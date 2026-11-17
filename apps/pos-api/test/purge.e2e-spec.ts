@@ -315,7 +315,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
   it('refuses a wrong or missing service key with 401 and touches nothing', async () => {
     const s = await createStore();
     const wrong = await purge({ userId: s.userId }, 'x'.repeat(32)).expect(401);
-    expect(wrong.body).toEqual({ message: expect.any(String) });
+    expect(wrong.body).toEqual({ message: 'Kunci layanan tidak valid' });
     await purge({ userId: s.userId }, null).expect(401);
     await purge({ userId: s.userId }, '').expect(401);
     await http().get('/tenant/me').set('Authorization', s.auth).expect(200);

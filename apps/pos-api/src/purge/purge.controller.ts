@@ -37,7 +37,7 @@ export class PurgeController {
     @Body() body: unknown,
   ) {
     if (!key || !timingSafeEqual(digest(key), this.serviceKey))
-      throw new UnauthorizedException();
+      throw new UnauthorizedException({ message: 'Kunci layanan tidak valid' });
     const { userId } = validate(PurgeBody, body);
     try {
       return { purged: await this.purge.purge(userId) };

@@ -2,7 +2,7 @@ import { AppShell } from '@umkmall/ui/layouts'
 import { Alert, Button, Header, Menu, Sidebar, SidebarMenuItem } from '@umkmall/ui/primitives'
 import { Link, getRouteApi, useRouter, useRouterState } from '@tanstack/react-router'
 import { LogOut, Menu as MenuIcon, Store } from 'lucide-react'
-import { forwardRef, useEffect, useRef, useState, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { NAV, activeNav, visibleNav } from '@/nav'
 
 export type Me = {
@@ -13,6 +13,20 @@ export type Me = {
 }
 
 const root = getRouteApi('__root__')
+
+// @umkmall/ui's breakpoint (md). The server renders the desktop navigation; the client switches on hydration.
+const DESKTOP = '(min-width: 768px)'
+function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const media = window.matchMedia(DESKTOP)
+      media.addEventListener('change', onChange)
+      return () => media.removeEventListener('change', onChange)
+    },
+    () => window.matchMedia(DESKTOP).matches,
+    () => true,
+  )
+}
 
 /** Whether the signed-in actor holds a permission (owners hold all). Hides actions the API would refuse with 403. */
 export function useCan(permission: string): boolean {
@@ -31,6 +45,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const [open, setOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  const desktop = useIsDesktop()
   const signOut = useRef<HTMLFormElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   // The page scrolls inside the shell, not the window, so the router's scroll reset never reaches it. Reset once the
@@ -140,9 +155,10 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
           }
         />
       )}
-      sidebar={nav(false, 'Navigasi')}
-      // Sidebar draws a rail and a drawer; this copy is only for its drawer, so it is hidden from md up.
-      mobileSidebar={<div className="md:hidden">{nav(true, 'Navigasi seluler')}</div>}
+      // One Sidebar at a time: each draws a rail and a drawer, and the copy not in use is already inert/hidden
+      // inside it, so screen readers and keyboards meet one menu (two instances meant four menus in the DOM).
+      sidebar={desktop ? nav(false, 'Navigasi') : undefined}
+      mobileSidebar={desktop ? undefined : nav(true, 'Navigasi')}
     >
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto bg-default-secondary">
         {me.offline && (
