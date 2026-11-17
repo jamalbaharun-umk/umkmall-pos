@@ -84,13 +84,14 @@ async function send<T>(path: string, body: unknown, headers: Record<string, stri
 
 export const loadCashier = createServerFn().handler(async () => {
   const { shift } = await load<{ shift: (Shift & { expectedCash: number }) | null }>('/shifts/current')
-  if (!shift) return { shift: null, products: [], taxBps: 0 }
+  if (!shift) return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[] }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
-  const [page, settings] = await Promise.all([
+  const [page, settings, methods] = await Promise.all([
     load<{ data: Product[] }>('/catalog/products?perPage=100'),
     load<{ taxBps: number }>('/sales/settings'),
+    load<{ data: PaymentMethod[] }>('/payment-methods'),
   ])
-  return { shift, products: page.data.filter((p) => p.isActive), taxBps: settings.taxBps }
+  return { shift, products: page.data.filter((p) => p.isActive), taxBps: settings.taxBps, methods: methods.data }
 })
 
 export const openShift = createServerFn({ method: 'POST' })
@@ -101,7 +102,16 @@ export const closeShift = createServerFn({ method: 'POST' })
   .validator((countedCash: number) => countedCash)
   .handler(({ data }) => send<Shift>('/shifts/current/close', { countedCash: data }))
 
-type SaleInput = { key: string; lines: { productId: string; qty: number }[]; paid: number; note?: string }
+type SaleInput = {
+  key: string
+  lines: { productId: string; qty: number }[]
+  paid: number
+  note?: string
+  // U7: member (required for a kasbon method), voucher code, payment method (default Tunai).
+  memberId?: string
+  voucherCode?: string
+  paymentMethodId?: string
+}
 export const createSale = createServerFn({ method: 'POST' })
   .validator((d: SaleInput) => d)
   .handler(({ data: { key, ...body } }) => send<{ id: string }>('/sales', body, { 'idempotency-key': key }))
@@ -125,3 +135,18 @@ export const loadCurrentShift = createServerFn().handler(() =>
 )
 
 export { rupiah } from '@/components/pos-page'
+
+// ---- U7: member picker, voucher check, payment methods ----
+
+export type PaymentMethod = { id: string; name: string; kind: 'cash' | 'debit' | 'credit' | 'wallet' }
+export type MemberOption = { id: string; name: string; code: string }
+
+/** Name and code only (GET /members/picker, sales.create): the till never loads phone or address. */
+export const pickMembers = createServerFn()
+  .validator((q: string) => q)
+  .handler(async ({ data }) => (await load<{ data: MemberOption[] }>(`/members/picker?q=${encodeURIComponent(data)}`)).data)
+
+/** The discount `code` gives on `amount`, without taking quota; the sale re-validates and takes it. */
+export const checkVoucher = createServerFn({ method: 'POST' })
+  .validator((d: { code: string; amount: number }) => d)
+  .handler(({ data }) => send<{ discount: number }>('/vouchers/check', data))

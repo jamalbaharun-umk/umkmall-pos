@@ -11,10 +11,12 @@ import {
   TabsTrigger,
   Text,
   TextField,
+  toast,
 } from '@umkmall/ui'
 import { useMemo, useState } from 'react'
 import { Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
-import { createSale, loadCashier, openShift, type Product } from './-api'
+import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
+import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
 import { numpadEdit, parseRupiah, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -28,8 +30,8 @@ export const Route = createFileRoute('/kasir/')({
 })
 
 function CashierPage() {
-  const { shift, products, taxBps } = Route.useLoaderData()
-  return shift ? <Register products={products} taxBps={taxBps} /> : <OpenShift />
+  const { shift, products, taxBps, methods } = Route.useLoaderData()
+  return shift ? <Register products={products} taxBps={taxBps} methods={methods} /> : <OpenShift />
 }
 
 function OpenShift() {
@@ -84,7 +86,7 @@ function OpenShift() {
 type CartLine = { product: Product; qty: number }
 const ALL = 'semua'
 
-function Register({ products, taxBps }: { products: Product[]; taxBps: number }) {
+function Register({ products, taxBps, methods }: { products: Product[]; taxBps: number; methods: PaymentMethod[] }) {
   const [q, setQ] = useState('')
   const [category, setCategory] = useState(ALL)
   const [cart, setCart] = useState<CartLine[]>([])
@@ -92,6 +94,8 @@ function Register({ products, taxBps }: { products: Product[]; taxBps: number })
   const [editingNote, setEditingNote] = useState(false)
   const [paying, setPaying] = useState(false)
   const [paid, setPaid] = useState<{ id: string; change: number }>()
+  const [member, setMember] = useState<MemberOption | null>(null)
+  const [voucher, setVoucher] = useState<AppliedVoucher | null>(null)
   // One key per order: a double tap or a retry after a network error sends the same key, so one sale.
   const [key, setKey] = useState(() => crypto.randomUUID())
 
@@ -112,8 +116,10 @@ function Register({ products, taxBps }: { products: Product[]; taxBps: number })
   }, [q, category, products])
 
   const subtotal = cart.reduce((n, l) => n + l.product.sellingPrice * l.qty, 0)
-  const tax = taxOf(subtotal, taxBps)
-  const total = subtotal + tax
+  // Estimate shown to the cashier; pos-api computes the charged total the same way (tax after the voucher).
+  const voucherDiscount = voucher?.discount ?? 0
+  const tax = taxOf(subtotal - voucherDiscount, taxBps)
+  const total = subtotal - voucherDiscount + tax
   const qtyOf = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0
 
   const add = (product: Product) =>
@@ -285,7 +291,7 @@ function Register({ products, taxBps }: { products: Product[]; taxBps: number })
         </div>
 
         <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
-          <Row label="Pelanggan" value={<span className="text-default-secondary">Belum tersedia</span>} />
+          <MemberRow member={member} onChange={setMember} />
           <div className="flex items-start justify-between gap-3">
             <dt className="text-default-secondary">Catatan</dt>
             <dd className="min-w-0 text-right">
@@ -298,11 +304,12 @@ function Register({ products, taxBps }: { products: Product[]; taxBps: number })
               </button>
             </dd>
           </div>
-          <Row label="Voucher" value={<span className="text-default-secondary">Belum tersedia</span>} />
+          <VoucherRow voucher={voucher} amount={subtotal} onChange={setVoucher} />
         </dl>
 
         <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
           <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
+          {voucher && <Row label="Voucher" value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>} />}
           <Row label="Pajak" value={<span className="text-default-brand">{taxBps / 100}%</span>} />
           <div className="flex justify-between border-t border-default-primary pt-2 text-base font-bold">
             <dt>Total</dt>
@@ -324,12 +331,17 @@ function Register({ products, taxBps }: { products: Product[]; taxBps: number })
           cart={cart}
           note={note}
           idempotencyKey={key}
+          methods={methods}
+          member={member}
+          voucher={voucher}
           onClose={() => setPaying(false)}
           onPaid={(sale) => {
             setPaying(false)
             setPaid(sale)
             setCart([])
             setNote('')
+            setMember(null)
+            setVoucher(null)
             setKey(crypto.randomUUID())
           }}
         />
@@ -410,6 +422,9 @@ function PayDialog({
   cart,
   note,
   idempotencyKey,
+  methods,
+  member,
+  voucher,
   onClose,
   onPaid,
 }: {
@@ -420,10 +435,18 @@ function PayDialog({
   cart: CartLine[]
   note: string
   idempotencyKey: string
+  methods: PaymentMethod[]
+  member: MemberOption | null
+  voucher: AppliedVoucher | null
   onClose: () => void
   onPaid: (sale: { id: string; change: number }) => void
 }) {
   const [paidText, setPaidText] = useState('')
+  const [methodId, setMethodId] = useState(() => methods.find((m) => m.kind === 'cash')?.id ?? methods[0]?.id ?? '')
+  const method = methods.find((m) => m.id === methodId)
+  // Kasbon: paid may be 0 and the rest becomes the member's receivable; debit/wallet: exactly the total.
+  const isCredit = method?.kind === 'credit'
+  const isExact = method?.kind === 'debit' || method?.kind === 'wallet'
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const paid = parseRupiah(paidText)
@@ -431,7 +454,13 @@ function PayDialog({
 
   async function pay(amount: number) {
     if (busy) return
-    if (Number.isNaN(amount) || amount < total) return setError('Uang yang dibayar kurang dari total.')
+    if (isCredit) {
+      if (!member) return setError('Pilih member untuk kasbon.')
+      if (!paidText.trim()) amount = 0 // no down payment
+      if (Number.isNaN(amount) || amount >= total) return setError('Kasbon harus menyisakan sisa tagihan.')
+    } else if (isExact) {
+      amount = total
+    } else if (Number.isNaN(amount) || amount < total) return setError('Uang yang dibayar kurang dari total.')
     setBusy(true)
     setError(undefined)
     const res = await createSale({
@@ -440,14 +469,20 @@ function PayDialog({
         lines: cart.map((l) => ({ productId: l.product.id, qty: l.qty })),
         paid: amount,
         note: note || undefined,
+        memberId: member?.id,
+        voucherCode: voucher?.code,
+        paymentMethodId: methodId || undefined,
       },
     }).catch(() => ({
       ok: false as const,
       error: 'Tidak bisa terhubung. Coba lagi: penjualan tidak akan tercatat dua kali.',
     }))
     setBusy(false)
-    if (!res.ok) return setError(res.error)
-    onPaid({ id: res.data.id, change: amount - total })
+    if (!res.ok) {
+      toast(res.error, { variant: 'danger' })
+      return setError(res.error)
+    }
+    onPaid({ id: res.data.id, change: Math.max(amount - total, 0) })
   }
 
   return (
@@ -469,12 +504,25 @@ function PayDialog({
         <div className="space-y-3">
           <SegmentedControl
             aria-label="Metode pembayaran"
-            options={[{ value: 'tunai', label: 'Tunai' }]}
-            value="tunai"
-            onChange={() => {}}
+            options={methods.map((m) => ({ value: m.id, label: m.name }))}
+            value={methodId}
+            onChange={(v) => {
+              setMethodId(v)
+              setError(undefined)
+            }}
           />
+          {isCredit && (
+            <p className={`text-sm ${member ? 'text-default-secondary' : 'text-default-error'}`}>
+              {member
+                ? `Kasbon atas nama ${member.name}. Uang muka boleh 0; sisanya menjadi piutang.`
+                : 'Pilih member untuk kasbon.'}
+            </p>
+          )}
           <dl className="space-y-1 text-sm">
             <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
+            {voucher && (
+              <Row label={`Voucher ${voucher.code}`} value={<span className="text-default-brand">−{rupiah(voucher.discount)}</span>} />
+            )}
             <Row label={`Pajak ${taxBps / 100}%`} value={<span className="text-default-brand">{rupiah(tax)}</span>} />
             <div className="flex justify-between border-t border-default-primary pt-2 font-bold">
               <dt>Total</dt>
@@ -491,11 +539,17 @@ function PayDialog({
             autoFocus
           />
           <p className="flex justify-between text-sm">
-            <span className="text-default-secondary">Kembalian</span>
+            <span className="text-default-secondary">{isCredit ? 'Sisa kasbon' : 'Kembalian'}</span>
             <span
               className={`font-bold ${change !== null && change < 0 ? 'text-default-error' : 'text-default-success'}`}
             >
-              {change === null ? '—' : change < 0 ? `Kurang ${rupiah(-change)}` : rupiah(change)}
+              {isCredit
+                ? rupiah(Math.max(total - (Number.isNaN(paid) ? 0 : paid), 0))
+                : change === null
+                  ? '—'
+                  : change < 0
+                    ? `Kurang ${rupiah(-change)}`
+                    : rupiah(change)}
             </span>
           </p>
           <div className="grid grid-cols-3 gap-2" aria-label="Nominal cepat">
@@ -545,9 +599,9 @@ function PayDialog({
               htmlType="submit"
               size="large"
               isLoading={busy}
-              disabled={change === null || change < 0}
+              disabled={isCredit ? !member : !isExact && (change === null || change < 0)}
             >
-              Bayar
+              {isCredit ? 'Simpan kasbon' : 'Bayar'}
             </Button>
             <Button width="auto" size="large" type="outline" color="light" disabled={busy} onClick={onClose}>
               Tutup
