@@ -43,12 +43,17 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     return req.send(body as object);
   };
 
-  /** What UMKMall's self-service deletion sets during the grace window (null = active account). */
+  /**
+   * What UMKMall's self-service deletion sets (null = active account). The purge may act only once the 30-day
+   * grace window since `delete_date` has passed (UMKMall's archiver cutoff), so the default is 31 days ago.
+   */
   const markForDeletion = (
     userId: string,
     flag: 'to_delete' | 'archived' | null = 'to_delete',
+    daysAgo = 31,
   ) =>
-    admin`update public.users set delete_status_flag = ${flag} where id = ${userId}`;
+    admin`update public.users set delete_status_flag = ${flag},
+      delete_date = now() - make_interval(days => ${daysAgo}) where id = ${userId}`;
 
   async function tenantTables(): Promise<string[]> {
     const rows = await admin<{ name: string }[]>`
@@ -272,9 +277,13 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     expect(existsSync(dir)).toBe(false);
   });
 
-  it.each([null, 'archived'] as const)(
-    'refuses with 409 and touches nothing when the account is not being deleted (flag %s)',
-    async (flag) => {
+  it.each([
+    ['flag null', null, 31],
+    ['flag archived', 'archived', 31],
+    ['to_delete inside the 30-day grace window', 'to_delete', 29],
+  ] as const)(
+    'refuses with 409 and touches nothing when the account is not erasable (%s)',
+    async (_, flag, daysAgo) => {
       const s = await createStore();
       const cat = await http()
         .post('/catalog/categories')
@@ -296,7 +305,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
         .set('Authorization', s.auth)
         .attach('file', PNG, { filename: 'a.png', contentType: 'image/png' })
         .expect(201);
-      await markForDeletion(s.userId, flag);
+      await markForDeletion(s.userId, flag, daysAgo);
 
       const res = await purge({ userId: s.userId }).expect(409);
       expect(res.body).toEqual({
