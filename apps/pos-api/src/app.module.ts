@@ -5,12 +5,21 @@ import { AuthController } from './auth/auth.controller';
 import { DbModule } from './db/db.module';
 import { StaffModule } from './staff/staff.module';
 import { StockModule } from './stock/stock.module';
+import { SuppliersModule } from './suppliers/suppliers.controller';
+import { PurchasingModule } from './purchasing/purchasing.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
 
 @Module({
-  imports: [DbModule, CatalogModule, StaffModule, StockModule],
+  imports: [
+    DbModule,
+    CatalogModule,
+    StaffModule,
+    StockModule,
+    SuppliersModule,
+    PurchasingModule,
+  ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [{ provide: APP_GUARD, useClass: SessionGuard }],
 })

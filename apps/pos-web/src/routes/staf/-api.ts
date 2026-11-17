@@ -23,6 +23,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'catalog.manage': 'Mengelola katalog',
   'reports.view': 'Melihat laporan',
   'staff.manage': 'Mengelola staf, peran dan perangkat',
+  'purchasing.manage': 'Mengelola pemasok, pembelian dan stok opname',
 }
 
 const ERRORS: Record<number, string> = {
