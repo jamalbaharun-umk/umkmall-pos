@@ -7,7 +7,7 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { parse } from '../catalog/catalog.schemas';
+import { validate as parse } from '../common/validation';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';

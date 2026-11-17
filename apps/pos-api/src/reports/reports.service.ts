@@ -1,9 +1,14 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { reportSettings } from '../db/schema';
-import type { DateRange, Period } from './reports.schemas';
+import { fieldError } from '../common/validation';
+import {
+  TIMEZONE_UNKNOWN,
+  type DateRange,
+  type Period,
+} from './reports.schemas';
 
 export const DEFAULT_TIMEZONE = 'Asia/Jakarta';
 /** Line reports return at most this many rows; totals always cover the whole range. */
@@ -67,11 +72,7 @@ export class ReportsService {
     const [known] = await this.rows(
       sql`select 1 from pg_timezone_names where name = ${timezone}`,
     );
-    if (!known)
-      throw new UnprocessableEntityException({
-        message: 'Zona waktu tidak dikenal',
-        fields: ['timezone'],
-      });
+    if (!known) throw fieldError('timezone', TIMEZONE_UNKNOWN);
     await this.db
       .insert(reportSettings)
       .values({ tenantId, timezone })

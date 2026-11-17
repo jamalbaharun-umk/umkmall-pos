@@ -361,42 +361,112 @@ describe('reports and dashboard (U5)', () => {
     }
   });
 
-  it('bad filters answer 422, never 500', async () => {
-    const store = await createStore();
-    const bad = [
-      '/reports/sales',
-      '/reports/sales?from=2026-11-01',
-      '/reports/sales?from=2026-11-1&to=2026-11-02',
-      '/reports/sales?from=2026-02-30&to=2026-03-01',
-      '/reports/products?from=2026-11-10&to=2026-11-01',
-      '/reports/shifts?from=2025-01-01&to=2026-11-01',
-      '/reports/purchasing?from=abc&to=def',
-      '/reports/sales/csv?from=x&to=y',
-      '/reports/dashboard?period=decade',
-    ];
-    for (const path of bad) await get(store, path).expect(422);
-    for (const timezone of [
-      'Mars/Olympus',
+  /** pos-api's toast line: the field's own message, or a generic one when several fields are wrong. */
+  const message = (errors: Record<string, string>) =>
+    Object.keys(errors).length === 1
+      ? Object.values(errors)[0]
+      : 'Periksa kembali isian kamu';
+
+  const RANGE_ENDPOINTS = [
+    'sales',
+    'products',
+    'shifts',
+    'purchasing',
+    'sales/csv',
+    'products/csv',
+    'shifts/csv',
+    'purchasing/csv',
+  ];
+  const RANGE_REFUSALS: [string, Record<string, string>][] = [
+    [
       '',
-      'Asia/Jakarta; drop table x',
-      42,
-    ]) {
-      await http()
+      { from: 'Tanggal mulai wajib diisi', to: 'Tanggal akhir wajib diisi' },
+    ],
+    ['from=2026-11-01', { to: 'Tanggal akhir wajib diisi' }],
+    ['from=&to=2026-11-02', { from: 'Tanggal mulai wajib diisi' }],
+    [
+      'from=2026-11-1&to=2026-11-02',
+      { from: 'Tanggal mulai harus berformat TTTT-BB-HH' },
+    ],
+    [
+      'from=2026-11-01&to=abc',
+      { to: 'Tanggal akhir harus berformat TTTT-BB-HH' },
+    ],
+    [
+      'from=2026-02-30&to=2026-03-01',
+      { from: 'Tanggal mulai tidak ada di kalender' },
+    ],
+    [
+      'from=2026-01-01&from=2026-01-02&to=2026-03-01',
+      { from: 'Tanggal mulai harus berformat TTTT-BB-HH' },
+    ],
+    [
+      'from=2026-11-10&to=2026-11-01',
+      { to: 'Tanggal akhir tidak boleh sebelum tanggal mulai' },
+    ],
+    [
+      'from=2025-11-16&to=2026-11-17',
+      { to: 'Rentang tanggal paling lama 366 hari' },
+    ],
+  ];
+
+  it.each(RANGE_ENDPOINTS)(
+    'GET /reports/%s refuses each bad range with 422 and the field message',
+    async (endpoint) => {
+      const store = await createStore();
+      for (const [query, errors] of RANGE_REFUSALS) {
+        const res = await get(store, `/reports/${endpoint}?${query}`).expect(
+          422,
+        );
+        expect(res.body).toEqual({ message: message(errors), errors });
+      }
+      // 366 days inclusive is the limit.
+      await get(
+        store,
+        `/reports/${endpoint}?from=2025-11-17&to=2026-11-17`,
+      ).expect(200);
+    },
+  );
+
+  it('GET /reports/dashboard refuses an unknown period with the field message', async () => {
+    const store = await createStore();
+    for (const q of ['period=decade', 'period=', 'period=today&period=week']) {
+      const res = await get(store, `/reports/dashboard?${q}`).expect(422);
+      expect(res.body).toEqual({
+        message: 'Periode harus hari ini, minggu ini, bulan ini atau tahun ini',
+        errors: {
+          period:
+            'Periode harus hari ini, minggu ini, bulan ini atau tahun ini',
+        },
+      });
+    }
+    await get(store, '/reports/dashboard').expect(200); // period defaults to today
+  });
+
+  it('PUT /reports/settings refuses a bad timezone with the field message and keeps the old one', async () => {
+    const store = await createStore();
+    const cases: [unknown, Record<string, string>][] = [
+      [{}, { timezone: 'Zona waktu wajib diisi' }],
+      [{ timezone: '' }, { timezone: 'Zona waktu wajib diisi' }],
+      [{ timezone: 42 }, { timezone: 'Zona waktu tidak dikenal' }],
+      [{ timezone: 'Mars/Olympus' }, { timezone: 'Zona waktu tidak dikenal' }],
+      [
+        { timezone: 'Asia/Jakarta; drop table x' },
+        { timezone: 'Zona waktu tidak dikenal' },
+      ],
+      [{ timezone: 'UTC', extra: 1 }, { extra: 'Isian tidak dikenal' }],
+    ];
+    for (const [body, errors] of cases) {
+      const res = await http()
         .put('/reports/settings')
         .set('Authorization', store.auth)
-        .send({ timezone })
+        .send(body as object)
         .expect(422);
+      expect(res.body).toEqual({ message: message(errors), errors });
     }
     expect((await get(store, '/reports/settings').expect(200)).body).toEqual({
       timezone: 'Asia/Jakarta',
     });
-    // 366 days inclusive is the limit.
-    await get(store, '/reports/sales?from=2025-11-17&to=2026-11-17').expect(
-      200,
-    );
-    await get(store, '/reports/sales?from=2025-11-16&to=2026-11-17').expect(
-      422,
-    );
   });
 
   it('cross-tenant: store B never sees store A’s numbers or settings', async () => {
