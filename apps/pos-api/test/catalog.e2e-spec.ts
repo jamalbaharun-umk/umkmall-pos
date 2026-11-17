@@ -319,6 +319,16 @@ describe('catalog (U2)', () => {
         .expect(422);
     });
 
+    it('lets a cashier holding catalog.manage write the catalog', async () => {
+      const { auth } = await createCashier(app, a, ['catalog.manage']);
+      const p = await product(a);
+      await http()
+        .patch(`/catalog/products/${p.id}`)
+        .set('Authorization', auth)
+        .send({ name: 'Es Teh Tawar' })
+        .expect(200);
+    });
+
     it('lets a cashier read but not write the catalog', async () => {
       // A real PIN-signed cashier: the guard refuses cashier tokens without a live session (U4).
       const { auth: cashier } = await createCashier(app, a);

@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   HttpCode,
   Param,
@@ -16,6 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { CurrentSession } from '../tenancy/decorators';
+import { RequirePermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
   CategoryInput,
@@ -26,11 +26,6 @@ import {
   Uuid,
 } from './catalog.schemas';
 import { CatalogService } from './catalog.service';
-
-// shortcut: writes are owner-only until U4 roles land; then gate on the catalog permission instead.
-function ownerOnly(session: PosSession) {
-  if (session.kind !== 'owner') throw new ForbiddenException();
-}
 
 // A malformed id can never name a row of this store: 404, same as another store's id.
 const idOf = (raw: string) => {
@@ -48,8 +43,8 @@ export class CategoriesController {
   }
 
   @Post()
+  @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    ownerOnly(s);
     return this.catalog.createCategory(
       s.tenantId,
       parse(CategoryInput, body).name,
@@ -57,12 +52,12 @@ export class CategoriesController {
   }
 
   @Patch(':id')
+  @RequirePermission('catalog.manage')
   update(
     @CurrentSession() s: PosSession,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    ownerOnly(s);
     return this.catalog.updateCategory(
       s.tenantId,
       idOf(id),
@@ -71,9 +66,9 @@ export class CategoriesController {
   }
 
   @Delete(':id')
+  @RequirePermission('catalog.manage')
   @HttpCode(204)
   async remove(@CurrentSession() s: PosSession, @Param('id') id: string) {
-    ownerOnly(s);
     await this.catalog.deleteCategory(s.tenantId, idOf(id));
   }
 }
@@ -88,8 +83,8 @@ export class ProductsController {
   }
 
   @Post()
+  @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    ownerOnly(s);
     return this.catalog.createProduct(s.tenantId, parse(ProductCreate, body));
   }
 
@@ -99,12 +94,12 @@ export class ProductsController {
   }
 
   @Patch(':id')
+  @RequirePermission('catalog.manage')
   update(
     @CurrentSession() s: PosSession,
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    ownerOnly(s);
     return this.catalog.updateProduct(
       s.tenantId,
       idOf(id),
@@ -113,13 +108,14 @@ export class ProductsController {
   }
 
   @Delete(':id')
+  @RequirePermission('catalog.manage')
   @HttpCode(204)
   async remove(@CurrentSession() s: PosSession, @Param('id') id: string) {
-    ownerOnly(s);
     await this.catalog.deleteProduct(s.tenantId, idOf(id));
   }
 
   @Post(':id/images')
+  @RequirePermission('catalog.manage')
   // Multer stops at 2 MB + 1 byte; the service refuses anything over 2 MB with 422.
   @UseInterceptors(
     FileInterceptor('file', {
@@ -131,7 +127,6 @@ export class ProductsController {
     @Param('id') id: string,
     @UploadedFile() file: { buffer: Buffer } | undefined,
   ) {
-    ownerOnly(s);
     return this.catalog.addImage(s.tenantId, idOf(id), file);
   }
 
@@ -157,13 +152,13 @@ export class ProductsController {
   }
 
   @Delete(':id/images/:imageId')
+  @RequirePermission('catalog.manage')
   @HttpCode(204)
   async removeImage(
     @CurrentSession() s: PosSession,
     @Param('id') id: string,
     @Param('imageId') imageId: string,
   ) {
-    ownerOnly(s);
     await this.catalog.deleteImage(s.tenantId, idOf(id), idOf(imageId));
   }
 }
