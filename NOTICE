@@ -1,0 +1,13 @@
+umkmall-pos
+Copyright (C) 2026 UMKMall
+
+This program is a port of Lakasir (https://github.com/lakasir/lakasir), which is free software
+licensed under the GNU General Public License v3.0. Lakasir copyright belongs to its authors and
+contributors. Ported from upstream commit acd1ee44c02469af32deb890c18a2507f13c02de (2026-11-03).
+
+umkmall-pos is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. See LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.output/
+.turbo/
+.tanstack/
+coverage/
+.env
+.env.*
+!.env.example
+.evidence/
+*.log
+.DS_Store

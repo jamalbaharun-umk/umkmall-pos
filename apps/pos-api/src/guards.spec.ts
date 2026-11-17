@@ -1,0 +1,48 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
+
+// Repo guards (the UMKMall monorepo's guard tests do not reach this repo, so it carries its own).
+const SRC = __dirname;
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) return sourceFiles(full);
+    return name.endsWith('.ts') && !name.endsWith('.spec.ts') ? [full] : [];
+  });
+}
+
+const files = sourceFiles(SRC).map((f) => ({
+  f: path.relative(SRC, f),
+  text: readFileSync(f, 'utf8'),
+}));
+
+describe('repo guards', () => {
+  it('sees the source tree', () => {
+    expect(files.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('verifies or signs POS tokens only in tenancy/session.ts', () => {
+    const offenders = files
+      .filter(({ f }) => f !== path.join('tenancy', 'session.ts'))
+      .filter(({ text }) => /\b(jwtVerify|SignJWT|jwtDecrypt)\b/.test(text))
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
+
+  it('never uses console (log through Nest Logger without tokens or PII)', () => {
+    const offenders = files
+      .filter(({ text }) => /\bconsole\.\w+\(/.test(text))
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
+
+  it('never reads a tenant id from the request body, query or params', () => {
+    const offenders = files
+      .filter(({ text }) =>
+        /(body|query|params)\s*(\.|\[['"])\s*tenant_?[iI]d/.test(text),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
+});

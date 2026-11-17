@@ -194,6 +194,8 @@ U0 → U1 → U2 → U3 → U4 → U5 → U6 → U7 → U8. The flag opens to in
 - 2026-11-17 owner (chat): separate repo, schema `pos` in the same Postgres, direct GPL-3 port, v1 scope, handoff token, tenant = `users.id` → Approach, U0–U9.
 - 2026-11-17 plan review: cascade replaced by explicit erasure with `RESTRICT`; handoff `jti` single-use in a POST body; legacy slot refused; grant as a manual step with a stub in POS CI; Nest CLI build; image storage in U2; analytics named; DoD keyed to Proves → U0, U1, U2, U8.
 - 2026-11-17 owner (chat): 15-minute owner session with liveness refresh; device-bound cashier PIN → U1, U4.
+- 2026-11-17 owner (chat): units run in parallel sessions that push straight to `umkmall-pos` `main` (no PR review there; CI gate); monorepo changes keep the monorepo PR process → CLAUDE.md.
+- 2026-11-17 U0 landed: NestJS (tsc, Jest), Drizzle in schema `pos`, own migration runner (drizzle's migrator needs database-level CREATE, which `pos_app` must not have), global session guard + `@CurrentSession`, `ops/pos-role.sql`, CI. Railway service and the real `pos_app` role are still owner steps → U0.
 
 ## Risks and deferred
 
