@@ -1,5 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
-import { api } from '@/lib/api.server'
+import { api, trySetStatus } from '@/lib/api.server'
 import { refusalOf } from '@/lib/refusal'
 
 // Server functions for the settings page: the store profile plus the tax (sales) and timezone (reports) settings
@@ -26,7 +26,10 @@ type Result = { error?: string; errors?: Record<string, string> }
 
 async function read<T>(path: string): Promise<T | null> {
   const res = await api(path)
-  if (res.status === 403) return null // the actor may not read this part (e.g. timezone needs reports.view)
+  if (res.status === 403) {
+    trySetStatus(200) // expected here: the page still renders, without this part
+    return null // the actor may not read this part (e.g. timezone needs reports.view)
+  }
   if (!res.ok) throw new Error((await refusalOf(res)).error)
   return (await res.json()) as T
 }

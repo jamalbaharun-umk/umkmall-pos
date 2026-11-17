@@ -1,4 +1,5 @@
 import { redirect } from '@tanstack/react-router'
+import { setResponseStatus } from '@tanstack/react-start/server'
 import { clearSessionToken, getSessionToken, posApiUrl, startSession } from './session.server'
 import { sessionKind } from './sign-in'
 
@@ -16,17 +17,39 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
   const token = getSessionToken()
   if (!token) throw redirect({ to: '/' })
   const res = await send(path, init, token)
-  if (res.status !== 401) return res
+  if (res.status !== 401) return pageStatus(res, init)
 
   if (sessionKind(token) === 'cashier') {
     clearSessionToken()
     throw redirect({ to: '/kasir/masuk' })
   }
   const fresh = await startSession('/auth/refresh', {}, token)
-  if (typeof fresh === 'string') return send(path, init, fresh)
-  if (fresh === 0 || fresh >= 500) throw new Error(UMKMALL_DOWN)
+  if (typeof fresh === 'string') return pageStatus(await send(path, init, fresh), init)
+  if (fresh === 0 || fresh >= 500) {
+    trySetStatus(503)
+    throw new Error(UMKMALL_DOWN)
+  }
   clearSessionToken()
   throw redirect({ to: '/' })
+}
+
+/**
+ * The router answers every failed page load with HTTP 500. A read that pos-api refused (403, 404) or an unreachable
+ * upstream (503) sets the real status on the request, which Start applies to the page response (the page text
+ * stays the Indonesian error state). Mutations keep their own status handling, so only GET reads set it.
+ */
+function pageStatus(res: Response, init: RequestInit): Response {
+  if ((init.method ?? 'GET') === 'GET' && (res.status === 403 || res.status === 404)) trySetStatus(res.status)
+  return res
+}
+
+/** Sets the page status when there is a request to set it on (no-op in tests or outside a request). */
+export function trySetStatus(status: number): void {
+  try {
+    setResponseStatus(status)
+  } catch {
+    // not inside a Start request
+  }
 }
 
 function send(path: string, init: RequestInit, token: string): Promise<Response> {
@@ -37,6 +60,7 @@ function send(path: string, init: RequestInit, token: string): Promise<Response>
     headers.set('content-type', 'application/json')
   // A refused or dropped connection must not reach a page as the runtime's English "fetch failed".
   return fetch(`${posApiUrl()}${path}`, { ...init, headers }).catch(() => {
+    trySetStatus(503)
     throw new Error(API_DOWN)
   })
 }
