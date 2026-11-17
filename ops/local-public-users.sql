@@ -15,5 +15,7 @@ EXCEPTION WHEN duplicate_object OR unique_violation THEN
 END
 $$;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS delete_status_flag public.user_delete_status_flag;
+-- Production has deny-all RLS on every public table (UMKMall migration 0058); so does the stub.
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 -- Stand-in for UMKMall's personal columns, so tests can prove pos_app cannot read them.
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone text;

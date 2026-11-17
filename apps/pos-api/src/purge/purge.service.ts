@@ -63,6 +63,9 @@ export class PurgeService {
     await this.deleteImages(tenant.id);
 
     await this.db.transaction(async (tx) => {
+      // First, so UMKMall's function takes the row lock (FOR SHARE) and holds it to our commit: a
+      // reactivation waits for the purge, or the purge sees it and rolls back.
+      await this.assertBeingDeleted(tx, userId);
       const tables = (
         await tx.execute<{ name: string }>(sql`
           select c.relname as name from pg_class c
@@ -82,19 +85,18 @@ export class PurgeService {
         );
       }
       await tx.delete(tenants).where(eq(tenants.id, tenant.id));
-      // Re-check last, just before commit: a reactivation that landed meanwhile rolls everything back.
-      // shortcut: no row lock (FOR SHARE needs UPDATE on public.users, which pos_app must not hold), so a
-      // reactivation committing between this read and our commit still loses; the window is one statement.
-      await this.assertBeingDeleted(tx, userId);
     });
     this.logger.log(`purged tenant ${tenant.id}`);
     return true;
   }
 
   private async assertBeingDeleted(db: Pick<Db, 'execute'>, userId: string) {
-    const rows = await db.execute(sql`
-      select 1 from public.users where id = ${userId} and delete_status_flag = 'to_delete'`);
-    if (rows.length === 0)
+    // public.users has deny-all RLS and pos_app no grant on it: only UMKMall's SECURITY DEFINER function
+    // can answer (UMKMall/umkmall#1839; local stub: ops/local-pos-account-erasable.sql).
+    const [row] = await db.execute<{ erasable: boolean }>(
+      sql`select public.pos_account_erasable(${userId}::uuid) as erasable`,
+    );
+    if (!row?.erasable)
       throw new ConflictException({ message: NOT_BEING_DELETED });
   }
 

@@ -35,6 +35,9 @@ export default async function globalSetup() {
         readFileSync(path.join(OPS, 'local-public-users.sql'), 'utf8'),
       );
       await admin.unsafe(readFileSync(path.join(OPS, 'pos-role.sql'), 'utf8'));
+      await admin.unsafe(
+        readFileSync(path.join(OPS, 'local-pos-account-erasable.sql'), 'utf8'),
+      );
       await admin.unsafe(`ALTER ROLE pos_app PASSWORD '${APP_ROLE_KEY}'`);
     } finally {
       await admin.end();
