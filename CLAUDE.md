@@ -28,6 +28,9 @@ silent, follow the monorepo's principles.
 
 ## Parallel sessions (several agents push to `main`)
 
+- **Own your test database.** Every session runs tests with its own `PGTEST_DB` (for example
+  `PGTEST_DB=pos_u2 npm test`); the default `pos` database belongs to whoever runs without it, and a shared one
+  gets its `pos` schema wiped mid-run by another session. Run servers on your own ports too.
 - **Own your module.** A unit works in its own directories: `apps/pos-api/src/<module>/`, its test files,
   `apps/pos-web/src/routes/<area>/`. Shared files (`app.module.ts`, `db/schema/index.ts`, route tree) take a
   one-line addition only.

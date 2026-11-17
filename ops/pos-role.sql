@@ -8,6 +8,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pos_app') THEN
     CREATE ROLE pos_app LOGIN;
   END IF;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN
+  NULL; -- created concurrently (roles are cluster-wide); nothing to do
 END
 $$;
 
