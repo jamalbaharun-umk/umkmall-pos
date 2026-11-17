@@ -218,6 +218,7 @@ describe('reports and dashboard (U5)', () => {
     expect(sales.rows).toHaveLength(4);
     expect(sales.rows[0]).toMatchObject({
       number: 1,
+      cashier: 'Pemilik',
       name: 'Es Teh',
       qty: 3,
       unitPrice: 5000,
@@ -259,7 +260,7 @@ describe('reports and dashboard (U5)', () => {
     expect(shifts.totals).toEqual({ shifts: 1, ...KNOWN });
   });
 
-  it('shift report names the cashier', async () => {
+  it('shift and sales reports name the cashier who sold', async () => {
     const store = await createStore();
     const teh = await product(store, 'Es Teh', 5000, 3000);
     const cashier = await createCashier(app, store, ['sales.create']);
@@ -286,7 +287,26 @@ describe('reports and dashboard (U5)', () => {
         difference: null,
       }),
     ]);
-    expect(res.body.rows[0].cashier).not.toBe('Pemilik');
+    const staffName = (
+      await get(store, `/staff/${cashier.staffId}`).expect(200)
+    ).body.name as string;
+    expect(res.body.rows[0].cashier).toBe(staffName);
+    const sales = (
+      await get(store, `/reports/sales?from=${today()}&to=${today()}`).expect(
+        200,
+      )
+    ).body as { rows: { cashier: string }[] };
+    expect(sales.rows.map((r) => r.cashier)).toEqual([staffName]);
+    const csv = await get(
+      store,
+      `/reports/sales/csv?from=${today()}&to=${today()}`,
+    ).expect(200);
+    const lines = csv.text.split('\r\n');
+    expect(lines[0]).toBe(
+      'No. struk,Waktu,Kasir,SKU,Produk,Qty,Harga,Jumlah,Modal,Laba kotor',
+    );
+    expect(lines[1].split(',')[2]).toBe(staffName);
+    expect(lines).toContain('Pendapatan,,,,,,,5000,,');
   });
 
   it('purchasing report lists approved purchases only', async () => {
@@ -353,6 +373,8 @@ describe('reports and dashboard (U5)', () => {
     expect(lines[1]).toMatch(
       /^[^,]+,"'=HYPERLINK\(""x""\)",2,10000,6000,4000$/,
     );
+    // The total row leaves gross profit empty: per-line profit is before discount and tax, the 'Laba kotor' line is not.
+    expect(lines).toContain('Total,,2,10000,6000,');
     expect(lines).toContain('Pendapatan,,,10000,,');
     expect(lines).toContain('Laba kotor,,,4000,,');
     for (const kind of ['sales', 'shifts']) {

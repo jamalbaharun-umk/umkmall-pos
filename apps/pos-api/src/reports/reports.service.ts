@@ -23,6 +23,11 @@ const TRUNC: Record<Period, string> = {
 
 type Row = Record<string, unknown>;
 const n = (v: unknown) => Number(v ?? 0);
+/** Who rang it up: the owner, or the cashier's name (Lakasir's cashier report shows the seller of each sale). */
+const cashierName = (r: Row) =>
+  r.actor_kind === 'owner'
+    ? 'Pemilik'
+    : ((r.staff_name as string | null) ?? 'Staf');
 
 /**
  * The one place a metric is defined (Lakasir swapped revenue and profit, flaw 5).
@@ -142,10 +147,12 @@ export class ReportsService {
     const [lines, totals, [q]] = await Promise.all([
       this.rows(sql`
         select s.number, to_char(s.created_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as time,
+               s.actor_kind, st.name as staff_name,
                p.sku, l.name, l.qty, l.unit_price, l.line_total, l.cost_total
           from pos.sale_lines l
           join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
           join pos.products p on p.tenant_id = l.tenant_id and p.id = l.product_id
+          left join pos.staff st on st.tenant_id = s.tenant_id and st.id = s.actor_id
          where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
          order by s.created_at, s.number, l.id
          limit ${ROW_CAP + 1}`),
@@ -163,6 +170,7 @@ export class ReportsService {
       rows: lines.slice(0, ROW_CAP).map((r) => ({
         number: n(r.number),
         time: r.time as string,
+        cashier: cashierName(r),
         sku: r.sku as string,
         name: r.name as string,
         qty: n(r.qty),
@@ -231,10 +239,7 @@ export class ReportsService {
       const expected = r.expected_cash == null ? null : n(r.expected_cash);
       return {
         shiftId: r.id as string,
-        cashier:
-          r.actor_kind === 'owner'
-            ? 'Pemilik'
-            : ((r.staff_name as string | null) ?? 'Staf'),
+        cashier: cashierName(r),
         openedAt: r.opened_at as string,
         closedAt: (r.closed_at as string | null) ?? null,
         openingCash: n(r.opening_cash),
