@@ -114,6 +114,8 @@ export const sales = pos
       costTotal: rupiah('cost_total').notNull(),
       // Actor who set a client price or discount (needs sales.price_override); null when none was used.
       overrideBy: uuid('override_by'),
+      // Lakasir's order note, typed by the cashier; shown on the receipt.
+      note: text('note'),
       createdAt: createdAt(),
     },
     (t) => [

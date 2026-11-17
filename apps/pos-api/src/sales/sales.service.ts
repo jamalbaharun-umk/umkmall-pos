@@ -9,7 +9,9 @@ import {
   count,
   desc,
   eq,
+  gte,
   inArray,
+  lt,
   isNull,
   sql,
   type SQL,
@@ -177,6 +179,7 @@ export class SalesService {
         change: input.paid - total,
         costTotal: 0,
         overrideBy,
+        note: input.note || null,
       })
       .returning({ id: sales.id });
 
@@ -233,27 +236,60 @@ export class SalesService {
     const where = and(
       this.scope(s),
       q.shiftId ? eq(sales.shiftId, q.shiftId) : undefined,
+      q.from ? gte(sales.createdAt, new Date(q.from)) : undefined,
+      q.to ? lt(sales.createdAt, new Date(q.to)) : undefined,
     );
-    const [rows, [{ total }]] = await Promise.all([
+    const showCost = hasPermission(s, 'reports.view');
+    const [rows, [summary]] = await Promise.all([
       this.db
         .select({
           id: sales.id,
           number: sales.number,
           shiftId: sales.shiftId,
           actorKind: sales.actorKind,
+          // Owner sales have no staff row (Lakasir's "user.name" column).
+          cashier: sql<string>`coalesce(${staff.name}, 'Pemilik')`,
+          subtotal: sales.subtotal,
+          discount: sales.discount,
+          tax: sales.tax,
           total: sales.total,
           paid: sales.paid,
           change: sales.change,
+          costTotal: sales.costTotal,
           createdAt: sales.createdAt,
         })
         .from(sales)
+        .leftJoin(
+          staff,
+          and(eq(staff.tenantId, sales.tenantId), eq(staff.id, sales.actorId)),
+        )
         .where(where)
         .orderBy(desc(sales.createdAt), desc(sales.number))
         .limit(q.perPage)
         .offset((q.page - 1) * q.perPage),
-      this.db.select({ total: count() }).from(sales).where(where),
+      this.db
+        .select({
+          count: count(),
+          revenue:
+            sql<number>`coalesce(sum(${sales.total}), 0)::bigint`.mapWith(
+              Number,
+            ),
+          discount:
+            sql<number>`coalesce(sum(${sales.discount}), 0)::bigint`.mapWith(
+              Number,
+            ),
+        })
+        .from(sales)
+        .where(where),
     ]);
-    return { data: rows, total };
+    return {
+      data: rows.map((r) => ({
+        ...r,
+        costTotal: showCost ? r.costTotal : undefined,
+      })),
+      total: summary.count,
+      summary,
+    };
   }
 
   /** One sale with lines. Cost is shown only to `reports.view`. `own` skips the scope (just created). */
@@ -275,6 +311,7 @@ export class SalesService {
         change: sales.change,
         costTotal: sales.costTotal,
         overrideBy: sales.overrideBy,
+        note: sales.note,
         createdAt: sales.createdAt,
       })
       .from(sales)
@@ -341,6 +378,7 @@ export class SalesService {
       total: sale.total,
       paid: sale.paid,
       change: sale.change,
+      note: sale.note,
     };
   }
 

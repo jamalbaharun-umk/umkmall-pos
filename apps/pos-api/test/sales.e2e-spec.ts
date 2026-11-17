@@ -367,6 +367,80 @@ describe('sales and shifts (U3)', () => {
     });
   });
 
+  it('history: note on the sale and receipt, cashier name, date range and summary', async () => {
+    const { store, productId } = await storeWithProduct();
+    const cashier = await createCashier(app, store, ['sales.create']);
+    await openShift(store.auth).expect(201);
+    await openShift(cashier.auth).expect(201);
+    const noted = await sell(cashier.auth, {
+      lines: [{ productId, qty: 2 }],
+      paid: 10_000,
+      note: '  tanpa es  ',
+    }).expect(201);
+    await sell(store.auth, {
+      lines: [{ productId, qty: 1 }],
+      paid: 5000,
+    }).expect(201);
+    await sell(store.auth, {
+      lines: [{ productId, qty: 1 }],
+      paid: 5000,
+      note: 'x'.repeat(201),
+    }).expect(422);
+
+    const receipt = await http()
+      .get(`/sales/${noted.body.id}/receipt`)
+      .set('Authorization', store.auth)
+      .expect(200);
+    expect(receipt.body.note).toBe('tanpa es');
+
+    const all = await http()
+      .get('/sales')
+      .set('Authorization', store.auth)
+      .expect(200);
+    const rows = all.body.data as {
+      cashier: string;
+      note?: string;
+      costTotal?: number;
+    }[];
+    expect(rows.map((r) => r.cashier).sort()).toEqual(['Pemilik', 'Sari']);
+    expect(rows.every((r) => typeof r.costTotal === 'number')).toBe(true);
+    expect(all.body.summary).toEqual({
+      count: 2,
+      revenue: 15_000,
+      discount: 0,
+    });
+
+    const hour = 60 * 60 * 1000;
+    const range = (from: number, to: number) =>
+      `/sales?from=${new Date(from).toISOString()}&to=${new Date(to).toISOString()}`;
+    const now = Date.now();
+    const today = await http()
+      .get(range(now - hour, now + hour))
+      .set('Authorization', store.auth)
+      .expect(200);
+    expect(today.body.total).toBe(2);
+    const earlier = await http()
+      .get(range(now - 3 * hour, now - 2 * hour))
+      .set('Authorization', store.auth)
+      .expect(200);
+    expect(earlier.body).toMatchObject({
+      total: 0,
+      data: [],
+      summary: { count: 0, revenue: 0 },
+    });
+    await http()
+      .get('/sales?from=kemarin')
+      .set('Authorization', store.auth)
+      .expect(422);
+
+    // A cashier without reports.view never sees cost in the list.
+    const own = await http()
+      .get('/sales')
+      .set('Authorization', cashier.auth)
+      .expect(200);
+    expect(own.body.data[0].costTotal).toBeUndefined();
+  });
+
   it('a cashier without sales.create cannot open a shift or sell (403)', async () => {
     const { store, productId } = await storeWithProduct();
     const cashier = await createCashier(app, store, ['reports.view']);
