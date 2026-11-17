@@ -1,12 +1,11 @@
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { Card } from '@umkmall/ui/compositions'
-import { Button, Select, toast } from '@umkmall/ui/primitives'
-import { loadSettings, saveTimezone } from './-api'
+import { useCan } from '@/components/shell'
+import { loadSettings } from './-api'
 import { REPORTS } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
 
-// Indonesia's three zones first; any other IANA zone can still be set through the API.
+// Labels for Indonesia's three zones; any other IANA zone shows as its name.
 const ZONES = [
   { value: 'Asia/Jakarta', label: 'WIB (Asia/Jakarta)' },
   { value: 'Asia/Makassar', label: 'WITA (Asia/Makassar)' },
@@ -40,36 +39,27 @@ function ReportIndex() {
   )
 }
 
+/** Read-only: the timezone is edited in one place, Pengaturan → Aplikasi (Lakasir's General Setting). */
 function TimezoneSetting({ current }: { current: string }) {
-  const router = useRouter()
-  const [tz, setTz] = useState(current)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
-  const options = ZONES.some((z) => z.value === current) ? ZONES : [{ value: current, label: current }, ...ZONES]
+  const canEdit = useCan('catalog.manage')
+  const label = ZONES.find((z) => z.value === current)?.label ?? current
   return (
     <Card variant="outlined" padding="medium" className="mt-6">
-      <h2 className="font-semibold text-default-primary">Zona waktu toko</h2>
-      <p className="mb-3 text-sm text-default-secondary">Menentukan awal dan akhir hari di semua laporan dan dasbor.</p>
-      <form
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={async (e) => {
-          e.preventDefault()
-          if (!tz) return setError('Zona waktu wajib diisi')
-          setBusy(true)
-          const r = await saveTimezone({ data: tz }).finally(() => setBusy(false))
-          if (r.ok) {
-            setError(undefined)
-            toast('Zona waktu disimpan.', { variant: 'success' })
-            await router.invalidate()
-          } else {
-            setError(r.errors?.timezone)
-            toast(r.error, { variant: 'danger' })
-          }
-        }}
-      >
-        <Select label="Zona waktu" value={tz} onValueChange={setTz} options={options} error={error} />
-        <Button htmlType="submit" type="primary" color="primary" width="auto" isLoading={busy}>Simpan</Button>
-      </form>
+      <h2 className="font-semibold text-default-primary">Zona waktu toko: {label}</h2>
+      <p className="mt-1 text-sm text-default-secondary">
+        Menentukan awal dan akhir hari di semua laporan dan dasbor.{' '}
+        {canEdit ? (
+          <>
+            Ubah di{' '}
+            <Link to="/pengaturan" className="font-medium text-default-brand underline">
+              Pengaturan → Aplikasi
+            </Link>
+            .
+          </>
+        ) : (
+          'Pemilik bisa mengubahnya di Pengaturan.'
+        )}
+      </p>
     </Card>
   )
 }

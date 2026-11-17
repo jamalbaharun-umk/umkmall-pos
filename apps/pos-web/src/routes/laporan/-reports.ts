@@ -10,6 +10,7 @@ const salesTotals: TotalLine[] = [
   { key: 'qty', label: 'Jumlah barang' },
   { key: 'grossSales', label: 'Penjualan kotor', money: true },
   { key: 'discount', label: 'Diskon', money: true },
+  { key: 'voucher', label: 'Voucher', money: true },
   { key: 'tax', label: 'Pajak', money: true },
   { key: 'revenue', label: 'Pendapatan', money: true },
   { key: 'cost', label: 'Modal', money: true },
@@ -38,7 +39,7 @@ export const REPORTS: Record<string, ReportDef> = {
   produk: {
     kind: 'products',
     title: 'Laporan produk',
-    hint: 'Penjualan per produk. Diskon per struk dan pajak hanya ada di total.',
+    hint: 'Penjualan per produk. Diskon dan voucher per struk serta pajak hanya ada di total.',
     columns: [
       { key: 'sku', label: 'SKU' },
       { key: 'name', label: 'Produk' },

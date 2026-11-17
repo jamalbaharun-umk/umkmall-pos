@@ -31,7 +31,7 @@ const cashierName = (r: Row) =>
 
 /**
  * The one place a metric is defined (Lakasir swapped revenue and profit, flaw 5).
- * revenue = Σ sale totals (paid by customers, after discounts, incl. tax);
+ * revenue = Σ sale totals = grossSales − discount − voucher + tax (paid by customers);
  * grossProfit = revenue − tax − cost (tax is owed, not earned; equals revenue − cost at tax 0).
  */
 function metrics(r: Row) {
@@ -42,6 +42,7 @@ function metrics(r: Row) {
     salesCount: n(r.sales_count),
     grossSales: n(r.gross_sales),
     discount: n(r.discount),
+    voucher: n(r.voucher),
     tax,
     revenue,
     cost,
@@ -99,7 +100,8 @@ export class ReportsService {
   private async salesMetrics(tenantId: string, start: SQL, end: SQL) {
     const [r] = await this.rows(sql`
       select count(*) as sales_count, coalesce(sum(subtotal), 0) as gross_sales,
-             coalesce(sum(discount), 0) as discount, coalesce(sum(tax), 0) as tax,
+             coalesce(sum(discount), 0) as discount,
+             coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
              coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost
         from pos.sales
        where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end}`);
@@ -226,7 +228,8 @@ export class ReportsService {
              to_char(sh.closed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as closed_at,
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
              count(s.id) as sales_count, coalesce(sum(s.subtotal), 0) as gross_sales,
-             coalesce(sum(s.discount), 0) as discount, coalesce(sum(s.tax), 0) as tax,
+             coalesce(sum(s.discount), 0) as discount,
+             coalesce(sum(s.voucher_discount), 0) as voucher, coalesce(sum(s.tax), 0) as tax,
              coalesce(sum(s.total), 0) as revenue, coalesce(sum(s.cost_total), 0) as cost
         from pos.shifts sh
         left join pos.staff st on st.tenant_id = sh.tenant_id and st.id = sh.actor_id
@@ -255,6 +258,7 @@ export class ReportsService {
         | 'salesCount'
         | 'grossSales'
         | 'discount'
+        | 'voucher'
         | 'tax'
         | 'revenue'
         | 'cost'
@@ -269,6 +273,7 @@ export class ReportsService {
         salesCount: sum('salesCount'),
         grossSales: sum('grossSales'),
         discount: sum('discount'),
+        voucher: sum('voucher'),
         tax: sum('tax'),
         revenue: sum('revenue'),
         cost: sum('cost'),

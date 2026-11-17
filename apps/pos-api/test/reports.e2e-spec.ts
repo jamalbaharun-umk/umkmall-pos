@@ -99,6 +99,7 @@ describe('reports and dashboard (U5)', () => {
     salesCount: 3,
     grossSales: 44_000,
     discount: 1000,
+    voucher: 0,
     tax: 1300,
     revenue: 44_300,
     cost: 24_000,
@@ -140,6 +141,7 @@ describe('reports and dashboard (U5)', () => {
         salesCount: 0,
         grossSales: 0,
         discount: 0,
+        voucher: 0,
         tax: 0,
         revenue: 0,
         cost: 0,
@@ -258,6 +260,64 @@ describe('reports and dashboard (U5)', () => {
       ...KNOWN,
     });
     expect(shifts.totals).toEqual({ shifts: 1, ...KNOWN });
+  });
+
+  it('a voucher shows in every summary: gross − discount − voucher + tax = revenue (D11)', async () => {
+    const { store, kopi } = await knownSalesStore();
+    const day = (d: number) =>
+      new Date(Date.now() + 7 * 3_600_000 + d * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+    const v = await http()
+      .post('/vouchers')
+      .set('Authorization', store.auth)
+      .send({
+        name: 'Hemat',
+        code: `V${randomUUID().slice(0, 6)}`,
+        type: 'flat',
+        nominal: 950,
+        kuota: 5,
+        startDate: day(-1),
+        expired: day(1),
+      })
+      .expect(201);
+    // 1 × Kopi Rp8.000 − voucher 950 = 7.050, tax 10% = 705, total 7.755.
+    await sell(store, {
+      lines: [{ productId: kopi, qty: 1 }],
+      voucherCode: v.body.code,
+      paid: 7755,
+    });
+    const expected = {
+      salesCount: 4,
+      grossSales: 52_000,
+      discount: 1000,
+      voucher: 950,
+      tax: 2005,
+      revenue: 52_055,
+      cost: 28_000,
+      grossProfit: 22_050,
+    };
+    const reconciles = (t: typeof expected) =>
+      expect(t.grossSales - t.discount - t.voucher + t.tax).toBe(t.revenue);
+    const q = `from=${today()}&to=${today()}`;
+
+    const dash = await get(store, '/reports/dashboard?period=today').expect(
+      200,
+    );
+    expect(dash.body.current).toEqual(expected);
+    for (const kind of ['sales', 'products', 'shifts']) {
+      const r = await get(store, `/reports/${kind}?${q}`).expect(200);
+      expect(r.body.totals).toMatchObject(expected);
+      reconciles(r.body.totals);
+    }
+    const salesCsv = (
+      await get(store, `/reports/sales/csv?${q}`).expect(200)
+    ).text.split('\r\n');
+    expect(salesCsv).toContain('Voucher,,,,,,,950,,');
+    const productsCsv = (
+      await get(store, `/reports/products/csv?${q}`).expect(200)
+    ).text.split('\r\n');
+    expect(productsCsv).toContain('Voucher,,,950,,');
   });
 
   it('shift and sales reports name the cashier who sold', async () => {

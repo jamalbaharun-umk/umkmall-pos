@@ -91,6 +91,7 @@ export class ReportsController {
           null,
         ],
         ['Diskon', null, null, null, null, null, null, t.discount, null, null],
+        ['Voucher', null, null, null, null, null, null, t.voucher, null, null],
         ['Pajak', null, null, null, null, null, null, t.tax, null, null],
         [
           'Pendapatan',
@@ -144,6 +145,7 @@ export class ReportsController {
         ]),
         ['Total', null, t.qty, t.grossSales, t.cost, null],
         ['Diskon', null, null, t.discount, null, null],
+        ['Voucher', null, null, t.voucher, null, null],
         ['Pajak', null, null, t.tax, null, null],
         ['Pendapatan', null, null, t.revenue, null, null],
         ['Laba kotor', null, null, t.grossProfit, null, null],

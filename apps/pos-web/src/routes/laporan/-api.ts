@@ -8,6 +8,7 @@ export type Metrics = {
   salesCount: number
   grossSales: number
   discount: number
+  voucher: number
   tax: number
   revenue: number
   cost: number
@@ -72,18 +73,5 @@ export const loadReport = createServerFn()
   })
 
 export const loadSettings = createServerFn().handler(() => load<{ timezone: string }>('/reports/settings'))
-
-export const saveTimezone = createServerFn({ method: 'POST' })
-  .validator((tz: string) => tz)
-  .handler(async ({ data }) => {
-    const res = await api('/reports/settings', { method: 'PUT', body: JSON.stringify({ timezone: data }) }).catch((e: unknown) => {
-      if (isRedirect(e)) throw e
-      return null
-    })
-    if (!res) return { ok: false, status: 0, error: OFFLINE } satisfies Failure
-    if (res.status === 403) return { ok: false, status: 403, error: 'Hanya pemilik yang bisa mengubah zona waktu.' } satisfies Failure
-    if (!res.ok) return failure(res, 'Zona waktu belum tersimpan, coba lagi.')
-    return { ok: true as const }
-  })
 
 export { rupiah } from '@/components/page'
