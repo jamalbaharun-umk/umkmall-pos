@@ -35,7 +35,7 @@ describe('purchase and opname form checks', () => {
       'lines.0.countedQty': 'Wajib diisi',
     })
     expect(validateOpname([{ productId: 'p', countedQty: '-1', reason: '' }])).toEqual({
-      'lines.0.countedQty': 'Jumlah harus bilangan bulat',
+      'lines.0.countedQty': 'Jumlah tidak boleh negatif',
     })
   })
   it('wholeNumber', () => {

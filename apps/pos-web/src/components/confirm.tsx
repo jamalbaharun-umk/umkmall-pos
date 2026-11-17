@@ -1,5 +1,5 @@
 import { Button, Dialog, toast } from '@umkmall/ui/primitives'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 
 /**
  * Lakasir's confirmation modal (Filament "Are you sure?") for destructive actions. `onConfirm` returns an error
@@ -13,6 +13,7 @@ export function useConfirm() {
     run: () => Promise<string | void>
   } | null>(null)
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // a double click arrives before `busy` re-renders
   const [error, setError] = useState<string>()
 
   const ask = (title: string, run: () => Promise<string | void>, opts: { body?: ReactNode; label?: string } = {}) => {
@@ -46,9 +47,11 @@ export function useConfirm() {
             width="auto"
             isLoading={busy}
             onClick={async () => {
-              if (!state) return
+              if (!state || lock.current) return
+              lock.current = true
               setBusy(true)
               const failed = await state.run().catch(() => 'Terjadi kesalahan. Coba lagi sebentar lagi.')
+              lock.current = false
               setBusy(false)
               if (failed) {
                 setError(failed)

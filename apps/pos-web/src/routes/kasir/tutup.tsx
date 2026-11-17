@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button, Card, Text, TextField } from '@umkmall/ui'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { act, Empty, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { closeShift, loadCurrentShift, type Shift } from './-api'
 import { parseRupiah } from './-money'
@@ -18,6 +18,7 @@ function CloseShiftPage() {
   const [counted, setCounted] = useState('')
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // state lags a burst of clicks; the ref does not
   const [closed, setClosed] = useState<Shift>()
 
   const { ask, dialog } = useConfirm()
@@ -25,7 +26,7 @@ function CloseShiftPage() {
   // Closing cannot be undone: check the count, then confirm (the dialog stays busy until pos-api answers).
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (lock.current) return
     if (!counted.trim()) return setError('Wajib diisi')
     const amount = parseRupiah(counted)
     if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 150.000')
@@ -33,8 +34,10 @@ function CloseShiftPage() {
     ask(
       'Tutup shift?',
       async () => {
+        lock.current = true
         setBusy(true)
         const r = await act(() => closeShift({ data: amount }), 'Shift ditutup')
+        lock.current = false
         setBusy(false)
         if (!r.ok) {
           setError(r.errors.countedCash)

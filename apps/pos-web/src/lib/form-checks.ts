@@ -7,6 +7,7 @@ export const check = {
   required: (v: string) => (v.trim() ? undefined : 'Wajib diisi'),
   wholeNumber: (v: string, { min = 0, max = Number.MAX_SAFE_INTEGER, label = 'Jumlah' } = {}) => {
     if (!v.trim()) return 'Wajib diisi'
+    if (/^-\d+$/.test(v.trim())) return `${label} tidak boleh negatif`
     if (!/^\d+$/.test(v.trim())) return `${label} harus bilangan bulat`
     const n = Number(v.trim())
     if (n < min) return min === 1 ? `${label} harus lebih dari 0` : `${label} minimal ${min}`

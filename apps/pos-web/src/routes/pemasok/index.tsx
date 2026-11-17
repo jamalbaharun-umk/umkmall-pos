@@ -11,7 +11,7 @@ import {
   TableRow,
   TextField,
 } from '@umkmall/ui'
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, useRef } from 'react'
 import {
   act,
   check,
@@ -171,14 +171,16 @@ function SupplierForm({
   const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // state lags a burst of clicks; the ref does not
   const set = (k: keyof typeof v) => (e: { target: { value: string } }) => setV((x) => ({ ...x, [k]: e.target.value }))
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (lock.current) return
     const local = validateSupplier(v)
     setErrors(local)
     if (Object.keys(local).length) return setError('Periksa kembali isian yang ditandai.')
+    lock.current = true
     setBusy(true)
     const r = await act(
       () =>
@@ -192,6 +194,7 @@ function SupplierForm({
         }),
       supplier ? 'Pemasok diperbarui' : 'Pemasok ditambahkan',
     )
+    lock.current = false
     setBusy(false)
     if (!r.ok) {
       setErrors(r.errors)

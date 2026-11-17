@@ -13,11 +13,11 @@ import {
   TextField,
   toast,
 } from '@umkmall/ui'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
 import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
-import { numpadEdit, parseRupiah, quickAmounts, taxOf } from './-money'
+import { numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
 // the left, "Orders details" on the right, then the payment modal (method, quick amounts, numpad, "Pay it") and the
@@ -39,14 +39,18 @@ function OpenShift() {
   const [cash, setCash] = useState('')
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // state lags a burst of clicks; the ref does not
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (busy) return
-    const amount = parseRupiah(cash || '0')
+    if (lock.current) return
+    if (!cash.trim()) return setError('Wajib diisi (isi 0 bila laci kosong)')
+    const amount = parseRupiah(cash)
     if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 100.000')
+    lock.current = true
     setBusy(true)
     setError(undefined)
     const r = await act(() => openShift({ data: amount }), 'Shift dibuka. Selamat berjualan!')
+    lock.current = false
     setBusy(false)
     if (!r.ok) return setError(r.errors.openingCash ?? r.error)
     await router.invalidate()
@@ -61,6 +65,7 @@ function OpenShift() {
         <form onSubmit={submit} noValidate className="mt-5 space-y-4">
           <TextField
             label="Uang awal di laci"
+            required
             prefix="Rp"
             inputMode="numeric"
             value={cash}
@@ -85,6 +90,7 @@ type CartLine = { product: Product; qty: number }
 const ALL = 'semua'
 
 function Register({ products, taxBps, methods }: { products: Product[]; taxBps: number; methods: PaymentMethod[] }) {
+  const router = useRouter()
   const [q, setQ] = useState('')
   const [category, setCategory] = useState(ALL)
   const [cart, setCart] = useState<CartLine[]>([])
@@ -252,17 +258,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
                     >
                       <Icon name="plus" size="sm" />
                     </Button>
-                    <TextField
-                      aria-label={`Jumlah ${l.product.name}`}
-                      size="xsmall"
-                      inputMode="numeric"
-                      className="w-16"
-                      value={String(l.qty)}
-                      onChange={(e) => {
-                        const n = Number(e.target.value.replace(/\D/g, ''))
-                        if (n > 0) setQty(l.product.id, Math.min(n, 100_000))
-                      }}
-                    />
+                    <QtyField name={l.product.name} qty={l.qty} onChange={(n) => setQty(l.product.id, n)} />
                     <Button
                       iconOnly
                       aria-label={`Kurangi ${l.product.name}`}
@@ -338,6 +334,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
           voucher={voucher}
           onClose={() => setPaying(false)}
           onPaid={(sale) => {
+            void router.invalidate() // fresh prices and products for the next order
             setPaying(false)
             setPaid(sale)
             setCart([])
@@ -350,6 +347,31 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
       )}
       <SuccessDialog sale={paid} onClose={() => setPaid(undefined)} />
     </main>
+  )
+}
+
+/**
+ * The cart quantity: free typing (it may be empty while editing), applied only when it is a whole number 1–100.000;
+ * anything else is shown as an error and the cart keeps the last good quantity until blur restores it.
+ */
+function QtyField({ name, qty, onChange }: { name: string; qty: number; onChange: (n: number) => void }) {
+  const [text, setText] = useState(String(qty))
+  useEffect(() => setText(String(qty)), [qty])
+  const error = qtyError(text)
+  return (
+    <TextField
+      aria-label={`Jumlah ${name}`}
+      size="xsmall"
+      inputMode="numeric"
+      className="w-16"
+      value={text}
+      error={text === String(qty) ? undefined : error}
+      onChange={(e) => {
+        setText(e.target.value)
+        if (!qtyError(e.target.value)) onChange(Number(e.target.value.trim()))
+      }}
+      onBlur={() => setText(String(qty))}
+    />
   )
 }
 
@@ -443,6 +465,7 @@ function PayDialog({
   onClose: () => void
   onPaid: (sale: { id: string; change: number }) => void
 }) {
+  const router = useRouter()
   const [paidText, setPaidText] = useState('')
   const [methodId, setMethodId] = useState(() => methods.find((m) => m.kind === 'cash')?.id ?? methods[0]?.id ?? '')
   const method = methods.find((m) => m.id === methodId)
@@ -451,6 +474,7 @@ function PayDialog({
   const isExact = method?.kind === 'debit' || method?.kind === 'wallet'
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // state lags a burst of clicks; the ref does not
   // The server computes the total; when it disagrees with this screen (a price changed), its figure is shown and due.
   const [serverTotal, setServerTotal] = useState<number>()
   const due = serverTotal ?? total
@@ -458,15 +482,17 @@ function PayDialog({
   const change = Number.isNaN(paid) ? null : paid - due
 
   async function pay(amount: number) {
-    if (busy) return
+    if (lock.current) return
     if (isCredit) {
       if (!member) return setError('Pilih member untuk kasbon.')
       if (!paidText.trim()) amount = 0 // no down payment
       if (Number.isNaN(amount) || amount >= due) return setError('Kasbon harus menyisakan sisa tagihan.')
     } else if (isExact) {
       amount = due
-    } else if (Number.isNaN(amount)) return setError('Isi uang diterima dengan angka.')
+    } else if (!paidText.trim()) return setError('Wajib diisi: masukkan uang diterima')
+    else if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 50.000')
     else if (amount < due) return setError('Uang dibayar kurang dari total')
+    lock.current = true
     setBusy(true)
     setError(undefined)
     const res = await createSale({
@@ -485,11 +511,13 @@ function PayDialog({
       total: undefined,
       errors: undefined,
     }))
+    lock.current = false
     setBusy(false)
     if (!res.ok) {
       toast(res.error, { variant: 'danger' })
       if (res.total !== undefined && res.total !== due) {
         setServerTotal(res.total)
+        void router.invalidate() // the grid shows the new prices too
         return setError(`Harga berubah: total terbaru ${rupiah(res.total)}. Periksa lalu bayar lagi.`)
       }
       return setError(res.error)
@@ -610,13 +638,7 @@ function PayDialog({
           </div>
           <ErrorText>{error}</ErrorText>
           <div className="grid grid-cols-2 gap-2">
-            <Button
-              width="auto"
-              htmlType="submit"
-              size="large"
-              isLoading={busy}
-              disabled={isCredit ? !member : !isExact && (change === null || change < 0)}
-            >
+            <Button width="auto" htmlType="submit" size="large" isLoading={busy}>
               {isCredit ? 'Simpan kasbon' : 'Bayar'}
             </Button>
             <Button width="auto" size="large" type="outline" color="light" disabled={busy} onClick={onClose}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { numpadEdit, parseRupiah, quickAmounts, taxOf } from './-money'
+import { numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 describe('cashier money helpers', () => {
   it('quick amounts: exact, then the next round notes', () => {
@@ -24,5 +24,12 @@ describe('cashier money helpers', () => {
     expect(numpadEdit('5000', 'hapus')).toBe('500')
     expect(numpadEdit('', 'hapus')).toBe('')
     expect(numpadEdit('9'.repeat(13), '1')).toHaveLength(13)
+  })
+  it('cart qty: only a whole number 1–100.000 is applied ("1.5" is not 15)', () => {
+    expect(qtyError('3')).toBeUndefined()
+    expect(qtyError('1.5')).toBe('Harus bilangan bulat')
+    expect(qtyError('')).toBe('Wajib diisi')
+    expect(qtyError('0')).toBe('Minimal 1')
+    expect(qtyError('100001')).toBe('Maksimal 100.000')
   })
 })

@@ -13,7 +13,7 @@ import {
   Text,
   TextField,
 } from '@umkmall/ui'
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, useRef } from 'react'
 import {
   act,
   check,
@@ -27,6 +27,7 @@ import {
   req,
   rupiah,
 } from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { createOrder, loadOrderForm } from './-api'
 import { type OrderLine as Line, toInt, validateOrder } from './-validate'
 
@@ -49,6 +50,21 @@ function NewOrderPage() {
   const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // state lags a burst of clicks; the ref does not
+
+  const canManage = useCan('purchasing.manage')
+
+  if (!canManage)
+    return (
+      <Page crumbs={[{ label: 'Pembelian', to: '/pembelian' }, { label: 'Buat' }]} title="Pembelian baru">
+        <Card variant="outlined">
+          <Empty
+            title="Kamu tidak punya izin"
+            hint="Membuat pembelian butuh izin Kelola pembelian. Minta pemilik toko menambahkannya ke peranmu."
+          />
+        </Card>
+      </Page>
+    )
 
   if (suppliers.length === 0 || products.length === 0)
     return (
@@ -83,10 +99,11 @@ function NewOrderPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (lock.current) return
     const local = validateOrder({ supplierId, lines })
     setErrors(local)
     if (Object.keys(local).length) return setError(local.lines ?? 'Periksa kembali isian yang ditandai.')
+    lock.current = true
     setBusy(true)
     setError(undefined)
     const r = await act(
@@ -101,6 +118,7 @@ function NewOrderPage() {
         }),
       'Pembelian disimpan sebagai draf',
     )
+    lock.current = false
     setBusy(false)
     if (!r.ok) {
       setErrors(r.errors)

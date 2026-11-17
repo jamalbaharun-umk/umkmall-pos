@@ -51,6 +51,7 @@ function HistoryPage() {
   const navigate = useNavigate({ from: '/kasir/riwayat/' })
   const [from, setFrom] = useState(search.from ?? '')
   const [to, setTo] = useState(search.to ?? '')
+  const [rangeError, setRangeError] = useState<string>()
   const showCost = data.some((s) => s.costTotal !== undefined)
   const filtered = !!(search.from || search.to)
   const period = filtered ? 'periode ini' : 'semua waktu'
@@ -68,8 +69,11 @@ function HistoryPage() {
       <Card padding="none" variant="outlined">
         <form
           className="flex flex-wrap items-end gap-3 p-4"
+          noValidate
           onSubmit={(e) => {
             e.preventDefault()
+            if (from && to && to < from) return setRangeError('Harus sama atau setelah tanggal awal')
+            setRangeError(undefined)
             void navigate({
               search: { from: from || undefined, to: to || undefined },
             })
@@ -81,7 +85,7 @@ function HistoryPage() {
               type="date"
               size="small"
               value={from}
-              max={to || undefined}
+
               onChange={(e) => setFrom(e.target.value)}
             />
           </div>
@@ -91,8 +95,8 @@ function HistoryPage() {
               type="date"
               size="small"
               value={to}
-              min={from || undefined}
               onChange={(e) => setTo(e.target.value)}
+              error={rangeError}
             />
           </div>
           <Button width="auto" htmlType="submit" size="small">

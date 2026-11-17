@@ -14,7 +14,7 @@ import {
   Text,
   TextField,
 } from '@umkmall/ui'
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, useRef } from 'react'
 import {
   act,
   check,
@@ -27,6 +27,7 @@ import {
   Pending,
   req,
 } from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { createOpname, loadOpnameForm } from '../pembelian/-api'
 import { type OpnameLine as Line, validateOpname } from '../pembelian/-validate'
 
@@ -48,6 +49,21 @@ function NewOpnamePage() {
   const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const lock = useRef(false) // state lags a burst of clicks; the ref does not
+
+  const canManage = useCan('purchasing.manage')
+
+  if (!canManage)
+    return (
+      <Page crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Buat' }]} title="Stok opname baru">
+        <Card variant="outlined">
+          <Empty
+            title="Kamu tidak punya izin"
+            hint="Membuat stok opname butuh izin Kelola pembelian. Minta pemilik toko menambahkannya ke peranmu."
+          />
+        </Card>
+      </Page>
+    )
 
   if (products.length === 0)
     return (
@@ -76,10 +92,11 @@ function NewOpnamePage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (lock.current) return
     const local = validateOpname(lines)
     setErrors(local)
     if (Object.keys(local).length) return setError('Periksa kembali isian yang ditandai.')
+    lock.current = true
     setBusy(true)
     setError(undefined)
     const r = await act(
@@ -96,6 +113,7 @@ function NewOpnamePage() {
         }),
       'Opname disimpan sebagai draf',
     )
+    lock.current = false
     setBusy(false)
     if (!r.ok) {
       setErrors(r.errors)

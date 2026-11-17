@@ -75,6 +75,7 @@ function OpnamesPage() {
               size="small"
               value={to}
               onChange={(e) => setTo(e.target.value)}
+              error={from && to && to < from ? 'Harus sama atau setelah tanggal awal' : undefined}
             />
           </div>
         </div>
