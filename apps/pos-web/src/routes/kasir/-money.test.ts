@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 describe('cashier money helpers', () => {
   it('quick amounts: exact, then the next round notes', () => {
@@ -35,5 +35,20 @@ describe('cashier money helpers', () => {
     expect(qtyError('')).toBe('Wajib diisi')
     expect(qtyError('0')).toBe('Minimal 1')
     expect(qtyError('100001')).toBe('Maksimal 100.000')
+  })
+  it('order discount: whole rupiah, not negative, not above the subtotal', () => {
+    expect(discountError('', 4000)).toBeUndefined()
+    expect(discountError('500', 4000)).toBeUndefined()
+    expect(discountError('4.000', 4000)).toBeUndefined()
+    expect(discountError('-500', 4000)).toBe('Diskon tidak boleh negatif')
+    expect(discountError('1.5', 4000)).toBe('Harus bilangan bulat rupiah, misalnya 5.000')
+    expect(discountError('4001', 4000)).toBe('Diskon melebihi subtotal')
+  })
+  it('the U7 case: 2 × Rp2.000, discount Rp500, voucher 10 %, tax 10 % → Rp3.465 (as pos-api)', () => {
+    const subtotal = 4000
+    const discount = 500
+    const voucher = Math.floor(((subtotal - discount) * 10) / 100) // 350, computed by pos-api /vouchers/check
+    const taxable = subtotal - discount - voucher
+    expect(taxable + taxOf(taxable, 1000)).toBe(3465)
   })
 })

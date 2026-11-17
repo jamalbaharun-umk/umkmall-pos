@@ -34,3 +34,14 @@ export const qtyError = (text: string) => {
   if (n > 100_000) return 'Maksimal 100.000'
   return undefined
 }
+
+/** Why the order discount text cannot be used (undefined when it can): whole rupiah, 0 ≤ discount ≤ subtotal. */
+export const discountError = (text: string, subtotal: number) => {
+  const t = text.trim()
+  if (!t) return undefined // no discount
+  if (/^-/.test(t)) return 'Diskon tidak boleh negatif'
+  const n = parseRupiah(t)
+  if (Number.isNaN(n)) return 'Harus bilangan bulat rupiah, misalnya 5.000'
+  if (n > subtotal) return 'Diskon melebihi subtotal'
+  return undefined
+}

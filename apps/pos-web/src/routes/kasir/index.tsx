@@ -15,9 +15,10 @@ import {
 } from '@umkmall/ui'
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
-import { numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
 // the left, "Orders details" on the right, then the payment modal (method, quick amounts, numpad, "Pay it") and the
@@ -97,13 +98,16 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const [note, setNote] = useState('')
   const [editingNote, setEditingNote] = useState(false)
   const [paying, setPaying] = useState(false)
-  const [paid, setPaid] = useState<{ id: string; change: number }>()
+  const [paid, setPaid] = useState<PaidSale>()
+  // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
+  const canDiscount = useCan('sales.price_override')
+  const [discountText, setDiscountText] = useState('')
   const [member, setMember] = useState<MemberOption | null>(null)
   const [voucher, setVoucher] = useState<AppliedVoucher | null>(null)
   // One key per request: a double tap or a retry of the same order sends the same key, so one sale. Any change to the
   // cart, note, member or voucher is a new request and gets a new key (pos-api refuses a known key with another body).
   const [key, setKey] = useState(() => crypto.randomUUID())
-  useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher])
+  useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher, discountText])
 
   const categories = useMemo(
     () =>
@@ -122,10 +126,13 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   }, [q, category, products])
 
   const subtotal = cart.reduce((n, l) => n + l.product.sellingPrice * l.qty, 0)
-  // Estimate shown to the cashier; pos-api computes the charged total the same way (tax after the voucher).
+  const discountBad = canDiscount ? discountError(discountText, subtotal) : undefined
+  const discount = canDiscount && !discountBad && discountText.trim() ? parseRupiah(discountText) : 0
+  // Estimate shown to the cashier; pos-api computes the charged total the same way: discount, then the voucher on
+  // what is left, then tax on the rest (Lakasir flaw 2).
   const voucherDiscount = voucher?.discount ?? 0
-  const tax = taxOf(subtotal - voucherDiscount, taxBps)
-  const total = subtotal - voucherDiscount + tax
+  const tax = taxOf(subtotal - discount - voucherDiscount, taxBps)
+  const total = subtotal - discount - voucherDiscount + tax
   const qtyOf = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0
 
   const add = (product: Product) =>
@@ -300,11 +307,31 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
               </button>
             </dd>
           </div>
-          <VoucherRow voucher={voucher} amount={subtotal} onChange={setVoucher} />
+          {canDiscount && (
+            <div className="flex items-start justify-between gap-3">
+              <dt className="pt-1 text-default-secondary">Diskon</dt>
+              <dd className="w-36">
+                <TextField
+                  aria-label="Diskon pesanan"
+                  size="xsmall"
+                  prefix="Rp"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={discountText}
+                  error={discountBad}
+                  onChange={(e) => setDiscountText(e.target.value)}
+                />
+              </dd>
+            </div>
+          )}
+          <VoucherRow voucher={voucher} amount={subtotal - discount} onChange={setVoucher} />
         </dl>
 
         <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
           <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
+          {discount > 0 && (
+            <Row label="Diskon" value={<span className="text-default-brand">−{rupiah(discount)}</span>} />
+          )}
           {voucher && (
             <Row label="Voucher" value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>} />
           )}
@@ -314,7 +341,12 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             <dd className="text-default-brand">{rupiah(total)}</dd>
           </div>
         </dl>
-        <Button size="large" width="full" disabled={cart.length === 0} onClick={() => setPaying(true)}>
+        <Button
+          size="large"
+          width="full"
+          disabled={cart.length === 0}
+          onClick={() => (discountBad ? toast(`Diskon: ${discountBad}`, { variant: 'danger' }) : setPaying(true))}
+        >
           Lanjut ke pembayaran
         </Button>
       </aside>
@@ -323,6 +355,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
       {paying && (
         <PayDialog
           subtotal={subtotal}
+          discount={discount}
           taxBps={taxBps}
           tax={tax}
           total={total}
@@ -342,6 +375,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             setNote('')
             setMember(null)
             setVoucher(null)
+            setDiscountText('')
             setKey(crypto.randomUUID())
           }}
         />
@@ -441,6 +475,7 @@ const NUMPAD = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '000', '0', 'hapus'
 
 function PayDialog({
   subtotal,
+  discount,
   taxBps,
   tax,
   total,
@@ -455,6 +490,7 @@ function PayDialog({
   onPaid,
 }: {
   subtotal: number
+  discount: number
   taxBps: number
   tax: number
   total: number
@@ -466,7 +502,7 @@ function PayDialog({
   onMemberChange: (m: MemberOption | null) => void
   voucher: AppliedVoucher | null
   onClose: () => void
-  onPaid: (sale: { id: string; change: number }) => void
+  onPaid: (sale: PaidSale) => void
 }) {
   const router = useRouter()
   const [paidText, setPaidText] = useState('')
@@ -503,6 +539,7 @@ function PayDialog({
         key: idempotencyKey,
         lines: cart.map((l) => ({ productId: l.product.id, qty: l.qty })),
         paid: amount,
+        discount: discount > 0 ? discount : undefined,
         note: note || undefined,
         memberId: member?.id,
         voucherCode: voucher?.code,
@@ -526,7 +563,7 @@ function PayDialog({
       return setError(res.error)
     }
     toast('Pembayaran berhasil', { variant: 'success' })
-    onPaid({ id: res.data.id, change: Math.max(res.data.change, 0) })
+    onPaid({ id: res.data.id, change: Math.max(res.data.change, 0), receivableRest: res.data.receivableRest ?? null })
   }
 
   return (
@@ -567,6 +604,9 @@ function PayDialog({
           )}
           <dl className="space-y-1 text-sm">
             <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
+            {discount > 0 && (
+              <Row label="Diskon" value={<span className="text-default-brand">−{rupiah(discount)}</span>} />
+            )}
             {voucher && (
               <Row
                 label={`Voucher ${voucher.code}`}
@@ -671,7 +711,9 @@ function PayDialog({
   )
 }
 
-function SuccessDialog({ sale, onClose }: { sale?: { id: string; change: number }; onClose: () => void }) {
+type PaidSale = { id: string; change: number; receivableRest: number | null }
+
+function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void }) {
   const navigate = useNavigate()
   return (
     <Dialog open={!!sale} onOpenChange={(o) => !o && onClose()} centered size="small" label="Pembayaran berhasil">
@@ -681,7 +723,10 @@ function SuccessDialog({ sale, onClose }: { sale?: { id: string; change: number 
         </span>
         <p className="text-default-secondary">Berhasil</p>
         <Text variant="h4" weight="bold">
-          Kembalian: {rupiah(sale?.change ?? 0)}
+          {/* A kasbon leaves a balance on the member's receivable, not change. */}
+          {sale?.receivableRest
+            ? `Sisa kasbon: ${rupiah(sale.receivableRest)}`
+            : `Kembalian: ${rupiah(sale?.change ?? 0)}`}
         </Text>
         <div className="mt-4 grid w-full grid-cols-2 gap-2">
           <Button

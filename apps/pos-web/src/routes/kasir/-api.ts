@@ -57,8 +57,7 @@ export type Receipt = {
   receivableRest: number | null
 }
 export type Result<T = undefined> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; errors?: Record<string, string>; total?: number }
+  { ok: true; data: T } | { ok: false; error: string; errors?: Record<string, string>; total?: number }
 
 const ERRORS: Record<number, string> = {
   403: 'Kamu tidak punya izin untuk berjualan.',
@@ -118,6 +117,8 @@ type SaleInput = {
   key: string
   lines: { productId: string; qty: number }[]
   paid: number
+  // Order discount in rupiah; pos-api honours it only with sales.price_override.
+  discount?: number
   note?: string
   // U7: member (required for a kasbon method), voucher code, payment method (default Tunai).
   memberId?: string
@@ -126,7 +127,9 @@ type SaleInput = {
 }
 export const createSale = createServerFn({ method: 'POST' })
   .validator((d: SaleInput) => d)
-  .handler(({ data: { key, ...body } }) => send<{ id: string; change: number }>('/sales', body, { 'idempotency-key': key }))
+  .handler(({ data: { key, ...body } }) =>
+    send<{ id: string; change: number; receivableRest?: number | null }>('/sales', body, { 'idempotency-key': key }),
+  )
 
 export const loadReceipt = createServerFn()
   .validator((id: string) => id)
@@ -156,7 +159,9 @@ export type MemberOption = { id: string; name: string; code: string }
 /** Name and code only (GET /members/picker, sales.create): the till never loads phone or address. */
 export const pickMembers = createServerFn()
   .validator((q: string) => q)
-  .handler(async ({ data }) => (await load<{ data: MemberOption[] }>(`/members/picker?q=${encodeURIComponent(data)}`)).data)
+  .handler(
+    async ({ data }) => (await load<{ data: MemberOption[] }>(`/members/picker?q=${encodeURIComponent(data)}`)).data,
+  )
 
 /** The discount `code` gives on `amount`, without taking quota; the sale re-validates and takes it. */
 export const checkVoucher = createServerFn({ method: 'POST' })
