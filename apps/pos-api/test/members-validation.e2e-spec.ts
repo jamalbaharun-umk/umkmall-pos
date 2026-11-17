@@ -97,6 +97,10 @@ describe('U7 validation: status and field message per refusal', () => {
         address: '',
       }).expect(201);
       expect(m.body).toMatchObject({ phone: null, address: null });
+      // Codes are case-insensitive (QA sweep U7: "plg-1" was accepted next to "PLG-1").
+      await refused(post('/members', { name: 'Lain', code: 'plg-1' }), 409, {
+        code: 'Kode pelanggan sudah dipakai',
+      });
       await refused(post('/members', { name: 'Lain', code: 'PLG-1' }), 409, {
         code: 'Kode pelanggan sudah dipakai',
       });

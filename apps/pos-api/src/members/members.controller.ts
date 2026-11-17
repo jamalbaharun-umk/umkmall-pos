@@ -34,7 +34,14 @@ const optional = <T extends z.ZodTypeAny>(schema: T) =>
 const MemberInput = z
   .object({
     name: z.string().trim().min(1).max(120),
-    code: z.string().trim().min(1).max(40).regex(/^\S+$/, 'Kode tanpa spasi'),
+    // Upper-cased like voucher codes: "plg001" and "PLG001" are one code.
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^\S+$/, 'Kode tanpa spasi')
+      .transform((c) => c.toUpperCase()),
     phone: optional(Phone),
     address: optional(z.string().trim().max(500)),
   })
