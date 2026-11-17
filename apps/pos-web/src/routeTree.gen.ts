@@ -10,13 +10,33 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CatalogRouteRouteImport } from './routes/catalog/route'
+import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
+import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
 import { Route as MasukUmkmallRouteImport } from './routes/masuk/umkmall'
+import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/products/index'
+import { Route as CatalogProductsIdRouteImport } from './routes/catalog/products/$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const CatalogRouteRoute = CatalogRouteRouteImport.update({
+  id: '/catalog',
+  path: '/catalog',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CatalogIndexRoute = CatalogIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CatalogRouteRoute,
+} as any)
+const CatalogCategoriesRoute = CatalogCategoriesRouteImport.update({
+  id: '/categories',
+  path: '/categories',
+  getParentRoute: () => CatalogRouteRoute,
 } as any)
 const MasukDevRoute = MasukDevRouteImport.update({
   id: '/masuk/dev',
@@ -28,33 +48,82 @@ const MasukUmkmallRoute = MasukUmkmallRouteImport.update({
   path: '/masuk/umkmall',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CatalogProductsIndexRoute = CatalogProductsIndexRouteImport.update({
+  id: '/products/',
+  path: '/products/',
+  getParentRoute: () => CatalogRouteRoute,
+} as any)
+const CatalogProductsIdRoute = CatalogProductsIdRouteImport.update({
+  id: '/products/$id',
+  path: '/products/$id',
+  getParentRoute: () => CatalogRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/catalog': typeof CatalogRouteRouteWithChildren
+  '/catalog/categories': typeof CatalogCategoriesRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/catalog/': typeof CatalogIndexRoute
+  '/catalog/products/$id': typeof CatalogProductsIdRoute
+  '/catalog/products/': typeof CatalogProductsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/catalog/categories': typeof CatalogCategoriesRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/catalog': typeof CatalogIndexRoute
+  '/catalog/products/$id': typeof CatalogProductsIdRoute
+  '/catalog/products': typeof CatalogProductsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/catalog': typeof CatalogRouteRouteWithChildren
+  '/catalog/categories': typeof CatalogCategoriesRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/catalog/': typeof CatalogIndexRoute
+  '/catalog/products/$id': typeof CatalogProductsIdRoute
+  '/catalog/products/': typeof CatalogProductsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/masuk/dev' | '/masuk/umkmall'
+  fullPaths:
+    | '/'
+    | '/catalog'
+    | '/catalog/categories'
+    | '/masuk/dev'
+    | '/masuk/umkmall'
+    | '/catalog/'
+    | '/catalog/products/$id'
+    | '/catalog/products/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/masuk/dev' | '/masuk/umkmall'
-  id: '__root__' | '/' | '/masuk/dev' | '/masuk/umkmall'
+  to:
+    | '/'
+    | '/catalog/categories'
+    | '/masuk/dev'
+    | '/masuk/umkmall'
+    | '/catalog'
+    | '/catalog/products/$id'
+    | '/catalog/products'
+  id:
+    | '__root__'
+    | '/'
+    | '/catalog'
+    | '/catalog/categories'
+    | '/masuk/dev'
+    | '/masuk/umkmall'
+    | '/catalog/'
+    | '/catalog/products/$id'
+    | '/catalog/products/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CatalogRouteRoute: typeof CatalogRouteRouteWithChildren
   MasukDevRoute: typeof MasukDevRoute
   MasukUmkmallRoute: typeof MasukUmkmallRoute
 }
@@ -67,6 +136,27 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/catalog': {
+      id: '/catalog'
+      path: '/catalog'
+      fullPath: '/catalog'
+      preLoaderRoute: typeof CatalogRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/catalog/': {
+      id: '/catalog/'
+      path: '/'
+      fullPath: '/catalog/'
+      preLoaderRoute: typeof CatalogIndexRouteImport
+      parentRoute: typeof CatalogRouteRoute
+    }
+    '/catalog/categories': {
+      id: '/catalog/categories'
+      path: '/categories'
+      fullPath: '/catalog/categories'
+      preLoaderRoute: typeof CatalogCategoriesRouteImport
+      parentRoute: typeof CatalogRouteRoute
     }
     '/masuk/dev': {
       id: '/masuk/dev'
@@ -82,11 +172,44 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MasukUmkmallRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/catalog/products/': {
+      id: '/catalog/products/'
+      path: '/products'
+      fullPath: '/catalog/products/'
+      preLoaderRoute: typeof CatalogProductsIndexRouteImport
+      parentRoute: typeof CatalogRouteRoute
+    }
+    '/catalog/products/$id': {
+      id: '/catalog/products/$id'
+      path: '/products/$id'
+      fullPath: '/catalog/products/$id'
+      preLoaderRoute: typeof CatalogProductsIdRouteImport
+      parentRoute: typeof CatalogRouteRoute
+    }
   }
 }
 
+interface CatalogRouteRouteChildren {
+  CatalogCategoriesRoute: typeof CatalogCategoriesRoute
+  CatalogIndexRoute: typeof CatalogIndexRoute
+  CatalogProductsIdRoute: typeof CatalogProductsIdRoute
+  CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
+}
+
+const CatalogRouteRouteChildren: CatalogRouteRouteChildren = {
+  CatalogCategoriesRoute: CatalogCategoriesRoute,
+  CatalogIndexRoute: CatalogIndexRoute,
+  CatalogProductsIdRoute: CatalogProductsIdRoute,
+  CatalogProductsIndexRoute: CatalogProductsIndexRoute,
+}
+
+const CatalogRouteRouteWithChildren = CatalogRouteRoute._addFileChildren(
+  CatalogRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CatalogRouteRoute: CatalogRouteRouteWithChildren,
   MasukDevRoute: MasukDevRoute,
   MasukUmkmallRoute: MasukUmkmallRoute,
 }
