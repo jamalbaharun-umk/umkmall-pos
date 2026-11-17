@@ -97,7 +97,7 @@ function ReceivablePage() {
       crumbs={[{ label: 'Piutang', to: '/piutang' }, { label: 'Detail' }]}
       actions={
         <>
-          <Button asChild type="outline" color="dark" width="auto">
+          <Button asChild type="outline" color="light" width="auto">
             <Link to="/piutang">Kembali</Link>
           </Button>
           {r.rest > 0 && (
@@ -212,7 +212,7 @@ function ReceivablePage() {
             </Alert>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="outline" color="dark" width="auto" onClick={() => {
+            <Button type="outline" color="light" width="auto" onClick={() => {
                 setAmount(String(r.rest))
                 setAmountError(undefined)
               }}>

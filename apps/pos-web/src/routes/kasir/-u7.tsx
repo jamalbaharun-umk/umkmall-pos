@@ -188,7 +188,7 @@ export function VoucherRow({
             autoFocus
           />
           <div className="flex justify-end gap-2">
-            <Button type="outline" color="dark" width="auto" disabled={busy} onClick={() => setOpen(false)}>
+            <Button type="outline" color="light" width="auto" disabled={busy} onClick={() => setOpen(false)}>
               Batal
             </Button>
             <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>

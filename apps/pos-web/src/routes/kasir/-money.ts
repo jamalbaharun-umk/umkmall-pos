@@ -45,3 +45,9 @@ export const discountError = (text: string, subtotal: number) => {
   if (n > subtotal) return 'Diskon melebihi subtotal'
   return undefined
 }
+
+/** Counted cash against what the drawer should hold: "Pas", "Kurang" (short) or "Lebih" (over) and the amount. */
+export const cashDifference = (counted: number, expected: number) => {
+  const d = counted - expected
+  return { label: d === 0 ? 'Pas' : d < 0 ? 'Kurang' : 'Lebih', amount: Math.abs(d), sign: Math.sign(d) as -1 | 0 | 1 }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { cashDifference, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 describe('cashier money helpers', () => {
   it('quick amounts: exact, then the next round notes', () => {
@@ -50,5 +50,10 @@ describe('cashier money helpers', () => {
     const voucher = Math.floor(((subtotal - discount) * 10) / 100) // 350, computed by pos-api /vouchers/check
     const taxable = subtotal - discount - voucher
     expect(taxable + taxOf(taxable, 1000)).toBe(3465)
+  })
+  it('close shift difference: Pas / Kurang / Lebih with the absolute amount', () => {
+    expect(cashDifference(133_000, 133_000)).toEqual({ label: 'Pas', amount: 0, sign: 0 })
+    expect(cashDifference(130_000, 133_000)).toEqual({ label: 'Kurang', amount: 3_000, sign: -1 })
+    expect(cashDifference(135_500, 133_000)).toEqual({ label: 'Lebih', amount: 2_500, sign: 1 })
   })
 })

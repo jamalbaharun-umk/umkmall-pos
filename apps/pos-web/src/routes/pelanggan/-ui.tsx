@@ -266,7 +266,7 @@ export function ResourcePage<T extends { id: string }>(props: {
             </Alert>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="outline" color="dark" width="auto" onClick={() => setForm(undefined)}>
+            <Button type="outline" color="light" width="auto" onClick={() => setForm(undefined)}>
               Batal
             </Button>
             <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
@@ -291,7 +291,7 @@ export function ResourcePage<T extends { id: string }>(props: {
             </Alert>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="outline" color="dark" width="auto" onClick={() => setDeleting(undefined)}>
+            <Button type="outline" color="light" width="auto" onClick={() => setDeleting(undefined)}>
               Batal
             </Button>
             <Button

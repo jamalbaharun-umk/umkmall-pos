@@ -3,7 +3,7 @@ import { Button, Card, Text, TextField } from '@umkmall/ui'
 import { useRef, useState } from 'react'
 import { act, Empty, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { closeShift, loadCurrentShift, type Shift } from './-api'
-import { parseRupiah } from './-money'
+import { cashDifference, parseRupiah } from './-money'
 
 // Closing the cash drawer (Lakasir: cashier header action): expected cash, counted cash, the difference.
 export const Route = createFileRoute('/kasir/tutup')({
@@ -45,7 +45,10 @@ function CloseShiftPage() {
         }
         if (r.res.ok) setClosed(r.res.data)
       },
-      { body: `Uang dihitung ${rupiah(amount)}. Shift yang ditutup tidak bisa dibuka lagi.`, label: 'Tutup shift' },
+      {
+        body: `Uang dihitung ${rupiah(amount)}, seharusnya ${rupiah(shift?.expectedCash ?? 0)} — ${differenceText(amount, shift?.expectedCash ?? 0)}. Shift yang ditutup tidak bisa dibuka lagi.`,
+        label: 'Tutup shift',
+      },
     )
   }
 
@@ -94,6 +97,7 @@ function CloseShiftPage() {
                 placeholder="0"
                 autoFocus
               />
+              <LiveDifference counted={counted} expected={shift.expectedCash} />
               <Button htmlType="submit" width="full" color="danger" isLoading={busy}>
                 Tutup shift
               </Button>
@@ -106,6 +110,27 @@ function CloseShiftPage() {
       </Card>
       {dialog}
     </Page>
+  )
+}
+
+const differenceText = (counted: number, expected: number) => {
+  const d = cashDifference(counted, expected)
+  return d.sign === 0 ? 'pas' : `${d.label.toLowerCase()} ${rupiah(d.amount)}`
+}
+
+/** The difference while the cashier counts (Moka/Majoo style): red when short, green when over or exact. */
+function LiveDifference({ counted, expected }: { counted: string; expected: number }) {
+  const n = parseRupiah(counted)
+  if (!counted.trim() || Number.isNaN(n)) return null
+  const d = cashDifference(n, expected)
+  return (
+    <p
+      aria-live="polite"
+      className={`flex justify-between text-sm font-bold ${d.sign < 0 ? 'text-default-error' : 'text-default-success'}`}
+    >
+      <span>Selisih: {d.label}</span>
+      <span>{rupiah(d.amount)}</span>
+    </p>
   )
 }
 
