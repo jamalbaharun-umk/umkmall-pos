@@ -66,7 +66,11 @@ silent, follow the monorepo's principles.
   UMKMall's `auth_token` HS256 key; UMKMall sign-in arrives as a handoff token (U1).
 - **No `console`** in `src/` (lint + guard). Never log tokens, PINs, phone numbers or customer names.
 - **Erasure:** the tenant FK to `public.users` is `ON DELETE RESTRICT`; a store is erased by the U8 purge,
-  which must cover every new table and every stored image.
+  which must cover every new table and every stored image. `POST /internal/tenants/purge` (`src/purge/`)
+  deletes every `pos` table with a `tenant_id` column, discovered at runtime, so a new table needs `tenant_id`
+  (guard in `test/purge.e2e-spec.ts`; only `tenants` and `handoff_jtis` are exempt) and its images under
+  `tenants/<tenantId>/`. UMKMall's archival (role `postgres`) reads `pos.tenants (id, user_id)` to wait for the
+  purge (migration `0012`); grant it nothing more.
 - **Licence:** keep `LICENSE`/`NOTICE`.
 - **UI is `@umkmall/ui` + the admin theme** (owner decision 2026-11-17): build screens from `@umkmall/ui`
   (`/primitives`, `/compositions`, `/layouts`), styled by `apps/pos-web/src/styles/app.css` (a copy of the UMKMall
