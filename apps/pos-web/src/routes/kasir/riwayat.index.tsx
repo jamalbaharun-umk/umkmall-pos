@@ -64,7 +64,7 @@ function HistoryPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <Stat label={`Pendapatan (${period})`} value={rupiah(summary.revenue)} />
         <Stat label={`Jumlah penjualan (${period})`} value={String(summary.count)} />
-        <Stat label={`Diskon (${period})`} value={rupiah(summary.discount)} />
+        <Stat label={`Diskon & voucher (${period})`} value={rupiah(summary.discount + summary.voucherDiscount)} />
       </div>
       <Card padding="none" variant="outlined">
         <form
@@ -133,6 +133,7 @@ function HistoryPage() {
                   <TableHead className="text-right">Total akhir</TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
                   <TableHead className="text-right">Diskon</TableHead>
+                  <TableHead className="text-right">Voucher</TableHead>
                   <TableHead className="text-right">Pajak</TableHead>
                   {showCost && <TableHead className="text-right">Total modal</TableHead>}
                 </TableRow>
@@ -163,6 +164,7 @@ function HistoryPage() {
                     <TableCell className="text-right">{rupiah(s.total)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.subtotal)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.discount)}</TableCell>
+                    <TableCell className="text-right">{rupiah(s.voucherDiscount)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.tax)}</TableCell>
                     {showCost && <TableCell className="text-right">{rupiah(s.costTotal ?? 0)}</TableCell>}
                   </TableRow>

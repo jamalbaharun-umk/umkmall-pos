@@ -395,6 +395,7 @@ export class SalesService {
           cashier: sql<string>`coalesce(${staff.name}, 'Pemilik')`,
           subtotal: sales.subtotal,
           discount: sales.discount,
+          voucherDiscount: sales.voucherDiscount,
           tax: sales.tax,
           total: sales.total,
           paid: sales.paid,
@@ -420,6 +421,10 @@ export class SalesService {
             ),
           discount:
             sql<number>`coalesce(sum(${sales.discount}), 0)::bigint`.mapWith(
+              Number,
+            ),
+          voucherDiscount:
+            sql<number>`coalesce(sum(${sales.voucherDiscount}), 0)::bigint`.mapWith(
               Number,
             ),
         })

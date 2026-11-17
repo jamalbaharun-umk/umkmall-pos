@@ -115,6 +115,20 @@ describe('members, vouchers and credit sales (U7)', () => {
       paid: 5000,
       change: 1535,
     });
+    // History (riwayat) rows and summary carry the voucher so a row adds up: 4.000 − 500 − 350 + 315 = 3.465.
+    const list = await get(s.auth, '/sales').expect(200);
+    expect(list.body.data[0]).toMatchObject({
+      subtotal: 4000,
+      discount: 500,
+      voucherDiscount: 350,
+      tax: 315,
+      total: 3465,
+    });
+    expect(list.body.summary).toMatchObject({
+      revenue: 3465,
+      discount: 500,
+      voucherDiscount: 350,
+    });
   });
 
   it('a quota-1 voucher works exactly once; a failed sale does not consume it', async () => {

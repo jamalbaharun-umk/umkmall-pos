@@ -29,6 +29,7 @@ export type SaleRow = {
   cashier: string
   subtotal: number
   discount: number
+  voucherDiscount: number
   tax: number
   total: number
   paid: number
@@ -36,7 +37,7 @@ export type SaleRow = {
   costTotal?: number
   createdAt: string
 }
-export type SalesSummary = { count: number; revenue: number; discount: number }
+export type SalesSummary = { count: number; revenue: number; discount: number; voucherDiscount: number }
 export type Receipt = {
   number: number
   createdAt: string
