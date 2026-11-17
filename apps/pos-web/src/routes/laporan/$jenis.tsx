@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { Card } from '@umkmall/ui/compositions'
 import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField, toast } from '@umkmall/ui/primitives'
 import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
-import { checkRange, REPORTS, type Column, type ReportDef } from './-reports'
+import { cashDiff, checkRange, REPORTS, type Column, type ReportDef } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
 
 type Search = { from?: string; to?: string }
@@ -24,7 +24,7 @@ export const Route = createFileRoute('/laporan/$jenis')({
 })
 
 const cell = (c: Column, v: string | number | null | undefined) =>
-  v == null ? '–' : c.money ? rupiah(Number(v)) : String(v)
+  v == null ? '–' : c.cashDiff ? cashDiff(Number(v)) : c.money ? rupiah(Number(v)) : String(v)
 
 const PRINT_CSS = `@media print {
   body * { visibility: hidden; }

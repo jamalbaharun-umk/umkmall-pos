@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { change, checkRange } from './-reports'
+import { cashDiff, change, checkRange } from './-reports'
 
 describe('change', () => {
   it('rounds the percentage and refuses a zero base', () => {
@@ -22,5 +22,13 @@ describe('checkRange (mirrors pos-api DateRange)', () => {
     expect(checkRange('2026-02-30', '2026-03-01')).toEqual({ from: 'Tanggal mulai tidak ada di kalender' })
     expect(checkRange('2026-11-10', '2026-11-01')).toEqual({ to: 'Tanggal akhir tidak boleh sebelum tanggal mulai' })
     expect(checkRange('2025-11-16', '2026-11-17')).toEqual({ to: 'Rentang tanggal paling lama 366 hari' })
+  })
+})
+
+describe('cashDiff', () => {
+  it('words the drawer difference like the shift close screen (D16)', () => {
+    expect(cashDiff(-500)).toBe('Kurang Rp500')
+    expect(cashDiff(2500)).toBe('Lebih Rp2.500')
+    expect(cashDiff(0)).toBe('Pas')
   })
 })

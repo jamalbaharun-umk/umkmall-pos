@@ -1,7 +1,7 @@
 import type { Kind } from './-api'
 
 // Columns per report, in Lakasir's order. `money` cells render as rupiah; the API sends integer rupiah.
-export type Column = { key: string; label: string; money?: boolean; num?: boolean }
+export type Column = { key: string; label: string; money?: boolean; num?: boolean; cashDiff?: boolean }
 export type TotalLine = { key: string; label: string; money?: boolean }
 export type ReportDef = { kind: Kind; title: string; hint: string; columns: Column[]; totals: TotalLine[] }
 
@@ -64,7 +64,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'openingCash', label: 'Kas awal', money: true },
       { key: 'expectedCash', label: 'Kas seharusnya', money: true },
       { key: 'countedCash', label: 'Kas dihitung', money: true },
-      { key: 'difference', label: 'Selisih', money: true },
+      { key: 'difference', label: 'Selisih', money: true, cashDiff: true },
     ],
     totals: [
       { key: 'shifts', label: 'Jumlah shift' },
@@ -93,6 +93,12 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'total', label: 'Total pembelian', money: true },
     ],
   },
+}
+
+/** A drawer difference as the shift close screen words it: "Pas", "Kurang Rp500", "Lebih Rp500". */
+export function cashDiff(d: number): string {
+  const amount = `Rp${Math.abs(d).toLocaleString('id-ID')}`
+  return d === 0 ? 'Pas' : d < 0 ? `Kurang ${amount}` : `Lebih ${amount}`
 }
 
 /** Whole-number percentage change; null when there is nothing to compare with. */
