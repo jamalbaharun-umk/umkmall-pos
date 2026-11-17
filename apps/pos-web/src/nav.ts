@@ -36,7 +36,7 @@ export const NAV: NavGroup[] = [
       { to: '/pemasok', label: 'Supplier', icon: ListOrdered, permission: 'purchasing.manage' },
       { to: '/pelanggan', label: 'Pelanggan', icon: UsersRound },
       { to: '/metode-pembayaran', label: 'Metode pembayaran', icon: CreditCard },
-      { to: '/piutang', label: 'Piutang', icon: CalendarDays },
+      { to: '/piutang', label: 'Piutang', icon: CalendarDays, permission: 'receivables.manage' },
     ],
   },
   {
@@ -57,7 +57,7 @@ export const NAV: NavGroup[] = [
     ],
   },
   { items: [{ to: '/laporan', label: 'Laporan', icon: FileText, permission: 'reports.view' }] },
-  { items: [{ to: '/voucher', label: 'Voucher', icon: TicketPercent }] },
+  { items: [{ to: '/voucher', label: 'Voucher', icon: TicketPercent, permission: 'vouchers.manage' }] },
   { label: 'Pengaturan', items: [{ to: '/pengaturan', label: 'Umum', icon: Settings }] },
 ]
 

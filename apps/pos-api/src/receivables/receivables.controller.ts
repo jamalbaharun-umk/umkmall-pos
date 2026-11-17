@@ -183,7 +183,9 @@ export class ReceivablesService {
       if (!r) throw new NotFoundException();
       if (r.rest === 0) throw refuse('Piutang sudah lunas');
       if (input.amount > r.rest)
-        throw refuse(`Pembayaran melebihi sisa piutang Rp${r.rest}`);
+        throw refuse(
+          `Pembayaran melebihi sisa piutang Rp${r.rest.toLocaleString('id-ID')}`,
+        );
       const methodId = await this.method(tx, s.tenantId, input.paymentMethodId);
       await tx.insert(receivablePayments).values({
         tenantId: s.tenantId,

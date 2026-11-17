@@ -109,7 +109,9 @@ export async function evaluateVoucher(
   if (!v.inRange) throw refuse('Voucher tidak berlaku hari ini');
   if (v.kuota <= 0) throw refuse('Kuota voucher habis');
   if (amount < v.minimalBuying)
-    throw refuse(`Minimal belanja Rp${v.minimalBuying} untuk voucher ini`);
+    throw refuse(
+      `Minimal belanja Rp${v.minimalBuying.toLocaleString('id-ID')} untuk voucher ini`,
+    );
   const discount =
     v.type === 'percentage'
       ? Number((BigInt(amount) * BigInt(v.nominal) + 50n) / 100n)

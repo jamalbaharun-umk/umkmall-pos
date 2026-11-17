@@ -1,0 +1,50 @@
+import { createFileRoute } from '@tanstack/react-router'
+import { listResource, type Voucher } from '../pelanggan/-api'
+import { formatDate, LoadError, Pending, ResourcePage, rupiah } from '../pelanggan/-ui'
+
+// Lakasir VoucherResource: percentage or flat, minimum purchase, quota, date range (inclusive, WIB).
+export const Route = createFileRoute('/voucher/')({
+  loader: async () => (await listResource({ data: { resource: 'vouchers' } })) as unknown as Voucher[],
+  pendingComponent: Pending,
+  errorComponent: LoadError,
+  component: () => (
+    <ResourcePage<Voucher>
+      title="Voucher"
+      crumbs={[{ label: 'Voucher' }, { label: 'Daftar' }]}
+      singular="voucher"
+      resource="vouchers"
+      rows={Route.useLoaderData()}
+      emptyHint="Buat voucher potongan persen atau nominal untuk dipakai di kasir."
+      columns={[
+        { label: 'Nama', cell: (v) => v.name },
+        { label: 'Kode', cell: (v) => <span className="font-mono">{v.code}</span> },
+        {
+          label: 'Potongan',
+          cell: (v) => (v.type === 'percentage' ? `${v.nominal}%` : rupiah(v.nominal)),
+          right: true,
+        },
+        { label: 'Min. belanja', cell: (v) => rupiah(v.minimalBuying), right: true },
+        { label: 'Kuota', cell: (v) => v.kuota, right: true },
+        { label: 'Mulai', cell: (v) => formatDate(v.startDate) },
+        { label: 'Berakhir', cell: (v) => formatDate(v.expired) },
+      ]}
+      fields={[
+        { name: 'name', label: 'Nama' },
+        { name: 'code', label: 'Kode', placeholder: 'Contoh: HEMAT10' },
+        {
+          name: 'type',
+          label: 'Jenis',
+          options: [
+            { value: 'percentage', label: 'Persen' },
+            { value: 'flat', label: 'Nominal (Rp)' },
+          ],
+        },
+        { name: 'nominal', label: 'Potongan (persen atau rupiah)', type: 'number' },
+        { name: 'minimalBuying', label: 'Minimal belanja (Rp)', type: 'number', optional: true },
+        { name: 'kuota', label: 'Kuota', type: 'number' },
+        { name: 'startDate', label: 'Mulai', type: 'date' },
+        { name: 'expired', label: 'Berakhir', type: 'date' },
+      ]}
+    />
+  ),
+})
