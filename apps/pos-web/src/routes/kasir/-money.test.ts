@@ -15,7 +15,11 @@ describe('cashier money helpers', () => {
   it('parses typed rupiah', () => {
     expect(parseRupiah('20.000')).toBe(20_000)
     expect(parseRupiah(' 5000 ')).toBe(5000)
+    expect(parseRupiah('1.250.000')).toBe(1_250_000)
     expect(Number.isNaN(parseRupiah('5,5'))).toBe(true)
+    expect(Number.isNaN(parseRupiah('1.5'))).toBe(true) // not 15
+    expect(Number.isNaN(parseRupiah('2.00'))).toBe(true)
+    expect(Number.isNaN(parseRupiah('20.0000'))).toBe(true)
     expect(Number.isNaN(parseRupiah(''))).toBe(true)
   })
   it('numpad: appends digits and 000 without leading zeros, ⌫ deletes, caps the length', () => {

@@ -3,8 +3,14 @@
 /** Same rule as pos-api (half up, on the amount after discounts). Integer rupiah in, integer out. */
 export const taxOf = (taxable: number, bps: number) => Math.floor((taxable * bps + 5000) / 10000)
 
-/** Whole-number rupiah from a text field ("20.000" → 20000); NaN when it is not a whole number. */
-export const parseRupiah = (s: string) => (/^\d[\d.]*$/.test(s.trim()) ? Number(s.trim().replace(/\./g, '')) : NaN)
+/**
+ * Whole-number rupiah from a text field: plain digits or correctly grouped thousands ("20.000" → 20000).
+ * NaN otherwise, so "1.5" or "2.00" is refused rather than read as 15 or 200.
+ */
+export const parseRupiah = (s: string) => {
+  const t = s.trim()
+  return /^\d+$/.test(t) || /^\d{1,3}(\.\d{3})+$/.test(t) ? Number(t.replace(/\./g, '')) : NaN
+}
 
 /** Exact amount, then the next round notes above the total (Lakasir's quick-amount buttons). */
 export function quickAmounts(total: number): number[] {
