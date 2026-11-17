@@ -70,9 +70,10 @@ silent, follow the monorepo's principles.
   deletes every `pos` table with a `tenant_id` column, discovered at runtime, so a new table needs `tenant_id`
   (guard in `test/purge.e2e-spec.ts`; only `tenants` and `handoff_jtis` are exempt) and its images under
   `tenants/<tenantId>/`. UMKMall's archival (role `postgres`) reads `pos.tenants (id, user_id)` to wait for the
-  purge (migration `0012`); grant it nothing more. 2026-11-17 owner: pos_app may read
-  `public.users (id, delete_status_flag)` (`ops/pos-role.sql`, column level, nothing else) so the purge refuses a
-  reactivated account: it answers 409 unless the flag is `to_delete`.
+  purge (migration `0012`); grant it nothing more. pos_app reads nothing in `public.users`
+  (deny-all RLS); the purge asks UMKMall's SECURITY DEFINER `public.pos_account_erasable(uuid)` (UMKMall migration
+  0198, EXECUTE granted to pos_app by `ops/pos-role.sql`) and answers 409 unless the account is marked `to_delete`.
+  Order per environment: 0198 → `ops/pos-role.sql` → `POS_PURGE_ENABLED`.
 - **Licence:** keep `LICENSE`/`NOTICE`.
 - **UI is `@umkmall/ui` + the admin theme** (owner decision 2026-11-17): build screens from `@umkmall/ui`
   (`/primitives`, `/compositions`, `/layouts`), styled by `apps/pos-web/src/styles/app.css` (a copy of the UMKMall
