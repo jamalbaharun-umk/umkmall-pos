@@ -148,6 +148,21 @@ describe('U7 validation: status and field message per refusal', () => {
         name: 'OVO',
         kind: 'wallet',
       }).expect(201);
+      // Case-insensitive (QA sweep U7: "kasbon" was accepted next to "Kasbon"), Tunai included.
+      await refused(
+        post('/payment-methods', { name: 'ovo', kind: 'debit' }),
+        409,
+        {
+          name: 'Nama metode pembayaran sudah dipakai',
+        },
+      );
+      await refused(
+        post('/payment-methods', { name: 'TUNAI', kind: 'credit' }),
+        409,
+        {
+          name: 'Nama metode pembayaran sudah dipakai',
+        },
+      );
       await refused(
         post('/payment-methods', { name: 'OVO', kind: 'debit' }),
         409,

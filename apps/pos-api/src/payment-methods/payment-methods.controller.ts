@@ -117,7 +117,7 @@ export class PaymentMethodsService {
     input: Partial<z.infer<typeof Input>>,
   ) {
     await this.assertEditable(tenantId, id);
-    if (input.name === 'Tunai')
+    if (input.name?.toLowerCase() === 'tunai')
       throw fieldError('name', 'Nama metode pembayaran sudah dipakai', 409);
     return this.write(async () => {
       const [row] = await this.db

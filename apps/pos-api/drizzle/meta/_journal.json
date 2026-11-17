@@ -92,6 +92,13 @@
       "when": 1794930030682,
       "tag": "0012_tenants_postgres_read",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794931324582,
+      "tag": "0013_payment_method_name_ci",
+      "breakpoints": true
     }
   ]
 }

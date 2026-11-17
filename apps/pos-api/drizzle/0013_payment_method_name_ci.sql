@@ -1,0 +1,2 @@
+DROP INDEX "pos"."payment_methods_tenant_name_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "payment_methods_tenant_name_uq" ON "pos"."payment_methods" USING btree ("tenant_id",lower("name")) WHERE "pos"."payment_methods"."deleted_at" is null;

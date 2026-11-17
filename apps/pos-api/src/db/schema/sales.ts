@@ -77,9 +77,9 @@ export const paymentMethods = pos
       createdAt: createdAt(),
     },
     (t) => [
-      // Unique among live rows: a deleted method's name can be used again.
+      // Unique among live rows, ignoring case ("kasbon" = "Kasbon"); a deleted method's name can be used again.
       uniqueIndex('payment_methods_tenant_name_uq')
-        .on(t.tenantId, t.name)
+        .on(t.tenantId, sql`lower(${t.name})`)
         .where(sql`${t.deletedAt} is null`),
       unique().on(t.tenantId, t.id),
       check(
