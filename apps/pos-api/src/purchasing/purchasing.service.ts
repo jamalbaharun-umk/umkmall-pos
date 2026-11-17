@@ -13,8 +13,9 @@ import {
   purchaseOrders,
   suppliers,
 } from '../db/schema';
+import { StockService } from '../stock/stock.service';
 
-export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 const Line = z
   .object({
@@ -68,7 +69,10 @@ export async function assertStockProducts(
 
 @Injectable()
 export class PurchasingService {
-  constructor(@InjectDb() private readonly db: Db) {}
+  constructor(
+    @InjectDb() private readonly db: Db,
+    private readonly stock: StockService,
+  ) {}
 
   list(tenantId: string) {
     return this.db
@@ -182,6 +186,45 @@ export class PurchasingService {
       await this.lockDraft(tx, tenantId, id);
       await tx.delete(purchaseOrders).where(eq(purchaseOrders.id, id));
     });
+  }
+
+  /**
+   * Draft → approved, receiving every line as a stock batch at its unit cost, in one transaction under
+   * the order's row lock. Approving an approved order changes nothing (Lakasir re-ran it: no status
+   * check); a cancelled one is 409.
+   */
+  async approve(tenantId: string, actorId: string, id: string) {
+    await this.db.transaction(async (tx) => {
+      const status = await this.lock(tx, tenantId, id);
+      if (status === 'approved') return;
+      if (status === 'cancelled')
+        throw new ConflictException('Pembelian sudah dibatalkan');
+      const lines = await tx
+        .select()
+        .from(purchaseOrderLines)
+        .where(eq(purchaseOrderLines.orderId, id))
+        .orderBy(purchaseOrderLines.productId);
+      for (const l of lines)
+        await this.stock.receive(tx, {
+          tenantId,
+          productId: l.productId,
+          qty: l.qty,
+          unitCost: l.unitCost,
+          source: 'purchase',
+          sourceId: id,
+          actorId,
+        });
+      await tx
+        .update(purchaseOrders)
+        .set({
+          status: 'approved',
+          approvedBy: actorId,
+          approvedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(purchaseOrders.id, id));
+    });
+    return this.get(tenantId, id);
   }
 
   /** Draft → cancelled; cancelled stays cancelled; approved → 409 (its stock is already in). */

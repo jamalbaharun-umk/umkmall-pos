@@ -10,6 +10,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { parse } from '../catalog/catalog.schemas';
+import { StockModule } from '../stock/stock.module';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
@@ -61,6 +62,13 @@ export class PurchasingController {
     await this.orders.remove(s.tenantId, parseId(id));
   }
 
+  @Post(':id/approve')
+  @RequirePermission('purchasing.manage')
+  @HttpCode(200)
+  approve(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    return this.orders.approve(s.tenantId, s.actorId, parseId(id));
+  }
+
   @Post(':id/cancel')
   @RequirePermission('purchasing.manage')
   @HttpCode(200)
@@ -70,6 +78,7 @@ export class PurchasingController {
 }
 
 @Module({
+  imports: [StockModule],
   controllers: [PurchasingController],
   providers: [PurchasingService],
 })

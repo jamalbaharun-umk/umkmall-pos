@@ -7,6 +7,7 @@ import { StaffModule } from './staff/staff.module';
 import { StockModule } from './stock/stock.module';
 import { SuppliersModule } from './suppliers/suppliers.controller';
 import { PurchasingModule } from './purchasing/purchasing.controller';
+import { StockOpnameModule } from './stock-opname/stock-opname.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -19,6 +20,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     StockModule,
     SuppliersModule,
     PurchasingModule,
+    StockOpnameModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [{ provide: APP_GUARD, useClass: SessionGuard }],

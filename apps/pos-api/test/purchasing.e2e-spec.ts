@@ -67,6 +67,157 @@ describe('stock in (U6)', () => {
     return res.body as { id: string; total: number; status: string };
   }
 
+  async function stockOf(store: Store, productId: string) {
+    const res = await http()
+      .get(`/stock/products/${productId}`)
+      .set('Authorization', store.auth)
+      .expect(200);
+    return res.body as {
+      onHand: number;
+      batches: { qtyInitial: number; unitCost: number; source: string }[];
+    };
+  }
+
+  async function opening(store: Store, productId: string, qty: number) {
+    await http()
+      .post('/stock/opening')
+      .set('Authorization', store.auth)
+      .send({ productId, qty })
+      .expect(201);
+  }
+
+  const approve = (store: Store, id: string) =>
+    http()
+      .post(`/purchasing/orders/${id}/approve`)
+      .set('Authorization', store.auth);
+
+  async function opname(
+    store: Store,
+    lines: { productId: string; countedQty: number; reason?: string }[],
+  ) {
+    const res = await http()
+      .post('/stock-opnames')
+      .set('Authorization', store.auth)
+      .send({ note: 'Hitung akhir bulan', lines })
+      .expect(201);
+    return res.body as {
+      id: string;
+      status: string;
+      lines: { systemQty: number; countedQty: number; difference: number }[];
+    };
+  }
+
+  const approveOpname = (store: { auth: string }, id: string) =>
+    http()
+      .post(`/stock-opnames/${id}/approve`)
+      .set('Authorization', store.auth);
+
+  describe('slice check', () => {
+    it('buy 20 → 47 → 67; opname to 65 shows −2', async () => {
+      const p = await product(a);
+      await opening(a, p, 47);
+      const o = await order(a, [{ productId: p, qty: 20, unitCost: 1800 }]);
+      await approve(a, o.id).expect(200);
+      expect((await stockOf(a, p)).onHand).toBe(67);
+
+      const so = await opname(a, [{ productId: p, countedQty: 65 }]);
+      expect(so.lines[0]).toMatchObject({
+        systemQty: 67,
+        countedQty: 65,
+        difference: -2,
+      });
+      await approveOpname(a, so.id).expect(200);
+      expect((await stockOf(a, p)).onHand).toBe(65);
+    });
+  });
+
+  describe('approval', () => {
+    it('an approved purchase creates a batch at its unit cost', async () => {
+      const p = await product(a);
+      const o = await order(a, [{ productId: p, qty: 12, unitCost: 1750 }]);
+      const res = await approve(a, o.id).expect(200);
+      expect(res.body).toMatchObject({ status: 'approved' });
+      expect(res.body.approvedAt).toBeTruthy();
+      const s = await stockOf(a, p);
+      expect(s.onHand).toBe(12);
+      expect(s.batches).toEqual([
+        expect.objectContaining({
+          qtyInitial: 12,
+          unitCost: 1750,
+          source: 'purchase',
+        }),
+      ]);
+    });
+
+    it('approving twice adds stock once (also when concurrent)', async () => {
+      const p = await product(a);
+      const o = await order(a, [{ productId: p, qty: 5, unitCost: 1000 }]);
+      await approve(a, o.id).expect(200);
+      await approve(a, o.id).expect(200);
+      expect((await stockOf(a, p)).onHand).toBe(5);
+
+      const o2 = await order(a, [{ productId: p, qty: 3, unitCost: 1000 }]);
+      const rs = await Promise.all([approve(a, o2.id), approve(a, o2.id)]);
+      expect(rs.map((r) => r.status)).toEqual([200, 200]);
+      expect((await stockOf(a, p)).onHand).toBe(8);
+    });
+
+    it('a cancelled order adds nothing and cannot be approved; an approved one cannot be cancelled', async () => {
+      const p = await product(a);
+      const o = await order(a, [{ productId: p, qty: 9, unitCost: 1000 }]);
+      await http()
+        .post(`/purchasing/orders/${o.id}/cancel`)
+        .set('Authorization', a.auth)
+        .expect(200);
+      await approve(a, o.id).expect(409);
+      expect((await stockOf(a, p)).onHand).toBe(0);
+
+      const o2 = await order(a, [{ productId: p, qty: 1, unitCost: 1000 }]);
+      await approve(a, o2.id).expect(200);
+      await http()
+        .post(`/purchasing/orders/${o2.id}/cancel`)
+        .set('Authorization', a.auth)
+        .expect(409);
+    });
+
+    it('an opname to a lower count writes one negative adjustment, once', async () => {
+      const p = await product(a);
+      await opening(a, p, 10);
+      const so = await opname(a, [
+        { productId: p, countedQty: 7, reason: 'rusak' },
+      ]);
+      await approveOpname(a, so.id).expect(200);
+      await approveOpname(a, so.id).expect(200);
+      expect((await stockOf(a, p)).onHand).toBe(7);
+      await http()
+        .patch(`/stock-opnames/${so.id}`)
+        .set('Authorization', a.auth)
+        .send({ note: 'x' })
+        .expect(409);
+      await http()
+        .delete(`/stock-opnames/${so.id}`)
+        .set('Authorization', a.auth)
+        .expect(409);
+    });
+
+    it('an opname to a higher count adds an adjustment batch; deleting a draft changes nothing', async () => {
+      const p = await product(a);
+      await opening(a, p, 4);
+      const draft = await opname(a, [{ productId: p, countedQty: 100 }]);
+      await http()
+        .delete(`/stock-opnames/${draft.id}`)
+        .set('Authorization', a.auth)
+        .expect(204);
+      expect((await stockOf(a, p)).onHand).toBe(4);
+
+      const so = await opname(a, [{ productId: p, countedQty: 6 }]);
+      await approveOpname(a, so.id).expect(200);
+      const s = await stockOf(a, p);
+      expect(s.onHand).toBe(6);
+      expect(s.batches.map((x) => x.source)).toContain('adjustment');
+    });
+  });
+
   describe('suppliers', () => {
     it('creates, lists, updates and soft-deletes', async () => {
       const s = await createStore();
@@ -218,10 +369,11 @@ describe('stock in (U6)', () => {
         .send({ note: 'x' })
         .expect(404);
       await http().delete(url).set('Authorization', b.auth).expect(404);
-      await http()
-        .post(`${url}/cancel`)
-        .set('Authorization', b.auth)
-        .expect(404);
+      for (const action of ['cancel', 'approve'])
+        await http()
+          .post(`${url}/${action}`)
+          .set('Authorization', b.auth)
+          .expect(404);
       const list = await http()
         .get('/purchasing/orders')
         .set('Authorization', b.auth)
@@ -231,11 +383,43 @@ describe('stock in (U6)', () => {
     });
   });
 
+  describe('stock opname', () => {
+    it("gives store B 404 on every route of store A's opname", async () => {
+      const so = await opname(a, [
+        { productId: await product(a), countedQty: 3 },
+      ]);
+      const url = `/stock-opnames/${so.id}`;
+      await http().get(url).set('Authorization', b.auth).expect(404);
+      await http()
+        .patch(url)
+        .set('Authorization', b.auth)
+        .send({ note: 'x' })
+        .expect(404);
+      await http().delete(url).set('Authorization', b.auth).expect(404);
+      await approveOpname(b, so.id).expect(404);
+      const list = await http()
+        .get('/stock-opnames')
+        .set('Authorization', b.auth)
+        .expect(200);
+      expect(rows(list).map((r) => r.id)).not.toContain(so.id);
+      await http().get(url).set('Authorization', a.auth).expect(200);
+    });
+
+    it("refuses another store's product (422)", async () => {
+      await http()
+        .post('/stock-opnames')
+        .set('Authorization', a.auth)
+        .send({ lines: [{ productId: await product(b), countedQty: 1 }] })
+        .expect(422);
+    });
+  });
+
   describe('permissions', () => {
     it('gives a cashier without purchasing.manage 403 on writes, 2xx with it', async () => {
       const p = await product(a);
       const sup = await supplier(a);
       const o = await order(a, [{ productId: p, qty: 1, unitCost: 1 }]);
+      const so = await opname(a, [{ productId: p, countedQty: 1 }]);
       const plain = await createCashier(app, a, ['sales.create']);
       const writes = [
         http().post('/suppliers').send({ name: 'x' }),
@@ -250,6 +434,13 @@ describe('stock in (U6)', () => {
         http().patch(`/purchasing/orders/${o.id}`).send({ note: 'x' }),
         http().delete(`/purchasing/orders/${o.id}`),
         http().post(`/purchasing/orders/${o.id}/cancel`),
+        http().post(`/purchasing/orders/${o.id}/approve`),
+        http()
+          .post('/stock-opnames')
+          .send({ lines: [{ productId: p, countedQty: 1 }] }),
+        http().patch(`/stock-opnames/${so.id}`).send({ note: 'x' }),
+        http().delete(`/stock-opnames/${so.id}`),
+        http().post(`/stock-opnames/${so.id}/approve`),
       ];
       for (const req of writes)
         await req.set('Authorization', plain.auth).expect(403);
@@ -266,9 +457,10 @@ describe('stock in (U6)', () => {
         .send({ name: 'x' })
         .expect(201);
       await http()
-        .post(`/purchasing/orders/${o.id}/cancel`)
+        .post(`/purchasing/orders/${o.id}/approve`)
         .set('Authorization', buyer.auth)
         .expect(200);
+      await approveOpname(buyer, so.id).expect(200);
     });
   });
 });
