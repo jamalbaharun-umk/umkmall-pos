@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
+import { MetricWidgets } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
   const devSignIn = process.env.NODE_ENV !== 'production' && Boolean(process.env.POS_DEV_USER_ID)
@@ -72,7 +73,7 @@ function SignIn({ failed, devSignIn }: { failed: boolean; devSignIn: boolean }) 
 function Dashboard({ products }: { products: number }) {
   return (
     <Page title="Dashboard">
-      {/* U5: <MetricWidgets /> */}
+      <MetricWidgets />
       <Panel>
         {products === 0 ? (
           <Empty
