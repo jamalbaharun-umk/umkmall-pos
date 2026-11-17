@@ -65,6 +65,11 @@ function OrderPage() {
               <Button width="auto" color="danger" type="ghost" onClick={() => run('delete')}>
                 Hapus draf
               </Button>
+              <Button width="auto" asChild type="outline" color="light">
+                <Link to="/pembelian/$id/ubah" params={{ id: order.id }}>
+                  Ubah
+                </Link>
+              </Button>
               <Button width="auto" type="outline" color="light" onClick={() => run('cancel')}>
                 Batalkan
               </Button>

@@ -17,7 +17,8 @@ export type OrderSummary = {
 export type Order = OrderSummary & {
   note: string | null
   approvedAt: string | null
-  lines: { id: string; productName: string; sku: string; qty: number; unitCost?: number }[]
+  supplierId: string
+  lines: { id: string; productId: string; productName: string; sku: string; qty: number; unitCost?: number }[]
 }
 export type OpnameSummary = { id: string; status: 'draft' | 'approved'; note: string | null; createdAt: string }
 export type Opname = OpnameSummary & {
@@ -100,11 +101,16 @@ export const loadOrder = createServerFn()
   .handler(({ data }) => load<Order>(`/purchasing/orders/${enc(data)}`))
 
 type OrderInput = {
+  id?: string
   supplierId: string
   paymentMethod: string | null
   note: string | null
   lines: { productId: string; qty: number; unitCost: number }[]
 }
+export const updateOrder = createServerFn({ method: 'POST' })
+  .validator((d: OrderInput & { id?: string }) => d)
+  .handler(({ data: { id, ...body } }) => mutate(`/purchasing/orders/${enc(id ?? '')}`, 'PATCH', body))
+
 export const createOrder = createServerFn({ method: 'POST' })
   .validator((d: OrderInput) => d)
   .handler(({ data }) => mutate('/purchasing/orders', 'POST', data))

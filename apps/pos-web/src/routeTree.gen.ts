@@ -42,6 +42,7 @@ import { Route as KasirRiwayatIndexRouteImport } from './routes/kasir/riwayat.in
 import { Route as KasirRiwayatIdRouteImport } from './routes/kasir/riwayat.$id'
 import { Route as KasirStrukIdRouteImport } from './routes/kasir/struk.$id'
 import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis'
+import { Route as PembelianIdUbahRouteImport } from './routes/pembelian/$id_.ubah'
 import { Route as StafPeranIndexRouteImport } from './routes/staf/peran/index'
 import { Route as StafPeranIdRouteImport } from './routes/staf/peran/$id'
 import { Route as StafPeranBaruRouteImport } from './routes/staf/peran/baru'
@@ -214,6 +215,11 @@ const LaporanCsvJenisRoute = LaporanCsvJenisRouteImport.update({
   path: '/laporan/csv/$jenis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PembelianIdUbahRoute = PembelianIdUbahRouteImport.update({
+  id: '/pembelian/$id_/ubah',
+  path: '/pembelian/$id/ubah',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StafPeranIndexRoute = StafPeranIndexRouteImport.update({
   id: '/staf/peran/',
   path: '/staf/peran/',
@@ -278,6 +284,7 @@ export interface FileRoutesByFullPath {
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
@@ -319,6 +326,7 @@ export interface FileRoutesByTo {
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
@@ -361,6 +369,7 @@ export interface FileRoutesById {
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/pembelian/$id_/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
@@ -404,6 +413,7 @@ export interface FileRouteTypes {
     | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/pembelian/$id/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
     | '/catalog/products/'
@@ -445,6 +455,7 @@ export interface FileRouteTypes {
     | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/pembelian/$id/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
     | '/catalog/products'
@@ -486,6 +497,7 @@ export interface FileRouteTypes {
     | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/pembelian/$id_/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
     | '/catalog/products/'
@@ -528,6 +540,7 @@ export interface RootRouteChildren {
   KasirRiwayatIdRoute: typeof KasirRiwayatIdRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
+  PembelianIdUbahRoute: typeof PembelianIdUbahRoute
   StafPeranIdRoute: typeof StafPeranIdRoute
   StafPeranBaruRoute: typeof StafPeranBaruRoute
   CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
@@ -771,6 +784,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaporanCsvJenisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/pembelian/$id_/ubah': {
+      id: '/pembelian/$id_/ubah'
+      path: '/pembelian/$id/ubah'
+      fullPath: '/pembelian/$id/ubah'
+      preLoaderRoute: typeof PembelianIdUbahRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/staf/peran/': {
       id: '/staf/peran/'
       path: '/staf/peran'
@@ -848,6 +868,7 @@ const rootRouteChildren: RootRouteChildren = {
   KasirRiwayatIdRoute: KasirRiwayatIdRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
+  PembelianIdUbahRoute: PembelianIdUbahRoute,
   StafPeranIdRoute: StafPeranIdRoute,
   StafPeranBaruRoute: StafPeranBaruRoute,
   CatalogProductsIndexRoute: CatalogProductsIndexRoute,
