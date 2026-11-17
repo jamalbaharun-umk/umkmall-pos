@@ -67,6 +67,7 @@ function Dashboard() {
     <main className="mx-auto min-h-svh max-w-3xl px-4 py-8">
       <h1 className="text-2xl font-semibold text-ink">Toko kamu</h1>
       <a href="/staf" className="mt-2 inline-block text-brand hover:underline">Staf, peran dan perangkat</a>
+      <a href="/pembelian" className="mt-2 ml-4 inline-block text-brand hover:underline">Pembelian dan stok opname</a>
       <section className="mt-6 rounded-xl bg-white p-8 text-center">
         <h2 className="text-lg font-medium text-ink">Belum ada produk</h2>
         <p className="mt-1 text-ink-muted">Tambahkan produk pertama untuk mulai berjualan.</p>

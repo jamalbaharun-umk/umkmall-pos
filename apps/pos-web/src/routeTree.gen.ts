@@ -16,10 +16,17 @@ import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categori
 import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
 import { Route as MasukUmkmallRouteImport } from './routes/masuk/umkmall'
+import { Route as PemasokIndexRouteImport } from './routes/pemasok/index'
+import { Route as PembelianIndexRouteImport } from './routes/pembelian/index'
+import { Route as PembelianIdRouteImport } from './routes/pembelian/$id'
+import { Route as PembelianBaruRouteImport } from './routes/pembelian/baru'
 import { Route as StafIndexRouteImport } from './routes/staf/index'
 import { Route as StafIdRouteImport } from './routes/staf/$id'
 import { Route as StafPeranRouteImport } from './routes/staf/peran'
 import { Route as StafPerangkatRouteImport } from './routes/staf/perangkat'
+import { Route as StokOpnameIndexRouteImport } from './routes/stok-opname/index'
+import { Route as StokOpnameIdRouteImport } from './routes/stok-opname/$id'
+import { Route as StokOpnameBaruRouteImport } from './routes/stok-opname/baru'
 import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/products/index'
 import { Route as CatalogProductsIdRouteImport } from './routes/catalog/products/$id'
 
@@ -58,6 +65,26 @@ const MasukUmkmallRoute = MasukUmkmallRouteImport.update({
   path: '/masuk/umkmall',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PemasokIndexRoute = PemasokIndexRouteImport.update({
+  id: '/pemasok/',
+  path: '/pemasok/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PembelianIndexRoute = PembelianIndexRouteImport.update({
+  id: '/pembelian/',
+  path: '/pembelian/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PembelianIdRoute = PembelianIdRouteImport.update({
+  id: '/pembelian/$id',
+  path: '/pembelian/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PembelianBaruRoute = PembelianBaruRouteImport.update({
+  id: '/pembelian/baru',
+  path: '/pembelian/baru',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StafIndexRoute = StafIndexRouteImport.update({
   id: '/staf/',
   path: '/staf/',
@@ -78,6 +105,21 @@ const StafPerangkatRoute = StafPerangkatRouteImport.update({
   path: '/staf/perangkat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StokOpnameIndexRoute = StokOpnameIndexRouteImport.update({
+  id: '/stok-opname/',
+  path: '/stok-opname/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StokOpnameIdRoute = StokOpnameIdRouteImport.update({
+  id: '/stok-opname/$id',
+  path: '/stok-opname/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StokOpnameBaruRoute = StokOpnameBaruRouteImport.update({
+  id: '/stok-opname/baru',
+  path: '/stok-opname/baru',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CatalogProductsIndexRoute = CatalogProductsIndexRouteImport.update({
   id: '/products/',
   path: '/products/',
@@ -96,11 +138,18 @@ export interface FileRoutesByFullPath {
   '/kasir/masuk': typeof KasirMasukRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/pembelian/$id': typeof PembelianIdRoute
+  '/pembelian/baru': typeof PembelianBaruRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/peran': typeof StafPeranRoute
   '/staf/perangkat': typeof StafPerangkatRoute
+  '/stok-opname/$id': typeof StokOpnameIdRoute
+  '/stok-opname/baru': typeof StokOpnameBaruRoute
   '/catalog/': typeof CatalogIndexRoute
+  '/pemasok/': typeof PemasokIndexRoute
+  '/pembelian/': typeof PembelianIndexRoute
   '/staf/': typeof StafIndexRoute
+  '/stok-opname/': typeof StokOpnameIndexRoute
   '/catalog/products/$id': typeof CatalogProductsIdRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
 }
@@ -110,11 +159,18 @@ export interface FileRoutesByTo {
   '/kasir/masuk': typeof KasirMasukRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/pembelian/$id': typeof PembelianIdRoute
+  '/pembelian/baru': typeof PembelianBaruRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/peran': typeof StafPeranRoute
   '/staf/perangkat': typeof StafPerangkatRoute
+  '/stok-opname/$id': typeof StokOpnameIdRoute
+  '/stok-opname/baru': typeof StokOpnameBaruRoute
   '/catalog': typeof CatalogIndexRoute
+  '/pemasok': typeof PemasokIndexRoute
+  '/pembelian': typeof PembelianIndexRoute
   '/staf': typeof StafIndexRoute
+  '/stok-opname': typeof StokOpnameIndexRoute
   '/catalog/products/$id': typeof CatalogProductsIdRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
 }
@@ -126,11 +182,18 @@ export interface FileRoutesById {
   '/kasir/masuk': typeof KasirMasukRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/pembelian/$id': typeof PembelianIdRoute
+  '/pembelian/baru': typeof PembelianBaruRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/peran': typeof StafPeranRoute
   '/staf/perangkat': typeof StafPerangkatRoute
+  '/stok-opname/$id': typeof StokOpnameIdRoute
+  '/stok-opname/baru': typeof StokOpnameBaruRoute
   '/catalog/': typeof CatalogIndexRoute
+  '/pemasok/': typeof PemasokIndexRoute
+  '/pembelian/': typeof PembelianIndexRoute
   '/staf/': typeof StafIndexRoute
+  '/stok-opname/': typeof StokOpnameIndexRoute
   '/catalog/products/$id': typeof CatalogProductsIdRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
 }
@@ -143,11 +206,18 @@ export interface FileRouteTypes {
     | '/kasir/masuk'
     | '/masuk/dev'
     | '/masuk/umkmall'
+    | '/pembelian/$id'
+    | '/pembelian/baru'
     | '/staf/$id'
     | '/staf/peran'
     | '/staf/perangkat'
+    | '/stok-opname/$id'
+    | '/stok-opname/baru'
     | '/catalog/'
+    | '/pemasok/'
+    | '/pembelian/'
     | '/staf/'
+    | '/stok-opname/'
     | '/catalog/products/$id'
     | '/catalog/products/'
   fileRoutesByTo: FileRoutesByTo
@@ -157,11 +227,18 @@ export interface FileRouteTypes {
     | '/kasir/masuk'
     | '/masuk/dev'
     | '/masuk/umkmall'
+    | '/pembelian/$id'
+    | '/pembelian/baru'
     | '/staf/$id'
     | '/staf/peran'
     | '/staf/perangkat'
+    | '/stok-opname/$id'
+    | '/stok-opname/baru'
     | '/catalog'
+    | '/pemasok'
+    | '/pembelian'
     | '/staf'
+    | '/stok-opname'
     | '/catalog/products/$id'
     | '/catalog/products'
   id:
@@ -172,11 +249,18 @@ export interface FileRouteTypes {
     | '/kasir/masuk'
     | '/masuk/dev'
     | '/masuk/umkmall'
+    | '/pembelian/$id'
+    | '/pembelian/baru'
     | '/staf/$id'
     | '/staf/peran'
     | '/staf/perangkat'
+    | '/stok-opname/$id'
+    | '/stok-opname/baru'
     | '/catalog/'
+    | '/pemasok/'
+    | '/pembelian/'
     | '/staf/'
+    | '/stok-opname/'
     | '/catalog/products/$id'
     | '/catalog/products/'
   fileRoutesById: FileRoutesById
@@ -187,10 +271,17 @@ export interface RootRouteChildren {
   KasirMasukRoute: typeof KasirMasukRoute
   MasukDevRoute: typeof MasukDevRoute
   MasukUmkmallRoute: typeof MasukUmkmallRoute
+  PembelianIdRoute: typeof PembelianIdRoute
+  PembelianBaruRoute: typeof PembelianBaruRoute
   StafIdRoute: typeof StafIdRoute
   StafPeranRoute: typeof StafPeranRoute
   StafPerangkatRoute: typeof StafPerangkatRoute
+  StokOpnameIdRoute: typeof StokOpnameIdRoute
+  StokOpnameBaruRoute: typeof StokOpnameBaruRoute
+  PemasokIndexRoute: typeof PemasokIndexRoute
+  PembelianIndexRoute: typeof PembelianIndexRoute
   StafIndexRoute: typeof StafIndexRoute
+  StokOpnameIndexRoute: typeof StokOpnameIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -244,6 +335,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MasukUmkmallRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/pemasok/': {
+      id: '/pemasok/'
+      path: '/pemasok'
+      fullPath: '/pemasok/'
+      preLoaderRoute: typeof PemasokIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pembelian/': {
+      id: '/pembelian/'
+      path: '/pembelian'
+      fullPath: '/pembelian/'
+      preLoaderRoute: typeof PembelianIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pembelian/$id': {
+      id: '/pembelian/$id'
+      path: '/pembelian/$id'
+      fullPath: '/pembelian/$id'
+      preLoaderRoute: typeof PembelianIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pembelian/baru': {
+      id: '/pembelian/baru'
+      path: '/pembelian/baru'
+      fullPath: '/pembelian/baru'
+      preLoaderRoute: typeof PembelianBaruRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/staf/': {
       id: '/staf/'
       path: '/staf'
@@ -270,6 +389,27 @@ declare module '@tanstack/react-router' {
       path: '/staf/perangkat'
       fullPath: '/staf/perangkat'
       preLoaderRoute: typeof StafPerangkatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stok-opname/': {
+      id: '/stok-opname/'
+      path: '/stok-opname'
+      fullPath: '/stok-opname/'
+      preLoaderRoute: typeof StokOpnameIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stok-opname/$id': {
+      id: '/stok-opname/$id'
+      path: '/stok-opname/$id'
+      fullPath: '/stok-opname/$id'
+      preLoaderRoute: typeof StokOpnameIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stok-opname/baru': {
+      id: '/stok-opname/baru'
+      path: '/stok-opname/baru'
+      fullPath: '/stok-opname/baru'
+      preLoaderRoute: typeof StokOpnameBaruRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/catalog/products/': {
@@ -313,10 +453,17 @@ const rootRouteChildren: RootRouteChildren = {
   KasirMasukRoute: KasirMasukRoute,
   MasukDevRoute: MasukDevRoute,
   MasukUmkmallRoute: MasukUmkmallRoute,
+  PembelianIdRoute: PembelianIdRoute,
+  PembelianBaruRoute: PembelianBaruRoute,
   StafIdRoute: StafIdRoute,
   StafPeranRoute: StafPeranRoute,
   StafPerangkatRoute: StafPerangkatRoute,
+  StokOpnameIdRoute: StokOpnameIdRoute,
+  StokOpnameBaruRoute: StokOpnameBaruRoute,
+  PemasokIndexRoute: PemasokIndexRoute,
+  PembelianIndexRoute: PembelianIndexRoute,
   StafIndexRoute: StafIndexRoute,
+  StokOpnameIndexRoute: StokOpnameIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
