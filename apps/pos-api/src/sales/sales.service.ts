@@ -46,8 +46,17 @@ const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps e
 export const taxOf = (taxable: number, bps: number) =>
   Number((BigInt(taxable) * BigInt(bps) + 5000n) / 10000n);
 
-const fail = (message: string, extra: Record<string, unknown> = {}) =>
-  new UnprocessableEntityException({ message, ...extra });
+/** 422 in the shared shape (`common/validation.ts`): `errors` names the field the cashier must fix. */
+const fail = (
+  message: string,
+  extra: Record<string, unknown> = {},
+  field = '_',
+) =>
+  new UnprocessableEntityException({
+    message,
+    errors: { [field]: message },
+    ...extra,
+  });
 
 /**
  * Cash sales (Lakasir SellingService + classic cashier). The server computes every price and total
@@ -126,7 +135,7 @@ export class SalesService {
     const byId = new Map(rows.map((r) => [r.id, r]));
     const missing = ids.filter((pid) => !byId.has(pid));
     if (missing.length)
-      throw fail('Produk tidak ditemukan', { productIds: missing });
+      throw fail('Produk tidak ditemukan', { productIds: missing }, 'lines');
 
     const canOverride = hasPermission(s, 'sales.price_override');
     const lines = input.lines.map((l) => {
@@ -147,7 +156,8 @@ export class SalesService {
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar');
     const discount = canOverride ? (input.discount ?? 0) : 0;
-    if (discount > subtotal) throw fail('Diskon melebihi subtotal');
+    if (discount > subtotal)
+      throw fail('Diskon melebihi subtotal', {}, 'discount');
     // U7: validated before anything is taken (Lakasir flaw 1); quota is consumed below, in this transaction.
     const voucher = input.voucherCode
       ? await evaluateVoucher(
@@ -177,14 +187,18 @@ export class SalesService {
     const total = subtotal - discount - voucherDiscount + tax;
     if (method.isCredit) {
       // Kasbon: the rest becomes the member's receivable; paid may be 0.
-      if (!memberId) throw fail('Kasbon membutuhkan pelanggan');
+      if (!memberId) throw fail('Pilih member untuk kasbon', {}, 'memberId');
       if (input.paid >= total)
-        throw fail('Kasbon harus menyisakan sisa tagihan', { total });
+        throw fail('Kasbon harus menyisakan sisa tagihan', { total }, 'paid');
     } else if (method.isCash) {
       if (input.paid < total)
-        throw fail('Uang yang dibayar kurang dari total', { total });
+        throw fail('Uang yang dibayar kurang dari total', { total }, 'paid');
     } else if (input.paid !== total) {
-      throw fail('Pembayaran non-tunai harus sama dengan total', { total });
+      throw fail(
+        'Pembayaran non-tunai harus sama dengan total',
+        { total },
+        'paid',
+      );
     }
     if (voucher) await consumeVoucher(tx, s.tenantId, voucher.id);
 
@@ -261,7 +275,7 @@ export class SalesService {
           isNull(members.deletedAt),
         ),
       );
-    if (!m) throw fail('Pelanggan tidak ditemukan');
+    if (!m) throw fail('Pelanggan tidak ditemukan', {}, 'memberId');
     return m.id;
   }
 
@@ -282,7 +296,8 @@ export class SalesService {
           isNull(paymentMethods.deletedAt),
         ),
       );
-    if (!m) throw fail('Metode pembayaran tidak ditemukan');
+    if (!m)
+      throw fail('Metode pembayaran tidak ditemukan', {}, 'paymentMethodId');
     return m;
   }
 

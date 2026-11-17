@@ -71,10 +71,16 @@ export const receivablePayments = pos
       restBefore: rupiah('rest_before').notNull(),
       actorId: uuid('actor_id').notNull(),
       actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
+      // Idempotency-Key of the request and a hash of its body (null for a kasbon's down payment).
+      idempotencyKey: text('idempotency_key'),
+      requestHash: text('request_hash'),
       createdAt: createdAt(),
     },
     (t) => [
       index('receivable_payments_receivable_idx').on(t.receivableId),
+      uniqueIndex('receivable_payments_tenant_key_uq')
+        .on(t.tenantId, t.idempotencyKey)
+        .where(sql`${t.idempotencyKey} is not null`),
       foreignKey({
         columns: [t.tenantId, t.receivableId],
         foreignColumns: [receivables.tenantId, receivables.id],

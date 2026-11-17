@@ -57,6 +57,18 @@ describe('members, vouchers and credit sales (U7)', () => {
       .set('Idempotency-Key', randomUUID())
       .send(body);
 
+  const pay = (
+    auth: string,
+    rid: string,
+    body: object,
+    key: string = randomUUID(),
+  ) =>
+    http()
+      .post(`/receivables/${rid}/payments`)
+      .set('Authorization', auth)
+      .set('Idempotency-Key', key)
+      .send(body);
+
   const voucher = (s: Store, body: object = {}) =>
     post(s.auth, '/vouchers', {
       name: 'Hemat',
@@ -129,7 +141,10 @@ describe('members, vouchers and credit sales (U7)', () => {
       voucherCode: v.body.code,
       paid: 2000,
     }).expect(422);
-    expect(again.body.message).toBe('Kuota voucher habis');
+    expect(again.body).toMatchObject({
+      message: 'Voucher sudah habis',
+      errors: { voucherCode: 'Voucher sudah habis' },
+    });
   });
 
   it('refuses expired, not started, unknown and below-minimum vouchers (422); check takes no quota', async () => {
@@ -194,7 +209,7 @@ describe('members, vouchers and credit sales (U7)', () => {
     });
     const rid = sale.body.receivableId as string;
 
-    const r1 = await post(s.auth, `/receivables/${rid}/payments`, {
+    const r1 = await pay(s.auth, rid, {
       amount: 2500,
     }).expect(201);
     expect(r1.body).toMatchObject({
@@ -213,21 +228,17 @@ describe('members, vouchers and credit sales (U7)', () => {
       }),
     ]);
 
-    await post(s.auth, `/receivables/${rid}/payments`, { amount: 4000 }).expect(
-      422,
-    );
+    await pay(s.auth, rid, { amount: 4000 }).expect(422);
     // A kasbon is not paid with another kasbon.
-    await post(s.auth, `/receivables/${rid}/payments`, {
+    await pay(s.auth, rid, {
       amount: 100,
       paymentMethodId: kasbon.body.id,
     }).expect(422);
-    const r2 = await post(s.auth, `/receivables/${rid}/payments`, {
+    const r2 = await pay(s.auth, rid, {
       amount: 3500,
     }).expect(201);
     expect(r2.body.rest).toBe(0);
-    await post(s.auth, `/receivables/${rid}/payments`, { amount: 1 }).expect(
-      422,
-    );
+    await pay(s.auth, rid, { amount: 1 }).expect(422);
 
     const open = await get(s.auth, '/receivables?status=open').expect(200);
     const settled = await get(s.auth, '/receivables?status=settled').expect(
@@ -419,11 +430,14 @@ describe('members, vouchers and credit sales (U7)', () => {
       .expect(403);
     await get(c.auth, '/receivables').expect(403);
     await get(c.auth, `/receivables/${rid}`).expect(403);
-    await post(c.auth, `/receivables/${rid}/payments`, { amount: 1 }).expect(
-      403,
-    );
+    await pay(c.auth, rid, { amount: 1 }).expect(403);
     // What the cashier needs at the till.
-    await get(c.auth, '/members').expect(200);
+    await get(c.auth, '/members').expect(403);
+    await get(c.auth, `/members/${sari.body.id}`).expect(403);
+    const picked = await get(c.auth, '/members/picker?q=sari').expect(200);
+    expect(picked.body.data).toEqual([
+      { id: sari.body.id, name: 'Bu Sari', code: sari.body.code },
+    ]);
     await get(c.auth, '/payment-methods').expect(200);
     await post(c.auth, '/vouchers/check', {
       code: v.body.code,
@@ -431,7 +445,7 @@ describe('members, vouchers and credit sales (U7)', () => {
     }).expect(200);
 
     const granted = await createCashier(app, s, ['receivables.manage']);
-    await post(granted.auth, `/receivables/${rid}/payments`, {
+    await pay(granted.auth, rid, {
       amount: 1,
     }).expect(201);
   });
@@ -464,9 +478,7 @@ describe('members, vouchers and credit sales (U7)', () => {
       await http().delete(url).set('Authorization', b.auth).expect(404);
     }
     await get(b.auth, `/receivables/${rid}`).expect(404);
-    await post(b.auth, `/receivables/${rid}/payments`, { amount: 1 }).expect(
-      404,
-    );
+    await pay(b.auth, rid, { amount: 1 }).expect(404);
 
     for (const list of ['/members', '/vouchers', '/receivables']) {
       expect(ids((await get(b.auth, list).expect(200)).body.data)).toEqual([]);

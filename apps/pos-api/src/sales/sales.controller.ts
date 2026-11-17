@@ -8,7 +8,8 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { parse } from '../catalog/catalog.schemas';
+import { z } from 'zod';
+import { validate } from '../common/validation';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
@@ -34,14 +35,16 @@ export class SalesController {
   ) {
     return this.sales.create(
       s,
-      parse(IdempotencyKey, key),
-      parse(SaleInput, body),
+      validate(z.object({ idempotencyKey: IdempotencyKey }), {
+        idempotencyKey: key,
+      }).idempotencyKey,
+      validate(SaleInput, body),
     );
   }
 
   @Get()
   list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return this.sales.list(s, parse(SalesQuery, query));
+    return this.sales.list(s, validate(SalesQuery, query));
   }
 
   @Get('settings')
@@ -54,7 +57,7 @@ export class SalesController {
   updateSettings(@CurrentSession() s: PosSession, @Body() body: unknown) {
     return this.sales.updateSettings(
       s.tenantId,
-      parse(SettingsInput, body).taxBps,
+      validate(SettingsInput, body).taxBps,
     );
   }
 

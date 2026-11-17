@@ -1,6 +1,5 @@
 import {
   Body,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -15,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, ilike, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-import { parse } from '../catalog/catalog.schemas';
+import { fieldError, Phone, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { members } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -23,19 +22,28 @@ import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
-const optionalText = (max: number) =>
-  z.string().trim().max(max).nullable().optional();
+/** Optional text: blank is stored as null. */
+const optional = <T extends z.ZodTypeAny>(schema: T) =>
+  z
+    .union([z.literal(''), schema])
+    .transform((v: unknown) => (v === '' ? null : (v as z.infer<T>)))
+    .nullable()
+    .optional();
 
 // Minimised from Lakasir (no email, identity number or join date): store customers' PII, never logged.
 const MemberInput = z
   .object({
     name: z.string().trim().min(1).max(120),
-    code: z.string().trim().min(1).max(40).regex(/^\S+$/, 'tanpa spasi'),
-    phone: optionalText(30),
-    address: optionalText(500),
+    code: z.string().trim().min(1).max(40).regex(/^\S+$/, 'Kode tanpa spasi'),
+    phone: optional(Phone),
+    address: optional(z.string().trim().max(500)),
   })
   .strict();
 type MemberInput = z.infer<typeof MemberInput>;
+const MemberUpdate = MemberInput.partial().refine(
+  (o) => Object.keys(o).length > 0,
+  'Tidak ada yang diubah',
+);
 
 const MemberQuery = z.object({ q: z.string().trim().max(60).optional() });
 
@@ -57,7 +65,7 @@ const live = (tenantId: string, id?: string) =>
 
 const escapeLike = (q: string) => q.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-/** Members (Lakasir MemberResource): the cashier's customer picker and the kasbon holder. */
+/** Members (Lakasir MemberResource): the kasbon holder and the cashier's customer picker. */
 @Injectable()
 export class MembersService {
   constructor(@InjectDb() private readonly db: Db) {}
@@ -83,6 +91,24 @@ export class MembersService {
       .limit(50);
   }
 
+  /** The cashier's picker: name and code only (phone and address stay behind members.manage). */
+  pick(tenantId: string, q?: string) {
+    const like = q ? `%${escapeLike(q)}%` : undefined;
+    return this.db
+      .select({ id: members.id, name: members.name, code: members.code })
+      .from(members)
+      .where(
+        and(
+          live(tenantId),
+          like
+            ? or(ilike(members.name, like), ilike(members.code, like))
+            : undefined,
+        ),
+      )
+      .orderBy(asc(members.name))
+      .limit(20);
+  }
+
   async get(tenantId: string, id: string) {
     const [row] = await this.db
       .select(columns)
@@ -97,7 +123,7 @@ export class MembersService {
       return await op();
     } catch (e) {
       if (isUniqueViolation(e))
-        throw new ConflictException({ message: 'Kode sudah dipakai' });
+        throw fieldError('code', 'Kode pelanggan sudah dipakai', 409);
       throw e;
     }
   }
@@ -139,20 +165,29 @@ export class MembersService {
 export class MembersController {
   constructor(private readonly members: MembersService) {}
 
+  // Full records are the store's customers' PII: members.manage only.
   @Get()
+  @RequirePermission('members.manage')
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return {
-      data: await this.members.list(s.tenantId, parse(MemberQuery, query).q),
-    };
+    const { q } = validate(MemberQuery, query);
+    return { data: await this.members.list(s.tenantId, q) };
+  }
+
+  @Get('picker')
+  @RequirePermission('sales.create')
+  async picker(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    const { q } = validate(MemberQuery, query);
+    return { data: await this.members.pick(s.tenantId, q) };
   }
 
   @Post()
   @RequirePermission('members.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.members.create(s.tenantId, parse(MemberInput, body));
+    return this.members.create(s.tenantId, validate(MemberInput, body));
   }
 
   @Get(':id')
+  @RequirePermission('members.manage')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return this.members.get(s.tenantId, parseId(id));
   }
@@ -167,10 +202,7 @@ export class MembersController {
     return this.members.update(
       s.tenantId,
       parseId(id),
-      parse(
-        MemberInput.partial().refine((o) => Object.keys(o).length > 0),
-        body,
-      ),
+      validate(MemberUpdate, body),
     );
   }
 

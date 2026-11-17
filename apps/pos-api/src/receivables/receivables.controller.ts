@@ -8,11 +8,19 @@ import {
   Param,
   Post,
   Query,
-  UnprocessableEntityException,
+  Headers,
 } from '@nestjs/common';
 import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { parse, Uuid } from '../catalog/catalog.schemas';
+import { createHash } from 'node:crypto';
+import {
+  fieldError,
+  formatRupiah,
+  Rupiah,
+  UuidField,
+  validate,
+} from '../common/validation';
+import { IdempotencyKey } from '../sales/sales.schemas';
 import { type Db, InjectDb } from '../db/db.module';
 import {
   members,
@@ -22,7 +30,7 @@ import {
   saleLines,
   sales,
 } from '../db/schema';
-import { parseId } from '../staff/http';
+import { isUniqueViolation, parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
 import { CurrentSession } from '../tenancy/decorators';
@@ -30,18 +38,28 @@ import type { PosSession } from '../tenancy/session';
 
 const PaymentInput = z
   .object({
-    amount: z.number().int().positive().max(1_000_000_000_000),
-    paymentMethodId: Uuid.optional(), // default: the store's Tunai
+    amount: Rupiah.positive('Harus lebih dari 0'),
+    paymentMethodId: UuidField.optional(), // default: the store's Tunai
   })
   .strict();
+type PaymentInput = z.infer<typeof PaymentInput>;
 
 const ReceivableQuery = z.object({
   status: z.enum(['open', 'settled']).optional(),
-  memberId: Uuid.optional(),
+  memberId: UuidField.optional(),
 });
 
-const refuse = (message: string) =>
-  new UnprocessableEntityException({ message });
+/** Same key + same request → the first result; same key + another request → refused. */
+const requestHash = (receivableId: string, input: PaymentInput) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([
+        receivableId,
+        input.amount,
+        input.paymentMethodId ?? null,
+      ]),
+    )
+    .digest('hex');
 
 const columns = {
   id: receivables.id,
@@ -170,37 +188,73 @@ export class ReceivablesService {
     return { ...row, lines, payments };
   }
 
-  async pay(s: PosSession, id: string, input: z.infer<typeof PaymentInput>) {
-    await this.db.transaction(async (tx) => {
-      // Row lock: two payments on one receivable apply one after the other.
-      const [r] = await tx
-        .select({ rest: receivables.rest })
-        .from(receivables)
-        .where(
-          and(eq(receivables.tenantId, s.tenantId), eq(receivables.id, id)),
-        )
-        .for('update');
-      if (!r) throw new NotFoundException();
-      if (r.rest === 0) throw refuse('Piutang sudah lunas');
-      if (input.amount > r.rest)
-        throw refuse(
-          `Pembayaran melebihi sisa piutang Rp${r.rest.toLocaleString('id-ID')}`,
+  async pay(s: PosSession, id: string, key: string, input: PaymentInput) {
+    const hash = requestHash(id, input);
+    await this.db
+      .transaction(async (tx) => {
+        // Row lock: two payments on one receivable apply one after the other.
+        const [r] = await tx
+          .select({ rest: receivables.rest })
+          .from(receivables)
+          .where(
+            and(eq(receivables.tenantId, s.tenantId), eq(receivables.id, id)),
+          )
+          .for('update');
+        if (!r) throw new NotFoundException();
+        // A retry (double tap, network replay) under the lock finds the first payment and changes nothing.
+        const [prior] = await tx
+          .select({ hash: receivablePayments.requestHash })
+          .from(receivablePayments)
+          .where(
+            and(
+              eq(receivablePayments.tenantId, s.tenantId),
+              eq(receivablePayments.idempotencyKey, key),
+            ),
+          );
+        if (prior) {
+          if (prior.hash !== hash)
+            throw fieldError(
+              'idempotencyKey',
+              'Kunci ini sudah dipakai untuk pembayaran lain',
+            );
+          return;
+        }
+        if (r.rest === 0) throw fieldError('amount', 'Piutang sudah lunas');
+        if (input.amount > r.rest)
+          throw fieldError(
+            'amount',
+            `Pembayaran melebihi sisa piutang (${formatRupiah(r.rest)})`,
+          );
+        const methodId = await this.method(
+          tx,
+          s.tenantId,
+          input.paymentMethodId,
         );
-      const methodId = await this.method(tx, s.tenantId, input.paymentMethodId);
-      await tx.insert(receivablePayments).values({
-        tenantId: s.tenantId,
-        receivableId: id,
-        amount: input.amount,
-        paymentMethodId: methodId,
-        restBefore: r.rest,
-        actorId: s.actorId,
-        actorKind: s.kind,
+        await tx.insert(receivablePayments).values({
+          tenantId: s.tenantId,
+          receivableId: id,
+          amount: input.amount,
+          paymentMethodId: methodId,
+          restBefore: r.rest,
+          actorId: s.actorId,
+          actorKind: s.kind,
+          idempotencyKey: key,
+          requestHash: hash,
+        });
+        await tx
+          .update(receivables)
+          .set({ rest: r.rest - input.amount, lastPaymentAt: new Date() })
+          .where(eq(receivables.id, id));
+      })
+      .catch((e: unknown) => {
+        // The same key on another receivable (no shared row lock): the unique index refuses it.
+        if (isUniqueViolation(e))
+          throw fieldError(
+            'idempotencyKey',
+            'Kunci ini sudah dipakai untuk pembayaran lain',
+          );
+        throw e;
       });
-      await tx
-        .update(receivables)
-        .set({ rest: r.rest - input.amount, lastPaymentAt: new Date() })
-        .where(eq(receivables.id, id));
-    });
     return this.get(s.tenantId, id);
   }
 
@@ -221,8 +275,13 @@ export class ReceivablesService {
           id ? eq(paymentMethods.id, id) : eq(paymentMethods.name, 'Tunai'),
         ),
       );
-    if (!m) throw refuse('Metode pembayaran tidak ditemukan');
-    if (m.isCredit) throw refuse('Piutang tidak dapat dibayar dengan kasbon');
+    if (!m)
+      throw fieldError('paymentMethodId', 'Metode pembayaran tidak ditemukan');
+    if (m.isCredit)
+      throw fieldError(
+        'paymentMethodId',
+        'Piutang tidak dapat dibayar dengan kasbon',
+      );
     return m.id;
   }
 }
@@ -237,7 +296,7 @@ export class ReceivablesController {
     return {
       data: await this.receivables.list(
         s.tenantId,
-        parse(ReceivableQuery, query),
+        validate(ReceivableQuery, query),
       ),
     };
   }
@@ -253,9 +312,19 @@ export class ReceivablesController {
   pay(
     @CurrentSession() s: PosSession,
     @Param('id') id: string,
+    @Headers('idempotency-key') key: unknown,
     @Body() body: unknown,
   ) {
-    return this.receivables.pay(s, parseId(id), parse(PaymentInput, body));
+    const { idempotencyKey } = validate(
+      z.object({ idempotencyKey: IdempotencyKey }),
+      { idempotencyKey: key },
+    );
+    return this.receivables.pay(
+      s,
+      parseId(id),
+      idempotencyKey,
+      validate(PaymentInput, body),
+    );
   }
 }
 

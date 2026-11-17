@@ -1,6 +1,5 @@
 import {
   Body,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -11,11 +10,10 @@ import {
   Param,
   Patch,
   Post,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { parse } from '../catalog/catalog.schemas';
+import { fieldError, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { paymentMethods } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -91,7 +89,7 @@ export class PaymentMethodsService {
       return await op();
     } catch (e) {
       if (isUniqueViolation(e))
-        throw new ConflictException({ message: 'Nama sudah dipakai' });
+        throw fieldError('name', 'Nama metode pembayaran sudah dipakai', 409);
       throw e;
     }
   }
@@ -110,9 +108,7 @@ export class PaymentMethodsService {
   private async assertEditable(tenantId: string, id: string) {
     const row = await this.get(tenantId, id);
     if (row.name === 'Tunai')
-      throw new UnprocessableEntityException({
-        message: 'Metode Tunai tidak dapat diubah',
-      });
+      throw fieldError('_', 'Metode Tunai tidak dapat diubah atau dihapus');
   }
 
   async update(
@@ -122,7 +118,7 @@ export class PaymentMethodsService {
   ) {
     await this.assertEditable(tenantId, id);
     if (input.name === 'Tunai')
-      throw new ConflictException({ message: 'Nama sudah dipakai' });
+      throw fieldError('name', 'Nama metode pembayaran sudah dipakai', 409);
     return this.write(async () => {
       const [row] = await this.db
         .update(paymentMethods)
@@ -159,7 +155,7 @@ export class PaymentMethodsController {
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.methods.create(s.tenantId, parse(Input, body));
+    return this.methods.create(s.tenantId, validate(Input, body));
   }
 
   @Get(':id')
@@ -177,8 +173,11 @@ export class PaymentMethodsController {
     return this.methods.update(
       s.tenantId,
       parseId(id),
-      parse(
-        Input.partial().refine((o) => Object.keys(o).length > 0),
+      validate(
+        Input.partial().refine(
+          (o) => Object.keys(o).length > 0,
+          'Tidak ada yang diubah',
+        ),
         body,
       ),
     );

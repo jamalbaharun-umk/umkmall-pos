@@ -1,6 +1,5 @@
 import {
   Body,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -11,11 +10,16 @@ import {
   Param,
   Patch,
   Post,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { parse } from '../catalog/catalog.schemas';
+import {
+  fieldError,
+  formatRupiah,
+  LocalDate,
+  Rupiah,
+  validate,
+} from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { VOUCHER_TYPES, vouchers } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -24,17 +28,12 @@ import type { Tx } from '../stock/stock.service';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
-const rupiah = z.number().int().nonnegative().max(1_000_000_000_000);
-const day = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'tanggal');
 const code = z
   .string()
   .trim()
   .min(1)
   .max(40)
-  .regex(/^\S+$/, 'tanpa spasi')
+  .regex(/^\S+$/, 'Kode tanpa spasi')
   .transform((c) => c.toUpperCase());
 
 const Fields = z
@@ -42,22 +41,26 @@ const Fields = z
     name: z.string().trim().min(1).max(120),
     code,
     type: z.enum(VOUCHER_TYPES),
-    nominal: rupiah.positive(),
-    kuota: z.number().int().min(0).max(1_000_000),
-    startDate: day,
-    expired: day,
-    minimalBuying: rupiah.default(0),
+    nominal: Rupiah.positive('Harus lebih dari 0'),
+    kuota: z.number().int('Harus bilangan bulat').min(0).max(1_000_000),
+    startDate: LocalDate,
+    expired: LocalDate,
+    minimalBuying: Rupiah.default(0),
   })
   .strict();
-const valid = (v: Partial<z.infer<typeof Fields>>) =>
-  (v.type !== 'percentage' || (v.nominal ?? 0) <= 100) &&
-  (!v.startDate || !v.expired || v.expired >= v.startDate);
-const VoucherInput = Fields.refine(valid, 'nominal/tanggal');
+const VoucherInput = Fields.refine(
+  (v) => v.type !== 'percentage' || v.nominal <= 100,
+  { message: 'Persen antara 1 dan 100', path: ['nominal'] },
+).refine((v) => v.expired >= v.startDate, {
+  message: 'Tanggal berakhir harus sama dengan atau setelah tanggal mulai',
+  path: ['expired'],
+});
+// A partial update is checked merged with the stored voucher (percentage ≤ 100, dates ordered).
 const VoucherUpdate = Fields.partial().refine(
-  (o) => Object.keys(o).length > 0 && valid(o),
-  'nominal/tanggal',
+  (o) => Object.keys(o).length > 0,
+  'Tidak ada yang diubah',
 );
-const CheckInput = z.object({ code, amount: rupiah }).strict();
+const CheckInput = z.object({ code, amount: Rupiah }).strict();
 
 const columns = {
   id: vouchers.id,
@@ -79,9 +82,6 @@ const live = (tenantId: string, id?: string) =>
     id ? eq(vouchers.id, id) : undefined,
   );
 
-const refuse = (message: string) =>
-  new UnprocessableEntityException({ message });
-
 /**
  * Validates a voucher for `amount` (the sale after its manual discount) WITHOUT touching quota
  * (Lakasir flaw 1: quota was taken before validation, so every attempt burned it).
@@ -92,7 +92,9 @@ export async function evaluateVoucher(
   tenantId: string,
   voucherCode: string,
   amount: number,
+  field = 'voucherCode',
 ) {
+  const refuse = (message: string) => fieldError(field, message);
   // The store's day is Asia/Jakarta: a voucher "until 17 Nov" works until midnight WIB.
   const [v] = await db
     .select({
@@ -106,11 +108,11 @@ export async function evaluateVoucher(
     .from(vouchers)
     .where(and(live(tenantId), eq(vouchers.code, voucherCode.toUpperCase())));
   if (!v) throw refuse('Voucher tidak ditemukan');
-  if (!v.inRange) throw refuse('Voucher tidak berlaku hari ini');
-  if (v.kuota <= 0) throw refuse('Kuota voucher habis');
+  if (!v.inRange) throw refuse('Voucher belum berlaku atau sudah kedaluwarsa');
+  if (v.kuota <= 0) throw refuse('Voucher sudah habis');
   if (amount < v.minimalBuying)
     throw refuse(
-      `Minimal belanja Rp${v.minimalBuying.toLocaleString('id-ID')} untuk voucher ini`,
+      `Belanja minimal ${formatRupiah(v.minimalBuying)} untuk voucher ini`,
     );
   const discount =
     v.type === 'percentage'
@@ -126,7 +128,7 @@ export async function consumeVoucher(tx: Tx, tenantId: string, id: string) {
     .set({ kuota: sql`${vouchers.kuota} - 1` })
     .where(and(live(tenantId, id), gt(vouchers.kuota, 0)))
     .returning({ id: vouchers.id });
-  if (!rows.length) throw refuse('Kuota voucher habis');
+  if (!rows.length) throw fieldError('voucherCode', 'Voucher sudah habis');
 }
 
 /** Vouchers (Lakasir VoucherResource + VoucherService). */
@@ -156,10 +158,7 @@ export class VouchersService {
       return await op();
     } catch (e) {
       if (isUniqueViolation(e))
-        throw new ConflictException({ message: 'Kode sudah dipakai' });
-      // The row check (percentage ≤ 100, expired ≥ start) after merging a partial update.
-      if ((e as { cause?: { code?: string } }).cause?.code === '23514')
-        throw refuse('Nominal atau tanggal tidak valid');
+        throw fieldError('code', 'Kode voucher sudah dipakai', 409);
       throw e;
     }
   }
@@ -174,7 +173,21 @@ export class VouchersService {
     });
   }
 
-  update(tenantId: string, id: string, input: z.infer<typeof VoucherUpdate>) {
+  async update(tenantId: string, id: string, body: unknown) {
+    const changes = validate(VoucherUpdate, body);
+    const c = await this.get(tenantId, id);
+    const current = {
+      name: c.name,
+      code: c.code,
+      type: c.type,
+      nominal: c.nominal,
+      kuota: c.kuota,
+      startDate: c.startDate,
+      expired: c.expired,
+      minimalBuying: c.minimalBuying,
+    };
+    // Checked as a whole so a changed nominal or date is refused on its own field, not by the DB check.
+    const input = validate(VoucherInput, { ...current, ...changes });
     return this.write(async () => {
       const [row] = await this.db
         .update(vouchers)
@@ -197,7 +210,7 @@ export class VouchersService {
   }
 
   check(tenantId: string, input: z.infer<typeof CheckInput>) {
-    return evaluateVoucher(this.db, tenantId, input.code, input.amount);
+    return evaluateVoucher(this.db, tenantId, input.code, input.amount, 'code');
   }
 }
 
@@ -214,7 +227,7 @@ export class VouchersController {
   @Post()
   @RequirePermission('vouchers.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.vouchers.create(s.tenantId, parse(VoucherInput, body));
+    return this.vouchers.create(s.tenantId, validate(VoucherInput, body));
   }
 
   // The cashier's preview of a code; the sale re-validates and takes the quota.
@@ -222,7 +235,7 @@ export class VouchersController {
   @RequirePermission('sales.create')
   @HttpCode(200)
   check(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.vouchers.check(s.tenantId, parse(CheckInput, body));
+    return this.vouchers.check(s.tenantId, validate(CheckInput, body));
   }
 
   @Get(':id')
@@ -238,11 +251,7 @@ export class VouchersController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.vouchers.update(
-      s.tenantId,
-      parseId(id),
-      parse(VoucherUpdate, body),
-    );
+    return this.vouchers.update(s.tenantId, parseId(id), body);
   }
 
   @Delete(':id')
