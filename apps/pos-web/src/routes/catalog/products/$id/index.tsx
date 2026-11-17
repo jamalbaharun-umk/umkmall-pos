@@ -4,7 +4,8 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { EllipsisVertical, Pencil, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useConfirm } from '@/components/confirm'
-import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components/page'
+import { useCan } from '@/components/shell'
+import { Empty, Page, PageError, PageLoading, Panel, dateTime, rupiah } from '@/components/page'
 import { deleteProduct, getProductDetail } from '../../-api'
 import { TYPE_LABEL } from '../-form'
 
@@ -23,13 +24,13 @@ const REASON: Record<string, string> = {
   opname: 'Stok opname',
 }
 const SOURCE: Record<string, string> = { opening: 'Stok awal', purchase: 'Pembelian', adjustment: 'Penyesuaian' }
-const when = (iso: string) => new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
 
 /** Lakasir's product view: status + actions, stat cards, the detail grid, then history tabs. */
 function ViewProduct() {
   const { product, stock, movements } = Route.useLoaderData()
   const navigate = useNavigate()
   const confirm = useConfirm()
+  const canEdit = useCan('catalog.manage')
 
   const remove = () =>
     confirm.ask(`Hapus ${product.name}?`, async () => {
@@ -48,21 +49,25 @@ function ViewProduct() {
           <Badge color={product.isActive ? 'success' : 'light'} size="small">
             {product.isActive ? 'Aktif' : 'Nonaktif'}
           </Badge>
-          <Button asChild type="primary" color="primary" size="small" width="auto">
-            <Link to="/catalog/products/$id/ubah" params={{ id: product.id }}>
-              <Pencil className="size-4" aria-hidden /> Ubah
-            </Link>
-          </Button>
-          <Menu
-            label="Aksi lain"
-            align="end"
-            trigger={
-              <Button type="outline" color="light" size="small" iconOnly aria-label="Aksi lain">
-                <EllipsisVertical className="size-4" aria-hidden />
+          {canEdit && (
+            <>
+              <Button asChild type="primary" color="primary" size="small" width="auto">
+                <Link to="/catalog/products/$id/ubah" params={{ id: product.id }}>
+                  <Pencil className="size-4" aria-hidden /> Ubah
+                </Link>
               </Button>
-            }
-            items={[{ id: 'hapus', label: 'Hapus', danger: true, icon: <Trash2 className="size-4" />, onSelect: remove }]}
-          />
+              <Menu
+                label="Aksi lain"
+                align="end"
+                trigger={
+                  <Button type="outline" color="light" size="small" iconOnly aria-label="Aksi lain">
+                    <EllipsisVertical className="size-4" aria-hidden />
+                  </Button>
+                }
+                items={[{ id: 'hapus', label: 'Hapus', danger: true, icon: <Trash2 className="size-4" />, onSelect: remove }]}
+              />
+            </>
+          )}
         </>
       }
     >
@@ -128,7 +133,7 @@ function ViewProduct() {
                 <TableBody>
                   {movements.map((m) => (
                     <TableRow key={m.id}>
-                      <TableCell>{when(m.createdAt)}</TableCell>
+                      <TableCell>{dateTime(m.createdAt)}</TableCell>
                       <TableCell>{REASON[m.reason] ?? m.reason}</TableCell>
                       <TableCell className={`text-right tabular-nums ${m.delta < 0 ? 'text-default-error' : 'text-default-success'}`}>
                         {m.delta > 0 ? `+${m.delta}` : m.delta}
@@ -157,7 +162,7 @@ function ViewProduct() {
                 <TableBody>
                   {stock.batches.map((b) => (
                     <TableRow key={b.id}>
-                      <TableCell>{when(b.receivedAt)}</TableCell>
+                      <TableCell>{dateTime(b.receivedAt)}</TableCell>
                       <TableCell>{SOURCE[b.source] ?? b.source}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {b.qtyRemaining} / {b.qtyInitial}

@@ -99,3 +99,6 @@ export function PageError({ error }: ErrorComponentProps) {
 }
 
 export const rupiah = (n: number) => `Rp${n.toLocaleString('id-ID')}`
+
+export const dateTime = (iso: string) =>
+  new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })

@@ -1,6 +1,6 @@
 import { AppShell } from '@umkmall/ui/layouts'
 import { Header, Menu, Sidebar, SidebarMenuItem } from '@umkmall/ui/primitives'
-import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, getRouteApi, useRouter, useRouterState } from '@tanstack/react-router'
 import { LogOut, Menu as MenuIcon, Store } from 'lucide-react'
 import { forwardRef, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NAV, activeNav, visibleNav } from '@/nav'
@@ -8,6 +8,14 @@ import { NAV, activeNav, visibleNav } from '@/nav'
 export type Me = {
   tenant: { id: string; name?: string | null }
   actor: { id: string; kind: 'owner' | 'cashier'; name: string | null; permissions: string[] }
+}
+
+const root = getRouteApi('__root__')
+
+/** Whether the signed-in actor holds a permission (owners hold all). Hides actions the API would refuse with 403. */
+export function useCan(permission: string): boolean {
+  const me = root.useLoaderData() as Me | null
+  return me?.actor.permissions.includes(permission) ?? false
 }
 
 // SidebarMenuItem renders `linkComponent` with `href`; TanStack's Link wants `to`.

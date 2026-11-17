@@ -1,0 +1,85 @@
+import { Alert, Button, CheckBox, TextField, toast } from '@umkmall/ui/primitives'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { Panel } from '@/components/page'
+import { PERMISSION_LABELS, saveRole, type Role } from '../-api'
+
+/** Lakasir's role form: a name, then the permissions as a searchable checkbox grid with select/deselect all. */
+export function RoleForm({ role, permissions }: { role?: Role; permissions: string[] }) {
+  const navigate = useNavigate()
+  const [name, setName] = useState(role?.name ?? '')
+  const [granted, setGranted] = useState<string[]>(role?.permissions ?? [])
+  const [q, setQ] = useState('')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const label = (p: string) => PERMISSION_LABELS[p] ?? p
+  const shown = permissions.filter((p) => label(p).toLowerCase().includes(q.trim().toLowerCase()))
+  const all = shown.length > 0 && shown.every((p) => granted.includes(p))
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (!name.trim()) return setError('Nama peran wajib diisi.')
+    setBusy(true)
+    setError(undefined)
+    const res = await saveRole({ data: { id: role?.id, name: name.trim(), permissions: granted } }).catch(() => ({
+      ok: false as const,
+      error: 'Gagal menyimpan, coba lagi.',
+    }))
+    setBusy(false)
+    if (!res.ok) return setError(res.error)
+    toast(role ? 'Peran tersimpan' : 'Peran dibuat', { variant: 'success' })
+    await navigate({ to: '/staf/peran' })
+  }
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
+      <Panel className="flex flex-col gap-5 p-6">
+        <TextField label="Nama" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} required />
+        <fieldset className="flex flex-col gap-3">
+          <legend className="mb-2 text-sm font-medium text-default-primary">Izin</legend>
+          <TextField
+            aria-label="Cari izin"
+            size="xsmall"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Ketik untuk mencari izin…"
+            leadingAdornment={<Search className="size-4 text-default-secondary" aria-hidden />}
+          />
+          <button
+            type="button"
+            className="self-start text-sm font-semibold text-default-brand hover:underline"
+            onClick={() =>
+              setGranted((g) => (all ? g.filter((p) => !shown.includes(p)) : [...new Set([...g, ...shown])]))
+            }
+          >
+            {all ? 'Batal pilih semua' : 'Pilih semua'}
+          </button>
+          {shown.length === 0 ? (
+            <p className="text-sm text-default-secondary">Izin tidak ditemukan.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {shown.map((p) => (
+                <CheckBox
+                  key={p}
+                  label={label(p)}
+                  checked={granted.includes(p)}
+                  onChange={(e) => setGranted((g) => (e.target.checked ? [...g, p] : g.filter((x) => x !== p)))}
+                />
+              ))}
+            </div>
+          )}
+        </fieldset>
+      </Panel>
+      {error && <Alert variant="danger">{error}</Alert>}
+      <div className="flex flex-wrap gap-2">
+        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
+          {role ? 'Simpan perubahan' : 'Simpan'}
+        </Button>
+        <Button asChild type="outline" color="light" size="small" width="auto">
+          <Link to="/staf/peran">Batal</Link>
+        </Button>
+      </div>
+    </form>
+  )
+}

@@ -24,6 +24,9 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'reports.view': 'Melihat laporan',
   'staff.manage': 'Mengelola staf, peran dan perangkat',
   'purchasing.manage': 'Mengelola pemasok, pembelian dan stok opname',
+  'members.manage': 'Mengelola pelanggan',
+  'vouchers.manage': 'Mengelola voucher',
+  'receivables.manage': 'Mengelola piutang',
 }
 
 const ERRORS: Record<number, string> = {
@@ -71,6 +74,13 @@ export const loadRolesPage = createServerFn().handler(async () => ({
   roles: await load<Role[]>('/roles'),
   permissions: await load<string[]>('/roles/permissions'),
 }))
+
+export const loadRole = createServerFn()
+  .validator((id: string) => id)
+  .handler(async ({ data }) => ({
+    role: await load<Role>(`/roles/${encodeURIComponent(data)}`),
+    permissions: await load<string[]>('/roles/permissions'),
+  }))
 
 type RoleInput = { id?: string; name: string; permissions: string[] }
 export const saveRole = createServerFn({ method: 'POST' })

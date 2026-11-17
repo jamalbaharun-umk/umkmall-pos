@@ -2,6 +2,7 @@ import { HeadContent, Outlet, Scripts, createRootRoute, useMatches } from '@tans
 import { createServerFn } from '@tanstack/react-start'
 import { Toaster } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
+import { Empty, Page } from '@/components/page'
 import { Shell, type Me } from '@/components/shell'
 import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
@@ -39,6 +40,11 @@ export const Route = createRootRoute({
   loader: () => getMe(),
   staleTime: 5 * 60_000, // router.invalidate() (after sign-in or any save) refreshes it sooner
   component: Root,
+  notFoundComponent: () => (
+    <Page title="Halaman tidak ditemukan">
+      <Empty title="Halaman ini tidak ada">Periksa alamatnya, atau kembali lewat menu di samping.</Empty>
+    </Page>
+  ),
 })
 
 function Root() {

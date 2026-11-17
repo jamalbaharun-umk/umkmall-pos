@@ -15,6 +15,7 @@ import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { Pencil, Search, Trash2 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
+import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { deleteCategory, listCategories, saveCategory, type Category } from './-api'
 
@@ -30,6 +31,7 @@ function CategoriesPage() {
   const categories = Route.useLoaderData()
   const router = useRouter()
   const confirm = useConfirm()
+  const canEdit = useCan('catalog.manage')
   const [q, setQ] = useState('')
   const [editing, setEditing] = useState<Category | 'new' | null>(null)
   const shown = categories.filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase()))
@@ -47,9 +49,11 @@ function CategoriesPage() {
       title="Kategori"
       crumbs={[{ label: 'Kategori', to: '/catalog/categories' }, { label: 'Daftar' }]}
       actions={
-        <Button type="primary" color="primary" size="small" width="auto" onClick={() => setEditing('new')}>
-          Tambah kategori
-        </Button>
+        canEdit && (
+          <Button type="primary" color="primary" size="small" width="auto" onClick={() => setEditing('new')}>
+            Tambah kategori
+          </Button>
+        )
       }
     >
       <Panel>
@@ -95,14 +99,16 @@ function CategoriesPage() {
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.name}</TableCell>
                   <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button type="text" color="primary" size="small" width="auto" onClick={() => setEditing(c)}>
-                        <Pencil className="size-4" aria-hidden /> Ubah
-                      </Button>
-                      <Button type="text" color="danger" size="small" width="auto" onClick={() => remove(c)}>
-                        <Trash2 className="size-4" aria-hidden /> Hapus
-                      </Button>
-                    </div>
+                    {canEdit && (
+                      <div className="flex justify-end gap-1">
+                        <Button type="text" color="primary" size="small" width="auto" onClick={() => setEditing(c)}>
+                          <Pencil className="size-4" aria-hidden /> Ubah
+                        </Button>
+                        <Button type="text" color="danger" size="small" width="auto" onClick={() => remove(c)}>
+                          <Trash2 className="size-4" aria-hidden /> Hapus
+                        </Button>
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

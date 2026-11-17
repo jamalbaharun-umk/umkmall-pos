@@ -1,42 +1,45 @@
-import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Button, toast } from '@umkmall/ui/primitives'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useConfirm } from '@/components/confirm'
+import { Page, PageError, PageLoading } from '@/components/page'
 import { deleteStaff, loadMember } from './-api'
 import { StaffForm } from './-staff-form'
-import { Button, Card, ErrorText, LoadError, Pending, StaffLayout } from './-ui'
 
 export const Route = createFileRoute('/staf/$id')({
   loader: ({ params }) => loadMember({ data: params.id }),
-  component: MemberPage,
-  pendingComponent: Pending,
-  errorComponent: LoadError,
+  pendingComponent: PageLoading,
+  errorComponent: PageError,
+  component: EditStaff,
 })
 
-function MemberPage() {
+/** Lakasir's Edit User: the form, with Delete as the page action. */
+function EditStaff() {
   const { member, roles } = Route.useLoaderData()
-  const router = useRouter()
   const navigate = useNavigate()
-  const [error, setError] = useState<string>()
-
-  async function remove() {
-    if (!window.confirm(`Hapus ${member.name}? Sesi kasirnya juga berakhir.`)) return
-    const res = await deleteStaff({ data: member.id }).catch(() => ({ ok: false as const, error: 'Gagal menghapus.' }))
-    if (!res.ok) return setError(res.error)
-    await navigate({ to: '/staf' })
-  }
-
+  const confirm = useConfirm()
+  const remove = () =>
+    confirm.ask(
+      `Hapus ${member.name}?`,
+      async () => {
+        const r = await deleteStaff({ data: member.id })
+        if (!r.ok) return r.error
+        toast('Staf dihapus', { variant: 'success' })
+        await navigate({ to: '/staf' })
+      },
+      { body: 'Staf yang dihapus tidak bisa masuk lagi dan sesi kasirnya berakhir.' },
+    )
   return (
-    <StaffLayout title={member.name}>
-      <Card>
-        <StaffForm key={member.id} member={member} roles={roles} onSaved={() => router.invalidate()} />
-      </Card>
-      <Card>
-        <h2 className="text-lg font-medium text-ink">Hapus staf</h2>
-        <p className="mt-1 text-sm text-ink-muted">Staf yang dihapus tidak bisa masuk lagi dan sesinya berakhir.</p>
-        <ErrorText>{error}</ErrorText>
-        <Button variant="danger" className="mt-3" onClick={remove}>
+    <Page
+      title={`Ubah ${member.name}`}
+      crumbs={[{ label: 'Staf', to: '/staf' }, { label: member.name }, { label: 'Ubah' }]}
+      actions={
+        <Button type="primary" color="danger" size="small" width="auto" onClick={remove}>
           Hapus
         </Button>
-      </Card>
-    </StaffLayout>
+      }
+    >
+      <StaffForm key={member.id} member={member} roles={roles} />
+      {confirm.dialog}
+    </Page>
   )
 }

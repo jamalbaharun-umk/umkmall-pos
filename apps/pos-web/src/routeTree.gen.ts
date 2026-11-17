@@ -30,7 +30,7 @@ import { Route as PiutangIndexRouteImport } from './routes/piutang/index'
 import { Route as PiutangIdRouteImport } from './routes/piutang/$id'
 import { Route as StafIndexRouteImport } from './routes/staf/index'
 import { Route as StafIdRouteImport } from './routes/staf/$id'
-import { Route as StafPeranRouteImport } from './routes/staf/peran'
+import { Route as StafBaruRouteImport } from './routes/staf/baru'
 import { Route as StafPerangkatRouteImport } from './routes/staf/perangkat'
 import { Route as StokOpnameIndexRouteImport } from './routes/stok-opname/index'
 import { Route as StokOpnameIdRouteImport } from './routes/stok-opname/$id'
@@ -42,6 +42,9 @@ import { Route as KasirRiwayatIndexRouteImport } from './routes/kasir/riwayat.in
 import { Route as KasirRiwayatIdRouteImport } from './routes/kasir/riwayat.$id'
 import { Route as KasirStrukIdRouteImport } from './routes/kasir/struk.$id'
 import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis'
+import { Route as StafPeranIndexRouteImport } from './routes/staf/peran/index'
+import { Route as StafPeranIdRouteImport } from './routes/staf/peran/$id'
+import { Route as StafPeranBaruRouteImport } from './routes/staf/peran/baru'
 import { Route as CatalogProductsIdIndexRouteImport } from './routes/catalog/products/$id/index'
 import { Route as CatalogProductsIdUbahRouteImport } from './routes/catalog/products/$id/ubah'
 import { Route as CatalogProductsIdGambarImageIdRouteImport } from './routes/catalog/products/$id/gambar.$imageId'
@@ -151,9 +154,9 @@ const StafIdRoute = StafIdRouteImport.update({
   path: '/staf/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const StafPeranRoute = StafPeranRouteImport.update({
-  id: '/staf/peran',
-  path: '/staf/peran',
+const StafBaruRoute = StafBaruRouteImport.update({
+  id: '/staf/baru',
+  path: '/staf/baru',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StafPerangkatRoute = StafPerangkatRouteImport.update({
@@ -211,6 +214,21 @@ const LaporanCsvJenisRoute = LaporanCsvJenisRouteImport.update({
   path: '/laporan/csv/$jenis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StafPeranIndexRoute = StafPeranIndexRouteImport.update({
+  id: '/staf/peran/',
+  path: '/staf/peran/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StafPeranIdRoute = StafPeranIdRouteImport.update({
+  id: '/staf/peran/$id',
+  path: '/staf/peran/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StafPeranBaruRoute = StafPeranBaruRouteImport.update({
+  id: '/staf/peran/baru',
+  path: '/staf/peran/baru',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CatalogProductsIdIndexRoute = CatalogProductsIdIndexRouteImport.update({
   id: '/catalog/products/$id/',
   path: '/catalog/products/$id/',
@@ -241,7 +259,7 @@ export interface FileRoutesByFullPath {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
   '/staf/$id': typeof StafIdRoute
-  '/staf/peran': typeof StafPeranRoute
+  '/staf/baru': typeof StafBaruRoute
   '/staf/perangkat': typeof StafPerangkatRoute
   '/stok-opname/$id': typeof StokOpnameIdRoute
   '/stok-opname/baru': typeof StokOpnameBaruRoute
@@ -260,8 +278,11 @@ export interface FileRoutesByFullPath {
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/staf/peran/$id': typeof StafPeranIdRoute
+  '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
   '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
+  '/staf/peran/': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
   '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
@@ -279,7 +300,7 @@ export interface FileRoutesByTo {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
   '/staf/$id': typeof StafIdRoute
-  '/staf/peran': typeof StafPeranRoute
+  '/staf/baru': typeof StafBaruRoute
   '/staf/perangkat': typeof StafPerangkatRoute
   '/stok-opname/$id': typeof StokOpnameIdRoute
   '/stok-opname/baru': typeof StokOpnameBaruRoute
@@ -298,8 +319,11 @@ export interface FileRoutesByTo {
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/staf/peran/$id': typeof StafPeranIdRoute
+  '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
   '/kasir/riwayat': typeof KasirRiwayatIndexRoute
+  '/staf/peran': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id': typeof CatalogProductsIdIndexRoute
   '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
@@ -318,7 +342,7 @@ export interface FileRoutesById {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
   '/staf/$id': typeof StafIdRoute
-  '/staf/peran': typeof StafPeranRoute
+  '/staf/baru': typeof StafBaruRoute
   '/staf/perangkat': typeof StafPerangkatRoute
   '/stok-opname/$id': typeof StokOpnameIdRoute
   '/stok-opname/baru': typeof StokOpnameBaruRoute
@@ -337,8 +361,11 @@ export interface FileRoutesById {
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/staf/peran/$id': typeof StafPeranIdRoute
+  '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
   '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
+  '/staf/peran/': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
   '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
@@ -358,7 +385,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/piutang/$id'
     | '/staf/$id'
-    | '/staf/peran'
+    | '/staf/baru'
     | '/staf/perangkat'
     | '/stok-opname/$id'
     | '/stok-opname/baru'
@@ -377,8 +404,11 @@ export interface FileRouteTypes {
     | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/staf/peran/$id'
+    | '/staf/peran/baru'
     | '/catalog/products/'
     | '/kasir/riwayat/'
+    | '/staf/peran/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
     | '/catalog/products/$id/gambar/$imageId'
@@ -396,7 +426,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/piutang/$id'
     | '/staf/$id'
-    | '/staf/peran'
+    | '/staf/baru'
     | '/staf/perangkat'
     | '/stok-opname/$id'
     | '/stok-opname/baru'
@@ -415,8 +445,11 @@ export interface FileRouteTypes {
     | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/staf/peran/$id'
+    | '/staf/peran/baru'
     | '/catalog/products'
     | '/kasir/riwayat'
+    | '/staf/peran'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id'
     | '/catalog/products/$id/gambar/$imageId'
@@ -434,7 +467,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/piutang/$id'
     | '/staf/$id'
-    | '/staf/peran'
+    | '/staf/baru'
     | '/staf/perangkat'
     | '/stok-opname/$id'
     | '/stok-opname/baru'
@@ -453,8 +486,11 @@ export interface FileRouteTypes {
     | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/staf/peran/$id'
+    | '/staf/peran/baru'
     | '/catalog/products/'
     | '/kasir/riwayat/'
+    | '/staf/peran/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
     | '/catalog/products/$id/gambar/$imageId'
@@ -473,7 +509,7 @@ export interface RootRouteChildren {
   PembelianBaruRoute: typeof PembelianBaruRoute
   PiutangIdRoute: typeof PiutangIdRoute
   StafIdRoute: typeof StafIdRoute
-  StafPeranRoute: typeof StafPeranRoute
+  StafBaruRoute: typeof StafBaruRoute
   StafPerangkatRoute: typeof StafPerangkatRoute
   StokOpnameIdRoute: typeof StokOpnameIdRoute
   StokOpnameBaruRoute: typeof StokOpnameBaruRoute
@@ -491,8 +527,11 @@ export interface RootRouteChildren {
   KasirRiwayatIdRoute: typeof KasirRiwayatIdRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
+  StafPeranIdRoute: typeof StafPeranIdRoute
+  StafPeranBaruRoute: typeof StafPeranBaruRoute
   CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
   KasirRiwayatIndexRoute: typeof KasirRiwayatIndexRoute
+  StafPeranIndexRoute: typeof StafPeranIndexRoute
   CatalogProductsIdUbahRoute: typeof CatalogProductsIdUbahRoute
   CatalogProductsIdIndexRoute: typeof CatalogProductsIdIndexRoute
   CatalogProductsIdGambarImageIdRoute: typeof CatalogProductsIdGambarImageIdRoute
@@ -647,11 +686,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StafIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/staf/peran': {
-      id: '/staf/peran'
-      path: '/staf/peran'
-      fullPath: '/staf/peran'
-      preLoaderRoute: typeof StafPeranRouteImport
+    '/staf/baru': {
+      id: '/staf/baru'
+      path: '/staf/baru'
+      fullPath: '/staf/baru'
+      preLoaderRoute: typeof StafBaruRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/staf/perangkat': {
@@ -731,6 +770,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaporanCsvJenisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/staf/peran/': {
+      id: '/staf/peran/'
+      path: '/staf/peran'
+      fullPath: '/staf/peran/'
+      preLoaderRoute: typeof StafPeranIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staf/peran/$id': {
+      id: '/staf/peran/$id'
+      path: '/staf/peran/$id'
+      fullPath: '/staf/peran/$id'
+      preLoaderRoute: typeof StafPeranIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staf/peran/baru': {
+      id: '/staf/peran/baru'
+      path: '/staf/peran/baru'
+      fullPath: '/staf/peran/baru'
+      preLoaderRoute: typeof StafPeranBaruRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/catalog/products/$id/': {
       id: '/catalog/products/$id/'
       path: '/catalog/products/$id'
@@ -768,7 +828,7 @@ const rootRouteChildren: RootRouteChildren = {
   PembelianBaruRoute: PembelianBaruRoute,
   PiutangIdRoute: PiutangIdRoute,
   StafIdRoute: StafIdRoute,
-  StafPeranRoute: StafPeranRoute,
+  StafBaruRoute: StafBaruRoute,
   StafPerangkatRoute: StafPerangkatRoute,
   StokOpnameIdRoute: StokOpnameIdRoute,
   StokOpnameBaruRoute: StokOpnameBaruRoute,
@@ -786,8 +846,11 @@ const rootRouteChildren: RootRouteChildren = {
   KasirRiwayatIdRoute: KasirRiwayatIdRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
+  StafPeranIdRoute: StafPeranIdRoute,
+  StafPeranBaruRoute: StafPeranBaruRoute,
   CatalogProductsIndexRoute: CatalogProductsIndexRoute,
   KasirRiwayatIndexRoute: KasirRiwayatIndexRoute,
+  StafPeranIndexRoute: StafPeranIndexRoute,
   CatalogProductsIdUbahRoute: CatalogProductsIdUbahRoute,
   CatalogProductsIdIndexRoute: CatalogProductsIdIndexRoute,
   CatalogProductsIdGambarImageIdRoute: CatalogProductsIdGambarImageIdRoute,

@@ -17,6 +17,7 @@ import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-r
 import { EllipsisVertical, Eye, Pencil, Search, Trash2 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
+import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components/page'
 import { deleteProduct, listCategories, listProducts, type ProductSearch } from '../-api'
 import { TYPE_LABEL } from './-form'
@@ -45,6 +46,7 @@ function ProductsPage() {
   const navigate = useNavigate({ from: Route.fullPath })
   const router = useRouter()
   const confirm = useConfirm()
+  const canEdit = useCan('catalog.manage')
   const [q, setQ] = useState(search.q ?? '')
   const pages = Math.max(1, Math.ceil(page.total / page.perPage))
   const filtered = Boolean(search.q || search.categoryId)
@@ -68,9 +70,11 @@ function ProductsPage() {
       title="Produk"
       crumbs={[{ label: 'Produk', to: '/catalog/products' }, { label: 'Daftar' }]}
       actions={
-        <Button asChild type="primary" color="primary" size="small" width="auto">
-          <Link to="/catalog/products/baru">Tambah produk</Link>
-        </Button>
+        canEdit && (
+          <Button asChild type="primary" color="primary" size="small" width="auto">
+            <Link to="/catalog/products/baru">Tambah produk</Link>
+          </Button>
+        )
       }
     >
       <Panel>
@@ -178,19 +182,24 @@ function ProductsPage() {
                           icon: <Eye className="size-4" />,
                           onSelect: () => void navigate({ to: '/catalog/products/$id', params: { id: p.id } }),
                         },
-                        {
-                          id: 'ubah',
-                          label: 'Ubah',
-                          icon: <Pencil className="size-4" />,
-                          onSelect: () => void navigate({ to: '/catalog/products/$id/ubah', params: { id: p.id } }),
-                        },
-                        {
-                          id: 'hapus',
-                          label: 'Hapus',
-                          danger: true,
-                          icon: <Trash2 className="size-4" />,
-                          onSelect: () => remove(p.id, p.name),
-                        },
+                        ...(canEdit
+                          ? [
+                              {
+                                id: 'ubah',
+                                label: 'Ubah',
+                                icon: <Pencil className="size-4" />,
+                                onSelect: () =>
+                                  void navigate({ to: '/catalog/products/$id/ubah', params: { id: p.id } }),
+                              },
+                              {
+                                id: 'hapus',
+                                label: 'Hapus',
+                                danger: true,
+                                icon: <Trash2 className="size-4" />,
+                                onSelect: () => remove(p.id, p.name),
+                              },
+                            ]
+                          : []),
                       ]}
                     />
                   </TableCell>
