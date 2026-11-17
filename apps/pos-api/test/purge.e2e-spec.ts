@@ -214,7 +214,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     await purge({ userId: a.userId }).expect(200, { purged: false });
     // The RESTRICT FK from pos.tenants no longer blocks UMKMall's own delete.
     await admin`delete from public.users where id = ${a.userId}`;
-  });
+   }, 30_000); // seeds two full stores (PIN hashing included)
 
   it('answers 503 and keeps every row when the images cannot be deleted; a retry completes it', async () => {
     const s = await createStore();

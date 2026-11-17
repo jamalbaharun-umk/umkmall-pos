@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import postgres from 'postgres';
 import { ADMIN_DATABASE_URL, APP_DATABASE_URL } from './support/env';
 
@@ -52,5 +54,45 @@ describe('pos schema and role', () => {
     await expect(
       admin`delete from public.users where id = ${u.id}`,
     ).rejects.toThrow(/foreign key/);
+  });
+
+  // U8: UMKMall's archival (role `postgres`) reads pos.tenants (id, user_id) to wait for the purge; nothing
+  // else. Local/CI clusters have no `postgres` role, so create a plain (non-superuser) one and re-apply the
+  // migration as its owner, pos_app: non-superuser is the strict case, where the RLS policy is needed too.
+  it('lets the postgres role read pos.tenants (id, user_id) and no other pos data', async () => {
+    await admin.unsafe(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres NOLOGIN; END IF;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$`);
+    await app.unsafe(
+      readFileSync(
+        path.join(__dirname, '..', 'drizzle', '0012_tenants_postgres_read.sql'),
+        'utf8',
+      ),
+    );
+    const [u] = await admin<
+      { id: string }[]
+    >`insert into public.users default values returning id`;
+    await app`insert into pos.tenants (user_id) values (${u.id})`;
+
+    const asPostgres = async <T>(query: string): Promise<T[]> =>
+      admin.begin(async (tx) => {
+        await tx.unsafe('set local role postgres');
+        return tx.unsafe(query) as unknown as T[];
+      }) as Promise<T[]>;
+    const rows = await asPostgres<{ user_id: string }>(
+      `select id, user_id from pos.tenants where user_id = '${u.id}'`,
+    );
+    expect(rows).toHaveLength(1);
+    await expect(
+      asPostgres('select created_at from pos.tenants limit 1'),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asPostgres('select 1 from pos.products limit 1'),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asPostgres(
+        `update pos.tenants set user_id = user_id where user_id = '${u.id}'`,
+      ),
+    ).rejects.toThrow(/permission denied/);
   });
 });

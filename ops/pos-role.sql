@@ -23,3 +23,8 @@ GRANT REFERENCES (id) ON public.users TO pos_app;
 -- Check (expect: false, true):
 --   SELECT has_table_privilege('pos_app', 'public.users', 'SELECT'),
 --          has_column_privilege('pos_app', 'public.users', 'id', 'REFERENCES');
+
+-- Not here: UMKMall's archive_deleted_users() (pg_cron, role `postgres`) reads pos.tenants (id, user_id) to
+-- skip users whose store the POS has not purged yet (UMK-1924 U8). That grant needs pos.tenants to exist, so
+-- it is a POS migration (apps/pos-api/drizzle/0012_tenants_postgres_read.sql, run by pos_app as owner), not
+-- part of this pre-migration script.
