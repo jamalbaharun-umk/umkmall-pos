@@ -1,8 +1,21 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
+import {
+  Button,
+  Card,
+  Dialog,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TextField,
+} from '@umkmall/ui'
 import { useState, type FormEvent } from 'react'
+import { Empty, ErrorText, LoadError, Page, Pending, useConfirm } from '@/components/pos-page'
 import { deleteSupplier, loadSuppliers, saveSupplier, type Supplier } from '../pembelian/-api'
-import { Button, Card, Empty, ErrorText, Field, inputClass, LoadError, Pending, StockLayout } from '../pembelian/-ui'
 
+// Lakasir's Suppliers resource: a table (name, phone, address) with edit/delete row actions and a modal form.
 export const Route = createFileRoute('/pemasok/')({
   loader: () => loadSuppliers(),
   component: SuppliersPage,
@@ -13,59 +26,105 @@ export const Route = createFileRoute('/pemasok/')({
 function SuppliersPage() {
   const suppliers = Route.useLoaderData()
   const router = useRouter()
-  const [editing, setEditing] = useState<Supplier | null>(null)
+  const { confirm, dialog } = useConfirm()
+  const [editing, setEditing] = useState<Supplier | 'new' | null>(null)
+  const [q, setQ] = useState('')
   const [error, setError] = useState<string>()
+  const s = q.trim().toLowerCase()
+  const shown = s
+    ? suppliers.filter((x) => [x.name, x.phone, x.address].some((v) => v?.toLowerCase().includes(s)))
+    : suppliers
 
-  async function remove(s: Supplier) {
-    if (!confirm(`Hapus pemasok ${s.name}? Pembelian lamanya tetap tersimpan.`)) return
-    const r = await deleteSupplier({ data: s.id })
+  async function remove(sup: Supplier) {
+    if (
+      !(await confirm(`Hapus ${sup.name}?`, 'Pembelian lamanya tetap tersimpan.', { confirm: 'Hapus', danger: true }))
+    )
+      return
+    const r = await deleteSupplier({ data: sup.id })
     if (!r.ok) return setError(r.error)
-    if (editing?.id === s.id) setEditing(null)
+    setError(undefined)
     await router.invalidate()
   }
 
   return (
-    <StockLayout title="Pemasok">
-      <Card>
-        <ErrorText>{error}</ErrorText>
-        {suppliers.length === 0 ? (
-          <Empty title="Belum ada pemasok" hint="Tambahkan pemasok tempat kamu membeli barang." />
+    <Page
+      crumbs={[{ label: 'Pemasok', to: '/pemasok' }, { label: 'Daftar' }]}
+      title="Pemasok"
+      actions={
+        <Button width="auto" onClick={() => setEditing('new')}>
+          Pemasok baru
+        </Button>
+      }
+    >
+      <ErrorText>{error}</ErrorText>
+      <Card variant="outlined" padding="none">
+        <div className="flex justify-end p-4">
+          <div className="w-full sm:w-72">
+            <TextField
+              aria-label="Cari pemasok"
+              type="search"
+              size="small"
+              placeholder="Cari nama, telepon, alamat…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+        </div>
+        {shown.length === 0 ? (
+          <Empty
+            title={suppliers.length === 0 ? 'Belum ada pemasok' : 'Pemasok tidak ditemukan'}
+            hint={suppliers.length === 0 ? 'Tambahkan pemasok tempat kamu membeli barang.' : 'Coba kata lain.'}
+          />
         ) : (
-          <ul className="divide-y divide-ink/10">
-            {suppliers.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-3 py-3">
-                <span className="min-w-0">
-                  <span className="font-medium text-ink">{s.name}</span>
-                  <span className="block truncate text-sm text-ink-muted">
-                    {[s.phone, s.address].filter(Boolean).join(' · ') || 'Tanpa kontak'}
-                  </span>
-                </span>
-                <span className="flex shrink-0 gap-2">
-                  <Button variant="ghost" onClick={() => setEditing(s)}>
-                    Ubah
-                  </Button>
-                  <Button variant="danger" onClick={() => void remove(s)}>
-                    Hapus
-                  </Button>
-                </span>
-              </li>
-            ))}
-          </ul>
+          <Table density="comfortable">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Nama</TableHead>
+                <TableHead>Telepon</TableHead>
+                <TableHead>Alamat</TableHead>
+                <TableHead className="text-right">Aksi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shown.map((sup) => (
+                <TableRow key={sup.id}>
+                  <TableCell className="font-medium">{sup.name}</TableCell>
+                  <TableCell>{sup.phone ?? '–'}</TableCell>
+                  <TableCell className="max-w-xs truncate">{sup.address ?? '–'}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    <Button width="auto" size="small" type="text" onClick={() => setEditing(sup)}>
+                      Ubah
+                    </Button>
+                    <Button width="auto" size="small" type="text" color="danger" onClick={() => void remove(sup)}>
+                      Hapus
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </Card>
-      <Card>
-        <h2 className="mb-4 text-lg font-medium text-ink">{editing ? `Ubah ${editing.name}` : 'Tambah pemasok'}</h2>
-        <SupplierForm
-          key={editing?.id ?? 'new'}
-          supplier={editing}
-          onDone={async () => {
-            setEditing(null)
-            await router.invalidate()
-          }}
-          onCancel={editing ? () => setEditing(null) : undefined}
-        />
-      </Card>
-    </StockLayout>
+      <Dialog
+        open={editing !== null}
+        onOpenChange={(o) => !o && setEditing(null)}
+        centered
+        size="medium"
+        title={editing === 'new' ? 'Pemasok baru' : 'Ubah pemasok'}
+      >
+        {editing !== null && (
+          <SupplierForm
+            supplier={editing === 'new' ? null : editing}
+            onCancel={() => setEditing(null)}
+            onDone={async () => {
+              setEditing(null)
+              await router.invalidate()
+            }}
+          />
+        )}
+      </Dialog>
+      {dialog}
+    </Page>
   )
 }
 
@@ -76,7 +135,7 @@ function SupplierForm({
 }: {
   supplier: Supplier | null
   onDone: () => Promise<void>
-  onCancel?: () => void
+  onCancel: () => void
 }) {
   const [name, setName] = useState(supplier?.name ?? '')
   const [phone, setPhone] = useState(supplier?.phone ?? '')
@@ -88,40 +147,54 @@ function SupplierForm({
     e.preventDefault()
     setBusy(true)
     const r = await saveSupplier({
-      data: { id: supplier?.id, name, phone: phone.trim() || null, address: address.trim() || null },
-    })
+      data: {
+        id: supplier?.id,
+        name,
+        phone: phone.trim() || null,
+        address: address.trim() || null,
+      },
+    }).catch(() => ({
+      ok: false as const,
+      error: 'Gagal menyimpan, coba lagi.',
+    }))
     setBusy(false)
     if (!r.ok) return setError(r.error)
-    if (!supplier) {
-      setName('')
-      setPhone('')
-      setAddress('')
-    }
-    setError(undefined)
     await onDone()
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <Field label="Nama">
-        <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} />
-      </Field>
-      <Field label="Telepon">
-        <input className={inputClass} value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" maxLength={30} />
-      </Field>
-      <Field label="Alamat">
-        <textarea className={inputClass} value={address} onChange={(e) => setAddress(e.target.value)} rows={2} maxLength={500} />
-      </Field>
+    <form onSubmit={submit} className="space-y-4 px-6 pb-6">
+      <TextField
+        label="Nama"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+        maxLength={120}
+        autoFocus
+      />
+      <TextField
+        label="Nomor telepon"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        inputMode="tel"
+        maxLength={30}
+      />
+      <TextField
+        label="Alamat"
+        multiline
+        rows={2}
+        value={address}
+        onChange={(e) => setAddress(e.target.value)}
+        maxLength={500}
+      />
       <ErrorText>{error}</ErrorText>
       <div className="flex gap-2">
-        <Button type="submit" disabled={busy}>
-          {busy ? 'Menyimpan…' : 'Simpan'}
+        <Button width="auto" htmlType="submit" isLoading={busy}>
+          Simpan
         </Button>
-        {onCancel && (
-          <Button variant="ghost" onClick={onCancel}>
-            Batal
-          </Button>
-        )}
+        <Button width="auto" type="outline" color="light" onClick={onCancel}>
+          Batal
+        </Button>
       </div>
     </form>
   )

@@ -15,7 +15,6 @@ import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
 import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
 import { Route as KasirIndexRouteImport } from './routes/kasir/index'
 import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
-import { Route as KasirRiwayatRouteImport } from './routes/kasir/riwayat'
 import { Route as KasirTutupRouteImport } from './routes/kasir/tutup'
 import { Route as LaporanIndexRouteImport } from './routes/laporan/index'
 import { Route as LaporanJenisRouteImport } from './routes/laporan/$jenis'
@@ -39,6 +38,8 @@ import { Route as StokOpnameBaruRouteImport } from './routes/stok-opname/baru'
 import { Route as VoucherIndexRouteImport } from './routes/voucher/index'
 import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/products/index'
 import { Route as CatalogProductsBaruRouteImport } from './routes/catalog/products/baru'
+import { Route as KasirRiwayatIndexRouteImport } from './routes/kasir/riwayat.index'
+import { Route as KasirRiwayatIdRouteImport } from './routes/kasir/riwayat.$id'
 import { Route as KasirStrukIdRouteImport } from './routes/kasir/struk.$id'
 import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis'
 import { Route as CatalogProductsIdIndexRouteImport } from './routes/catalog/products/$id/index'
@@ -73,11 +74,6 @@ const KasirIndexRoute = KasirIndexRouteImport.update({
 const KasirMasukRoute = KasirMasukRouteImport.update({
   id: '/kasir/masuk',
   path: '/kasir/masuk',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const KasirRiwayatRoute = KasirRiwayatRouteImport.update({
-  id: '/kasir/riwayat',
-  path: '/kasir/riwayat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KasirTutupRoute = KasirTutupRouteImport.update({
@@ -195,6 +191,16 @@ const CatalogProductsBaruRoute = CatalogProductsBaruRouteImport.update({
   path: '/catalog/products/baru',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KasirRiwayatIndexRoute = KasirRiwayatIndexRouteImport.update({
+  id: '/kasir/riwayat/',
+  path: '/kasir/riwayat/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KasirRiwayatIdRoute = KasirRiwayatIdRouteImport.update({
+  id: '/kasir/riwayat/$id',
+  path: '/kasir/riwayat/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KasirStrukIdRoute = KasirStrukIdRouteImport.update({
   id: '/kasir/struk/$id',
   path: '/kasir/struk/$id',
@@ -227,7 +233,6 @@ export interface FileRoutesByFullPath {
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
-  '/kasir/riwayat': typeof KasirRiwayatRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/masuk/dev': typeof MasukDevRoute
@@ -252,9 +257,11 @@ export interface FileRoutesByFullPath {
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
+  '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
+  '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
   '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
@@ -264,7 +271,6 @@ export interface FileRoutesByTo {
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
-  '/kasir/riwayat': typeof KasirRiwayatRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/masuk/dev': typeof MasukDevRoute
@@ -289,9 +295,11 @@ export interface FileRoutesByTo {
   '/stok-opname': typeof StokOpnameIndexRoute
   '/voucher': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
+  '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
+  '/kasir/riwayat': typeof KasirRiwayatIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id': typeof CatalogProductsIdIndexRoute
   '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
@@ -302,7 +310,6 @@ export interface FileRoutesById {
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
-  '/kasir/riwayat': typeof KasirRiwayatRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/masuk/dev': typeof MasukDevRoute
@@ -327,9 +334,11 @@ export interface FileRoutesById {
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
+  '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
+  '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
   '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
@@ -341,7 +350,6 @@ export interface FileRouteTypes {
     | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
-    | '/kasir/riwayat'
     | '/kasir/tutup'
     | '/laporan/$jenis'
     | '/masuk/dev'
@@ -366,9 +374,11 @@ export interface FileRouteTypes {
     | '/stok-opname/'
     | '/voucher/'
     | '/catalog/products/baru'
+    | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/catalog/products/'
+    | '/kasir/riwayat/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
     | '/catalog/products/$id/gambar/$imageId'
@@ -378,7 +388,6 @@ export interface FileRouteTypes {
     | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
-    | '/kasir/riwayat'
     | '/kasir/tutup'
     | '/laporan/$jenis'
     | '/masuk/dev'
@@ -403,9 +412,11 @@ export interface FileRouteTypes {
     | '/stok-opname'
     | '/voucher'
     | '/catalog/products/baru'
+    | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/catalog/products'
+    | '/kasir/riwayat'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id'
     | '/catalog/products/$id/gambar/$imageId'
@@ -415,7 +426,6 @@ export interface FileRouteTypes {
     | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
-    | '/kasir/riwayat'
     | '/kasir/tutup'
     | '/laporan/$jenis'
     | '/masuk/dev'
@@ -440,9 +450,11 @@ export interface FileRouteTypes {
     | '/stok-opname/'
     | '/voucher/'
     | '/catalog/products/baru'
+    | '/kasir/riwayat/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/catalog/products/'
+    | '/kasir/riwayat/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
     | '/catalog/products/$id/gambar/$imageId'
@@ -453,7 +465,6 @@ export interface RootRouteChildren {
   KeluarRoute: typeof KeluarRoute
   CatalogCategoriesRoute: typeof CatalogCategoriesRoute
   KasirMasukRoute: typeof KasirMasukRoute
-  KasirRiwayatRoute: typeof KasirRiwayatRoute
   KasirTutupRoute: typeof KasirTutupRoute
   LaporanJenisRoute: typeof LaporanJenisRoute
   MasukDevRoute: typeof MasukDevRoute
@@ -477,9 +488,11 @@ export interface RootRouteChildren {
   StokOpnameIndexRoute: typeof StokOpnameIndexRoute
   VoucherIndexRoute: typeof VoucherIndexRoute
   CatalogProductsBaruRoute: typeof CatalogProductsBaruRoute
+  KasirRiwayatIdRoute: typeof KasirRiwayatIdRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
   CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
+  KasirRiwayatIndexRoute: typeof KasirRiwayatIndexRoute
   CatalogProductsIdUbahRoute: typeof CatalogProductsIdUbahRoute
   CatalogProductsIdIndexRoute: typeof CatalogProductsIdIndexRoute
   CatalogProductsIdGambarImageIdRoute: typeof CatalogProductsIdGambarImageIdRoute
@@ -527,13 +540,6 @@ declare module '@tanstack/react-router' {
       path: '/kasir/masuk'
       fullPath: '/kasir/masuk'
       preLoaderRoute: typeof KasirMasukRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/kasir/riwayat': {
-      id: '/kasir/riwayat'
-      path: '/kasir/riwayat'
-      fullPath: '/kasir/riwayat'
-      preLoaderRoute: typeof KasirRiwayatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/kasir/tutup': {
@@ -697,6 +703,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CatalogProductsBaruRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/kasir/riwayat/': {
+      id: '/kasir/riwayat/'
+      path: '/kasir/riwayat'
+      fullPath: '/kasir/riwayat/'
+      preLoaderRoute: typeof KasirRiwayatIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kasir/riwayat/$id': {
+      id: '/kasir/riwayat/$id'
+      path: '/kasir/riwayat/$id'
+      fullPath: '/kasir/riwayat/$id'
+      preLoaderRoute: typeof KasirRiwayatIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/kasir/struk/$id': {
       id: '/kasir/struk/$id'
       path: '/kasir/struk/$id'
@@ -740,7 +760,6 @@ const rootRouteChildren: RootRouteChildren = {
   KeluarRoute: KeluarRoute,
   CatalogCategoriesRoute: CatalogCategoriesRoute,
   KasirMasukRoute: KasirMasukRoute,
-  KasirRiwayatRoute: KasirRiwayatRoute,
   KasirTutupRoute: KasirTutupRoute,
   LaporanJenisRoute: LaporanJenisRoute,
   MasukDevRoute: MasukDevRoute,
@@ -764,9 +783,11 @@ const rootRouteChildren: RootRouteChildren = {
   StokOpnameIndexRoute: StokOpnameIndexRoute,
   VoucherIndexRoute: VoucherIndexRoute,
   CatalogProductsBaruRoute: CatalogProductsBaruRoute,
+  KasirRiwayatIdRoute: KasirRiwayatIdRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
   CatalogProductsIndexRoute: CatalogProductsIndexRoute,
+  KasirRiwayatIndexRoute: KasirRiwayatIndexRoute,
   CatalogProductsIdUbahRoute: CatalogProductsIdUbahRoute,
   CatalogProductsIdIndexRoute: CatalogProductsIdIndexRoute,
   CatalogProductsIdGambarImageIdRoute: CatalogProductsIdGambarImageIdRoute,

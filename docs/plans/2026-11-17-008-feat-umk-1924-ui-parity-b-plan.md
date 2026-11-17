@@ -60,3 +60,26 @@ these screens stop importing `staf/-ui`, which `ui-parity-a` owns.
 
 Purchase number / date / due date / image / payment status, stock opname number and PIC, product stock and image on
 cashier cards, cashier filter on history, A4 invoice, member / voucher / payment methods (U7).
+
+## Final parity (2026-11-17)
+
+Exercised in the browser against a local pos-api (own database), Lakasir and POS screenshots at 1280×800 in
+`.evidence/ui-parity-b/` (gitignored). Screens use `@umkmall/ui` and the shell's `components/page.tsx`; extras in
+`components/pos-page.tsx` (inline error, confirm dialog, date format). No legacy token classes in these routes.
+
+| Screen | Route | State | Exercised | Not built / not exercised |
+|---|---|---|---|---|
+| Open shift | `/kasir` (no shift) | Done | opened with Rp100.000 | — |
+| Cashier | `/kasir` (bare, no shell) | Done: grid, search, category tabs, order panel (+ / qty / − / delete), note dialog, subtotal/tax/total | added 3 items, note, 10% tax; tablet 768 px | Member and voucher rows show "Belum tersedia" until U7 wires them; product stock and image on cards |
+| Payment dialog | `/kasir` | Done: method (Tunai), totals, amount field, quick amounts, "Uang pas", numpad, Bayar/Tutup, items on the right | quick amount + numpad + pay | Non-cash methods (U7) |
+| Success dialog | `/kasir` | Done: change, Cetak struk, Tutup | change Rp4.400 | — |
+| Receipt | `/kasir/struk/$id` | Done, shows the note | opened | Physical printer (browser print only) |
+| Selling history | `/kasir/riwayat` | Done: overview cards (range), table (code, cashier, date, totals, tax, discount, cost with reports.view), date filter, pagination | filter empty day and today | Member / customer number columns (U7), cashier filter |
+| Selling detail | `/kasir/riwayat/$id` | Done | opened from the table | Member details (U7), A4 invoice |
+| Close shift | `/kasir/tutup` | Done | counted = expected, "Pas" | — |
+| Suppliers | `/pemasok` | Done: table, search, modal form, edit/delete with confirm | create, delete | Edit opened in code review only |
+| Purchases list | `/pembelian` | Done: status/date filters, table | listed | Number, date, due date, image, payment status (not in U6) |
+| Purchase form | `/pembelian/baru` | Done: header grid + lines table | created 10 × Kopi Susu | — |
+| Purchase detail | `/pembelian/$id` | Done: approve / cancel / delete with confirm | approved: Kopi Susu on hand 18 → 28 | cancel / delete paths |
+| Stock opnames | `/stok-opname` | Done: status/date filters, table | listed | Number, PIC (not in U6) |
+| Opname form / detail | `/stok-opname/baru`, `/$id` | Done | counted Es Teh 15 vs 20, approved (−5) | delete path |

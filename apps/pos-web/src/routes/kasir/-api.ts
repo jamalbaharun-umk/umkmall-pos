@@ -14,8 +14,29 @@ export type Shift = {
   salesCount: number | null
   difference: number | null
 }
-export type Product = { id: string; name: string; sku: string; sellingPrice: number; type: string; isActive: boolean }
-export type SaleRow = { id: string; number: number; total: number; paid: number; change: number; createdAt: string }
+export type Product = {
+  id: string
+  name: string
+  sku: string
+  sellingPrice: number
+  type: string
+  isActive: boolean
+  category: { id: string; name: string }
+}
+export type SaleRow = {
+  id: string
+  number: number
+  cashier: string
+  subtotal: number
+  discount: number
+  tax: number
+  total: number
+  paid: number
+  change: number
+  costTotal?: number
+  createdAt: string
+}
+export type SalesSummary = { count: number; revenue: number; discount: number }
 export type Receipt = {
   number: number
   createdAt: string
@@ -29,6 +50,7 @@ export type Receipt = {
   total: number
   paid: number
   change: number
+  note: string | null
 }
 export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string }
 
@@ -79,7 +101,7 @@ export const closeShift = createServerFn({ method: 'POST' })
   .validator((countedCash: number) => countedCash)
   .handler(({ data }) => send<Shift>('/shifts/current/close', { countedCash: data }))
 
-type SaleInput = { key: string; lines: { productId: string; qty: number }[]; paid: number }
+type SaleInput = { key: string; lines: { productId: string; qty: number }[]; paid: number; note?: string }
 export const createSale = createServerFn({ method: 'POST' })
   .validator((d: SaleInput) => d)
   .handler(({ data: { key, ...body } }) => send<{ id: string }>('/sales', body, { 'idempotency-key': key }))
@@ -88,13 +110,18 @@ export const loadReceipt = createServerFn()
   .validator((id: string) => id)
   .handler(({ data }) => load<Receipt>(`/sales/${encodeURIComponent(data)}/receipt`))
 
+export type HistoryQuery = { page: number; from?: string; to?: string }
 export const loadHistory = createServerFn()
-  .validator((page: number) => page)
-  .handler(({ data }) => load<{ data: SaleRow[]; total: number }>(`/sales?page=${data}&perPage=20`))
+  .validator((q: HistoryQuery) => q)
+  .handler(({ data: { page, from, to } }) => {
+    const qs = new URLSearchParams({ page: String(page), perPage: '20' })
+    if (from) qs.set('from', from)
+    if (to) qs.set('to', to)
+    return load<{ data: SaleRow[]; total: number; summary: SalesSummary }>(`/sales?${qs}`)
+  })
 
 export const loadCurrentShift = createServerFn().handler(() =>
   load<{ shift: (Shift & { expectedCash: number; cashSales: number; salesCount: number }) | null }>('/shifts/current'),
 )
 
-export const rupiah = (n: number) =>
-  new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(n)
+export { rupiah } from '@/components/pos-page'

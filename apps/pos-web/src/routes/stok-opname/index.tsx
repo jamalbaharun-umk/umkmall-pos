@@ -1,7 +1,22 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import {
+  Button,
+  Card,
+  Select,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TextField,
+} from '@umkmall/ui'
+import { useState } from 'react'
+import { Empty, formatDate, LoadError, Page, Pending } from '@/components/pos-page'
 import { loadOpnames } from '../pembelian/-api'
-import { Card, Empty, formatDate, LoadError, Pending, StatusBadge, StockLayout } from '../pembelian/-ui'
+import { inDays, StatusBadge } from '../pembelian/-ui'
 
+// Lakasir's Stock Opnames list: date, note, status, with status and date filters.
 export const Route = createFileRoute('/stok-opname/')({
   loader: () => loadOpnames(),
   component: OpnamesPage,
@@ -9,39 +24,92 @@ export const Route = createFileRoute('/stok-opname/')({
   errorComponent: LoadError,
 })
 
+const ALL = 'semua'
+const STATUSES = [
+  { value: ALL, label: 'Semua' },
+  { value: 'draft', label: 'Draf' },
+  { value: 'approved', label: 'Disetujui' },
+]
+
 function OpnamesPage() {
   const opnames = Route.useLoaderData()
+  const navigate = useNavigate()
+  const [status, setStatus] = useState(ALL)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const shown = opnames.filter((o) => (status === ALL || o.status === status) && inDays(o.createdAt, from, to))
+  const open = (id: string) => void navigate({ to: '/stok-opname/$id', params: { id } })
+
   return (
-    <StockLayout title="Stok opname">
-      <Link
-        to="/stok-opname/baru"
-        className="inline-block rounded-lg bg-brand px-4 py-2 font-medium text-white hover:bg-brand-strong"
-      >
-        Mulai hitung stok
-      </Link>
-      <Card>
-        {opnames.length === 0 ? (
-          <Empty title="Belum ada stok opname" hint="Hitung stok fisik di toko, lalu samakan dengan stok di sistem." />
+    <Page
+      crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Daftar' }]}
+      title="Stok opname"
+      actions={
+        <Button width="auto" asChild>
+          <Link to="/stok-opname/baru">Stok opname baru</Link>
+        </Button>
+      }
+    >
+      <Card variant="outlined" padding="none">
+        <div className="flex flex-wrap items-end gap-3 p-4">
+          <div className="w-44">
+            <Select label="Status" size="small" options={STATUSES} value={status} onValueChange={setStatus} />
+          </div>
+          <div className="w-44">
+            <TextField
+              label="Dari tanggal"
+              type="date"
+              size="small"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
+          </div>
+          <div className="w-44">
+            <TextField
+              label="Sampai tanggal"
+              type="date"
+              size="small"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
+          </div>
+        </div>
+        {shown.length === 0 ? (
+          <Empty
+            title={opnames.length === 0 ? 'Belum ada stok opname' : 'Tidak ada opname yang cocok'}
+            hint={
+              opnames.length === 0 ? 'Hitung stok fisik di toko, lalu samakan dengan stok di sistem.' : 'Ubah filter.'
+            }
+          />
         ) : (
-          <ul className="divide-y divide-ink/10">
-            {opnames.map((o) => (
-              <li key={o.id}>
-                <Link
-                  to="/stok-opname/$id"
-                  params={{ id: o.id }}
-                  className="flex items-center justify-between gap-3 py-3 hover:bg-brand-soft/60"
+          <Table density="comfortable">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tanggal</TableHead>
+                <TableHead>Catatan</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shown.map((o) => (
+                <TableRow
+                  key={o.id}
+                  tabIndex={0}
+                  className="cursor-pointer"
+                  onClick={() => open(o.id)}
+                  onKeyDown={(e) => e.key === 'Enter' && open(o.id)}
                 >
-                  <span className="min-w-0">
-                    <span className="font-medium text-ink">{formatDate(o.createdAt)}</span>
-                    <span className="block truncate text-sm text-ink-muted">{o.note ?? 'Tanpa catatan'}</span>
-                  </span>
-                  <StatusBadge status={o.status} />
-                </Link>
-              </li>
-            ))}
-          </ul>
+                  <TableCell className="font-medium">{formatDate(o.createdAt)}</TableCell>
+                  <TableCell className="max-w-md truncate">{o.note ?? '–'}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={o.status} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </Card>
-    </StockLayout>
+    </Page>
   )
 }

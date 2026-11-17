@@ -1,46 +1,24 @@
-import { Link } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
+import { Badge } from '@umkmall/ui'
 
-export { Button, Card, Empty, ErrorText, Field, LoadError, Pending, formatDate, inputClass } from '../staf/-ui'
-export { rupiah } from '../catalog/-api'
+const STATUS = {
+  draft: ['Draf', 'warning'],
+  approved: ['Disetujui', 'success'],
+  cancelled: ['Dibatalkan', 'light'],
+} as const
 
-const TABS = [
-  { to: '/pembelian', label: 'Pembelian' },
-  { to: '/pemasok', label: 'Pemasok' },
-  { to: '/stok-opname', label: 'Stok opname' },
-] as const
+export const STATUS_OPTIONS = Object.entries(STATUS).map(([value, [label]]) => ({ value, label }))
 
-export function StockLayout({ title, children }: { title: string; children: ReactNode }) {
+export function StatusBadge({ status }: { status: keyof typeof STATUS }) {
+  const [label, color] = STATUS[status]
   return (
-    <main className="mx-auto min-h-svh max-w-3xl px-4 py-8">
-      <Link to="/" className="text-sm text-brand hover:underline">
-        ← Toko
-      </Link>
-      <h1 className="mt-2 text-2xl font-semibold text-ink">{title}</h1>
-      <nav className="mt-4 flex gap-2 overflow-x-auto border-b border-ink/10" aria-label="Stok masuk">
-        {TABS.map((t) => (
-          <Link
-            key={t.to}
-            to={t.to}
-            className="-mb-px border-b-2 border-transparent px-3 py-2 whitespace-nowrap text-ink-muted hover:text-ink"
-            activeProps={{ className: 'border-brand! text-ink! font-medium' }}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </nav>
-      <div className="mt-6 space-y-6">{children}</div>
-    </main>
+    <Badge color={color} size="small">
+      {label}
+    </Badge>
   )
 }
 
-const STATUS = {
-  draft: ['Draf', 'bg-warning/15 text-ink'],
-  approved: ['Disetujui', 'bg-success/15 text-success'],
-  cancelled: ['Dibatalkan', 'bg-ink/10 text-ink-muted'],
-} as const
-
-export function StatusBadge({ status }: { status: keyof typeof STATUS }) {
-  const [label, look] = STATUS[status]
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${look}`}>{label}</span>
+/** Lakasir's list date filter: inclusive start / end day against a timestamp (browser local days). */
+export const inDays = (iso: string, from: string, to: string) => {
+  const day = new Date(iso).toLocaleDateString('sv-SE') // YYYY-MM-DD
+  return (!from || day >= from) && (!to || day <= to)
 }

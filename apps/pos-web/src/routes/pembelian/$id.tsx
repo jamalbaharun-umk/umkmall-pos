@@ -1,8 +1,11 @@
-import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
+import { Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
 import { useState } from 'react'
+import { ErrorText, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { loadOrder, orderAction } from './-api'
-import { Button, Card, ErrorText, formatDate, LoadError, Pending, rupiah, StatusBadge, StockLayout } from './-ui'
+import { StatusBadge } from './-ui'
 
+// Lakasir's View purchasing: details, stock lines, and the status actions (approve raises stock).
 export const Route = createFileRoute('/pembelian/$id')({
   loader: ({ params }) => loadOrder({ data: params.id }),
   component: OrderPage,
@@ -10,23 +13,34 @@ export const Route = createFileRoute('/pembelian/$id')({
   errorComponent: LoadError,
 })
 
-const CONFIRM = {
-  approve: 'Setujui pembelian ini? Stok barang langsung bertambah dan pembelian tidak bisa diubah lagi.',
-  cancel: 'Batalkan pembelian ini?',
-  delete: 'Hapus draf pembelian ini?',
+const ASK = {
+  approve: ['Setujui pembelian?', 'Stok barang langsung bertambah dan pembelian tidak bisa diubah lagi.', 'Setujui'],
+  cancel: ['Batalkan pembelian?', 'Pembelian dibatalkan tanpa mengubah stok.', 'Batalkan pembelian'],
+  delete: ['Hapus draf?', 'Draf pembelian ini dihapus permanen.', 'Hapus'],
 } as const
 
 function OrderPage() {
   const order = Route.useLoaderData()
   const router = useRouter()
   const navigate = useNavigate()
+  const { confirm, dialog } = useConfirm()
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
 
-  async function act(action: keyof typeof CONFIRM) {
-    if (!confirm(CONFIRM[action])) return
+  async function act(action: keyof typeof ASK) {
+    const [title, body, label] = ASK[action]
+    if (
+      !(await confirm(title, body, {
+        confirm: label,
+        danger: action !== 'approve',
+      }))
+    )
+      return
     setBusy(true)
-    const r = await orderAction({ data: { id: order.id, action } })
+    const r = await orderAction({ data: { id: order.id, action } }).catch(() => ({
+      ok: false as const,
+      error: 'Gagal, coba lagi.',
+    }))
     setBusy(false)
     if (!r.ok) return setError(r.error)
     if (action === 'delete') return navigate({ to: '/pembelian' })
@@ -35,62 +49,89 @@ function OrderPage() {
   }
 
   return (
-    <StockLayout title={`Pembelian dari ${order.supplierName}`}>
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <StatusBadge status={order.status} />
-          <span className="text-sm text-ink-muted">Dibuat {formatDate(order.createdAt)}</span>
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
-          <dt className="text-ink-muted">Pembayaran</dt>
-          <dd className="text-ink">{order.paymentMethod ?? '–'}</dd>
+    <Page
+      crumbs={[{ label: 'Pembelian', to: '/pembelian' }, { label: 'Detail' }]}
+      title={`Pembelian dari ${order.supplierName}`}
+      actions={
+        <>
+          <Button width="auto" asChild type="outline" color="light">
+            <Link to="/pembelian">Kembali</Link>
+          </Button>
+          {order.status === 'draft' && (
+            <>
+              <Button width="auto" color="danger" type="ghost" disabled={busy} onClick={() => void act('delete')}>
+                Hapus draf
+              </Button>
+              <Button width="auto" type="outline" color="light" disabled={busy} onClick={() => void act('cancel')}>
+                Batalkan
+              </Button>
+              <Button width="auto" isLoading={busy} onClick={() => void act('approve')}>
+                Setujui dan tambah stok
+              </Button>
+            </>
+          )}
+        </>
+      }
+    >
+      <ErrorText>{error}</ErrorText>
+      <Card variant="outlined" padding="large">
+        <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+          <dt className="font-medium">Status</dt>
+          <dd>
+            <StatusBadge status={order.status} />
+          </dd>
+          <dt className="font-medium">Pemasok</dt>
+          <dd>{order.supplierName}</dd>
+          <dt className="font-medium">Tanggal</dt>
+          <dd>{formatDate(order.createdAt)}</dd>
+          <dt className="font-medium">Metode pembayaran</dt>
+          <dd>{order.paymentMethod ?? '–'}</dd>
           {order.approvedAt && (
             <>
-              <dt className="text-ink-muted">Disetujui</dt>
-              <dd className="text-ink">{formatDate(order.approvedAt)}</dd>
+              <dt className="font-medium">Disetujui</dt>
+              <dd>{formatDate(order.approvedAt)}</dd>
             </>
           )}
           {order.note && (
             <>
-              <dt className="text-ink-muted">Catatan</dt>
-              <dd className="text-ink">{order.note}</dd>
+              <dt className="font-medium">Catatan</dt>
+              <dd>{order.note}</dd>
             </>
           )}
         </dl>
       </Card>
-      <Card>
-        <ul className="divide-y divide-ink/10">
-          {order.lines.map((l) => (
-            <li key={l.id} className="flex justify-between gap-3 py-2">
-              <span>
-                <span className="text-ink">{l.productName}</span>
-                <span className="block text-sm text-ink-muted">
-                  {l.qty} × {rupiah(l.unitCost)}
-                </span>
-              </span>
-              <span className="font-medium text-ink">{rupiah(l.qty * l.unitCost)}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-3 flex justify-between border-t border-ink/10 pt-3 text-lg font-semibold text-ink">
+      <Card variant="outlined" padding="none">
+        <Text as="h2" variant="h6" weight="bold" className="p-4">
+          Stok
+        </Text>
+        <Table density="comfortable">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Produk</TableHead>
+              <TableHead>SKU</TableHead>
+              <TableHead className="text-right">Jumlah</TableHead>
+              <TableHead className="text-right">Harga beli</TableHead>
+              <TableHead className="text-right">Subtotal</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {order.lines.map((l) => (
+              <TableRow key={l.id}>
+                <TableCell className="font-medium">{l.productName}</TableCell>
+                <TableCell>{l.sku}</TableCell>
+                <TableCell className="text-right">{l.qty}</TableCell>
+                <TableCell className="text-right">{rupiah(l.unitCost)}</TableCell>
+                <TableCell className="text-right">{rupiah(l.qty * l.unitCost)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        <p className="flex justify-end gap-6 p-4 text-lg font-bold">
           <span>Total</span>
           <span>{rupiah(order.total)}</span>
         </p>
       </Card>
-      <ErrorText>{error}</ErrorText>
-      {order.status === 'draft' && (
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={busy} onClick={() => void act('approve')}>
-            Setujui dan tambah stok
-          </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => void act('cancel')}>
-            Batalkan
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={() => void act('delete')}>
-            Hapus draf
-          </Button>
-        </div>
-      )}
-    </StockLayout>
+      {dialog}
+    </Page>
   )
 }

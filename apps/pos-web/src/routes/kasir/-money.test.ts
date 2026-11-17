@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseRupiah, quickAmounts, taxOf } from './-money'
+import { numpadEdit, parseRupiah, quickAmounts, taxOf } from './-money'
 
 describe('cashier money helpers', () => {
   it('quick amounts: exact, then the next round notes', () => {
@@ -17,5 +17,12 @@ describe('cashier money helpers', () => {
     expect(parseRupiah(' 5000 ')).toBe(5000)
     expect(Number.isNaN(parseRupiah('5,5'))).toBe(true)
     expect(Number.isNaN(parseRupiah(''))).toBe(true)
+  })
+  it('numpad: appends digits and 000 without leading zeros, ⌫ deletes, caps the length', () => {
+    expect(['5', '000'].reduce(numpadEdit, '')).toBe('5000')
+    expect(['0', '0', '7'].reduce(numpadEdit, '')).toBe('7')
+    expect(numpadEdit('5000', 'hapus')).toBe('500')
+    expect(numpadEdit('', 'hapus')).toBe('')
+    expect(numpadEdit('9'.repeat(13), '1')).toHaveLength(13)
   })
 })

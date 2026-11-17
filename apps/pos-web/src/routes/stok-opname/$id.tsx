@@ -1,8 +1,11 @@
-import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
+import { Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
 import { useState } from 'react'
+import { ErrorText, formatDate, LoadError, Page, Pending, useConfirm } from '@/components/pos-page'
 import { loadOpname, opnameAction } from '../pembelian/-api'
-import { Button, Card, ErrorText, formatDate, LoadError, Pending, StatusBadge, StockLayout } from '../pembelian/-ui'
+import { StatusBadge } from '../pembelian/-ui'
 
+// Lakasir's View stock opname: details, items with system / counted / difference, and approve.
 export const Route = createFileRoute('/stok-opname/$id')({
   loader: ({ params }) => loadOpname({ data: params.id }),
   component: OpnamePage,
@@ -16,17 +19,26 @@ function OpnamePage() {
   const opname = Route.useLoaderData()
   const router = useRouter()
   const navigate = useNavigate()
+  const { confirm, dialog } = useConfirm()
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
 
   async function act(action: 'approve' | 'delete') {
-    const msg =
+    const ok =
       action === 'approve'
-        ? 'Setujui opname ini? Stok disesuaikan sebesar selisihnya dan opname tidak bisa diubah lagi.'
-        : 'Hapus draf opname ini?'
-    if (!confirm(msg)) return
+        ? await confirm('Setujui opname?', 'Stok disesuaikan sebesar selisihnya dan opname tidak bisa diubah lagi.', {
+            confirm: 'Setujui',
+          })
+        : await confirm('Hapus draf?', 'Draf opname ini dihapus permanen.', {
+            confirm: 'Hapus',
+            danger: true,
+          })
+    if (!ok) return
     setBusy(true)
-    const r = await opnameAction({ data: { id: opname.id, action } })
+    const r = await opnameAction({ data: { id: opname.id, action } }).catch(() => ({
+      ok: false as const,
+      error: 'Gagal, coba lagi.',
+    }))
     setBusy(false)
     if (!r.ok) return setError(r.error)
     if (action === 'delete') return navigate({ to: '/stok-opname' })
@@ -35,58 +47,84 @@ function OpnamePage() {
   }
 
   return (
-    <StockLayout title="Stok opname">
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <StatusBadge status={opname.status} />
-          <span className="text-sm text-ink-muted">
-            {opname.approvedAt ? `Disetujui ${formatDate(opname.approvedAt)}` : `Dihitung ${formatDate(opname.createdAt)}`}
-          </span>
-        </div>
-        {opname.note && <p className="mt-3 text-ink">{opname.note}</p>}
-      </Card>
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-ink-muted">
-              <tr>
-                <th className="py-2 font-medium">Produk</th>
-                <th className="py-2 text-right font-medium">Sistem</th>
-                <th className="py-2 text-right font-medium">Dihitung</th>
-                <th className="py-2 text-right font-medium">Selisih</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-ink/10">
-              {opname.lines.map((l) => (
-                <tr key={l.id}>
-                  <td className="py-2">
-                    <span className="text-ink">{l.productName}</span>
-                    {l.reason && <span className="block text-ink-muted">{l.reason}</span>}
-                  </td>
-                  <td className="py-2 text-right text-ink">{l.systemQty}</td>
-                  <td className="py-2 text-right text-ink">{l.countedQty}</td>
-                  <td
-                    className={`py-2 text-right font-medium ${l.difference < 0 ? 'text-error' : l.difference > 0 ? 'text-success' : 'text-ink-muted'}`}
-                  >
-                    {signed(l.difference)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+    <Page
+      crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Detail' }]}
+      title={`Stok opname ${formatDate(opname.createdAt)}`}
+      actions={
+        <>
+          <Button width="auto" asChild type="outline" color="light">
+            <Link to="/stok-opname">Kembali</Link>
+          </Button>
+          {opname.status === 'draft' && (
+            <>
+              <Button width="auto" type="ghost" color="danger" disabled={busy} onClick={() => void act('delete')}>
+                Hapus draf
+              </Button>
+              <Button width="auto" isLoading={busy} onClick={() => void act('approve')}>
+                Setujui dan sesuaikan stok
+              </Button>
+            </>
+          )}
+        </>
+      }
+    >
       <ErrorText>{error}</ErrorText>
-      {opname.status === 'draft' && (
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={busy} onClick={() => void act('approve')}>
-            Setujui dan sesuaikan stok
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={() => void act('delete')}>
-            Hapus draf
-          </Button>
-        </div>
-      )}
-    </StockLayout>
+      <Card variant="outlined" padding="large">
+        <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+          <dt className="font-medium">Status</dt>
+          <dd>
+            <StatusBadge status={opname.status} />
+          </dd>
+          <dt className="font-medium">Tanggal</dt>
+          <dd>{formatDate(opname.createdAt)}</dd>
+          {opname.approvedAt && (
+            <>
+              <dt className="font-medium">Disetujui</dt>
+              <dd>{formatDate(opname.approvedAt)}</dd>
+            </>
+          )}
+          {opname.note && (
+            <>
+              <dt className="font-medium">Catatan</dt>
+              <dd>{opname.note}</dd>
+            </>
+          )}
+        </dl>
+      </Card>
+      <Card variant="outlined" padding="none">
+        <Text as="h2" variant="h6" weight="bold" className="p-4">
+          Item
+        </Text>
+        <Table density="comfortable">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Produk</TableHead>
+              <TableHead>Alasan</TableHead>
+              <TableHead className="text-right">Stok sistem</TableHead>
+              <TableHead className="text-right">Dihitung</TableHead>
+              <TableHead className="text-right">Selisih</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {opname.lines.map((l) => (
+              <TableRow key={l.id}>
+                <TableCell className="font-medium">
+                  {l.productName} <span className="text-default-secondary">({l.sku})</span>
+                </TableCell>
+                <TableCell>{l.reason ?? '–'}</TableCell>
+                <TableCell className="text-right">{l.systemQty}</TableCell>
+                <TableCell className="text-right">{l.countedQty}</TableCell>
+                <TableCell
+                  className={`text-right font-medium ${l.difference < 0 ? 'text-default-error' : l.difference > 0 ? 'text-default-success' : 'text-default-secondary'}`}
+                >
+                  {signed(l.difference)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+      {dialog}
+    </Page>
   )
 }
