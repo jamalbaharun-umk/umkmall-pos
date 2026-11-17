@@ -1,9 +1,9 @@
 import { createFileRoute, notFound, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Card } from '@umkmall/ui/compositions'
-import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField } from '@umkmall/ui/primitives'
-import { loadReport, rupiah, type Report } from './-api'
-import { REPORTS, type Column, type ReportDef } from './-reports'
+import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField, toast } from '@umkmall/ui/primitives'
+import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
+import { checkRange, REPORTS, type Column, type ReportDef } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
 
 type Search = { from?: string; to?: string }
@@ -37,38 +37,86 @@ const dateLabel = (d: string) =>
 
 function ReportPage() {
   const result = Route.useLoaderData()
-  const def = REPORTS[Route.useParams().jenis]
-  if (!result.ok) return <ReportError message={result.error} />
+  const search = Route.useSearch()
+  const jenis = Route.useParams().jenis
+  const def = REPORTS[jenis]
+  // A refused range keeps the form, with pos-api's message on the field it names.
+  if (!result.ok && result.status !== 422) return <ReportError message={result.error} />
   return (
     <ReportLayout title={def.title}>
-      <RangeForm jenis={Route.useParams().jenis} report={result.data} />
-      <Printable def={def} report={result.data} />
+      {result.ok ? (
+        <>
+          <RangeForm key={`${result.data.from}_${result.data.to}`} jenis={jenis} from={result.data.from} to={result.data.to} />
+          <Printable def={def} report={result.data} />
+        </>
+      ) : (
+        <RangeForm jenis={jenis} from={search.from ?? ''} to={search.to ?? ''} serverErrors={result.errors ?? { _: result.error }} />
+      )}
     </ReportLayout>
   )
 }
 
-function RangeForm({ jenis, report }: { jenis: string; report: Report }) {
+/** Downloads the CSV through the session route; says how it went in a toast. */
+async function downloadCsv(jenis: string, from: string, to: string) {
+  const res = await fetch(`/laporan/csv/${jenis}?${new URLSearchParams({ from, to })}`).catch(() => null)
+  if (!res?.ok) {
+    // Only our route's JSON `{ message }` is shown; anything else (a proxy page, a framework error) gets the generic line.
+    const body = res?.headers.get('content-type')?.includes('application/json')
+      ? ((await res.json().catch(() => null)) as { message?: unknown } | null)
+      : null
+    const fromServer = res && (res.status === 422 || res.status === 502) && typeof body?.message === 'string' ? body.message : null
+    toast(fromServer ?? 'Laporan belum bisa diunduh, coba lagi.', { variant: 'danger' })
+    return
+  }
+  const url = URL.createObjectURL(await res.blob())
+  const a = Object.assign(document.createElement('a'), { href: url, download: `laporan-${jenis}-${from}_${to}.csv` })
+  a.click()
+  URL.revokeObjectURL(url)
+  toast('Laporan CSV diunduh.', { variant: 'success' })
+}
+
+function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: string; from: string; to: string; serverErrors?: FieldErrors }) {
   const navigate = useNavigate()
-  const [from, setFrom] = useState(report.from)
-  const [to, setTo] = useState(report.to)
-  const csv = `/laporan/csv/${jenis}?${new URLSearchParams({ from: report.from, to: report.to })}`
+  const [from, setFrom] = useState(from0)
+  const [to, setTo] = useState(to0)
+  const [errors, setErrors] = useState<FieldErrors>(serverErrors ?? {})
+  const [exporting, setExporting] = useState(false)
+  // Each action checks the dates first, with the same messages pos-api would answer.
+  const valid = () => {
+    const e = checkRange(from, to)
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
   return (
     <Card variant="outlined" padding="medium" className="mb-4 print:hidden">
       <form
+        noValidate
         onSubmit={(e) => {
           e.preventDefault()
-          void navigate({ to: '/laporan/$jenis', params: { jenis }, search: { from, to } })
+          if (valid()) void navigate({ to: '/laporan/$jenis', params: { jenis }, search: { from, to } })
         }}
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          <TextField label="Dari tanggal" type="date" value={from} required onChange={(e) => setFrom(e.target.value)} />
-          <TextField label="Sampai tanggal" type="date" value={to} required onChange={(e) => setTo(e.target.value)} />
+          <TextField label="Dari tanggal" type="date" value={from} required error={errors.from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Sampai tanggal" type="date" value={to} required error={errors.to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        {errors._ && <Alert variant="danger" className="mt-3">{errors._}</Alert>}
         <div className="mt-4 flex flex-wrap gap-2">
           <Button htmlType="submit" type="primary" color="primary" width="auto">Tampilkan</Button>
-          <Button htmlType="button" type="outline" color="primary" width="auto" onClick={() => window.print()}>Cetak</Button>
-          <Button asChild type="outline" color="primary" width="auto">
-            <a href={csv} download>Unduh CSV</a>
+          <Button htmlType="button" type="outline" color="primary" width="auto" disabled={!!serverErrors} onClick={() => window.print()}>Cetak</Button>
+          <Button
+            htmlType="button"
+            type="outline"
+            color="primary"
+            width="auto"
+            isLoading={exporting}
+            onClick={async () => {
+              if (!valid()) return
+              setExporting(true)
+              await downloadCsv(jenis, from, to).finally(() => setExporting(false))
+            }}
+          >
+            Unduh CSV
           </Button>
         </div>
       </form>

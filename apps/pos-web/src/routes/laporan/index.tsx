@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Card } from '@umkmall/ui/compositions'
-import { Alert, Button, Select } from '@umkmall/ui/primitives'
+import { Button, Select, toast } from '@umkmall/ui/primitives'
 import { loadSettings, saveTimezone } from './-api'
 import { REPORTS } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
@@ -43,7 +43,8 @@ function ReportIndex() {
 function TimezoneSetting({ current }: { current: string }) {
   const router = useRouter()
   const [tz, setTz] = useState(current)
-  const [state, setState] = useState<{ busy?: boolean; error?: string; saved?: boolean }>({})
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
   const options = ZONES.some((z) => z.value === current) ? ZONES : [{ value: current, label: current }, ...ZONES]
   return (
     <Card variant="outlined" padding="medium" className="mt-6">
@@ -53,17 +54,22 @@ function TimezoneSetting({ current }: { current: string }) {
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (e) => {
           e.preventDefault()
-          setState({ busy: true })
-          const r = await saveTimezone({ data: tz })
-          setState(r.ok ? { saved: true } : { error: r.error })
-          if (r.ok) await router.invalidate()
+          if (!tz) return setError('Zona waktu wajib diisi')
+          setBusy(true)
+          const r = await saveTimezone({ data: tz }).finally(() => setBusy(false))
+          if (r.ok) {
+            setError(undefined)
+            toast('Zona waktu disimpan.', { variant: 'success' })
+            await router.invalidate()
+          } else {
+            setError(r.errors?.timezone)
+            toast(r.error, { variant: 'danger' })
+          }
         }}
       >
-        <Select label="Zona waktu" value={tz} onValueChange={setTz} options={options} />
-        <Button htmlType="submit" type="primary" color="primary" width="auto" isLoading={state.busy}>Simpan</Button>
+        <Select label="Zona waktu" value={tz} onValueChange={setTz} options={options} error={error} />
+        <Button htmlType="submit" type="primary" color="primary" width="auto" isLoading={busy}>Simpan</Button>
       </form>
-      {state.error && <Alert variant="danger" className="mt-3">{state.error}</Alert>}
-      {state.saved && <Alert variant="success" className="mt-3">Zona waktu disimpan.</Alert>}
     </Card>
   )
 }

@@ -97,3 +97,25 @@ export const REPORTS: Record<string, ReportDef> = {
 export function change(current: number, previous: number): number | null {
   return previous === 0 ? null : Math.round(((current - previous) / Math.abs(previous)) * 100)
 }
+
+const isCalendarDate = (v: string) => {
+  const t = Date.parse(`${v}T00:00:00Z`)
+  return !Number.isNaN(t) && new Date(t).toISOString().startsWith(v)
+}
+
+/** Mirrors pos-api's DateRange schema (same Indonesian messages) so the form answers before the request. */
+export function checkRange(from: string, to: string): Record<string, string> {
+  const errors: Record<string, string> = {}
+  const check = (field: 'from' | 'to', label: string, v: string) => {
+    if (!v) errors[field] = `${label} wajib diisi`
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) errors[field] = `${label} harus berformat TTTT-BB-HH`
+    else if (!isCalendarDate(v)) errors[field] = `${label} tidak ada di kalender`
+  }
+  check('from', 'Tanggal mulai', from)
+  check('to', 'Tanggal akhir', to)
+  if (Object.keys(errors).length === 0) {
+    if (from > to) errors.to = 'Tanggal akhir tidak boleh sebelum tanggal mulai'
+    else if ((Date.parse(to) - Date.parse(from)) / 86_400_000 >= 366) errors.to = 'Rentang tanggal paling lama 366 hari'
+  }
+  return errors
+}

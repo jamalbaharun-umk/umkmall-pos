@@ -24,11 +24,24 @@ export type Report = {
   rows: Record<string, string | number | null>[]
   totals: Record<string, number>
 }
-export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string }
+export type FieldErrors = Record<string, string>
+export type Failure = { ok: false; status: number; error: string; errors?: FieldErrors }
+export type Result<T> = { ok: true; data: T } | Failure
 
 const ERRORS: Record<number, string> = {
   403: 'Kamu tidak punya izin melihat laporan.',
-  422: 'Rentang tanggal belum benar (paling lama 366 hari).',
+}
+const OFFLINE = 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.'
+
+/** pos-api answers 422 as `{ message, errors: { field: message } }` in Indonesian: pass both through, nothing else. */
+async function failure(res: Response, fallback: string): Promise<Failure> {
+  if (res.status === 422) {
+    const body = (await res.json().catch(() => null)) as { message?: unknown; errors?: unknown } | null
+    const errors = body?.errors && typeof body.errors === 'object' ? (body.errors as FieldErrors) : undefined
+    const error = typeof body?.message === 'string' ? body.message : 'Periksa kembali isian kamu'
+    return { ok: false, status: 422, error, errors }
+  }
+  return { ok: false, status: res.status, error: ERRORS[res.status] ?? fallback }
 }
 
 async function load<T>(path: string): Promise<Result<T>> {
@@ -36,28 +49,26 @@ async function load<T>(path: string): Promise<Result<T>> {
     if (isRedirect(e)) throw e // session ended: let the router send the user to sign in
     return null
   })
-  if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
-  if (!res.ok) return { ok: false, status: res.status, error: ERRORS[res.status] ?? 'Gagal memuat laporan, coba lagi.' }
+  if (!res) return { ok: false, status: 0, error: OFFLINE }
+  if (!res.ok) return failure(res, 'Gagal memuat laporan, coba lagi.')
   return { ok: true, data: (await res.json()) as T }
 }
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/
 
 export const loadDashboard = createServerFn()
   .validator((p: Period) => p)
   .handler(({ data }) => load<Dashboard>(`/reports/dashboard?period=${encodeURIComponent(data)}`))
 
-/** A report for `from..to`; without dates, today in the store's timezone. */
+/** A report for `from..to`; with neither date, today in the store's timezone. Bad dates go to pos-api, which names them. */
 export const loadReport = createServerFn()
   .validator((d: { kind: Kind; from?: string; to?: string }) => d)
   .handler(async ({ data }) => {
     let { from, to } = data
-    if (!from || !to || !DATE.test(from) || !DATE.test(to)) {
+    if (from === undefined && to === undefined) {
       const s = await load<{ timezone: string }>('/reports/settings')
       if (!s.ok) return s
       from = to = new Intl.DateTimeFormat('en-CA', { timeZone: s.data.timezone }).format(new Date())
     }
-    return load<Report>(`/reports/${data.kind}?${new URLSearchParams({ from, to })}`)
+    return load<Report>(`/reports/${data.kind}?${new URLSearchParams({ from: from ?? '', to: to ?? '' })}`)
   })
 
 export const loadSettings = createServerFn().handler(() => load<{ timezone: string }>('/reports/settings'))
@@ -69,9 +80,9 @@ export const saveTimezone = createServerFn({ method: 'POST' })
       if (isRedirect(e)) throw e
       return null
     })
-    if (!res) return { ok: false as const, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
-    if (res.status === 403) return { ok: false as const, error: 'Hanya pemilik yang bisa mengubah zona waktu.' }
-    if (!res.ok) return { ok: false as const, error: 'Zona waktu tidak dikenal.' }
+    if (!res) return { ok: false, status: 0, error: OFFLINE } satisfies Failure
+    if (res.status === 403) return { ok: false, status: 403, error: 'Hanya pemilik yang bisa mengubah zona waktu.' } satisfies Failure
+    if (!res.ok) return failure(res, 'Zona waktu belum tersimpan, coba lagi.')
     return { ok: true as const }
   })
 
