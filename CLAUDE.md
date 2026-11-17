@@ -72,7 +72,7 @@ silent, follow the monorepo's principles.
   `tenants/<tenantId>/`. UMKMall's archival (role `postgres`) reads `pos.tenants (id, user_id)` to wait for the
   purge (migration `0012`); grant it nothing more. pos_app reads nothing in `public.users`
   (deny-all RLS); the purge asks UMKMall's SECURITY DEFINER `public.pos_account_erasable(uuid)` (UMKMall migration
-  0198, EXECUTE granted to pos_app by `ops/pos-role.sql`) and answers 409 unless the account is marked `to_delete`.
+  0198, EXECUTE granted to pos_app by `ops/pos-role.sql`) and answers 409 unless the account is marked `to_delete` and past its 30-day grace window.
   Order per environment: 0198 → `ops/pos-role.sql` → `POS_PURGE_ENABLED`.
 - **Licence:** keep `LICENSE`/`NOTICE`.
 - **UI is `@umkmall/ui` + the admin theme** (owner decision 2026-11-17): build screens from `@umkmall/ui`
