@@ -7,10 +7,13 @@ export interface ObjectStorage {
   /** null when the object does not exist. */
   get(key: string): Promise<Buffer | null>;
   delete(key: string): Promise<void>;
+  /** Deletes every object under a tenant prefix `tenants/<tenantId>/` (U8 purge). No-op when empty. */
+  deletePrefix(prefix: string): Promise<void>;
 }
 
 export const OBJECT_STORAGE = Symbol('OBJECT_STORAGE');
 
+const PREFIX = /^tenants\/[0-9a-f-]{36}\/$/;
 const KEY = /^tenants\/[0-9a-f-]{36}\/[a-z0-9/.-]+$/;
 
 /** v1 adapter: files under POS_STORAGE_DIR. */
@@ -41,6 +44,11 @@ export class LocalDiskStorage implements ObjectStorage {
 
   async delete(key: string) {
     await rm(this.file(key), { force: true });
+  }
+
+  async deletePrefix(prefix: string) {
+    if (!PREFIX.test(prefix)) throw new Error('bad storage prefix');
+    await rm(path.join(this.root, prefix), { recursive: true, force: true });
   }
 }
 
