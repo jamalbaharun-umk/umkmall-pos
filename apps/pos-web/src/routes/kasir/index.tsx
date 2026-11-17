@@ -170,6 +170,9 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
+// Lakasir's payment numpad: digits, 000 for round notes, backspace.
+const NUMPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '000', '0', 'hapus'] as const
+
 function PayDialog({ total, cart, idempotencyKey, onClose, onPaid }: {
   total: number
   cart: CartLine[]
@@ -215,8 +218,15 @@ function PayDialog({ total, cart, idempotencyKey, onClose, onPaid }: {
         </div>
         <form onSubmit={(e) => { e.preventDefault(); void pay(paid) }} className="mt-4 space-y-3">
           <Field label="Uang diterima (Rp)">
-            <input className={inputClass} inputMode="numeric" value={paidText} onChange={(e) => setPaidText(e.target.value)} placeholder="0" autoFocus />
+            <input className={inputClass} inputMode="numeric" value={paidText} onChange={(e) => setPaidText(e.target.value)} placeholder="0" />
           </Field>
+          <div className="grid grid-cols-3 gap-2" aria-label="Papan angka">
+            {NUMPAD.map((k) => (
+              <button key={k} type="button" disabled={busy} onClick={() => setPaidText((t) => (k === 'hapus' ? t.slice(0, -1) : (t + k).replace(/^0+(?=\d)/, '').slice(0, 13)))} className="h-12 rounded-lg bg-white text-lg font-medium text-ink shadow-sm ring-1 ring-ink/10 active:bg-brand-soft">
+                {k === 'hapus' ? '⌫' : k}
+              </button>
+            ))}
+          </div>
           <p className="flex justify-between text-lg">
             <span className="text-ink-muted">Kembalian</span>
             <span className={`font-semibold ${change !== null && change < 0 ? 'text-error' : 'text-success'}`}>
