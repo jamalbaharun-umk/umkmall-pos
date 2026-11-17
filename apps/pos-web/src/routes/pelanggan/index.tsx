@@ -25,6 +25,7 @@ function MembersPage() {
       crumbs={[{ label: 'Pelanggan' }, { label: 'Daftar' }]}
       singular="pelanggan"
       resource="members"
+      cap={50}
       rows={rows}
       emptyHint={
         q ? 'Tidak ada pelanggan yang cocok.' : 'Tambahkan pelanggan untuk mencatat kasbon dan riwayat belanja.'

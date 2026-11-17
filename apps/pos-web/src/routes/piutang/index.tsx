@@ -35,6 +35,19 @@ function ReceivablesPage() {
   const navigate = useNavigate({ from: '/piutang/' })
   return (
     <Page title="Piutang" crumbs={[{ label: 'Piutang' }, { label: 'Daftar' }]}>
+      {/* Lakasir's StatsReceivable: what members still owe, over the rows shown. */}
+      <Card variant="outlined" padding="large" className="flex flex-wrap gap-8">
+        <div>
+          <p className="text-sm text-default-secondary">Sisa piutang belum lunas</p>
+          <p className="text-2xl font-bold text-default-primary">
+            {rupiah(rows.reduce((n, r) => n + r.rest, 0))}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-default-secondary">Belum lunas</p>
+          <p className="text-2xl font-bold text-default-primary">{rows.filter((r) => r.rest > 0).length}</p>
+        </div>
+      </Card>
       <Card variant="outlined" padding="none" className="overflow-hidden">
         <div className="border-b border-default-primary p-4">
           <Tabs
@@ -49,6 +62,11 @@ function ReceivablesPage() {
             </TabsList>
           </Tabs>
         </div>
+        {rows.length >= 200 && (
+          <p className="border-b border-default-primary px-4 py-2 text-sm text-default-secondary">
+            Menampilkan 200 piutang terbaru. Pilih filter status untuk mempersempit.
+          </p>
+        )}
         {rows.length === 0 ? (
           <Empty title="Belum ada piutang">Penjualan dengan metode kasbon akan muncul di sini.</Empty>
         ) : (
@@ -62,6 +80,9 @@ function ReceivablesPage() {
                 <TableHead>Jatuh tempo</TableHead>
                 <TableHead>Bayar terakhir</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="text-right">
+                  <span className="sr-only">Aksi</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -83,6 +104,11 @@ function ReceivablesPage() {
                   <TableCell>{r.lastPaymentAt ? formatDate(r.lastPaymentAt) : '–'}</TableCell>
                   <TableCell>
                     {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-right">
+                    <Link to="/piutang/$id" params={{ id: r.id }} className="font-medium text-brand-primary hover:underline">
+                      {r.rest > 0 ? 'Bayar' : 'Lihat'}
+                    </Link>
                   </TableCell>
                 </TableRow>
               ))}

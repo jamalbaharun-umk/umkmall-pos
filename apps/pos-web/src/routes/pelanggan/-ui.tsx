@@ -56,6 +56,8 @@ export function ResourcePage<T extends { id: string }>(props: {
   emptyHint: string
   canManage?: (row: T) => boolean
   toolbar?: ReactNode
+  /** pos-api returns at most this many rows: say so instead of silently cutting the list. */
+  cap?: number
 }) {
   const router = useRouter()
   const [form, setForm] = useState<{ id?: string; values: Values }>()
@@ -145,6 +147,11 @@ export function ResourcePage<T extends { id: string }>(props: {
     >
       <Card variant="outlined" padding="none" className="overflow-hidden">
         {props.toolbar && <div className="border-b border-default-primary p-4">{props.toolbar}</div>}
+        {props.cap && props.rows.length >= props.cap && (
+          <p className="border-b border-default-primary px-4 py-2 text-sm text-default-secondary">
+            Menampilkan {props.cap} data pertama. Gunakan pencarian untuk mempersempit.
+          </p>
+        )}
         {props.rows.length === 0 ? (
           <Empty title={`Belum ada ${props.singular}`}>{props.emptyHint}</Empty>
         ) : (
