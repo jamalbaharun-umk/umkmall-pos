@@ -77,5 +77,17 @@ npm run db:generate -w pos-api  # new migration from schema changes
 npm run dev -w pos-web          # http://localhost:3101
 ```
 
-`pos-api` needs `DATABASE_URL` (the `pos_app` role) and `POS_SESSION_SECRET` (≥ 32 chars) in its environment.
+`pos-api` needs `DATABASE_URL` (the `pos_app` role), `POS_SESSION_SECRET` (≥ 32 chars), `UMKMALL_JWKS_URL`
+(`{UMKMall API}/.well-known/pos-jwks.json`), `UMKMALL_API_URL` (liveness base) and `POS_SERVICE_KEY` (same value as
+UMKMall's) in its environment. `pos-web` needs `POS_API_URL`.
+
+**Signing in locally without UMKMall** (refused when `NODE_ENV=production`): create a stub UMKMall user in your
+database, then start `pos-web` with `POS_DEV_USER_ID` set to it and press "Masuk (pengembangan)" on `/`
+(`POST /masuk/dev` → pos-api `POST /auth/dev/sign-in`). The dev session has no UMKMall `sid`, so it cannot refresh:
+sign in again after 15 minutes. Screens call pos-api through `api()` in `apps/pos-web/src/lib/api.server.ts`.
+
+```bash
+docker compose exec postgres psql -U pos -d pos -tAc "insert into public.users default values returning id"
+POS_API_URL=http://localhost:3000 POS_DEV_USER_ID=<that id> npm run dev -w pos-web
+```
 The `pos_app` role and `pos` schema are created once per environment by a UMKMall DB owner: `ops/pos-role.sql`.

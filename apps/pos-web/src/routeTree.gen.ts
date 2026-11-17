@@ -10,33 +10,53 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as MasukDevRouteImport } from './routes/masuk/dev'
+import { Route as MasukUmkmallRouteImport } from './routes/masuk/umkmall'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MasukDevRoute = MasukDevRouteImport.update({
+  id: '/masuk/dev',
+  path: '/masuk/dev',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MasukUmkmallRoute = MasukUmkmallRouteImport.update({
+  id: '/masuk/umkmall',
+  path: '/masuk/umkmall',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/masuk/dev': typeof MasukDevRoute
+  '/masuk/umkmall': typeof MasukUmkmallRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/masuk/dev': typeof MasukDevRoute
+  '/masuk/umkmall': typeof MasukUmkmallRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/masuk/dev': typeof MasukDevRoute
+  '/masuk/umkmall': typeof MasukUmkmallRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/masuk/dev' | '/masuk/umkmall'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/masuk/dev' | '/masuk/umkmall'
+  id: '__root__' | '/' | '/masuk/dev' | '/masuk/umkmall'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  MasukDevRoute: typeof MasukDevRoute
+  MasukUmkmallRoute: typeof MasukUmkmallRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +68,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/masuk/dev': {
+      id: '/masuk/dev'
+      path: '/masuk/dev'
+      fullPath: '/masuk/dev'
+      preLoaderRoute: typeof MasukDevRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/masuk/umkmall': {
+      id: '/masuk/umkmall'
+      path: '/masuk/umkmall'
+      fullPath: '/masuk/umkmall'
+      preLoaderRoute: typeof MasukUmkmallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  MasukDevRoute: MasukDevRoute,
+  MasukUmkmallRoute: MasukUmkmallRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
