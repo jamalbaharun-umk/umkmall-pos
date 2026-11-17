@@ -43,6 +43,13 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     return req.send(body as object);
   };
 
+  /** What UMKMall's self-service deletion sets during the grace window (null = active account). */
+  const markForDeletion = (
+    userId: string,
+    flag: 'to_delete' | 'archived' | null = 'to_delete',
+  ) =>
+    admin`update public.users set delete_status_flag = ${flag} where id = ${userId}`;
+
   async function tenantTables(): Promise<string[]> {
     const rows = await admin<{ name: string }[]>`
       select c.relname as name from pg_class c
@@ -195,6 +202,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     expect(existsSync(imageDir(a.tenantId))).toBe(true);
     const bBefore = await rowCounts(b.tenantId);
 
+    await markForDeletion(a.userId);
     await purge({ userId: a.userId }).expect(200, { purged: true });
 
     const after = await rowCounts(a.tenantId);
@@ -240,6 +248,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .expect(201);
     const dir = imageDir(s.tenantId);
     const sub = path.join(dir, readdirSync(dir)[0]);
+    await markForDeletion(s.userId);
     chmodSync(sub, 0o500); // its files cannot be unlinked
     try {
       await purge({ userId: s.userId }).expect(503);
@@ -252,6 +261,42 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     await purge({ userId: s.userId }).expect(200, { purged: true });
     expect(existsSync(dir)).toBe(false);
   });
+
+  it.each([null, 'archived'] as const)(
+    'refuses with 409 and touches nothing when the account is not being deleted (flag %s)',
+    async (flag) => {
+      const s = await createStore();
+      const cat = await http()
+        .post('/catalog/categories')
+        .set('Authorization', s.auth)
+        .send({ name: 'Snack' })
+        .expect(201);
+      const p = await http()
+        .post('/catalog/products')
+        .set('Authorization', s.auth)
+        .send({
+          categoryId: cat.body.id,
+          name: 'Keripik',
+          costPrice: 1,
+          sellingPrice: 2,
+        })
+        .expect(201);
+      await http()
+        .post(`/catalog/products/${p.body.id}/images`)
+        .set('Authorization', s.auth)
+        .attach('file', PNG, { filename: 'a.png', contentType: 'image/png' })
+        .expect(201);
+      await markForDeletion(s.userId, flag);
+
+      const res = await purge({ userId: s.userId }).expect(409);
+      expect(res.body).toEqual({
+        message: 'Akun UMKMall tidak sedang dihapus',
+      });
+      expect((await rowCounts(s.tenantId)).products).toBe(1);
+      expect(readdirSync(imageDir(s.tenantId)).length).toBeGreaterThan(0);
+      await http().get('/tenant/me').set('Authorization', s.auth).expect(200);
+    },
+  );
 
   it('answers purged:false for a user who never had a store', async () => {
     await purge({ userId: randomUUID() }).expect(200, { purged: false });

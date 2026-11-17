@@ -33,17 +33,34 @@ describe('pos schema and role', () => {
     expect(pub.t).toBeNull();
   });
 
-  it('refuses pos_app on public.users reads', async () => {
-    await expect(app`select id from public.users limit 1`).rejects.toThrow(
+  it('lets pos_app read public.users (id, delete_status_flag) and no other column', async () => {
+    await expect(
+      app`select id, delete_status_flag from public.users limit 1`,
+    ).resolves.toBeDefined();
+    await expect(app`select * from public.users limit 1`).rejects.toThrow(
+      /permission denied/,
+    );
+    await expect(app`select phone from public.users limit 1`).rejects.toThrow(
       /permission denied/,
     );
   });
 
-  it('lets pos_app reference public.users(id) and nothing more', async () => {
-    const [p] = await admin<{ sel: boolean; ref: boolean }[]>`
+  it('grants pos_app on public.users only REFERENCES (id) and SELECT (id, delete_status_flag)', async () => {
+    const [p] = await admin<Record<string, boolean>[]>`
       select has_table_privilege('pos_app', 'public.users', 'SELECT') as sel,
-             has_column_privilege('pos_app', 'public.users', 'id', 'REFERENCES') as ref`;
-    expect(p).toEqual({ sel: false, ref: true });
+             has_table_privilege('pos_app', 'public.users', 'UPDATE') as upd,
+             has_column_privilege('pos_app', 'public.users', 'id', 'REFERENCES') as ref,
+             has_column_privilege('pos_app', 'public.users', 'id', 'SELECT') as id,
+             has_column_privilege('pos_app', 'public.users', 'delete_status_flag', 'SELECT') as flag,
+             has_column_privilege('pos_app', 'public.users', 'phone', 'SELECT') as phone`;
+    expect(p).toEqual({
+      sel: false,
+      upd: false,
+      ref: true,
+      id: true,
+      flag: true,
+      phone: false,
+    });
   });
 
   it('restricts deleting a UMKMall user that still has a store', async () => {

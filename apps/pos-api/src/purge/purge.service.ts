@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { ObjectStorage } from '../catalog/storage';
@@ -6,6 +6,9 @@ import { OBJECT_STORAGE } from '../catalog/storage';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
+
+/** Answer when UMKMall's account is not (or no longer) marked for deletion: a reactivated account keeps its store. */
+export const NOT_BEING_DELETED = 'Akun UMKMall tidak sedang dihapus';
 
 const quote = (name: string) => `"${name.replace(/"/g, '""')}"`;
 
@@ -52,6 +55,8 @@ export class PurgeService {
       .from(tenants)
       .where(eq(tenants.userId, userId));
     if (!tenant) return false;
+    // Only an account UMKMall is deleting: refuse before anything (images included) is touched.
+    await this.assertBeingDeleted(this.db, userId);
 
     // Images first: a storage failure throws (503 to UMKMall) with every row intact, so a retry finds the
     // tenant again. After the commit there would be no row left to find the files from.
@@ -77,9 +82,20 @@ export class PurgeService {
         );
       }
       await tx.delete(tenants).where(eq(tenants.id, tenant.id));
+      // Re-check last, just before commit: a reactivation that landed meanwhile rolls everything back.
+      // shortcut: no row lock (FOR SHARE needs UPDATE on public.users, which pos_app must not hold), so a
+      // reactivation committing between this read and our commit still loses; the window is one statement.
+      await this.assertBeingDeleted(tx, userId);
     });
     this.logger.log(`purged tenant ${tenant.id}`);
     return true;
+  }
+
+  private async assertBeingDeleted(db: Pick<Db, 'execute'>, userId: string) {
+    const rows = await db.execute(sql`
+      select 1 from public.users where id = ${userId} and delete_status_flag = 'to_delete'`);
+    if (rows.length === 0)
+      throw new ConflictException({ message: NOT_BEING_DELETED });
   }
 
   private async deleteImages(tenantId: string) {

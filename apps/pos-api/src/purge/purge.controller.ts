@@ -3,6 +3,7 @@ import {
   Controller,
   Headers,
   HttpCode,
+  HttpException,
   Logger,
   Module,
   Post,
@@ -41,6 +42,7 @@ export class PurgeController {
     try {
       return { purged: await this.purge.purge(userId) };
     } catch (error) {
+      if (error instanceof HttpException) throw error; // 409: account not being deleted
       // Error class only. Nothing was committed if the images could not go, so UMKMall's retry completes it.
       this.logger.error(`purge failed: ${(error as Error).name}`);
       throw new ServiceUnavailableException();
