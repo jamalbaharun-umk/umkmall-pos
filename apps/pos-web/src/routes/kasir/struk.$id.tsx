@@ -28,6 +28,7 @@ function ReceiptPage() {
             </span>
           </p>
           <p>Kasir: {r.cashier}</p>
+          {r.memberName && <p>Pelanggan: {r.memberName}</p>}
           <hr className="my-2 border-dashed border-black/40" />
           <ul className="space-y-1">
             {r.lines.map((l, i) => (
@@ -45,6 +46,7 @@ function ReceiptPage() {
           <hr className="my-2 border-dashed border-black/40" />
           <Line label="Subtotal" value={r.subtotal} />
           {r.discount > 0 && <Line label="Diskon" value={-r.discount} />}
+          {r.voucherDiscount > 0 && <Line label="Voucher" value={-r.voucherDiscount} />}
           {r.tax > 0 && <Line label={`Pajak ${r.taxBps / 100}%`} value={r.tax} />}
           <p className="flex justify-between font-semibold">
             <span>Total</span>
@@ -52,6 +54,7 @@ function ReceiptPage() {
           </p>
           <Line label={r.paymentMethod} value={r.paid} />
           <Line label="Kembalian" value={r.change} />
+          {r.receivableRest !== null && <Line label="Sisa kasbon" value={r.receivableRest} />}
           {r.note && <p className="mt-2">Catatan: {r.note}</p>}
           <hr className="my-2 border-dashed border-black/40" />
           <p className="text-center">Terima kasih</p>
@@ -73,7 +76,7 @@ function Line({ label, value }: { label: string; value: number }) {
   return (
     <p className="flex justify-between">
       <span>{label}</span>
-      <span>{rupiah(value)}</span>
+      <span>{value < 0 ? `−${rupiah(-value)}` : rupiah(value)}</span>
     </p>
   )
 }

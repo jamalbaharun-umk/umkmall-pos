@@ -51,6 +51,10 @@ export type Receipt = {
   paid: number
   change: number
   note: string | null
+  // U7
+  voucherDiscount: number
+  memberName: string | null
+  receivableRest: number | null
 }
 export type Result<T = undefined> =
   | { ok: true; data: T }

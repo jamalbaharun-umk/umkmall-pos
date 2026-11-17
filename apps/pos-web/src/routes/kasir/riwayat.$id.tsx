@@ -43,6 +43,18 @@ function SalePage() {
             <dd className="text-right">{r.cashier}</dd>
             <dt className="font-medium">Tanggal</dt>
             <dd className="text-right">{formatDate(r.createdAt)}</dd>
+            {r.memberName && (
+              <>
+                <dt className="font-medium">Pelanggan</dt>
+                <dd className="text-right">{r.memberName}</dd>
+              </>
+            )}
+            {r.receivableRest !== null && (
+              <>
+                <dt className="font-medium">Sisa kasbon</dt>
+                <dd className="text-right">{rupiah(r.receivableRest)}</dd>
+              </>
+            )}
             <dt className="font-medium">Metode pembayaran</dt>
             <dd className="text-right">{r.paymentMethod}</dd>
             {r.note && (
@@ -78,6 +90,12 @@ function SalePage() {
           <dd className="text-right">{rupiah(r.subtotal)}</dd>
           <dt className="font-medium">Diskon</dt>
           <dd className="text-right">{rupiah(r.discount)}</dd>
+          {r.voucherDiscount > 0 && (
+            <>
+              <dt className="font-medium">Voucher</dt>
+              <dd className="text-right">−{rupiah(r.voucherDiscount)}</dd>
+            </>
+          )}
           <dt className="font-medium">Pajak</dt>
           <dd className="text-right">{r.taxBps / 100}%</dd>
           <dt className="font-medium">Nilai pajak</dt>
