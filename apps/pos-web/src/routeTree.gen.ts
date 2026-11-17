@@ -13,8 +13,13 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CatalogRouteRouteImport } from './routes/catalog/route'
 import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
 import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
+import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
 import { Route as MasukUmkmallRouteImport } from './routes/masuk/umkmall'
+import { Route as StafIndexRouteImport } from './routes/staf/index'
+import { Route as StafIdRouteImport } from './routes/staf/$id'
+import { Route as StafPeranRouteImport } from './routes/staf/peran'
+import { Route as StafPerangkatRouteImport } from './routes/staf/perangkat'
 import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/products/index'
 import { Route as CatalogProductsIdRouteImport } from './routes/catalog/products/$id'
 
@@ -38,6 +43,11 @@ const CatalogCategoriesRoute = CatalogCategoriesRouteImport.update({
   path: '/categories',
   getParentRoute: () => CatalogRouteRoute,
 } as any)
+const KasirMasukRoute = KasirMasukRouteImport.update({
+  id: '/kasir/masuk',
+  path: '/kasir/masuk',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MasukDevRoute = MasukDevRouteImport.update({
   id: '/masuk/dev',
   path: '/masuk/dev',
@@ -46,6 +56,26 @@ const MasukDevRoute = MasukDevRouteImport.update({
 const MasukUmkmallRoute = MasukUmkmallRouteImport.update({
   id: '/masuk/umkmall',
   path: '/masuk/umkmall',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StafIndexRoute = StafIndexRouteImport.update({
+  id: '/staf/',
+  path: '/staf/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StafIdRoute = StafIdRouteImport.update({
+  id: '/staf/$id',
+  path: '/staf/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StafPeranRoute = StafPeranRouteImport.update({
+  id: '/staf/peran',
+  path: '/staf/peran',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StafPerangkatRoute = StafPerangkatRouteImport.update({
+  id: '/staf/perangkat',
+  path: '/staf/perangkat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CatalogProductsIndexRoute = CatalogProductsIndexRouteImport.update({
@@ -63,18 +93,28 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRouteRouteWithChildren
   '/catalog/categories': typeof CatalogCategoriesRoute
+  '/kasir/masuk': typeof KasirMasukRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/staf/$id': typeof StafIdRoute
+  '/staf/peran': typeof StafPeranRoute
+  '/staf/perangkat': typeof StafPerangkatRoute
   '/catalog/': typeof CatalogIndexRoute
+  '/staf/': typeof StafIndexRoute
   '/catalog/products/$id': typeof CatalogProductsIdRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
+  '/kasir/masuk': typeof KasirMasukRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/staf/$id': typeof StafIdRoute
+  '/staf/peran': typeof StafPeranRoute
+  '/staf/perangkat': typeof StafPerangkatRoute
   '/catalog': typeof CatalogIndexRoute
+  '/staf': typeof StafIndexRoute
   '/catalog/products/$id': typeof CatalogProductsIdRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
 }
@@ -83,9 +123,14 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRouteRouteWithChildren
   '/catalog/categories': typeof CatalogCategoriesRoute
+  '/kasir/masuk': typeof KasirMasukRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/umkmall': typeof MasukUmkmallRoute
+  '/staf/$id': typeof StafIdRoute
+  '/staf/peran': typeof StafPeranRoute
+  '/staf/perangkat': typeof StafPerangkatRoute
   '/catalog/': typeof CatalogIndexRoute
+  '/staf/': typeof StafIndexRoute
   '/catalog/products/$id': typeof CatalogProductsIdRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
 }
@@ -95,18 +140,28 @@ export interface FileRouteTypes {
     | '/'
     | '/catalog'
     | '/catalog/categories'
+    | '/kasir/masuk'
     | '/masuk/dev'
     | '/masuk/umkmall'
+    | '/staf/$id'
+    | '/staf/peran'
+    | '/staf/perangkat'
     | '/catalog/'
+    | '/staf/'
     | '/catalog/products/$id'
     | '/catalog/products/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/catalog/categories'
+    | '/kasir/masuk'
     | '/masuk/dev'
     | '/masuk/umkmall'
+    | '/staf/$id'
+    | '/staf/peran'
+    | '/staf/perangkat'
     | '/catalog'
+    | '/staf'
     | '/catalog/products/$id'
     | '/catalog/products'
   id:
@@ -114,9 +169,14 @@ export interface FileRouteTypes {
     | '/'
     | '/catalog'
     | '/catalog/categories'
+    | '/kasir/masuk'
     | '/masuk/dev'
     | '/masuk/umkmall'
+    | '/staf/$id'
+    | '/staf/peran'
+    | '/staf/perangkat'
     | '/catalog/'
+    | '/staf/'
     | '/catalog/products/$id'
     | '/catalog/products/'
   fileRoutesById: FileRoutesById
@@ -124,8 +184,13 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CatalogRouteRoute: typeof CatalogRouteRouteWithChildren
+  KasirMasukRoute: typeof KasirMasukRoute
   MasukDevRoute: typeof MasukDevRoute
   MasukUmkmallRoute: typeof MasukUmkmallRoute
+  StafIdRoute: typeof StafIdRoute
+  StafPeranRoute: typeof StafPeranRoute
+  StafPerangkatRoute: typeof StafPerangkatRoute
+  StafIndexRoute: typeof StafIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -158,6 +223,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CatalogCategoriesRouteImport
       parentRoute: typeof CatalogRouteRoute
     }
+    '/kasir/masuk': {
+      id: '/kasir/masuk'
+      path: '/kasir/masuk'
+      fullPath: '/kasir/masuk'
+      preLoaderRoute: typeof KasirMasukRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/masuk/dev': {
       id: '/masuk/dev'
       path: '/masuk/dev'
@@ -170,6 +242,34 @@ declare module '@tanstack/react-router' {
       path: '/masuk/umkmall'
       fullPath: '/masuk/umkmall'
       preLoaderRoute: typeof MasukUmkmallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staf/': {
+      id: '/staf/'
+      path: '/staf'
+      fullPath: '/staf/'
+      preLoaderRoute: typeof StafIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staf/$id': {
+      id: '/staf/$id'
+      path: '/staf/$id'
+      fullPath: '/staf/$id'
+      preLoaderRoute: typeof StafIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staf/peran': {
+      id: '/staf/peran'
+      path: '/staf/peran'
+      fullPath: '/staf/peran'
+      preLoaderRoute: typeof StafPeranRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/staf/perangkat': {
+      id: '/staf/perangkat'
+      path: '/staf/perangkat'
+      fullPath: '/staf/perangkat'
+      preLoaderRoute: typeof StafPerangkatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/catalog/products/': {
@@ -210,8 +310,13 @@ const CatalogRouteRouteWithChildren = CatalogRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CatalogRouteRoute: CatalogRouteRouteWithChildren,
+  KasirMasukRoute: KasirMasukRoute,
   MasukDevRoute: MasukDevRoute,
   MasukUmkmallRoute: MasukUmkmallRoute,
+  StafIdRoute: StafIdRoute,
+  StafPeranRoute: StafPeranRoute,
+  StafPerangkatRoute: StafPerangkatRoute,
+  StafIndexRoute: StafIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

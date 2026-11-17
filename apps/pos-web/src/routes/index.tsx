@@ -50,6 +50,7 @@ function SignIn({ failed, devSignIn }: { failed: boolean; devSignIn: boolean }) 
           Gagal masuk. Tautan dari UMKMall hanya berlaku sekali dan beberapa menit, coba lagi dari UMKMall.
         </p>
       )}
+      <a href="/kasir/masuk" className="text-brand hover:underline">Masuk sebagai kasir</a>
       {devSignIn && (
         <form method="post" action="/masuk/dev">
           <button type="submit" className="rounded-lg bg-brand px-4 py-2 font-medium text-white hover:bg-brand-strong">
@@ -65,6 +66,7 @@ function Dashboard() {
   return (
     <main className="mx-auto min-h-svh max-w-3xl px-4 py-8">
       <h1 className="text-2xl font-semibold text-ink">Toko kamu</h1>
+      <a href="/staf" className="mt-2 inline-block text-brand hover:underline">Staf, peran dan perangkat</a>
       <section className="mt-6 rounded-xl bg-white p-8 text-center">
         <h2 className="text-lg font-medium text-ink">Belum ada produk</h2>
         <p className="mt-1 text-ink-muted">Tambahkan produk pertama untuk mulai berjualan.</p>

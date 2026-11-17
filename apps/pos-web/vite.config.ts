@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import { nitro } from 'nitro/vite'
 import tailwindcss from '@tailwindcss/vite'
+import viteReact from '@vitejs/plugin-react'
 
 export default defineConfig({
   server: { port: 3101 },
@@ -10,5 +11,6 @@ export default defineConfig({
     tailwindcss(),
     tanstackStart({ router: { routesDirectory: 'routes', generatedRouteTree: 'routeTree.gen.ts' } }),
     nitro({ preset: 'node-server' }),
+    viteReact(), // after tanstackStart: React Refresh runtime, without which dev pages never hydrate
   ],
 })
