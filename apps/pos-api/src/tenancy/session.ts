@@ -46,10 +46,15 @@ export async function signSession(
     .sign(new TextEncoder().encode(secret));
 }
 
-/** Returns the session, or null for any invalid, expired or foreign token. Never throws. */
+/**
+ * Returns the session, or null for any invalid, expired or foreign token. Never throws.
+ * `graceSeconds` accepts a token that expired at most that long ago: only `/auth/refresh` passes it, and refresh
+ * still requires UMKMall to say the owner's session is live.
+ */
 export async function verifySession(
   token: string,
   secret: string,
+  graceSeconds = 0,
 ): Promise<PosSession | null> {
   try {
     const { payload } = await jwtVerify(
@@ -59,6 +64,7 @@ export async function verifySession(
         issuer: ISSUER,
         audience: AUDIENCE,
         algorithms: ['HS256'],
+        clockTolerance: graceSeconds,
       },
     );
     const claims = ClaimsSchema.parse(payload);

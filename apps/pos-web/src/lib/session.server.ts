@@ -1,4 +1,5 @@
 import { deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
+import { sessionKind } from './sign-in'
 
 // The POS session lives only in this httpOnly cookie; the browser never sees the token in JS or a URL.
 const COOKIE = 'pos_session'
@@ -27,6 +28,8 @@ export function clearSessionToken(): void {
   deleteCookie(COOKIE, { path: '/' })
 }
 
+const OWNER_COOKIE_SECONDS = 7 * 24 * 60 * 60
+
 type SessionAnswer = { sessionToken: string; expiresIn: number }
 
 /**
@@ -43,7 +46,9 @@ export async function startSession(path: string, body: unknown, bearer?: string)
   if (!res) return 0
   if (!res.ok) return res.status
   const { sessionToken, expiresIn } = (await res.json()) as SessionAnswer
-  setSessionToken(sessionToken, expiresIn)
+  // An owner token lapses in minutes but stays refreshable for pos-api's REFRESH_WINDOW (7 days, gated by UMKMall
+  // liveness), so its cookie must outlive it; api() refreshes on the first 401.
+  setSessionToken(sessionToken, sessionKind(sessionToken) === 'owner' ? OWNER_COOKIE_SECONDS : expiresIn)
   return sessionToken
 }
 

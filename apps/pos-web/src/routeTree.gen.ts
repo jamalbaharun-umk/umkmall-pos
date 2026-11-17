@@ -60,9 +60,9 @@ const KeluarRoute = KeluarRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const CatalogIndexRoute = CatalogIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => CatalogRouteRoute,
+  id: '/catalog/',
+  path: '/catalog/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const CatalogCategoriesRoute = CatalogCategoriesRouteImport.update({
   id: '/catalog/categories',
@@ -513,6 +513,7 @@ export interface RootRouteChildren {
   StafPerangkatRoute: typeof StafPerangkatRoute
   StokOpnameIdRoute: typeof StokOpnameIdRoute
   StokOpnameBaruRoute: typeof StokOpnameBaruRoute
+  CatalogIndexRoute: typeof CatalogIndexRoute
   KasirIndexRoute: typeof KasirIndexRoute
   LaporanIndexRoute: typeof LaporanIndexRoute
   MetodePembayaranIndexRoute: typeof MetodePembayaranIndexRoute
@@ -555,10 +556,10 @@ declare module '@tanstack/react-router' {
     }
     '/catalog/': {
       id: '/catalog/'
-      path: '/'
+      path: '/catalog'
       fullPath: '/catalog/'
       preLoaderRoute: typeof CatalogIndexRouteImport
-      parentRoute: typeof CatalogRouteRoute
+      parentRoute: typeof rootRouteImport
     }
     '/catalog/categories': {
       id: '/catalog/categories'
@@ -832,6 +833,7 @@ const rootRouteChildren: RootRouteChildren = {
   StafPerangkatRoute: StafPerangkatRoute,
   StokOpnameIdRoute: StokOpnameIdRoute,
   StokOpnameBaruRoute: StokOpnameBaruRoute,
+  CatalogIndexRoute: CatalogIndexRoute,
   KasirIndexRoute: KasirIndexRoute,
   LaporanIndexRoute: LaporanIndexRoute,
   MetodePembayaranIndexRoute: MetodePembayaranIndexRoute,

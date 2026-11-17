@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Headers,
   HttpCode,
   Logger,
   NotFoundException,
@@ -15,11 +16,13 @@ import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { handoffJtis, tenants } from '../db/schema';
-import { CurrentSession, Public } from '../tenancy/decorators';
+import { Public } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
-import { signSession, verifyHandoff } from '../tenancy/session';
+import { signSession, verifyHandoff, verifySession } from '../tenancy/session';
 
 const SESSION_TTL = 15 * 60;
+/** How long after its expiry an owner token may still be refreshed (UMKMall liveness decides the rest). */
+export const REFRESH_WINDOW = 7 * 24 * 60 * 60;
 const LIVENESS_TIMEOUT_MS = 5_000;
 
 const ExchangeBody = z.object({ token: z.string().min(1).max(4096) });
@@ -74,11 +77,20 @@ export class AuthController {
     });
   }
 
-  /** A fresh owner session while UMKMall says its session is still live. */
+  /**
+   * A fresh owner session while UMKMall says its session is still live. Accepts an owner token that expired up to
+   * REFRESH_WINDOW ago (the client refreshes after the 15-minute token lapses), so it reads the bearer itself
+   * instead of going through the session guard, which refuses any expired token.
+   */
+  @Public()
   @Post('refresh')
   @HttpCode(200)
-  async refresh(@CurrentSession() session: PosSession) {
-    if (session.kind !== 'owner' || !session.sid)
+  async refresh(@Headers('authorization') header: string | undefined) {
+    const token = header?.startsWith('Bearer ') ? header.slice(7) : '';
+    const session = token
+      ? await verifySession(token, this.env.POS_SESSION_SECRET, REFRESH_WINDOW)
+      : null;
+    if (session?.kind !== 'owner' || !session.sid)
       throw new UnauthorizedException();
     if (!(await this.isLive(session.sid))) throw new UnauthorizedException();
     return this.issue(session);

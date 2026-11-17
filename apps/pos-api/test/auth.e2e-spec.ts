@@ -225,6 +225,52 @@ describe('UMKMall handoff exchange and owner refresh', () => {
       expect(res.body.sessionToken).toBeUndefined();
     });
 
+    it('refreshes an owner token that expired within the refresh window, not one older', async () => {
+      stub.liveness = 'live';
+      const owner = await ownerSession();
+      const claims = {
+        tenantId: owner.tenant.id,
+        actorId: owner.sub,
+        kind: 'owner' as const,
+        sid: `sid-${owner.sub}`,
+      };
+      const lapsed = await new SignJWT({
+        tid: claims.tenantId,
+        kind: 'owner',
+        sid: claims.sid,
+      })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(claims.actorId)
+        .setIssuer('umkmall-pos')
+        .setAudience('pos-api')
+        .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
+        .setExpirationTime(Math.floor(Date.now() / 1000) - 1800)
+        .sign(new TextEncoder().encode(process.env.POS_SESSION_SECRET));
+      // the guard still refuses it everywhere else
+      await request(app.getHttpServer())
+        .get('/tenant/me')
+        .set('Authorization', `Bearer ${lapsed}`)
+        .expect(401);
+      const res = await refresh(lapsed).expect(200);
+      expect(res.body.tenant.id).toBe(owner.tenant.id);
+      const ancient = await new SignJWT({
+        tid: claims.tenantId,
+        kind: 'owner',
+        sid: claims.sid,
+      })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(claims.actorId)
+        .setIssuer('umkmall-pos')
+        .setAudience('pos-api')
+        .setIssuedAt(Math.floor(Date.now() / 1000) - 9 * 86400)
+        .setExpirationTime(Math.floor(Date.now() / 1000) - 8 * 86400)
+        .sign(new TextEncoder().encode(process.env.POS_SESSION_SECRET));
+      await refresh(ancient).expect(401);
+      stub.liveness = 'down';
+      await refresh(lapsed).expect(503);
+      stub.liveness = 'live';
+    });
+
     it('refuses a session without a UMKMall sid', async () => {
       stub.liveness = 'live';
       const store = await createStore(); // owner session signed without sid

@@ -29,6 +29,9 @@ function Screen({ title, children }: { title?: string; children: ReactNode }) {
       <Card variant="outlined" padding="large" className="flex w-full max-w-md flex-col items-center gap-5 bg-default-primary text-center">
         {title && <h1 className="text-2xl font-bold text-default-primary">{title}</h1>}
         {children}
+        <a href="/" className="text-sm text-default-secondary hover:text-default-brand">
+          Masuk sebagai pemilik toko
+        </a>
       </Card>
     </main>
   )
