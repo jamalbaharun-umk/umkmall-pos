@@ -28,6 +28,12 @@ describe('client validation mirrors the API', () => {
       costPrice: 'Harga modal tidak boleh melebihi harga jual',
     })
     expect(productErrors({ ...product, sku: 'A B' }, false).sku).toBe('SKU tidak boleh berisi spasi')
+    // typos get a message, never a silently different number
+    expect(productErrors({ ...product, stock: '-2', costPrice: '1,5', sellingPrice: '5.000' }, false)).toEqual({
+      stock: 'Stok awal tidak boleh negatif',
+      costPrice: 'Harga modal harus bilangan bulat',
+      sellingPrice: 'Harga jual harus bilangan bulat',
+    })
     expect(productErrors(product, true).sku).toBe('SKU wajib diisi')
     expect(productErrors({ ...product, barcodes: ['12', '899', '899'] }, false)).toEqual({
       'barcodes.0': 'Barcode minimal 3 karakter',

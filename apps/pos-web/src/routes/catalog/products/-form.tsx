@@ -20,8 +20,6 @@ import {
 export const TYPE_LABEL: Record<ProductType, string> = { product: 'Barang', service: 'Jasa', non_stock: 'Tanpa stok' }
 const TYPES = (Object.keys(TYPE_LABEL) as ProductType[]).map((value) => ({ value, label: TYPE_LABEL[value] }))
 
-// Whole rupiah only: digits, no decimals (the API refuses fractions too).
-const digits = (s: string) => s.replace(/\D/g, '')
 const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'file'] as const
 
 /**
@@ -81,8 +79,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     const found = productErrors(form, Boolean(product))
     setErrors(found)
     if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
-    const costPrice = Number(form.costPrice || '0')
-    const sellingPrice = Number(form.sellingPrice)
+    const costPrice = Number(form.costPrice.trim() || '0')
+    const sellingPrice = Number(form.sellingPrice.trim())
     const input: ProductInput = {
       categoryId: form.categoryId,
       name: form.name.trim(),
@@ -107,7 +105,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       const id = product?.id ?? saved.id
       if (!id) return fail(GENERIC_ERROR)
       const problems: string[] = []
-      const qty = Number(form.stock || '0')
+      const qty = Number(form.stock.trim() || '0')
       if (!product && form.type === 'product' && qty > 0) {
         const r = await recordOpeningStock({ data: { productId: id, qty } })
         if (r.error) problems.push(`Stok awal belum tercatat: ${r.error}`)
@@ -263,7 +261,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             label="Stok awal"
             inputMode="numeric"
             value={form.stock}
-            onChange={(e) => set('stock', digits(e.target.value))}
+            onChange={(e) => set('stock', e.target.value)}
             disabled={form.type !== 'product'}
             placeholder={form.type === 'product' ? '0' : 'Tidak memakai stok'}
             error={errors.stock}
@@ -283,7 +281,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           prefix="Rp"
           inputMode="numeric"
           value={form.costPrice}
-          onChange={(e) => set('costPrice', digits(e.target.value))}
+          onChange={(e) => set('costPrice', e.target.value)}
           required
           error={errors.costPrice}
         />
@@ -292,7 +290,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           prefix="Rp"
           inputMode="numeric"
           value={form.sellingPrice}
-          onChange={(e) => set('sellingPrice', digits(e.target.value))}
+          onChange={(e) => set('sellingPrice', e.target.value)}
           placeholder="5000"
           required
           error={errors.sellingPrice}

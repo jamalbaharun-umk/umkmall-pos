@@ -3,6 +3,7 @@ import { clearSessionToken, getSessionToken, posApiUrl, startSession } from './s
 import { sessionKind } from './sign-in'
 
 export const UMKMALL_DOWN = 'UMKMall sedang tidak bisa dihubungi, coba lagi'
+export const API_DOWN = 'Tidak bisa terhubung ke server kasir. Periksa koneksi lalu coba lagi.'
 
 /**
  * Server-side pos-api client for server functions and loaders. Sends the session cookie as a bearer.
@@ -34,5 +35,8 @@ function send(path: string, init: RequestInit, token: string): Promise<Response>
   // FormData sets its own multipart boundary; everything else this client sends is JSON.
   if (init.body && !(init.body instanceof FormData) && !headers.has('content-type'))
     headers.set('content-type', 'application/json')
-  return fetch(`${posApiUrl()}${path}`, { ...init, headers })
+  // A refused or dropped connection must not reach a page as the runtime's English "fetch failed".
+  return fetch(`${posApiUrl()}${path}`, { ...init, headers }).catch(() => {
+    throw new Error(API_DOWN)
+  })
 }

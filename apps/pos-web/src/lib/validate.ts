@@ -1,3 +1,5 @@
+import { check } from './form-checks'
+
 /**
  * Client checks that mirror pos-api's zod rules and messages, so a form answers before the round trip. The server
  * stays the authority: its 422/409 field errors land on the same fields.
@@ -27,20 +29,23 @@ export type ProductFields = {
   stock: string
 }
 
-/** Same rules as `ProductCreate`/`ProductUpdate`; prices and stock arrive as digit strings. */
+/**
+ * Same rules as `ProductCreate`/`ProductUpdate`. Prices and stock arrive as the raw text typed, never silently
+ * cleaned: "-2" or "1,5" gets a message instead of becoming 2 or 15.
+ */
 export function productErrors(f: ProductFields, editing: boolean): Errors {
-  const selling = f.sellingPrice === '' ? NaN : Number(f.sellingPrice)
-  const cost = Number(f.costPrice || '0')
+  const sellingText = f.sellingPrice.trim()
+  const costText = f.costPrice.trim() || '0'
+  const sellingBad = sellingText === '' ? 'Harga jual wajib diisi' : check.wholeNumber(sellingText, { min: 1, label: 'Harga jual' })
+  const costBad = check.wholeNumber(costText, { label: 'Harga modal' })
+  const selling = Number(sellingText)
+  const cost = Number(costText)
   const e: Record<string, string | undefined> = {
     name: required(f.name, 'Nama produk wajib diisi') ?? (f.name.trim().length > 120 ? 'Maksimal 120 karakter' : undefined),
     categoryId: f.categoryId ? undefined : 'Pilih kategori',
     unit: required(f.unit, 'Satuan wajib diisi') ?? (f.unit.trim().length > 20 ? 'Maksimal 20 karakter' : undefined),
-    sellingPrice: Number.isNaN(selling)
-      ? 'Harga jual wajib diisi'
-      : selling <= 0
-        ? 'Harga jual harus lebih dari 0'
-        : undefined,
-    costPrice: !Number.isNaN(selling) && cost > selling ? 'Harga modal tidak boleh melebihi harga jual' : undefined,
+    sellingPrice: sellingBad,
+    costPrice: costBad ?? (!sellingBad && cost > selling ? 'Harga modal tidak boleh melebihi harga jual' : undefined),
     sku: f.sku === '' ? (editing ? 'SKU wajib diisi' : undefined) : code(f.sku, 'SKU'),
   }
   const seen = new Set<string>()
@@ -49,7 +54,7 @@ export function productErrors(f: ProductFields, editing: boolean): Errors {
     e[`barcodes.${i}`] = code(v, 'Barcode') ?? (seen.has(v) ? 'Barcode tidak boleh ganda' : undefined)
     seen.add(v)
   })
-  if (f.stock !== '' && !/^\d+$/.test(f.stock)) e.stock = 'Stok harus bilangan bulat'
+  if (f.stock.trim() !== '') e.stock = check.wholeNumber(f.stock, { label: 'Stok awal' })
   return compact(e)
 }
 
