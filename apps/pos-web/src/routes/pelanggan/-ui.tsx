@@ -14,7 +14,7 @@ import {
   TextField,
   toast,
 } from '@umkmall/ui'
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Empty, Page, PageError, PageLoading, type Crumb } from '@/components/page'
 import { checkFields, toBody, type Errors, type Field, type Values } from './-form'
 import { removeResource, saveResource, type Resource, type Result } from './-api'
@@ -61,6 +61,8 @@ export function ResourcePage<T extends { id: string }>(props: {
   const [form, setForm] = useState<{ id?: string; values: Values }>()
   const [deleting, setDeleting] = useState<T>()
   const [busy, setBusy] = useState(false)
+  // Set synchronously: two clicks in one tick both see busy=false, never inFlight=false.
+  const inFlight = useRef(false)
   const [error, setError] = useState<string>()
   const [fieldErrors, setFieldErrors] = useState<Errors>({})
   const names = new Set(props.fields.map((f) => f.name))
@@ -68,7 +70,8 @@ export function ResourcePage<T extends { id: string }>(props: {
 
   /** Runs one save/delete: no double submit, server field errors onto fields, a toast either way. */
   async function run(action: () => Promise<Result>, success: string, done: () => void) {
-    if (busy) return
+    if (inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     setError(undefined)
     try {
@@ -89,6 +92,7 @@ export function ResourcePage<T extends { id: string }>(props: {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
       toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })
     } finally {
+      inFlight.current = false
       setBusy(false)
     }
   }

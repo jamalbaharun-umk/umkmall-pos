@@ -47,6 +47,7 @@ export function checkFields(fields: Field[], values: Values): Errors {
     }
     if (f.max && v.length > f.max) fail(`Maksimal ${f.max} karakter`)
     if (f.noSpaces && /\s/.test(v)) fail('Kode tanpa spasi')
+    if (f.type === 'number' && v.startsWith('-')) fail('Tidak boleh negatif')
     if (f.type === 'number' && Number.isNaN(parseRupiah(v))) fail('Harus bilangan bulat')
     if (f.type === 'date' && !isRealDate(v)) fail('Tanggal tidak valid')
     if (f.type === 'phone' && !isPhone(v)) fail('Nomor telepon tidak valid')

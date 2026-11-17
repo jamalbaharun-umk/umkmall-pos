@@ -49,6 +49,7 @@ describe('U7 form checks', () => {
     expect(parseRupiah('2500')).toBe(2500)
     expect(parseRupiah('1.5')).toBeNaN()
     expect(parseRupiah('10,000')).toBeNaN()
+    expect(checkFields([{ name: 'kuota', label: 'Kuota', type: 'number' }], { kuota: '-1' })).toEqual({ kuota: 'Tidak boleh negatif' })
   })
 
   it('accepts Indonesian phone numbers', () => {

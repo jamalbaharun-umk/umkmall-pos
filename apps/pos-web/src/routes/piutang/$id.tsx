@@ -16,7 +16,7 @@ import {
   TextField,
   toast,
 } from '@umkmall/ui'
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { loadReceivable, payReceivable } from '../pelanggan/-api'
 import { parseRupiah } from '../pelanggan/-form'
 import { formatDate, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
@@ -36,6 +36,7 @@ function ReceivablePage() {
   const [amount, setAmount] = useState('')
   const [methodId, setMethodId] = useState(methods[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
+  const inFlight = useRef(false) // set synchronously: a double click sends one request
   const [error, setError] = useState<string>()
   const [amountError, setAmountError] = useState<string>()
   // One key per opened dialog: a double tap or a network retry records one payment (pos-api Idempotency-Key).
@@ -60,10 +61,11 @@ function ReceivablePage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (inFlight.current) return
     const problem = checkAmount(amount)
     setAmountError(problem)
     if (problem) return
+    inFlight.current = true
     setBusy(true)
     setError(undefined)
     try {
@@ -83,6 +85,7 @@ function ReceivablePage() {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
       toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })
     } finally {
+      inFlight.current = false
       setBusy(false)
     }
   }

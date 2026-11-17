@@ -1,5 +1,5 @@
 import { Button, Dialog, TextField, toast } from '@umkmall/ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ErrorText, rupiah } from '@/components/pos-page'
 import { checkVoucher, pickMembers, type MemberOption } from './-api'
 
@@ -97,6 +97,7 @@ export function VoucherRow({
   const [code, setCode] = useState('')
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const inFlight = useRef(false) // set synchronously: a double click sends one check
 
   // The cart changed: the discount (percentage, minimum) is checked again; a voucher that no longer applies is removed.
   useEffect(() => {
@@ -119,16 +120,18 @@ export function VoucherRow({
 
   async function apply(e: React.FormEvent) {
     e.preventDefault()
-    if (busy) return
+    if (inFlight.current) return
     const c = code.trim().toUpperCase()
     if (!c) return setError('Wajib diisi')
     if (/\s/.test(c)) return setError('Kode tanpa spasi')
+    inFlight.current = true
     setBusy(true)
     setError(undefined)
     const res = await checkVoucher({ data: { code: c, amount } }).catch(() => ({
       ok: false as const,
       error: 'Tidak bisa terhubung. Coba lagi.',
     }))
+    inFlight.current = false
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
