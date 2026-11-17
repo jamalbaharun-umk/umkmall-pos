@@ -78,9 +78,10 @@ function ReceivablePage() {
         toast(res.error, { variant: 'danger' })
         return
       }
+      // Fresh numbers first, then close and toast together: no moment showing the old balance.
+      await router.invalidate()
       setOpen(false)
       toast(`Pembayaran ${rupiah(parseRupiah(amount))} tercatat`, { variant: 'success' })
-      await router.invalidate()
     } catch {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
       toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })

@@ -331,6 +331,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
           idempotencyKey={key}
           methods={methods}
           member={member}
+          onMemberChange={setMember}
           voucher={voucher}
           onClose={() => setPaying(false)}
           onPaid={(sale) => {
@@ -448,6 +449,7 @@ function PayDialog({
   idempotencyKey,
   methods,
   member,
+  onMemberChange,
   voucher,
   onClose,
   onPaid,
@@ -461,6 +463,7 @@ function PayDialog({
   idempotencyKey: string
   methods: PaymentMethod[]
   member: MemberOption | null
+  onMemberChange: (m: MemberOption | null) => void
   voucher: AppliedVoucher | null
   onClose: () => void
   onPaid: (sale: { id: string; change: number }) => void
@@ -553,11 +556,14 @@ function PayDialog({
             }}
           />
           {isCredit && (
-            <p className={`text-sm ${member ? 'text-default-secondary' : 'text-default-error'}`}>
-              {member
-                ? `Kasbon atas nama ${member.name}. Uang muka boleh 0; sisanya menjadi piutang.`
-                : 'Pilih member untuk kasbon.'}
-            </p>
+            <div className="space-y-1 text-sm">
+              <dl>
+                <MemberRow member={member} onChange={onMemberChange} />
+              </dl>
+              <p className={member ? 'text-default-secondary' : 'text-default-error'}>
+                {member ? 'Uang muka boleh 0; sisanya menjadi piutang.' : 'Pilih member untuk kasbon.'}
+              </p>
+            </div>
           )}
           <dl className="space-y-1 text-sm">
             <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />

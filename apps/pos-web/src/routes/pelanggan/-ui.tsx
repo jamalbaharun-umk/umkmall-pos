@@ -85,9 +85,10 @@ export function ResourcePage<T extends { id: string }>(props: {
         toast(res.error, { variant: 'danger' })
         return
       }
+      // Fresh list first, then close and toast together: no moment showing the old rows.
+      await router.invalidate()
       done()
       toast(success, { variant: 'success' })
-      await router.invalidate()
     } catch {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
       toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })

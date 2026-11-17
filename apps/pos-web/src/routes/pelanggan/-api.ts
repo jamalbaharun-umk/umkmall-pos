@@ -1,3 +1,4 @@
+import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 
@@ -58,7 +59,14 @@ async function load<T>(path: string): Promise<T> {
 }
 
 async function mutate(path: string, method: string, body?: unknown, headers?: Record<string, string>): Promise<Result> {
-  const res = await api(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  const res = await api(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }).catch(
+    (e: unknown) => {
+      if (isRedirect(e)) throw e // session ended: go to sign-in
+      return null
+    },
+  )
+  // pos-api unreachable: nothing was saved; a payment retry reuses its Idempotency-Key.
+  if (!res) return { ok: false, error: 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.' }
   if (res.ok) return { ok: true }
   const err = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown }
   // 409 and 422 carry a safe Indonesian message and a field map from pos-api (common/validation.ts).
