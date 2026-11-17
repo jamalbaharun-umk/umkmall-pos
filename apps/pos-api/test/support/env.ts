@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 // Test wiring for the local docker-compose Postgres (port 5544); CI points PGTEST_HOST at its service.
 // PGTEST_DB gives each parallel session its own database (global-setup creates it), so one session's
@@ -20,6 +23,9 @@ process.env.PGTEST_APP_KEY ??= createHash('sha256')
   .digest('hex');
 process.env.POS_SESSION_SECRET ??= randomBytes(32).toString('hex');
 process.env.NODE_ENV = 'test';
+process.env.POS_STORAGE_DIR ??= mkdtempSync(
+  path.join(tmpdir(), 'pos-storage-'),
+);
 
 const ADMIN_KEY = process.env.PGTEST_ADMIN_KEY ?? 'pos';
 export const TEST_DB = DB;

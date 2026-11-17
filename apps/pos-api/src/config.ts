@@ -5,6 +5,8 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().url(),
   // The POS's OWN session secret. Never UMKMall's auth_token key (UMK-1924 settled decision).
   POS_SESSION_SECRET: z.string().min(32),
+  // Local-disk image store (U2). Swap the ObjectStorage adapter for object storage in production.
+  POS_STORAGE_DIR: z.string().min(1).default('.storage'),
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])

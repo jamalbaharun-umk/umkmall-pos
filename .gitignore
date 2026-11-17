@@ -10,3 +10,4 @@ coverage/
 .evidence/
 *.log
 .DS_Store
+.storage/

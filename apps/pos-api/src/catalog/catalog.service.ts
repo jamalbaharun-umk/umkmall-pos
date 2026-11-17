@@ -1,0 +1,511 @@
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import type { Db } from '../db/db.module';
+import { InjectDb } from '../db/db.module';
+import {
+  categories,
+  productBarcodes,
+  productImages,
+  products,
+} from '../db/schema';
+import type {
+  ProductCreate,
+  ProductQuery,
+  ProductUpdate,
+} from './catalog.schemas';
+import { detectImage, OBJECT_STORAGE, type ObjectStorage } from './storage';
+
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+// Postgres unique violations → 409 with a stable, internals-free message.
+const CONFLICTS: Record<string, string> = {
+  categories_tenant_name_uq: 'Nama kategori sudah dipakai',
+  products_tenant_sku_uq: 'SKU sudah dipakai',
+  product_barcodes_tenant_code_uq: 'Barcode sudah dipakai',
+};
+
+function pgError(e: unknown): { code?: string; constraint_name?: string } {
+  // drizzle wraps the driver error in `cause`.
+  const err = e as { code?: string; cause?: unknown };
+  return err.code ? err : (err.cause ?? {});
+}
+
+function conflictOf(e: unknown): string | null {
+  const pg = pgError(e);
+  return pg.code === '23505'
+    ? (CONFLICTS[pg.constraint_name ?? ''] ?? null)
+    : null;
+}
+
+function rethrow(e: unknown): never {
+  const msg = conflictOf(e);
+  if (msg) throw new ConflictException(msg);
+  throw e;
+}
+
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+const alnum = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const productColumns = {
+  id: products.id,
+  categoryId: products.categoryId,
+  categoryName: categories.name,
+  name: products.name,
+  sku: products.sku,
+  unit: products.unit,
+  costPrice: products.costPrice,
+  sellingPrice: products.sellingPrice,
+  type: products.type,
+  isActive: products.isActive,
+  createdAt: products.createdAt,
+  updatedAt: products.updatedAt,
+};
+
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+@Injectable()
+export class CatalogService {
+  constructor(
+    @InjectDb() private readonly db: Db,
+    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+  ) {}
+
+  // ---------- categories ----------
+
+  listCategories(tenantId: string) {
+    return this.db
+      .select({
+        id: categories.id,
+        name: categories.name,
+        createdAt: categories.createdAt,
+      })
+      .from(categories)
+      .where(eq(categories.tenantId, tenantId))
+      .orderBy(asc(categories.name));
+  }
+
+  async createCategory(tenantId: string, name: string) {
+    try {
+      const [row] = await this.db
+        .insert(categories)
+        .values({ tenantId, name })
+        .returning({
+          id: categories.id,
+          name: categories.name,
+          createdAt: categories.createdAt,
+        });
+      return row;
+    } catch (e) {
+      rethrow(e);
+    }
+  }
+
+  async updateCategory(tenantId: string, id: string, name: string) {
+    try {
+      const [row] = await this.db
+        .update(categories)
+        .set({ name, updatedAt: new Date() })
+        .where(and(eq(categories.tenantId, tenantId), eq(categories.id, id)))
+        .returning({
+          id: categories.id,
+          name: categories.name,
+          createdAt: categories.createdAt,
+        });
+      if (!row) throw new NotFoundException();
+      return row;
+    } catch (e) {
+      rethrow(e);
+    }
+  }
+
+  async deleteCategory(tenantId: string, id: string) {
+    const [inUse] = await this.db
+      .select({ n: count() })
+      .from(products)
+      .where(and(eq(products.tenantId, tenantId), eq(products.categoryId, id)));
+    // Soft-deleted products still reference the category (sales history), so they count too.
+    if (inUse.n > 0)
+      throw new ConflictException('Kategori masih dipakai produk');
+    const [row] = await this.db
+      .delete(categories)
+      .where(and(eq(categories.tenantId, tenantId), eq(categories.id, id)))
+      .returning({ id: categories.id });
+    if (!row) throw new NotFoundException();
+  }
+
+  // ---------- products ----------
+
+  private live(tenantId: string) {
+    return and(eq(products.tenantId, tenantId), isNull(products.deletedAt));
+  }
+
+  async listProducts(tenantId: string, q: ProductQuery) {
+    const filters = [this.live(tenantId)];
+    if (q.categoryId) filters.push(eq(products.categoryId, q.categoryId));
+    if (q.q) {
+      const like = `%${escapeLike(q.q)}%`;
+      filters.push(
+        or(
+          ilike(products.name, like),
+          ilike(products.sku, like),
+          sql`exists (select 1 from ${productBarcodes} b where b.product_id = ${products.id} and b.code ilike ${like})`,
+        ),
+      );
+    }
+    const where = and(...filters);
+    const [rows, [{ total }]] = await Promise.all([
+      this.db
+        .select(productColumns)
+        .from(products)
+        .innerJoin(categories, eq(categories.id, products.categoryId))
+        .where(where)
+        .orderBy(desc(products.createdAt), desc(products.id))
+        .limit(q.perPage)
+        .offset((q.page - 1) * q.perPage),
+      this.db.select({ total: count() }).from(products).where(where),
+    ]);
+    const codes = await this.barcodesOf(rows.map((r) => r.id));
+    return {
+      data: rows.map((r) => this.present(r, codes.get(r.id) ?? [])),
+      page: q.page,
+      perPage: q.perPage,
+      total,
+    };
+  }
+
+  async getProduct(tenantId: string, id: string) {
+    const [row] = await this.db
+      .select(productColumns)
+      .from(products)
+      .innerJoin(categories, eq(categories.id, products.categoryId))
+      .where(and(this.live(tenantId), eq(products.id, id)));
+    if (!row) throw new NotFoundException();
+    const [codes, images] = await Promise.all([
+      this.barcodesOf([id]),
+      this.db
+        .select({
+          id: productImages.id,
+          contentType: productImages.contentType,
+          sizeBytes: productImages.sizeBytes,
+        })
+        .from(productImages)
+        .where(
+          and(
+            eq(productImages.tenantId, tenantId),
+            eq(productImages.productId, id),
+          ),
+        )
+        .orderBy(asc(productImages.createdAt)),
+    ]);
+    return { ...this.present(row, codes.get(id) ?? []), images };
+  }
+
+  async createProduct(tenantId: string, input: ProductCreate) {
+    const category = await this.requireCategory(tenantId, input.categoryId);
+    const generate = !input.sku;
+    // A generated SKU can race another create; retry with the next number.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const id = await this.db.transaction(async (tx) => {
+          const sku = generate
+            ? await this.nextSku(
+                tx,
+                tenantId,
+                category.name,
+                input.name,
+                attempt,
+              )
+            : input.sku!;
+          const [row] = await tx
+            .insert(products)
+            .values({
+              tenantId,
+              categoryId: input.categoryId,
+              name: input.name,
+              sku,
+              unit: input.unit,
+              costPrice: input.costPrice,
+              sellingPrice: input.sellingPrice,
+              type: input.type,
+              isActive: input.isActive,
+            })
+            .returning({ id: products.id });
+          await this.replaceBarcodes(
+            tx,
+            tenantId,
+            row.id,
+            input.barcodes ?? [],
+          );
+          return row.id;
+        });
+        return this.getProduct(tenantId, id);
+      } catch (e) {
+        if (
+          generate &&
+          attempt < 3 &&
+          conflictOf(e) === CONFLICTS.products_tenant_sku_uq
+        )
+          continue;
+        rethrow(e);
+      }
+    }
+  }
+
+  async updateProduct(tenantId: string, id: string, input: ProductUpdate) {
+    const [current] = await this.db
+      .select({
+        costPrice: products.costPrice,
+        sellingPrice: products.sellingPrice,
+      })
+      .from(products)
+      .where(and(this.live(tenantId), eq(products.id, id)));
+    if (!current) throw new NotFoundException();
+    if (input.categoryId)
+      await this.requireCategory(tenantId, input.categoryId);
+    const cost = input.costPrice ?? current.costPrice;
+    const selling = input.sellingPrice ?? current.sellingPrice;
+    if (cost > selling) {
+      throw new UnprocessableEntityException({
+        message: 'Data tidak valid',
+        fields: ['costPrice'],
+      });
+    }
+    const { barcodes, ...fields } = input;
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx
+          .update(products)
+          .set({ ...fields, updatedAt: new Date() })
+          .where(and(this.live(tenantId), eq(products.id, id)));
+        if (barcodes) await this.replaceBarcodes(tx, tenantId, id, barcodes);
+      });
+    } catch (e) {
+      rethrow(e);
+    }
+    return this.getProduct(tenantId, id);
+  }
+
+  async deleteProduct(tenantId: string, id: string) {
+    const images = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(products)
+        .set({ deletedAt: new Date() })
+        .where(and(this.live(tenantId), eq(products.id, id)))
+        .returning({ id: products.id });
+      if (!row) throw new NotFoundException();
+      // Free the barcodes for reuse; drop the image rows (bytes deleted after commit).
+      await tx
+        .delete(productBarcodes)
+        .where(
+          and(
+            eq(productBarcodes.tenantId, tenantId),
+            eq(productBarcodes.productId, id),
+          ),
+        );
+      return tx
+        .delete(productImages)
+        .where(
+          and(
+            eq(productImages.tenantId, tenantId),
+            eq(productImages.productId, id),
+          ),
+        )
+        .returning({ key: productImages.storageKey });
+    });
+    await Promise.all(images.map((i) => this.storage.delete(i.key)));
+  }
+
+  // ---------- images ----------
+
+  async addImage(
+    tenantId: string,
+    productId: string,
+    file: { buffer: Buffer } | undefined,
+  ) {
+    await this.requireProduct(tenantId, productId);
+    const kind =
+      file && file.buffer.length <= MAX_IMAGE_BYTES
+        ? detectImage(file.buffer)
+        : null;
+    if (!file || !kind) {
+      throw new UnprocessableEntityException({
+        message: 'Gambar harus JPG, PNG atau WebP, maksimal 2 MB',
+        fields: ['file'],
+      });
+    }
+    const storageKey = `tenants/${tenantId}/products/${productId}/${randomUUID()}.${kind.ext}`;
+    await this.storage.put(storageKey, file.buffer);
+    try {
+      const [row] = await this.db
+        .insert(productImages)
+        .values({
+          tenantId,
+          productId,
+          storageKey,
+          contentType: kind.contentType,
+          sizeBytes: file.buffer.length,
+        })
+        .returning({
+          id: productImages.id,
+          contentType: productImages.contentType,
+          sizeBytes: productImages.sizeBytes,
+        });
+      return row;
+    } catch (e) {
+      await this.storage.delete(storageKey);
+      throw e;
+    }
+  }
+
+  private async findImage(
+    tenantId: string,
+    productId: string,
+    imageId: string,
+  ) {
+    await this.requireProduct(tenantId, productId);
+    const [image] = await this.db
+      .select({
+        key: productImages.storageKey,
+        contentType: productImages.contentType,
+      })
+      .from(productImages)
+      .where(
+        and(
+          eq(productImages.tenantId, tenantId),
+          eq(productImages.productId, productId),
+          eq(productImages.id, imageId),
+        ),
+      );
+    if (!image) throw new NotFoundException();
+    return image;
+  }
+
+  async getImage(tenantId: string, productId: string, imageId: string) {
+    const image = await this.findImage(tenantId, productId, imageId);
+    const body = await this.storage.get(image.key);
+    if (!body) throw new NotFoundException();
+    return { body, contentType: image.contentType };
+  }
+
+  async deleteImage(tenantId: string, productId: string, imageId: string) {
+    const image = await this.findImage(tenantId, productId, imageId);
+    await this.db
+      .delete(productImages)
+      .where(
+        and(
+          eq(productImages.tenantId, tenantId),
+          eq(productImages.id, imageId),
+        ),
+      );
+    await this.storage.delete(image.key);
+  }
+
+  // ---------- helpers ----------
+
+  private async requireCategory(tenantId: string, id: string) {
+    const [row] = await this.db
+      .select({ name: categories.name })
+      .from(categories)
+      .where(and(eq(categories.tenantId, tenantId), eq(categories.id, id)));
+    // 422, not 404: the category is a field of the payload, not the resource in the path.
+    if (!row)
+      throw new UnprocessableEntityException({
+        message: 'Kategori tidak ditemukan',
+        fields: ['categoryId'],
+      });
+    return row;
+  }
+
+  private async requireProduct(tenantId: string, id: string) {
+    const [row] = await this.db
+      .select({ id: products.id })
+      .from(products)
+      .where(and(this.live(tenantId), eq(products.id, id)));
+    if (!row) throw new NotFoundException();
+  }
+
+  /** CAT-NAM-0001: letters/digits only, never a space (Lakasir flaw 9). */
+  private async nextSku(
+    tx: Tx,
+    tenantId: string,
+    category: string,
+    name: string,
+    bump: number,
+  ) {
+    const prefix = `${alnum(category).slice(0, 3) || 'PRD'}-${alnum(name).slice(0, 3) || 'X'}`;
+    const [{ n }] = await tx
+      .select({ n: count() })
+      .from(products)
+      .where(eq(products.tenantId, tenantId));
+    return `${prefix}-${String(n + 1 + bump).padStart(4, '0')}`;
+  }
+
+  private async replaceBarcodes(
+    tx: Tx,
+    tenantId: string,
+    productId: string,
+    codes: string[],
+  ) {
+    await tx
+      .delete(productBarcodes)
+      .where(
+        and(
+          eq(productBarcodes.tenantId, tenantId),
+          eq(productBarcodes.productId, productId),
+        ),
+      );
+    if (codes.length)
+      await tx
+        .insert(productBarcodes)
+        .values(codes.map((code) => ({ tenantId, productId, code })));
+  }
+
+  private async barcodesOf(productIds: string[]) {
+    const map = new Map<string, string[]>();
+    if (!productIds.length) return map;
+    const rows = await this.db
+      .select({
+        productId: productBarcodes.productId,
+        code: productBarcodes.code,
+      })
+      .from(productBarcodes)
+      .where(inArray(productBarcodes.productId, productIds))
+      .orderBy(asc(productBarcodes.createdAt), asc(productBarcodes.code));
+    for (const r of rows)
+      map.set(r.productId, [...(map.get(r.productId) ?? []), r.code]);
+    return map;
+  }
+
+  private present(
+    {
+      categoryName,
+      ...row
+    }: { categoryName: string; categoryId: string } & Record<string, unknown>,
+    barcodes: string[],
+  ) {
+    return {
+      ...row,
+      category: { id: row.categoryId, name: categoryName },
+      barcodes,
+    };
+  }
+}
