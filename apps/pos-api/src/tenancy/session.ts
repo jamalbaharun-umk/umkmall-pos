@@ -12,6 +12,7 @@ const ClaimsSchema = z.object({
   sub: z.string().min(1), // actor: UMKMall user id (owner) or POS staff id (cashier)
   kind: z.enum(['owner', 'cashier']),
   sid: z.string().min(1).optional(), // UMKMall session id, owner sessions only (liveness refresh)
+  csid: z.string().uuid().optional(), // cashier session row (U4); the guard checks it is still live
 });
 
 export type PosSession = {
@@ -20,6 +21,9 @@ export type PosSession = {
   kind: 'owner' | 'cashier';
   /** UMKMall auth session id; present on owner sessions from the handoff, never on cashier sessions. */
   sid?: string;
+  cashierSessionId?: string;
+  /** Set by the session guard per request, never from the token (U4). Owners hold every permission. */
+  permissions?: readonly string[];
 };
 
 export async function signSession(
@@ -31,6 +35,7 @@ export async function signSession(
     tid: session.tenantId,
     kind: session.kind,
     ...(session.sid ? { sid: session.sid } : {}),
+    ...(session.cashierSessionId && { csid: session.cashierSessionId }),
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(session.actorId)
@@ -62,6 +67,7 @@ export async function verifySession(
       actorId: claims.sub,
       kind: claims.kind,
       ...(claims.sid ? { sid: claims.sid } : {}),
+      ...(claims.csid && { cashierSessionId: claims.csid }),
     };
   } catch {
     return null;

@@ -57,6 +57,10 @@ silent, follow the monorepo's principles.
   under a row lock (`select … for update`) or an atomic `update … where qty >= n`.
 - **Money and state changes are idempotent:** sale creation takes an `Idempotency-Key`; a retry returns the
   first result.
+- **Gate actions with `@RequirePermission('<key>')`** (`src/staff/require-permission.ts`; keys in
+  `src/staff/permissions.ts`, add new ones there). Owners hold every permission; a cashier holds their roles'
+  permissions, loaded per request by the session guard (`session.permissions`). Inline checks use
+  `hasPermission(session, key)` (U3: a client price counts only with `sales.price_override`).
 - **Validate at the boundary with zod;** a bad input answers 422 (never 500). Errors never echo internals.
 - **POS tokens are signed and verified only in `src/tenancy/session.ts`** (guard test). The POS never holds
   UMKMall's `auth_token` HS256 key; UMKMall sign-in arrives as a handoff token (U1).
