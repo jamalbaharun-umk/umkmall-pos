@@ -14,9 +14,11 @@ import {
   TableRow,
   Text,
   TextField,
+  toast,
 } from '@umkmall/ui'
 import { useState, type FormEvent } from 'react'
 import { loadReceivable, payReceivable } from '../pelanggan/-api'
+import { parseRupiah } from '../pelanggan/-form'
 import { formatDate, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
 
 // Lakasir ViewReceivable: details, the sale's items, the payment history and the "add payment" action.
@@ -35,21 +37,51 @@ function ReceivablePage() {
   const [methodId, setMethodId] = useState(methods[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [amountError, setAmountError] = useState<string>()
+  // One key per opened dialog: a double tap or a network retry records one payment (pos-api Idempotency-Key).
+  const [key, setKey] = useState(() => crypto.randomUUID())
+
+  function openDialog() {
+    setKey(crypto.randomUUID())
+    setAmount('')
+    setError(undefined)
+    setAmountError(undefined)
+    setOpen(true)
+  }
+
+  /** Mirrors pos-api: required, whole rupiah, more than 0, at most the rest. */
+  function checkAmount(raw: string): string | undefined {
+    if (!raw.trim()) return 'Wajib diisi'
+    const value = parseRupiah(raw)
+    if (Number.isNaN(value)) return 'Harus bilangan bulat rupiah'
+    if (value <= 0) return 'Harus lebih dari 0'
+    if (value > r.rest) return `Pembayaran melebihi sisa piutang (${rupiah(r.rest)})`
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    const value = Number(amount.replace(/\D/g, ''))
-    if (!value) return setError('Isi jumlah pembayaran.')
+    if (busy) return
+    const problem = checkAmount(amount)
+    setAmountError(problem)
+    if (problem) return
     setBusy(true)
     setError(undefined)
     try {
-      const res = await payReceivable({ data: { id: r.id, amount: value, paymentMethodId: methodId || undefined } })
-      if (!res.ok) return setError(res.error)
+      const res = await payReceivable({
+        data: { id: r.id, key, amount: parseRupiah(amount), paymentMethodId: methodId || undefined },
+      })
+      if (!res.ok) {
+        setAmountError(res.errors?.amount)
+        if (!res.errors?.amount) setError(res.errors?.paymentMethodId ?? res.error)
+        toast(res.error, { variant: 'danger' })
+        return
+      }
       setOpen(false)
-      setAmount('')
+      toast(`Pembayaran ${rupiah(parseRupiah(amount))} tercatat`, { variant: 'success' })
       await router.invalidate()
     } catch {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
+      toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })
     } finally {
       setBusy(false)
     }
@@ -65,7 +97,7 @@ function ReceivablePage() {
             <Link to="/piutang">Kembali</Link>
           </Button>
           {r.rest > 0 && (
-            <Button width="auto" onClick={() => setOpen(true)}>
+            <Button width="auto" onClick={openDialog}>
               Tambah pembayaran
             </Button>
           )}
@@ -150,13 +182,18 @@ function ReceivablePage() {
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen} centered title="Tambah pembayaran">
-        <form onSubmit={submit} className="space-y-4 px-6 pb-6">
+        <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">
           <p className="text-sm text-default-secondary">Sisa piutang {rupiah(r.rest)}</p>
           <TextField
             label="Jumlah (Rp)"
             inputMode="numeric"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setAmount(e.target.value)
+              setAmountError(undefined)
+            }}
+            error={amountError}
+            placeholder="Contoh: 2.500"
             required
           />
           <Select
@@ -171,10 +208,13 @@ function ReceivablePage() {
             </Alert>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="outline" color="dark" width="auto" onClick={() => setAmount(String(r.rest))}>
+            <Button type="outline" color="dark" width="auto" onClick={() => {
+                setAmount(String(r.rest))
+                setAmountError(undefined)
+              }}>
               Lunasi
             </Button>
-            <Button htmlType="submit" width="auto" isLoading={busy}>
+            <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
               Simpan
             </Button>
           </div>

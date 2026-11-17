@@ -35,7 +35,7 @@ export type Receivable = ReceivableSummary & {
 }
 /** A list row as JSON; each screen narrows it to its own type. */
 type Row = Record<string, string | number | null>
-export type Result = { ok: true } | { ok: false; error: string }
+export type Result = { ok: true } | { ok: false; error: string; errors?: Record<string, string> }
 
 /** The only collections these relays reach (never a client-chosen path). */
 export type Resource = 'members' | 'vouchers' | 'payment-methods'
@@ -57,17 +57,15 @@ async function load<T>(path: string): Promise<T> {
   return (await res.json()) as T
 }
 
-async function mutate(path: string, method: string, body?: unknown): Promise<Result> {
-  const res = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })
+async function mutate(path: string, method: string, body?: unknown, headers?: Record<string, string>): Promise<Result> {
+  const res = await api(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   if (res.ok) return { ok: true }
-  const err = (await res.json().catch(() => ({}))) as { message?: unknown }
-  // 409 and business 422s (voucher, kasbon, Tunai) carry a safe Indonesian message from pos-api.
-  if (
-    (res.status === 409 || res.status === 422) &&
-    typeof err.message === 'string' &&
-    err.message !== 'Data tidak valid'
-  )
-    return { ok: false, error: err.message }
+  const err = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown }
+  // 409 and 422 carry a safe Indonesian message and a field map from pos-api (common/validation.ts).
+  if ((res.status === 409 || res.status === 422) && typeof err.message === 'string') {
+    const errors = err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined
+    return { ok: false, error: err.message, errors }
+  }
   return { ok: false, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
 }
 
@@ -110,6 +108,9 @@ export const loadReceivable = createServerFn()
     return { receivable, methods: methods.data.filter((m) => m.kind !== 'credit') }
   })
 
+// `key` is made once per payment dialog, so a double tap or a retry records one payment.
 export const payReceivable = createServerFn({ method: 'POST' })
-  .validator((d: { id: string; amount: number; paymentMethodId?: string }) => d)
-  .handler(({ data: { id, ...body } }) => mutate(`/receivables/${enc(id)}/payments`, 'POST', body))
+  .validator((d: { id: string; key: string; amount: number; paymentMethodId?: string }) => d)
+  .handler(({ data: { id, key, ...body } }) =>
+    mutate(`/receivables/${enc(id)}/payments`, 'POST', body, { 'idempotency-key': key }),
+  )

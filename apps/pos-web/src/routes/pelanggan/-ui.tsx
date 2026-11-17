@@ -12,9 +12,11 @@ import {
   TableHeader,
   TableRow,
   TextField,
+  toast,
 } from '@umkmall/ui'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { Empty, Page, PageError, PageLoading, type Crumb } from '@/components/page'
+import { checkFields, toBody, type Errors, type Field, type Values } from './-form'
 import { removeResource, saveResource, type Resource, type Result } from './-api'
 
 // Page pieces for the U7 screens (pelanggan, voucher, metode pembayaran, piutang): Filament's page header,
@@ -32,32 +34,13 @@ export { Empty, Page, PageError as LoadError, PageLoading as Pending }
 export const formatDate = (iso: string) =>
   new Date(iso.length === 10 ? `${iso}T00:00:00` : iso).toLocaleDateString('id-ID', { dateStyle: 'medium' })
 
-export type Field = {
-  name: string
-  label: string
-  type?: 'text' | 'number' | 'date'
-  options?: { label: string; value: string }[]
-  optional?: boolean
-  placeholder?: string
-}
+export type { Field } from './-form'
+
 export type Column<T> = {
   label: string
   cell: (row: T) => ReactNode
   right?: boolean
 }
-type Values = Record<string, string>
-
-/** Form strings → API body: numbers parsed, blank optional text sent as null. */
-function toBody(fields: Field[], v: Values) {
-  return Object.fromEntries(
-    fields.map((f) => {
-      const raw = (v[f.name] ?? '').trim()
-      if (f.type === 'number') return [f.name, raw === '' ? undefined : Number(raw.replace(/\D/g, ''))]
-      return [f.name, raw === '' && f.optional ? null : raw]
-    }),
-  )
-}
-
 /**
  * Lakasir's simple resource: a table with Ubah/Hapus row actions and a "Tambah" header action, create and edit
  * in a modal form. pos-api validates; its message is shown in the form.
@@ -79,17 +62,32 @@ export function ResourcePage<T extends { id: string }>(props: {
   const [deleting, setDeleting] = useState<T>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [fieldErrors, setFieldErrors] = useState<Errors>({})
+  const names = new Set(props.fields.map((f) => f.name))
+  const Singular = props.singular[0].toUpperCase() + props.singular.slice(1)
 
-  async function run(action: () => Promise<Result>, done: () => void) {
+  /** Runs one save/delete: no double submit, server field errors onto fields, a toast either way. */
+  async function run(action: () => Promise<Result>, success: string, done: () => void) {
+    if (busy) return
     setBusy(true)
     setError(undefined)
     try {
       const res = await action()
-      if (!res.ok) return setError(res.error)
+      if (!res.ok) {
+        const onFields = Object.fromEntries(Object.entries(res.errors ?? {}).filter(([k]) => names.has(k)))
+        setFieldErrors(onFields)
+        // What no field shows goes to the form-level alert.
+        const rest = Object.entries(res.errors ?? {}).filter(([k]) => !names.has(k))
+        setError(Object.keys(onFields).length && !rest.length ? undefined : (rest[0]?.[1] ?? res.error))
+        toast(res.error, { variant: 'danger' })
+        return
+      }
       done()
+      toast(success, { variant: 'success' })
       await router.invalidate()
     } catch {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
+      toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })
     } finally {
       setBusy(false)
     }
@@ -97,6 +95,7 @@ export function ResourcePage<T extends { id: string }>(props: {
 
   const open = (row?: T) => {
     setError(undefined)
+    setFieldErrors({})
     const r = row as Record<string, unknown> | undefined
     setForm({
       id: row?.id,
@@ -109,7 +108,10 @@ export function ResourcePage<T extends { id: string }>(props: {
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    if (!form) return
+    if (!form || busy) return
+    const errors = checkFields(props.fields, form.values)
+    setFieldErrors(errors)
+    if (Object.keys(errors).length) return setError('Periksa kembali isian yang ditandai.')
     void run(
       () =>
         saveResource({
@@ -119,11 +121,15 @@ export function ResourcePage<T extends { id: string }>(props: {
             body: toBody(props.fields, form.values),
           },
         }),
+      form.id ? `${Singular} tersimpan` : `${Singular} ditambahkan`,
       () => setForm(undefined),
     )
   }
 
-  const set = (name: string, value: string) => setForm((f) => f && { ...f, values: { ...f.values, [name]: value } })
+  const set = (name: string, value: string) => {
+    setForm((f) => f && { ...f, values: { ...f.values, [name]: value } })
+    setFieldErrors(({ [name]: _gone, ...rest }) => rest)
+  }
   const manage = props.canManage ?? (() => true)
 
   return (
@@ -164,7 +170,10 @@ export function ResourcePage<T extends { id: string }>(props: {
                         <Button type="text" size="small" width="auto" onClick={() => open(row)}>
                           Ubah
                         </Button>
-                        <Button type="text" color="danger" size="small" width="auto" onClick={() => setDeleting(row)}>
+                        <Button type="text" color="danger" size="small" width="auto" onClick={() => {
+                            setError(undefined)
+                            setDeleting(row)
+                          }}>
                           Hapus
                         </Button>
                       </span>
@@ -183,7 +192,7 @@ export function ResourcePage<T extends { id: string }>(props: {
         centered
         title={form?.id ? `Ubah ${props.singular}` : `Tambah ${props.singular}`}
       >
-        <form onSubmit={submit} className="space-y-4 px-6 pb-6">
+        <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">
           <div className="grid max-h-[60vh] gap-4 overflow-y-auto p-1 sm:grid-cols-2">
             {props.fields.map((f) =>
               f.options ? (
@@ -193,17 +202,19 @@ export function ResourcePage<T extends { id: string }>(props: {
                   options={f.options}
                   value={form?.values[f.name] ?? ''}
                   onValueChange={(v) => set(f.name, v)}
+                  error={fieldErrors[f.name]}
                 />
               ) : (
                 <TextField
                   key={f.name}
                   label={f.optional ? `${f.label} (opsional)` : f.label}
-                  type={f.type === 'number' ? 'text' : (f.type ?? 'text')}
-                  inputMode={f.type === 'number' ? 'numeric' : undefined}
+                  type={f.type === 'date' ? 'date' : f.type === 'phone' ? 'tel' : 'text'}
+                  inputMode={f.type === 'number' ? 'numeric' : f.type === 'phone' ? 'tel' : undefined}
                   placeholder={f.placeholder}
                   value={form?.values[f.name] ?? ''}
                   onChange={(e) => set(f.name, e.target.value)}
                   required={!f.optional}
+                  error={fieldErrors[f.name]}
                 />
               ),
             )}
@@ -217,7 +228,7 @@ export function ResourcePage<T extends { id: string }>(props: {
             <Button type="outline" color="dark" width="auto" onClick={() => setForm(undefined)}>
               Batal
             </Button>
-            <Button htmlType="submit" width="auto" isLoading={busy}>
+            <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
               Simpan
             </Button>
           </div>
@@ -253,6 +264,7 @@ export function ResourcePage<T extends { id: string }>(props: {
                     removeResource({
                       data: { resource: props.resource, id: deleting.id },
                     }),
+                  `${Singular} dihapus`,
                   () => setDeleting(undefined),
                 )
               }

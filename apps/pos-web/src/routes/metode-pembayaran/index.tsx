@@ -34,7 +34,7 @@ export const Route = createFileRoute('/metode-pembayaran/')({
         },
       ]}
       fields={[
-        { name: 'name', label: 'Nama', placeholder: 'Contoh: QRIS BCA' },
+        { name: 'name', label: 'Nama', placeholder: 'Contoh: QRIS BCA', max: 60 },
         { name: 'kind', label: 'Jenis', options: KINDS },
       ]}
     />

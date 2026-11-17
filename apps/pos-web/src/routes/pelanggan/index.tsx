@@ -52,10 +52,10 @@ function MembersPage() {
         { label: 'Alamat', cell: (m) => m.address ?? '–' },
       ]}
       fields={[
-        { name: 'name', label: 'Nama' },
-        { name: 'code', label: 'Kode', placeholder: 'Contoh: PLG001' },
-        { name: 'phone', label: 'Telepon', optional: true },
-        { name: 'address', label: 'Alamat', optional: true },
+        { name: 'name', label: 'Nama', max: 120 },
+        { name: 'code', label: 'Kode', placeholder: 'Contoh: PLG001', max: 40, noSpaces: true },
+        { name: 'phone', label: 'Telepon', type: 'phone', optional: true, placeholder: '0812-3456-7890' },
+        { name: 'address', label: 'Alamat', optional: true, max: 500 },
       ]}
     />
   )
