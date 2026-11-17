@@ -15,7 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { CurrentSession } from '../tenancy/decorators';
-import { RequirePermission } from '../staff/require-permission';
+import { hasPermission, RequirePermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
   CategoryInput,
@@ -73,13 +73,28 @@ export class CategoriesController {
   }
 }
 
+/** Cost price is margin data: only actors who manage the catalog, read reports or buy stock see it. */
+function withoutCost<T extends Record<string, unknown>>(s: PosSession, p: T) {
+  const sees = (
+    ['catalog.manage', 'reports.view', 'purchasing.manage'] as const
+  ).some((k) => hasPermission(s, k));
+  if (sees) return p;
+  const rest: Record<string, unknown> = { ...p };
+  delete rest.costPrice;
+  return rest;
+}
+
 @Controller('catalog/products')
 export class ProductsController {
   constructor(private readonly catalog: CatalogService) {}
 
   @Get()
-  list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return this.catalog.listProducts(s.tenantId, parse(ProductQuery, query));
+  async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    const page = await this.catalog.listProducts(
+      s.tenantId,
+      parse(ProductQuery, query),
+    );
+    return { ...page, data: page.data.map((p) => withoutCost(s, p)) };
   }
 
   @Post()
@@ -89,8 +104,8 @@ export class ProductsController {
   }
 
   @Get(':id')
-  get(@CurrentSession() s: PosSession, @Param('id') id: string) {
-    return this.catalog.getProduct(s.tenantId, idOf(id));
+  async get(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    return withoutCost(s, await this.catalog.getProduct(s.tenantId, idOf(id)));
   }
 
   @Patch(':id')

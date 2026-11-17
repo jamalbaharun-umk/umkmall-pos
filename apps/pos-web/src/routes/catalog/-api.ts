@@ -37,26 +37,10 @@ export type ProductInput = {
 }
 type Result = { error?: string; id?: string }
 
-const FIELD_LABELS: Record<string, string> = {
-  name: 'nama',
-  categoryId: 'kategori',
-  sku: 'SKU',
-  unit: 'satuan',
-  costPrice: 'harga modal (tidak boleh melebihi harga jual)',
-  sellingPrice: 'harga jual',
-  type: 'jenis',
-  barcodes: 'barcode',
-}
-
 async function errorOf(res: Response): Promise<string> {
-  const body = (await res.json().catch(() => ({}))) as { message?: unknown; fields?: string[] }
-  if (res.status === 409 && typeof body.message === 'string') return body.message
-  if (res.status === 422) {
-    const fields = [...new Set((body.fields ?? []).map((f) => FIELD_LABELS[f.split('.')[0]] ?? f))]
-    return fields.length ? `Periksa lagi: ${fields.join(', ')}.` : 'Data tidak valid.'
-  }
-  if (res.status === 404) return 'Data tidak ditemukan. Mungkin sudah dihapus.'
-  if (res.status === 403) return 'Kamu tidak punya izin untuk mengubah katalog.'
+  const body = (await res.json().catch(() => ({}))) as { message?: unknown }
+  // pos-api answers every refusal with an Indonesian `message` (common/error.filter.ts).
+  if (res.status < 500 && typeof body.message === 'string') return body.message
   return 'Terjadi kesalahan. Coba lagi sebentar lagi.'
 }
 

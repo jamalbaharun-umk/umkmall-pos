@@ -108,6 +108,11 @@ describe('UMKMall handoff exchange and owner refresh', () => {
   const exchange = (token: unknown) =>
     request(app.getHttpServer()).post('/auth/umkmall/exchange').send({ token });
 
+  it('refuses a handoff for an account UMKMall has no users row for with 401, not a 500', async () => {
+    const res = await exchange(await handoff(randomUUID())).expect(401);
+    expect(res.body).toEqual({ message: 'Akun UMKMall tidak ditemukan' });
+  });
+
   it('exchanges a handoff token for an owner session and creates the store once', async () => {
     const sub = await umkmallUser();
     const first = await exchange(await handoff(sub)).expect(200);

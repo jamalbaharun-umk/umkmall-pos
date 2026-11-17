@@ -6,6 +6,14 @@ import { createStore } from './fixtures';
 type Store = Awaited<ReturnType<typeof createStore>>;
 
 /** Through the real API: a role with `permissions`, a cashier with PIN `pin`, a bound device. */
+// Staff names are unique per store: the first cashier is "Sari", later ones in the same store "Sari 2", ...
+const perStore = new Map<string, number>();
+function cashierName(tenantId: string): string {
+  const n = (perStore.get(tenantId) ?? 0) + 1;
+  perStore.set(tenantId, n);
+  return n === 1 ? 'Sari' : `Sari ${n}`;
+}
+
 export async function createCashier(
   app: INestApplication,
   store: Store,
@@ -21,7 +29,7 @@ export async function createCashier(
   const member = await http()
     .post('/staff')
     .set('Authorization', store.auth)
-    .send({ name: 'Sari', pin, roleIds: [role.body.id] })
+    .send({ name: cashierName(store.tenantId), pin, roleIds: [role.body.id] })
     .expect(201);
   const device = await http()
     .post('/staff/devices')

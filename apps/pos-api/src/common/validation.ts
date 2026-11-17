@@ -22,6 +22,12 @@ const rp = (n: number | bigint) => `Rp${Number(n).toLocaleString('id-ID')}`;
 const errorMap: z.ZodErrorMap = (issue, ctx) => {
   switch (issue.code) {
     case z.ZodIssueCode.invalid_type:
+      // A schema's own required_error / invalid_type_error arrives as defaultError and wins.
+      if (
+        ctx.defaultError !== 'Required' &&
+        !ctx.defaultError.startsWith('Expected ')
+      )
+        return { message: ctx.defaultError };
       return {
         message:
           issue.received === 'undefined' || issue.received === 'null'

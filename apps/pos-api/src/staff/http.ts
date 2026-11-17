@@ -1,21 +1,13 @@
-import {
-  NotFoundException,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
+import { validate } from '../common/validation';
 
-/** Validate a request body: 422 naming the bad fields, never echoing their values. */
+/** Validate a request body: 422 `{ message, errors }` in Indonesian, never echoing values. */
 export function parseBody<T extends z.ZodTypeAny>(
   schema: T,
   body: unknown,
 ): z.infer<T> {
-  const r = schema.safeParse(body);
-  if (!r.success)
-    throw new UnprocessableEntityException({
-      message: 'Invalid input',
-      fields: r.error.issues.map((i) => i.path.join('.')),
-    });
-  return r.data as z.infer<T>;
+  return validate(schema, body) as z.infer<T>;
 }
 
 const Uuid = z.string().uuid();

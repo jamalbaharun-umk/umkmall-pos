@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ErrorFilter } from './common/error.filter';
 import { CatalogModule } from './catalog/catalog.module';
 import { AuthController } from './auth/auth.controller';
 import { DbModule } from './db/db.module';
@@ -37,6 +38,9 @@ import { TenancyController } from './tenancy/tenancy.controller';
     ReceivablesModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
-  providers: [{ provide: APP_GUARD, useClass: SessionGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: SessionGuard },
+    { provide: APP_FILTER, useClass: ErrorFilter },
+  ],
 })
 export class AppModule {}

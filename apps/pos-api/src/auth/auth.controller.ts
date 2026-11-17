@@ -7,10 +7,10 @@ import {
   Post,
   ServiceUnavailableException,
   UnauthorizedException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { eq, lt } from 'drizzle-orm';
 import { z } from 'zod';
+import { fieldError, validate } from '../common/validation';
 import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -25,11 +25,9 @@ const LIVENESS_TIMEOUT_MS = 5_000;
 const ExchangeBody = z.object({ token: z.string().min(1).max(4096) });
 const DevBody = z.object({ userId: z.string().uuid() });
 
-function parse<T>(schema: z.ZodType<T>, body: unknown): T {
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) throw new UnprocessableEntityException();
-  return parsed.data;
-}
+const parse = validate;
+const isMissingUser = (e: unknown) =>
+  (e as { cause?: { code?: string } }).cause?.code === '23503';
 
 @Controller('auth')
 export class AuthController {
@@ -47,16 +45,27 @@ export class AuthController {
     const handoff = await verifyHandoff(token, this.env.UMKMALL_JWKS_URL);
     if (!handoff) throw new UnauthorizedException();
 
-    const tenantId = await this.db.transaction(async (tx) => {
-      await tx.delete(handoffJtis).where(lt(handoffJtis.expiresAt, new Date()));
-      const spent = await tx
-        .insert(handoffJtis)
-        .values({ jti: handoff.jti, expiresAt: new Date(handoff.exp * 1000) })
-        .onConflictDoNothing()
-        .returning({ jti: handoffJtis.jti });
-      if (spent.length === 0) throw new UnauthorizedException(); // replayed jti
-      return this.findOrCreateTenant(tx, handoff.sub);
-    });
+    const tenantId = await this.db
+      .transaction(async (tx) => {
+        await tx
+          .delete(handoffJtis)
+          .where(lt(handoffJtis.expiresAt, new Date()));
+        const spent = await tx
+          .insert(handoffJtis)
+          .values({ jti: handoff.jti, expiresAt: new Date(handoff.exp * 1000) })
+          .onConflictDoNothing()
+          .returning({ jti: handoffJtis.jti });
+        if (spent.length === 0) throw new UnauthorizedException(); // replayed jti
+        return this.findOrCreateTenant(tx, handoff.sub);
+      })
+      .catch((error: unknown) => {
+        // A handoff for an account UMKMall has no users row for: refuse cleanly instead of a 500.
+        if (isMissingUser(error))
+          throw new UnauthorizedException({
+            message: 'Akun UMKMall tidak ditemukan',
+          });
+        throw error;
+      });
     return this.issue({
       tenantId,
       actorId: handoff.sub,
@@ -87,8 +96,8 @@ export class AuthController {
       return this.issue({ tenantId, actorId: userId, kind: 'owner' });
     } catch (error) {
       // 23503: no such public.users row
-      if ((error as { cause?: { code?: string } }).cause?.code === '23503')
-        throw new UnprocessableEntityException();
+      if (isMissingUser(error))
+        throw fieldError('userId', 'Pengguna tidak ditemukan');
       throw error;
     }
   }

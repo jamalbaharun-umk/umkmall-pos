@@ -157,7 +157,10 @@ export class PinAuthController {
       if (outcome.retryAfter) {
         res.setHeader('Retry-After', String(outcome.retryAfter));
         throw new HttpException(
-          { message: 'Too many attempts', retryAfter: outcome.retryAfter },
+          {
+            message: 'Terlalu banyak PIN salah, coba lagi nanti',
+            retryAfter: outcome.retryAfter,
+          },
           HttpStatus.TOO_MANY_REQUESTS,
         );
       }

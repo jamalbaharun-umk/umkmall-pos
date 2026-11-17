@@ -8,11 +8,11 @@ import {
   Param,
   Patch,
   Post,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/db.module';
+import { fieldError } from '../common/validation';
 import { InjectDb } from '../db/db.module';
 import { pinAttempts, roles, staff, staffRoles } from '../db/schema';
 import { CurrentSession } from '../tenancy/decorators';
@@ -22,9 +22,17 @@ import { RequirePermission } from './require-permission';
 import { hashPin } from './secrets';
 import { StaffAccess, type Tx } from './staff-access';
 
-const Name = z.string().trim().min(1).max(100);
-const Pin = z.string().regex(/^\d{4,8}$/);
-const RoleIds = z.array(z.string().uuid()).max(20);
+const Name = z
+  .string({ required_error: 'Nama wajib diisi' })
+  .trim()
+  .min(1, 'Nama wajib diisi')
+  .max(100, 'Maksimal 100 karakter');
+const Pin = z
+  .string({ required_error: 'PIN wajib diisi' })
+  .regex(/^\d{4,8}$/, 'PIN harus 4 sampai 8 angka');
+const RoleIds = z
+  .array(z.string().uuid('Peran tidak ditemukan'))
+  .max(20, 'Maksimal 20 peran');
 
 const CreateStaff = z.object({
   name: Name,
@@ -57,6 +65,32 @@ export class StaffController {
     private readonly access: StaffAccess,
   ) {}
 
+  /**
+   * Names are unique per store (case-insensitive), so the PIN picker never shows two identical names.
+   * shortcut: a read-then-write check, not a unique index; two simultaneous creates of one name can both pass.
+   * Upgrade to a partial unique index on (tenant_id, lower(name)) where deleted_at is null with the next staff migration.
+   */
+  private async uniqueName(
+    tx: Tx,
+    tenantId: string,
+    name: string,
+    except?: string,
+  ) {
+    const [taken] = await tx
+      .select({ id: staff.id })
+      .from(staff)
+      .where(
+        and(
+          eq(staff.tenantId, tenantId),
+          isNull(staff.deletedAt),
+          sql`lower(${staff.name}) = lower(${name})`,
+          except ? sql`${staff.id} <> ${except}` : undefined,
+        ),
+      )
+      .limit(1);
+    if (taken) throw fieldError('name', 'Nama staf sudah dipakai', 409);
+  }
+
   @Get()
   async list(@CurrentSession() s: PosSession) {
     const rows = await this.db
@@ -72,6 +106,7 @@ export class StaffController {
     const input = parseBody(CreateStaff, body);
     const pinHash = await hashPin(input.pin);
     const id = await this.db.transaction(async (tx) => {
+      await this.uniqueName(tx, s.tenantId, input.name);
       const [row] = await tx
         .insert(staff)
         .values({
@@ -102,6 +137,7 @@ export class StaffController {
     const input = parseBody(UpdateStaff, body);
     const pinHash = input.pin ? await hashPin(input.pin) : undefined;
     await this.db.transaction(async (tx) => {
+      if (input.name) await this.uniqueName(tx, s.tenantId, input.name, id);
       const [row] = await tx
         .update(staff)
         .set({
@@ -208,10 +244,7 @@ export class StaffController {
         .from(roles)
         .where(and(eq(roles.tenantId, tenantId), inArray(roles.id, ids)));
       if (found.length !== ids.length)
-        throw new UnprocessableEntityException({
-          message: 'Invalid input',
-          fields: ['roleIds'],
-        });
+        throw fieldError('roleIds', 'Peran tidak ditemukan');
     }
     await tx
       .delete(staffRoles)

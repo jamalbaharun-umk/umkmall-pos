@@ -86,7 +86,10 @@ export class StaffAccess {
   async device(
     header: string | undefined,
   ): Promise<{ id: string; tenantId: string } | null> {
-    const m = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/.exec(header ?? '');
+    const m =
+      /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/.exec(
+        header ?? '',
+      );
     if (!m) return null;
     const [row] = await this.db
       .select({

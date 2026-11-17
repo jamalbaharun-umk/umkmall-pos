@@ -1,6 +1,5 @@
 import {
   Body,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -13,6 +12,7 @@ import {
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/db.module';
+import { fieldError } from '../common/validation';
 import { InjectDb } from '../db/db.module';
 import { rolePermissions, roles } from '../db/schema';
 import { CurrentSession } from '../tenancy/decorators';
@@ -117,7 +117,7 @@ export class RolesController {
       return await fn();
     } catch (err) {
       if (isUniqueViolation(err))
-        throw new ConflictException({ message: 'Role name already exists' });
+        throw fieldError('name', 'Nama peran sudah dipakai', 409);
       throw err;
     }
   }

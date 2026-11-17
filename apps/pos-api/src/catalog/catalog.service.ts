@@ -3,7 +3,6 @@ import {
   Inject,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   and,
@@ -18,6 +17,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
@@ -35,11 +35,14 @@ import { detectImage, OBJECT_STORAGE, type ObjectStorage } from './storage';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
-// Postgres unique violations → 409 with a stable, internals-free message.
-const CONFLICTS: Record<string, string> = {
-  categories_tenant_name_uq: 'Nama kategori sudah dipakai',
-  products_tenant_sku_uq: 'SKU sudah dipakai',
-  product_barcodes_tenant_code_uq: 'Barcode sudah dipakai',
+// Postgres unique violations → 409 on the field, with a stable, internals-free message.
+const CONFLICTS: Record<string, [field: string, message: string]> = {
+  categories_tenant_name_uq: ['name', 'Nama kategori sudah dipakai'],
+  products_tenant_sku_uq: ['sku', 'SKU sudah dipakai produk lain'],
+  product_barcodes_tenant_code_uq: [
+    'barcodes',
+    'Barcode sudah dipakai produk lain',
+  ],
 };
 
 function pgError(e: unknown): { code?: string; constraint_name?: string } {
@@ -48,7 +51,7 @@ function pgError(e: unknown): { code?: string; constraint_name?: string } {
   return err.code ? err : (err.cause ?? {});
 }
 
-function conflictOf(e: unknown): string | null {
+function conflictOf(e: unknown): [string, string] | null {
   const pg = pgError(e);
   return pg.code === '23505'
     ? (CONFLICTS[pg.constraint_name ?? ''] ?? null)
@@ -56,8 +59,8 @@ function conflictOf(e: unknown): string | null {
 }
 
 function rethrow(e: unknown): never {
-  const msg = conflictOf(e);
-  if (msg) throw new ConflictException(msg);
+  const hit = conflictOf(e);
+  if (hit) throw fieldError(hit[0], hit[1], 409);
   throw e;
 }
 
@@ -145,10 +148,16 @@ export class CatalogService {
     // Soft-deleted products still reference the category (sales history), so they count too.
     if (inUse.n > 0)
       throw new ConflictException('Kategori masih dipakai produk');
+    // A product created between the count and the delete trips the foreign key: same answer.
     const [row] = await this.db
       .delete(categories)
       .where(and(eq(categories.tenantId, tenantId), eq(categories.id, id)))
-      .returning({ id: categories.id });
+      .returning({ id: categories.id })
+      .catch((e: unknown) => {
+        if (pgError(e).code === '23503')
+          throw new ConflictException('Kategori masih dipakai produk');
+        throw e;
+      });
     if (!row) throw new NotFoundException();
   }
 
@@ -284,10 +293,10 @@ export class CatalogService {
     const cost = input.costPrice ?? current.costPrice;
     const selling = input.sellingPrice ?? current.sellingPrice;
     if (cost > selling) {
-      throw new UnprocessableEntityException({
-        message: 'Data tidak valid',
-        fields: ['costPrice'],
-      });
+      throw fieldError(
+        'costPrice',
+        'Harga modal tidak boleh melebihi harga jual',
+      );
     }
     const { barcodes, ...fields } = input;
     try {
@@ -347,10 +356,10 @@ export class CatalogService {
         ? detectImage(file.buffer)
         : null;
     if (!file || !kind) {
-      throw new UnprocessableEntityException({
-        message: 'Gambar harus JPG, PNG atau WebP, maksimal 2 MB',
-        fields: ['file'],
-      });
+      throw fieldError(
+        'file',
+        'Gambar harus JPG, PNG atau WebP, maksimal 2 MB',
+      );
     }
     const storageKey = `tenants/${tenantId}/products/${productId}/${randomUUID()}.${kind.ext}`;
     await this.storage.put(storageKey, file.buffer);
@@ -427,11 +436,7 @@ export class CatalogService {
       .from(categories)
       .where(and(eq(categories.tenantId, tenantId), eq(categories.id, id)));
     // 422, not 404: the category is a field of the payload, not the resource in the path.
-    if (!row)
-      throw new UnprocessableEntityException({
-        message: 'Kategori tidak ditemukan',
-        fields: ['categoryId'],
-      });
+    if (!row) throw fieldError('categoryId', 'Kategori tidak ditemukan');
     return row;
   }
 
