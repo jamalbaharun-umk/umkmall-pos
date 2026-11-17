@@ -196,6 +196,7 @@ U0 → U1 → U2 → U3 → U4 → U5 → U6 → U7 → U8. The flag opens to in
 - 2026-11-17 owner (chat): 15-minute owner session with liveness refresh; device-bound cashier PIN → U1, U4.
 - 2026-11-17 owner (chat): units run in parallel sessions that push straight to `umkmall-pos` `main` (no PR review there; CI gate); monorepo changes keep the monorepo PR process → CLAUDE.md.
 - 2026-11-17 U0 landed: NestJS (tsc, Jest), Drizzle in schema `pos`, own migration runner (drizzle's migrator needs database-level CREATE, which `pos_app` must not have), global session guard + `@CurrentSession`, `ops/pos-role.sql`, CI. Railway service and the real `pos_app` role are still owner steps → U0.
+- 2026-11-17 U2 landed: `pos.categories`, `pos.products` (SKU unique per tenant among live rows, generated without spaces; `cost_price`/`selling_price` integer rupiah, cost ≤ selling; type product/service/non_stock; soft delete), `pos.product_barcodes`, `pos.product_images` (key `tenants/<id>/products/<pid>/…`, local-disk `ObjectStorage` via `POS_STORAGE_DIR`, magic-byte type check, served only through the API); writes gated on `catalog.manage`; `pos-web` catalog screens. No stock columns: U3/U6 key stock by `products.id`. Not done: S3 adapter, image UI, price units → U2.
 
 ## Risks and deferred
 
