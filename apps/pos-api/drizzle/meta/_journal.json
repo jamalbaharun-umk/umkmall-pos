@@ -106,6 +106,13 @@
       "when": 1794933336229,
       "tag": "0014_name_ci",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794933899631,
+      "tag": "0015_store_profiles",
+      "breakpoints": true
     }
   ]
 }

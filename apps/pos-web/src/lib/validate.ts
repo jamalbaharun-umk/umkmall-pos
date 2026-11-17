@@ -84,3 +84,29 @@ export function staffErrors(f: { name: string; pin: string; pin2: string }, edit
     pin2: f.pin !== f.pin2 ? 'Konfirmasi PIN tidak sama' : undefined,
   })
 }
+
+/** Same rules as pos-api's store profile schema. */
+export function storeProfileErrors(f: {
+  name: string
+  businessType: string
+  otherBusinessType: string
+  address: string
+}): Errors {
+  return compact({
+    name: required(f.name, 'Nama toko wajib diisi') ?? (f.name.trim().length > 120 ? 'Maksimal 120 karakter' : undefined),
+    businessType: f.businessType ? undefined : 'Pilih jenis usaha',
+    otherBusinessType:
+      f.businessType === 'other' ? required(f.otherBusinessType, 'Jenis usaha lainnya wajib diisi') : undefined,
+    address:
+      required(f.address, 'Alamat toko wajib diisi') ?? (f.address.trim().length > 500 ? 'Maksimal 500 karakter' : undefined),
+  })
+}
+
+/** Tax as typed in percent ("11", "11,5", "11.25") → basis points (pos-api's taxBps, 0–10.000), or the message. */
+export function taxToBps(text: string): { bps: number } | { error: string } {
+  const t = text.trim().replace(',', '.')
+  if (!t) return { error: 'Pajak wajib diisi' }
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return { error: 'Pajak harus angka 0 sampai 100, paling banyak 2 desimal' }
+  const bps = Math.round(Number(t) * 100)
+  return bps > 10_000 ? { error: 'Pajak maksimal 100%' } : { bps }
+}

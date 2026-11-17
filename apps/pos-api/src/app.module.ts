@@ -17,6 +17,7 @@ import { VouchersModule } from './vouchers/vouchers.controller';
 import { PaymentMethodsModule } from './payment-methods/payment-methods.controller';
 import { ReceivablesModule } from './receivables/receivables.controller';
 import { PurgeModule } from './purge/purge.controller';
+import { StoreModule } from './store/store.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -38,6 +39,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     PaymentMethodsModule,
     ReceivablesModule,
     PurgeModule,
+    StoreModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [

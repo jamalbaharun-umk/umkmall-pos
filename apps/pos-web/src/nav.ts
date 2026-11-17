@@ -58,7 +58,7 @@ export const NAV: NavGroup[] = [
   },
   { items: [{ to: '/laporan', label: 'Laporan', icon: FileText, permission: 'reports.view' }] },
   { items: [{ to: '/voucher', label: 'Voucher', icon: TicketPercent, permission: 'vouchers.manage' }] },
-  { label: 'Pengaturan', items: [{ to: '/pengaturan', label: 'Umum', icon: Settings }] },
+  { items: [{ to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'catalog.manage' }] },
 ]
 
 /** Route ids that render full-screen, without the shell (Lakasir's POS page uses the bare layout too). */

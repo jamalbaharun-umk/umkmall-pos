@@ -2,7 +2,7 @@ import { Controller, Get, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { staff, tenants } from '../db/schema';
+import { staff, storeProfiles, tenants } from '../db/schema';
 import { CurrentSession } from './decorators';
 import type { PosSession } from './session';
 
@@ -17,8 +17,13 @@ export class TenancyController {
   @Get('me')
   async me(@CurrentSession() session: PosSession) {
     const [tenant] = await this.db
-      .select({ id: tenants.id, createdAt: tenants.createdAt })
+      .select({
+        id: tenants.id,
+        createdAt: tenants.createdAt,
+        name: storeProfiles.name,
+      })
       .from(tenants)
+      .leftJoin(storeProfiles, eq(storeProfiles.tenantId, tenants.id))
       .where(eq(tenants.id, session.tenantId));
     if (!tenant) throw new NotFoundException();
     const [cashier] =

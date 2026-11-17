@@ -26,6 +26,8 @@ import { Route as PemasokIndexRouteImport } from './routes/pemasok/index'
 import { Route as PembelianIndexRouteImport } from './routes/pembelian/index'
 import { Route as PembelianIdRouteImport } from './routes/pembelian/$id'
 import { Route as PembelianBaruRouteImport } from './routes/pembelian/baru'
+import { Route as PengaturanIndexRouteImport } from './routes/pengaturan/index'
+import { Route as PengaturanLogoRouteImport } from './routes/pengaturan/logo'
 import { Route as PiutangIndexRouteImport } from './routes/piutang/index'
 import { Route as PiutangIdRouteImport } from './routes/piutang/$id'
 import { Route as StafIndexRouteImport } from './routes/staf/index'
@@ -133,6 +135,16 @@ const PembelianIdRoute = PembelianIdRouteImport.update({
 const PembelianBaruRoute = PembelianBaruRouteImport.update({
   id: '/pembelian/baru',
   path: '/pembelian/baru',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PengaturanIndexRoute = PengaturanIndexRouteImport.update({
+  id: '/pengaturan/',
+  path: '/pengaturan/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PengaturanLogoRoute = PengaturanLogoRouteImport.update({
+  id: '/pengaturan/logo',
+  path: '/pengaturan/logo',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PiutangIndexRoute = PiutangIndexRouteImport.update({
@@ -263,6 +275,7 @@ export interface FileRoutesByFullPath {
   '/masuk/umkmall': typeof MasukUmkmallRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
+  '/pengaturan/logo': typeof PengaturanLogoRoute
   '/piutang/$id': typeof PiutangIdRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/baru': typeof StafBaruRoute
@@ -276,6 +289,7 @@ export interface FileRoutesByFullPath {
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
   '/pembelian/': typeof PembelianIndexRoute
+  '/pengaturan/': typeof PengaturanIndexRoute
   '/piutang/': typeof PiutangIndexRoute
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
@@ -305,6 +319,7 @@ export interface FileRoutesByTo {
   '/masuk/umkmall': typeof MasukUmkmallRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
+  '/pengaturan/logo': typeof PengaturanLogoRoute
   '/piutang/$id': typeof PiutangIdRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/baru': typeof StafBaruRoute
@@ -318,6 +333,7 @@ export interface FileRoutesByTo {
   '/pelanggan': typeof PelangganIndexRoute
   '/pemasok': typeof PemasokIndexRoute
   '/pembelian': typeof PembelianIndexRoute
+  '/pengaturan': typeof PengaturanIndexRoute
   '/piutang': typeof PiutangIndexRoute
   '/staf': typeof StafIndexRoute
   '/stok-opname': typeof StokOpnameIndexRoute
@@ -348,6 +364,7 @@ export interface FileRoutesById {
   '/masuk/umkmall': typeof MasukUmkmallRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
+  '/pengaturan/logo': typeof PengaturanLogoRoute
   '/piutang/$id': typeof PiutangIdRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/baru': typeof StafBaruRoute
@@ -361,6 +378,7 @@ export interface FileRoutesById {
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
   '/pembelian/': typeof PembelianIndexRoute
+  '/pengaturan/': typeof PengaturanIndexRoute
   '/piutang/': typeof PiutangIndexRoute
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
@@ -392,6 +410,7 @@ export interface FileRouteTypes {
     | '/masuk/umkmall'
     | '/pembelian/$id'
     | '/pembelian/baru'
+    | '/pengaturan/logo'
     | '/piutang/$id'
     | '/staf/$id'
     | '/staf/baru'
@@ -405,6 +424,7 @@ export interface FileRouteTypes {
     | '/pelanggan/'
     | '/pemasok/'
     | '/pembelian/'
+    | '/pengaturan/'
     | '/piutang/'
     | '/staf/'
     | '/stok-opname/'
@@ -434,6 +454,7 @@ export interface FileRouteTypes {
     | '/masuk/umkmall'
     | '/pembelian/$id'
     | '/pembelian/baru'
+    | '/pengaturan/logo'
     | '/piutang/$id'
     | '/staf/$id'
     | '/staf/baru'
@@ -447,6 +468,7 @@ export interface FileRouteTypes {
     | '/pelanggan'
     | '/pemasok'
     | '/pembelian'
+    | '/pengaturan'
     | '/piutang'
     | '/staf'
     | '/stok-opname'
@@ -476,6 +498,7 @@ export interface FileRouteTypes {
     | '/masuk/umkmall'
     | '/pembelian/$id'
     | '/pembelian/baru'
+    | '/pengaturan/logo'
     | '/piutang/$id'
     | '/staf/$id'
     | '/staf/baru'
@@ -489,6 +512,7 @@ export interface FileRouteTypes {
     | '/pelanggan/'
     | '/pemasok/'
     | '/pembelian/'
+    | '/pengaturan/'
     | '/piutang/'
     | '/staf/'
     | '/stok-opname/'
@@ -519,6 +543,7 @@ export interface RootRouteChildren {
   MasukUmkmallRoute: typeof MasukUmkmallRoute
   PembelianIdRoute: typeof PembelianIdRoute
   PembelianBaruRoute: typeof PembelianBaruRoute
+  PengaturanLogoRoute: typeof PengaturanLogoRoute
   PiutangIdRoute: typeof PiutangIdRoute
   StafIdRoute: typeof StafIdRoute
   StafBaruRoute: typeof StafBaruRoute
@@ -532,6 +557,7 @@ export interface RootRouteChildren {
   PelangganIndexRoute: typeof PelangganIndexRoute
   PemasokIndexRoute: typeof PemasokIndexRoute
   PembelianIndexRoute: typeof PembelianIndexRoute
+  PengaturanIndexRoute: typeof PengaturanIndexRoute
   PiutangIndexRoute: typeof PiutangIndexRoute
   StafIndexRoute: typeof StafIndexRoute
   StokOpnameIndexRoute: typeof StokOpnameIndexRoute
@@ -670,6 +696,20 @@ declare module '@tanstack/react-router' {
       path: '/pembelian/baru'
       fullPath: '/pembelian/baru'
       preLoaderRoute: typeof PembelianBaruRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pengaturan/': {
+      id: '/pengaturan/'
+      path: '/pengaturan'
+      fullPath: '/pengaturan/'
+      preLoaderRoute: typeof PengaturanIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pengaturan/logo': {
+      id: '/pengaturan/logo'
+      path: '/pengaturan/logo'
+      fullPath: '/pengaturan/logo'
+      preLoaderRoute: typeof PengaturanLogoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/piutang/': {
@@ -847,6 +887,7 @@ const rootRouteChildren: RootRouteChildren = {
   MasukUmkmallRoute: MasukUmkmallRoute,
   PembelianIdRoute: PembelianIdRoute,
   PembelianBaruRoute: PembelianBaruRoute,
+  PengaturanLogoRoute: PengaturanLogoRoute,
   PiutangIdRoute: PiutangIdRoute,
   StafIdRoute: StafIdRoute,
   StafBaruRoute: StafBaruRoute,
@@ -860,6 +901,7 @@ const rootRouteChildren: RootRouteChildren = {
   PelangganIndexRoute: PelangganIndexRoute,
   PemasokIndexRoute: PemasokIndexRoute,
   PembelianIndexRoute: PembelianIndexRoute,
+  PengaturanIndexRoute: PengaturanIndexRoute,
   PiutangIndexRoute: PiutangIndexRoute,
   StafIndexRoute: StafIndexRoute,
   StokOpnameIndexRoute: StokOpnameIndexRoute,

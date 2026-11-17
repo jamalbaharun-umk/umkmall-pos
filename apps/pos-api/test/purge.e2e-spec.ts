@@ -105,6 +105,16 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     await post('/stock/opening', { productId, qty: 50 }).expect(201);
     await put('/sales/settings', { taxBps: 1000 }).expect(200);
     await put('/reports/settings', { timezone: 'UTC' }).expect(200);
+    await put('/store/profile', {
+      name: 'Toko',
+      businessType: 'retail',
+      address: 'Jl. 1',
+    }).expect(200);
+    await http()
+      .post('/store/profile/logo')
+      .set('Authorization', s.auth)
+      .attach('file', PNG, { filename: 'logo.png', contentType: 'image/png' })
+      .expect(201);
 
     // Staff, role, device, PIN session, a failed PIN attempt.
     const cashier = await createCashier(app, s, ['sales.create']);

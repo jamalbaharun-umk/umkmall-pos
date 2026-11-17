@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { plainNumber, productErrors, required, splitImages, staffErrors } from './validate'
+import { plainNumber, productErrors, required, splitImages, staffErrors, storeProfileErrors, taxToBps } from './validate'
 
 const product = {
   name: 'Es Teh',
@@ -65,5 +65,27 @@ describe('client validation mirrors the API', () => {
   it('required trims', () => {
     expect(required('  ', 'Wajib')).toBe('Wajib')
     expect(required('a', 'Wajib')).toBeUndefined()
+  })
+  it('checks the store profile like pos-api', () => {
+    const ok = { name: 'Toko', businessType: 'retail', otherBusinessType: '', address: 'Jl. 1' }
+    expect(storeProfileErrors(ok)).toEqual({})
+    expect(storeProfileErrors({ name: '', businessType: '', otherBusinessType: '', address: ' ' })).toEqual({
+      name: 'Nama toko wajib diisi',
+      businessType: 'Pilih jenis usaha',
+      address: 'Alamat toko wajib diisi',
+    })
+    expect(storeProfileErrors({ ...ok, businessType: 'other' })).toEqual({
+      otherBusinessType: 'Jenis usaha lainnya wajib diisi',
+    })
+  })
+
+  it('reads tax percent into basis points', () => {
+    expect(taxToBps('11')).toEqual({ bps: 1100 })
+    expect(taxToBps('11,5')).toEqual({ bps: 1150 })
+    expect(taxToBps('0')).toEqual({ bps: 0 })
+    expect(taxToBps('')).toEqual({ error: 'Pajak wajib diisi' })
+    expect(taxToBps('-1')).toHaveProperty('error')
+    expect(taxToBps('11,555')).toHaveProperty('error')
+    expect(taxToBps('101')).toEqual({ error: 'Pajak maksimal 100%' })
   })
 })
