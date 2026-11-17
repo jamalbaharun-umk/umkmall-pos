@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { productErrors, required, staffErrors } from './validate'
+import { productErrors, required, splitImages, staffErrors } from './validate'
 
 const product = {
   name: 'Es Teh',
@@ -43,6 +43,13 @@ describe('client validation mirrors the API', () => {
       pin2: 'Konfirmasi PIN tidak sama',
     })
     expect(staffErrors({ name: 'Sari', pin: '', pin2: '' }, true)).toEqual({})
+  })
+
+  it('refuses non-images and images over 2 MB before upload', () => {
+    const png = { type: 'image/png', size: 1000 }
+    const big = { type: 'image/jpeg', size: 2 * 1024 * 1024 + 1 }
+    const txt = { type: 'text/plain', size: 10 }
+    expect(splitImages([png, big, txt])).toEqual({ accepted: [png], refused: [big, txt] })
   })
 
   it('required trims', () => {

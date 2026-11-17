@@ -82,8 +82,12 @@ function ViewProduct() {
           )}
         </Stat>
         <Stat label="Harga jual">{rupiah(product.sellingPrice)}</Stat>
-        <Stat label="Harga modal">{rupiah(product.costPrice)}</Stat>
-        <Stat label="Laba per item">{rupiah(product.sellingPrice - product.costPrice)}</Stat>
+        {product.costPrice !== undefined && (
+          <>
+            <Stat label="Harga modal">{rupiah(product.costPrice)}</Stat>
+            <Stat label="Laba per item">{rupiah(product.sellingPrice - product.costPrice)}</Stat>
+          </>
+        )}
       </div>
 
       <Panel className="grid gap-x-8 gap-y-5 p-6 md:grid-cols-2">

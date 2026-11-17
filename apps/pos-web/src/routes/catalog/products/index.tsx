@@ -51,6 +51,8 @@ function ProductsPage() {
   const pages = Math.max(1, Math.ceil(page.total / page.perPage))
   const filtered = Boolean(search.q || search.categoryId)
   const first = (page.page - 1) * page.perPage + 1
+  // pos-api omits cost for actors who may not see margins; their table has no cost or profit columns.
+  const showCost = page.data.some((p) => p.costPrice !== undefined)
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -128,9 +130,9 @@ function ProductsPage() {
                 <TableHead>SKU</TableHead>
                 <TableHead className="text-right">Stok</TableHead>
                 <TableHead>Satuan</TableHead>
-                <TableHead className="text-right">Harga modal</TableHead>
+                {showCost && <TableHead className="text-right">Harga modal</TableHead>}
                 <TableHead className="text-right">Harga jual</TableHead>
-                <TableHead className="text-right">Laba</TableHead>
+                {showCost && <TableHead className="text-right">Laba</TableHead>}
                 <TableHead>Jenis</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>
@@ -157,9 +159,11 @@ function ProductsPage() {
                   <TableCell>{p.sku}</TableCell>
                   <TableCell className="text-right tabular-nums">{page.stock[p.id] ?? '–'}</TableCell>
                   <TableCell>{p.unit}</TableCell>
-                  <TableCell className="text-right tabular-nums">{rupiah(p.costPrice)}</TableCell>
+                  {showCost && <TableCell className="text-right tabular-nums">{rupiah(p.costPrice ?? 0)}</TableCell>}
                   <TableCell className="text-right tabular-nums">{rupiah(p.sellingPrice)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{rupiah(p.sellingPrice - p.costPrice)}</TableCell>
+                  {showCost && (
+                    <TableCell className="text-right tabular-nums">{rupiah(p.sellingPrice - (p.costPrice ?? 0))}</TableCell>
+                  )}
                   <TableCell>{TYPE_LABEL[p.type]}</TableCell>
                   <TableCell>
                     <Badge color={p.isActive ? 'success' : 'light'} size="small">

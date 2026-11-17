@@ -5,7 +5,7 @@ import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { Panel, RequiredLabel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
-import { productErrors, type Errors } from '@/lib/validate'
+import { IMAGE_ERROR, productErrors, splitImages, type Errors } from '@/lib/validate'
 import {
   deleteImage,
   recordOpeningStock,
@@ -52,7 +52,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           sku: product.sku,
           categoryId: product.categoryId,
           unit: product.unit,
-          costPrice: String(product.costPrice),
+          costPrice: String(product.costPrice ?? 0),
           sellingPrice: String(product.sellingPrice),
           type: product.type,
           isActive: product.isActive,
@@ -141,7 +141,11 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             accept="image/jpeg,image/png,image/webp"
             multiple
             filled={files.length > 0}
-            onFilesChange={(picked) => setFiles((f) => [...f, ...picked])}
+            onFilesChange={(picked) => {
+              const { accepted, refused } = splitImages(picked)
+              setFiles((f) => [...f, ...accepted])
+              setErrors(({ file: _gone, ...rest }) => (refused.length ? { ...rest, file: IMAGE_ERROR } : rest))
+            }}
             helperText="JPG, PNG atau WebP, paling besar 2 MB per gambar."
             browseLabel="Pilih"
             error={errors.file}

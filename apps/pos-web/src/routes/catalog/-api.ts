@@ -12,7 +12,8 @@ export type Product = {
   name: string
   sku: string
   unit: string
-  costPrice: number
+  /** Absent for actors without catalog.manage, reports.view or purchasing.manage (pos-api hides it). */
+  costPrice?: number
   sellingPrice: number
   type: ProductType
   isActive: boolean

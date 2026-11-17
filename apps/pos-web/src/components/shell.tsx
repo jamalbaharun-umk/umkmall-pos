@@ -31,10 +31,12 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
   const signOut = useRef<HTMLFormElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
-  // The page scrolls inside the shell, not the window, so the router's scroll reset never reaches it.
+  // The page scrolls inside the shell, not the window, so the router's scroll reset never reaches it. Reset once the
+  // new page has rendered (resolved), not when the path changes: the old page is still on screen while it loads.
+  const resolved = useRouterState({ select: (s) => s.resolvedLocation?.pathname })
   useEffect(() => {
     scroller.current?.scrollTo(0, 0)
-  }, [pathname])
+  }, [resolved])
 
   const exists = (to: string) => Boolean((router.routesByPath as unknown as Record<string, unknown>)[to])
   const groups = visibleNav(NAV, exists, me.actor.permissions)

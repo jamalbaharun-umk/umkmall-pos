@@ -1,6 +1,7 @@
 import { Button } from '@umkmall/ui/primitives'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
+import { Empty, NoAccess, Page, PageError, PageLoading, Panel } from '@/components/page'
+import { useCan } from '@/components/shell'
 import { listCategories } from '../-api'
 import { ProductForm } from './-form'
 
@@ -13,9 +14,12 @@ export const Route = createFileRoute('/catalog/products/baru')({
 
 function CreateProduct() {
   const categories = Route.useLoaderData()
+  const canEdit = useCan('catalog.manage')
   return (
     <Page title="Tambah produk" crumbs={[{ label: 'Produk', to: '/catalog/products' }, { label: 'Tambah' }]}>
-      {categories.length === 0 ? (
+      {!canEdit ? (
+        <NoAccess permission="Mengelola katalog" />
+      ) : categories.length === 0 ? (
         <Panel>
           <Empty
             title="Belum ada kategori"

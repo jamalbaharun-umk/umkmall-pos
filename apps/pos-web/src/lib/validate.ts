@@ -53,6 +53,15 @@ export function productErrors(f: ProductFields, editing: boolean): Errors {
   return compact(e)
 }
 
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+export const IMAGE_ERROR = 'Gambar harus JPG, PNG atau WebP, maksimal 2 MB'
+
+/** pos-api's image rule (type sniffed server-side, 2 MB cap): split picked files into accepted and refused. */
+export function splitImages<F extends { type: string; size: number }>(files: readonly F[]) {
+  const ok = (f: F) => IMAGE_TYPES.includes(f.type) && f.size <= 2 * 1024 * 1024
+  return { accepted: files.filter(ok), refused: files.filter((f) => !ok(f)) }
+}
+
 /** Same rules as the staff schema: name, 4–8 digit PIN (optional when editing), matching confirmation. */
 export function staffErrors(f: { name: string; pin: string; pin2: string }, editing: boolean): Errors {
   return compact({

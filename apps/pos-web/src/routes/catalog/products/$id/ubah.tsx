@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Page, PageError, PageLoading } from '@/components/page'
+import { NoAccess, Page, PageError, PageLoading } from '@/components/page'
+import { useCan } from '@/components/shell'
 import { getProduct, listCategories } from '../../-api'
 import { ProductForm } from '../-form'
 
@@ -15,6 +16,7 @@ export const Route = createFileRoute('/catalog/products/$id/ubah')({
 
 function EditProduct() {
   const { categories, product } = Route.useLoaderData()
+  const canEdit = useCan('catalog.manage')
   return (
     <Page
       title={`Ubah ${product.name}`}
@@ -24,7 +26,11 @@ function EditProduct() {
         { label: 'Ubah' },
       ]}
     >
-      <ProductForm key={product.id} categories={categories} product={product} />
+      {canEdit ? (
+        <ProductForm key={product.id} categories={categories} product={product} />
+      ) : (
+        <NoAccess permission="Mengelola katalog" />
+      )}
     </Page>
   )
 }

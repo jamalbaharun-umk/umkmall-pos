@@ -83,8 +83,19 @@ export function PageLoading() {
   )
 }
 
+export const NO_PERMISSION = 'Kamu tidak punya izin untuk ini'
+
 export function PageError({ error }: ErrorComponentProps) {
   const router = useRouter()
+  // A 403 does not get better by retrying: say so, without the retry button.
+  if (error instanceof Error && error.message.startsWith(NO_PERMISSION))
+    return (
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8 md:py-8">
+        <Panel>
+          <Empty title={NO_PERMISSION}>Minta pemilik toko menambahkan izin yang dibutuhkan ke peranmu.</Empty>
+        </Panel>
+      </div>
+    )
   return (
     <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-4 py-16 text-center">
       <p className="text-lg font-semibold text-default-primary">Halaman belum bisa dibuka</p>
@@ -112,5 +123,16 @@ export function RequiredLabel({ children }: { children: ReactNode }) {
         *
       </span>
     </>
+  )
+}
+
+/** What a screen shows an actor who lacks its permission (the API would answer 403 anyway). */
+export function NoAccess({ permission }: { permission: string }) {
+  return (
+    <Panel>
+      <Empty title="Kamu tidak punya izin untuk ini">
+        Minta pemilik toko menambahkan izin “{permission}” ke peranmu.
+      </Empty>
+    </Panel>
   )
 }

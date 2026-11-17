@@ -118,6 +118,8 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
   }
 
   function press(k: (typeof KEYS)[number]) {
+    // The keypad buttons are disabled while busy or locked; the hardware keyboard must obey the same rule.
+    if (busy || lockedFor > 0) return
     if (k === 'hapus') return setPin((p) => p.slice(0, -1))
     if (k === 'masuk') return void submit()
     setPin((p) => (p.length < 8 ? p + k : p))
