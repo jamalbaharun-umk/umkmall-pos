@@ -2,7 +2,6 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, count, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
@@ -117,8 +116,7 @@ export class ShiftsService {
           ),
         )
         .for('update');
-      if (!shift)
-        throw new UnprocessableEntityException('Tidak ada shift yang terbuka');
+      if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
       const t = await this.totals(tx, shift.id);
       const [row] = await tx
         .update(shifts)

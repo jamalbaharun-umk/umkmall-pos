@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { parse } from '../catalog/catalog.schemas';
+import { validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { suppliers } from '../db/schema';
 import { parseId } from '../staff/http';
@@ -113,7 +113,7 @@ export class SuppliersController {
   @Post()
   @RequirePermission('purchasing.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.suppliers.create(s.tenantId, parse(SupplierInput, body));
+    return this.suppliers.create(s.tenantId, validate(SupplierInput, body));
   }
 
   @Get(':id')
@@ -131,7 +131,7 @@ export class SuppliersController {
     return this.suppliers.update(
       s.tenantId,
       parseId(id),
-      parse(SupplierInput.partial(), body),
+      validate(SupplierInput.partial(), body),
     );
   }
 

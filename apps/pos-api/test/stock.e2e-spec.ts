@@ -208,7 +208,10 @@ describe('stock (U3)', () => {
       .post('/stock/opening')
       .set('Authorization', b.auth)
       .send({ productId: id, qty: 5 })
-      .expect(404);
+      .expect(422)
+      .expect((r) =>
+        expect(r.body.errors).toEqual({ productId: 'Produk tidak ditemukan' }),
+      );
     await expect(consume(b, id, 1)).rejects.toThrow('Produk tidak ditemukan');
     expect(await stock.onHand(b.tenantId, [id])).toEqual({});
   });

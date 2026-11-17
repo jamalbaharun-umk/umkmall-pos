@@ -120,6 +120,8 @@ export const sales = pos
       actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
       paymentMethodId: uuid('payment_method_id').notNull(),
       idempotencyKey: text('idempotency_key').notNull(),
+      // sha256 of the normalized request: the same key with a different body is refused, not replayed.
+      requestHash: text('request_hash'),
       subtotal: rupiah('subtotal').notNull(),
       discount: rupiah('discount').notNull().default(0),
       // U7: member (required for a credit sale) and the voucher applied, with its discount.

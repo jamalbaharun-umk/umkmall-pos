@@ -1,0 +1,1 @@
+ALTER TABLE "pos"."sales" ADD COLUMN "request_hash" text;

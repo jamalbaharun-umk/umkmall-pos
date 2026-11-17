@@ -8,7 +8,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { z } from 'zod';
-import { parse } from '../catalog/catalog.schemas';
+import { validate } from '../common/validation';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
@@ -36,19 +36,19 @@ export class ShiftsController {
   @Post('open')
   @RequirePermission('sales.create')
   open(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.shifts.open(s, parse(OpenInput, body).openingCash);
+    return this.shifts.open(s, validate(OpenInput, body).openingCash);
   }
 
   @Post('current/close')
   @RequirePermission('sales.create')
   @HttpCode(200)
   close(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.shifts.close(s, parse(CloseInput, body).countedCash);
+    return this.shifts.close(s, validate(CloseInput, body).countedCash);
   }
 
   @Get()
   list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    const q = parse(Page, query);
+    const q = validate(Page, query);
     return this.shifts.list(s, q.page, q.perPage);
   }
 

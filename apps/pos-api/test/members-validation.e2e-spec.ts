@@ -404,7 +404,7 @@ describe('U7 validation: status and field message per refusal', () => {
         },
       );
       await refused(sell({ lines: line, paid: 100 }), 422, {
-        paid: 'Uang yang dibayar kurang dari total',
+        paid: 'Uang dibayar kurang dari total',
       });
       const empty = await post('/vouchers', goodVoucher({ kuota: 0 })).expect(
         201,

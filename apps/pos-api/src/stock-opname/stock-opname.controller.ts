@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { parse } from '../catalog/catalog.schemas';
+import { validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { products, stockOpnameLines, stockOpnames } from '../db/schema';
 import { assertStockProducts } from '../purchasing/purchasing.service';
@@ -34,7 +34,11 @@ const fields = {
       z
         .object({
           productId: z.string().uuid(),
-          countedQty: z.number().int().nonnegative().max(1_000_000),
+          countedQty: z
+            .number()
+            .int('Jumlah harus bilangan bulat')
+            .nonnegative('Jumlah tidak boleh negatif')
+            .max(1_000_000, 'Jumlah maksimal 1.000.000'),
           reason: z.string().trim().max(200).nullable().optional(),
         })
         .strict(),
@@ -43,7 +47,7 @@ const fields = {
     .max(500)
     .refine(
       (l) => new Set(l.map((x) => x.productId)).size === l.length,
-      'produk ganda',
+      'Satu produk cukup satu baris',
     ),
 };
 const OpnameCreate = z.object(fields).strict();
@@ -104,12 +108,20 @@ export class StockOpnameService {
         ),
       )
       .orderBy(products.name);
+    // A draft shows today's on-hand (what approval will compare against); an approved one, what it applied.
+    const live =
+      opname.status === 'draft'
+        ? await this.stock.onHand(
+            tenantId,
+            lines.map((l) => l.productId),
+          )
+        : {};
     return {
       ...opname,
-      lines: lines.map((l) => ({
-        ...l,
-        difference: l.countedQty - l.systemQty,
-      })),
+      lines: lines.map((l) => {
+        const systemQty = live[l.productId] ?? l.systemQty;
+        return { ...l, systemQty, difference: l.countedQty - systemQty };
+      }),
     };
   }
 
@@ -168,7 +180,18 @@ export class StockOpnameService {
         .where(eq(stockOpnameLines.opnameId, id))
         .orderBy(stockOpnameLines.productId); // stock's lock order: no deadlocks
       for (const l of lines) {
-        const delta = l.countedQty - l.systemQty;
+        // The count replaces what is on hand NOW (sales since the draft was saved included), read under the lock.
+        const systemQty = await this.stock.lockedOnHand(
+          tx,
+          tenantId,
+          l.productId,
+        );
+        if (systemQty !== l.systemQty)
+          await tx
+            .update(stockOpnameLines)
+            .set({ systemQty })
+            .where(eq(stockOpnameLines.id, l.id));
+        const delta = l.countedQty - systemQty;
         if (delta !== 0)
           await this.stock.adjust(tx, {
             tenantId,
@@ -243,7 +266,7 @@ export class StockOpnameController {
     return this.opnames.create(
       s.tenantId,
       s.actorId,
-      parse(OpnameCreate, body),
+      validate(OpnameCreate, body),
     );
   }
 
@@ -262,7 +285,7 @@ export class StockOpnameController {
     return this.opnames.update(
       s.tenantId,
       parseId(id),
-      parse(OpnameUpdate, body),
+      validate(OpnameUpdate, body),
     );
   }
 

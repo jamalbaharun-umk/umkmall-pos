@@ -192,6 +192,39 @@ describe('sales and shifts (U3)', () => {
     expect(list.body.total).toBe(2);
   });
 
+  it('the same Idempotency-Key with a different cart is refused, never replayed as the old sale', async () => {
+    const { store, productId } = await storeWithProduct(50);
+    await openShift(store.auth).expect(201);
+    const key = randomUUID();
+    const first = await sell(
+      store.auth,
+      { lines: [{ productId, qty: 1 }], paid: 5000 },
+      key,
+    ).expect(201);
+    // The cart changed after a timed-out (but committed) first try: same key, more items.
+    const changed = await sell(
+      store.auth,
+      { lines: [{ productId, qty: 3 }], paid: 15_000 },
+      key,
+    ).expect(422);
+    expect(changed.body.message).toBe(
+      'Permintaan berbeda dengan transaksi sebelumnya',
+    );
+    await sell(
+      store.auth,
+      { lines: [{ productId, qty: 1 }], paid: 5000, note: 'x' },
+      key,
+    ).expect(422);
+    // An identical retry still returns the first sale; stock moved once.
+    const again = await sell(
+      store.auth,
+      { lines: [{ productId, qty: 1 }], paid: 5000 },
+      key,
+    ).expect(201);
+    expect(again.body.id).toBe(first.body.id);
+    expect(await onHand(store, productId)).toBe(49);
+  });
+
   it('refuses a sale without an open shift (422)', async () => {
     const { store, productId } = await storeWithProduct();
     await sell(store.auth, {
@@ -306,7 +339,7 @@ describe('sales and shifts (U3)', () => {
       .post('/shifts/current/close')
       .set('Authorization', store.auth)
       .send({ countedCash: 0 })
-      .expect(422);
+      .expect(409);
     const none = await http()
       .get('/shifts/current')
       .set('Authorization', store.auth)

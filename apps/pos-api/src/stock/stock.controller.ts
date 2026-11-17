@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
-import { parse, Uuid } from '../catalog/catalog.schemas';
+import { Uuid } from '../catalog/catalog.schemas';
+import { validate } from '../common/validation';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
@@ -30,7 +31,7 @@ export class StockController {
   /** On-hand per tracked product, for the product list's stock column. Untracked and foreign ids are omitted. */
   @Get('on-hand')
   onHand(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return this.stock.onHand(s.tenantId, parse(OnHandQuery, query).ids);
+    return this.stock.onHand(s.tenantId, validate(OnHandQuery, query).ids);
   }
 
   @Get('products/:id/movements')
@@ -46,6 +47,10 @@ export class StockController {
   @Post('opening')
   @RequirePermission('catalog.manage')
   opening(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.stock.opening(s.tenantId, s.actorId, parse(OpeningInput, body));
+    return this.stock.opening(
+      s.tenantId,
+      s.actorId,
+      validate(OpeningInput, body),
+    );
   }
 }

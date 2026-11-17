@@ -3,7 +3,9 @@ import { Uuid } from '../catalog/catalog.schemas';
 
 const rupiah = z.number().int().nonnegative().max(1_000_000_000_000);
 
-export const IdempotencyKey = z.string().regex(/^[A-Za-z0-9_-]{8,100}$/);
+export const IdempotencyKey = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{8,100}$/, 'Idempotency-Key tidak valid');
 
 export const SaleInput = z
   .object({
@@ -12,7 +14,11 @@ export const SaleInput = z
         z
           .object({
             productId: Uuid,
-            qty: z.number().int().positive().max(100_000),
+            qty: z
+              .number()
+              .int('Jumlah harus bilangan bulat')
+              .positive('Jumlah harus lebih dari 0')
+              .max(100_000, 'Jumlah maksimal 100.000'),
             // Honoured only with sales.price_override; otherwise the catalog price is used.
             price: rupiah.optional(),
           })
@@ -22,7 +28,7 @@ export const SaleInput = z
       .max(200)
       .refine(
         (ls) => new Set(ls.map((l) => l.productId)).size === ls.length,
-        'produk ganda',
+        'Satu produk cukup satu baris',
       ),
     // Honoured only with sales.price_override.
     discount: rupiah.optional(),

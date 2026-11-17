@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   Injectable,
   NotFoundException,
@@ -46,7 +47,25 @@ const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps e
 export const taxOf = (taxable: number, bps: number) =>
   Number((BigInt(taxable) * BigInt(bps) + 5000n) / 10000n);
 
-/** 422 in the shared shape (`common/validation.ts`): `errors` names the field the cashier must fix. */
+/** Order-independent fingerprint of a sale request (lines sorted, keys sorted). */
+export const requestHash = (input: SaleInput) => {
+  const lines = [...input.lines].sort((x, y) =>
+    x.productId < y.productId ? -1 : 1,
+  );
+  const norm = { ...input, lines, note: input.note || undefined };
+  const stable = JSON.stringify(norm, (_k, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : 1,
+          ),
+        )
+      : v,
+  );
+  return createHash('sha256').update(stable).digest('hex');
+};
+
+/** A 422 in the shared shape; `field` puts the message on that input (`paid`, `lines.0.qty`). */
 const fail = (
   message: string,
   extra: Record<string, unknown> = {},
@@ -73,23 +92,35 @@ export class SalesService {
 
   private async byKey(tenantId: string, key: string) {
     const [row] = await this.db
-      .select({ id: sales.id })
+      .select({ id: sales.id, requestHash: sales.requestHash })
       .from(sales)
       .where(and(eq(sales.tenantId, tenantId), eq(sales.idempotencyKey, key)));
-    return row?.id;
+    return row;
+  }
+
+  /** A replay returns the first sale only for the same request; another body under that key is refused. */
+  private async replay(s: PosSession, key: string, hash: string) {
+    const prior = await this.byKey(s.tenantId, key);
+    if (!prior) return null;
+    if (prior.requestHash !== null && prior.requestHash !== hash)
+      throw fail('Permintaan berbeda dengan transaksi sebelumnya');
+    return this.get(s, prior.id, true);
   }
 
   async create(s: PosSession, key: string, input: SaleInput) {
-    const prior = await this.byKey(s.tenantId, key);
-    if (prior) return this.get(s, prior, true);
+    const hash = requestHash(input);
+    const prior = await this.replay(s, key, hash);
+    if (prior) return prior;
     let id: string;
     try {
-      id = await this.db.transaction((tx) => this.insert(tx, s, key, input));
+      id = await this.db.transaction((tx) =>
+        this.insert(tx, s, key, input, hash),
+      );
     } catch (e) {
-      // A concurrent request with the same key won the unique index: return its sale.
+      // A concurrent request with the same key won the unique index: return its sale (same body only).
       if (isUniqueViolation(e)) {
-        const winner = await this.byKey(s.tenantId, key);
-        if (winner) return this.get(s, winner, true);
+        const winner = await this.replay(s, key, hash);
+        if (winner) return winner;
       }
       throw e;
     }
@@ -101,6 +132,7 @@ export class SalesService {
     s: PosSession,
     key: string,
     input: SaleInput,
+    hash: string,
   ): Promise<string> {
     // The shift row lock serializes this actor's sales with closing the shift.
     const [shift] = await tx
@@ -135,7 +167,11 @@ export class SalesService {
     const byId = new Map(rows.map((r) => [r.id, r]));
     const missing = ids.filter((pid) => !byId.has(pid));
     if (missing.length)
-      throw fail('Produk tidak ditemukan', { productIds: missing }, 'lines');
+      throw fail(
+        'Produk tidak ditemukan atau tidak aktif',
+        { productIds: missing },
+        `lines.${input.lines.findIndex((l) => l.productId === missing[0])}.productId`,
+      );
 
     const canOverride = hasPermission(s, 'sales.price_override');
     const lines = input.lines.map((l) => {
@@ -154,7 +190,7 @@ export class SalesService {
       };
     });
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
-    if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar');
+    if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
     const discount = canOverride ? (input.discount ?? 0) : 0;
     if (discount > subtotal)
       throw fail('Diskon melebihi subtotal', {}, 'discount');
@@ -192,7 +228,7 @@ export class SalesService {
         throw fail('Kasbon harus menyisakan sisa tagihan', { total }, 'paid');
     } else if (method.isCash) {
       if (input.paid < total)
-        throw fail('Uang yang dibayar kurang dari total', { total }, 'paid');
+        throw fail('Uang dibayar kurang dari total', { total }, 'paid');
     } else if (input.paid !== total) {
       throw fail(
         'Pembayaran non-tunai harus sama dengan total',
@@ -215,6 +251,7 @@ export class SalesService {
         actorKind: s.kind,
         paymentMethodId: method.id,
         idempotencyKey: key,
+        requestHash: hash,
         subtotal,
         discount,
         memberId,
@@ -236,13 +273,26 @@ export class SalesService {
     for (const l of [...lines].sort((x, y) =>
       x.productId < y.productId ? -1 : 1,
     )) {
-      const { costTotal: cost } = await this.stock.consume(tx, {
-        tenantId: s.tenantId,
-        productId: l.productId,
-        qty: l.qty,
-        refId: sale.id,
-        actorId: s.actorId,
-      });
+      const { costTotal: cost } = await this.stock
+        .consume(tx, {
+          tenantId: s.tenantId,
+          productId: l.productId,
+          qty: l.qty,
+          refId: sale.id,
+          actorId: s.actorId,
+        })
+        .catch((e: unknown) => {
+          // "Stok Es Teh Manis tidak cukup (sisa 2)", on that line's qty.
+          if (e instanceof UnprocessableEntityException) {
+            const body = e.getResponse() as { message: string } & Record<
+              string,
+              unknown
+            >;
+            const i = input.lines.findIndex((x) => x.productId === l.productId);
+            throw fail(body.message, body, `lines.${i}.qty`);
+          }
+          throw e;
+        });
       costTotal += cost;
       await tx.insert(saleLines).values({
         ...l,

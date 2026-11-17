@@ -200,6 +200,42 @@ describe('stock in (U6)', () => {
         .expect(409);
     });
 
+    it('approval applies the count against on-hand at approval, not at saving (sales in between)', async () => {
+      const p = await product(a);
+      await opening(a, p, 20);
+      const so = await opname(a, [{ productId: p, countedQty: 15 }]);
+      expect(so.lines[0].systemQty).toBe(20);
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', a.auth)
+        .send({ openingCash: 0 });
+      await http()
+        .post('/sales')
+        .set('Authorization', a.auth)
+        .set('Idempotency-Key', `opname-race-${p}`)
+        .send({ lines: [{ productId: p, qty: 2 }], paid: 10_000 })
+        .expect(201);
+      const draft = await http()
+        .get(`/stock-opnames/${so.id}`)
+        .set('Authorization', a.auth)
+        .expect(200);
+      expect(draft.body.lines[0]).toMatchObject({
+        systemQty: 18,
+        difference: -3,
+      });
+      await approveOpname(a, so.id).expect(200);
+      expect((await stockOf(a, p)).onHand).toBe(15);
+      const done = await http()
+        .get(`/stock-opnames/${so.id}`)
+        .set('Authorization', a.auth)
+        .expect(200);
+      expect(done.body.lines[0]).toMatchObject({
+        systemQty: 18,
+        countedQty: 15,
+        difference: -3,
+      });
+    });
+
     it('an opname to a higher count adds an adjustment batch; deleting a draft changes nothing', async () => {
       const p = await product(a);
       await opening(a, p, 4);
@@ -415,6 +451,37 @@ describe('stock in (U6)', () => {
   });
 
   describe('permissions', () => {
+    it('hides purchase costs from a session without purchasing.manage or reports.view', async () => {
+      const p = await product(a);
+      const o = await order(a, [{ productId: p, qty: 2, unitCost: 1500 }]);
+      const plain = await createCashier(app, a, ['sales.create']);
+      const list = await http()
+        .get('/purchasing/orders')
+        .set('Authorization', plain.auth)
+        .expect(200);
+      expect(
+        (list.body as { data: { total?: number }[] }).data.every(
+          (r) => r.total === undefined,
+        ),
+      ).toBe(true);
+      const one = await http()
+        .get(`/purchasing/orders/${o.id}`)
+        .set('Authorization', plain.auth)
+        .expect(200);
+      expect(one.body.total).toBeUndefined();
+      expect(one.body.lines[0]).toMatchObject({ qty: 2 });
+      expect(one.body.lines[0].unitCost).toBeUndefined();
+      const auditor = await createCashier(app, a, ['reports.view']);
+      const seen = await http()
+        .get(`/purchasing/orders/${o.id}`)
+        .set('Authorization', auditor.auth)
+        .expect(200);
+      expect(seen.body).toMatchObject({
+        total: 3000,
+        lines: [{ unitCost: 1500 }],
+      });
+    });
+
     it('gives a cashier without purchasing.manage 403 on writes, 2xx with it', async () => {
       const p = await product(a);
       const sup = await supplier(a);

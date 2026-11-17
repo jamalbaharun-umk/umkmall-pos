@@ -2,10 +2,10 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
+import { fieldError } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import {
   products,
@@ -20,14 +20,24 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 const Line = z
   .object({
     productId: z.string().uuid(),
-    qty: z.number().int().positive().max(1_000_000),
-    // Integer rupiah per unit.
-    unitCost: z.number().int().nonnegative().max(1_000_000_000_000),
+    qty: z
+      .number()
+      .int('Jumlah harus bilangan bulat')
+      .positive('Jumlah harus lebih dari 0')
+      .max(100_000, 'Jumlah maksimal 100.000'),
+    // Integer rupiah per unit; capped so qty × cost × lines stays a safe integer.
+    unitCost: z
+      .number()
+      .int('Harga beli harus bilangan bulat rupiah')
+      .nonnegative('Harga beli tidak boleh negatif')
+      .max(1_000_000_000, 'Harga beli maksimal Rp1.000.000.000'),
   })
   .strict();
 
+const MAX_ORDER_TOTAL = 1_000_000_000_000;
+
 const orderFields = {
-  supplierId: z.string().uuid(),
+  supplierId: z.string().uuid('Pilih pemasok'),
   paymentMethod: z.string().trim().max(60).nullable().optional(),
   note: z.string().trim().max(500).nullable().optional(),
   lines: z
@@ -36,7 +46,11 @@ const orderFields = {
     .max(200)
     .refine(
       (l) => new Set(l.map((x) => x.productId)).size === l.length,
-      'produk ganda',
+      'Satu produk cukup satu baris',
+    )
+    .refine(
+      (l) => l.reduce((n, x) => n + x.qty * x.unitCost, 0) <= MAX_ORDER_TOTAL,
+      'Total pembelian maksimal Rp1.000.000.000.000',
     ),
 };
 export const OrderCreate = z.object(orderFields).strict();
@@ -60,11 +74,13 @@ export async function assertStockProducts(
         eq(products.type, 'product'),
       ),
     );
-  if (found.length !== new Set(ids).size)
-    throw new UnprocessableEntityException({
-      message: 'Produk tidak ditemukan atau tidak memakai stok',
-      fields: ['lines'],
-    });
+  if (found.length !== new Set(ids).size) {
+    const ok = new Set(found.map((f) => f.id));
+    throw fieldError(
+      `lines.${ids.findIndex((id) => !ok.has(id))}.productId`,
+      'Produk tidak ditemukan atau tidak memakai stok',
+    );
+  }
 }
 
 @Injectable()
@@ -271,11 +287,7 @@ export class PurchasingService {
           isNull(suppliers.deletedAt),
         ),
       );
-    if (!row)
-      throw new UnprocessableEntityException({
-        message: 'Pemasok tidak ditemukan',
-        fields: ['supplierId'],
-      });
+    if (!row) throw fieldError('supplierId', 'Pemasok tidak ditemukan');
   }
 
   private async writeLines(

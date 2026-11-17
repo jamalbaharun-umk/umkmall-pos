@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
@@ -40,8 +41,13 @@ const positiveInt = (n: number, what: string) => {
 export class StockService {
   constructor(@InjectDb() private readonly db: Db) {}
 
-  /** The tenant's live product, or 404. Not locked: batches carry the locks. */
-  private async product(tx: Tx | Db, tenantId: string, productId: string) {
+  /** The tenant's live product; 404 for a path id, 422 on `productId` for a body (`inBody`). Not locked. */
+  private async product(
+    tx: Tx | Db,
+    tenantId: string,
+    productId: string,
+    inBody = true,
+  ) {
     const [p] = await tx
       .select({ type: products.type, costPrice: products.costPrice })
       .from(products)
@@ -52,7 +58,10 @@ export class StockService {
           isNull(products.deletedAt),
         ),
       );
-    if (!p) throw new NotFoundException('Produk tidak ditemukan');
+    if (!p)
+      throw inBody
+        ? fieldError('productId', 'Produk tidak ditemukan')
+        : new NotFoundException('Produk tidak ditemukan');
     return p;
   }
 
@@ -175,12 +184,17 @@ export class StockService {
       .for('update');
 
     const available = batches.reduce((n, b) => n + b.qtyRemaining, 0);
-    if (available < input.qty)
+    if (available < input.qty) {
+      const [p] = await tx
+        .select({ name: products.name })
+        .from(products)
+        .where(eq(products.id, input.productId));
       throw new UnprocessableEntityException({
-        message: 'Stok tidak cukup',
+        message: `Stok ${p?.name ?? 'produk'} tidak cukup (sisa ${available})`,
         productId: input.productId,
         available,
       });
+    }
 
     let left = input.qty;
     let costTotal = 0;
@@ -204,6 +218,22 @@ export class StockService {
       left -= take;
     }
     return { costTotal };
+  }
+
+  /** On-hand of one product with its batches locked FOR UPDATE: a concurrent sale waits until the caller commits. */
+  async lockedOnHand(tx: Tx, tenantId: string, productId: string) {
+    const batches = await tx
+      .select({ qty: stockBatches.qtyRemaining })
+      .from(stockBatches)
+      .where(
+        and(
+          eq(stockBatches.tenantId, tenantId),
+          eq(stockBatches.productId, productId),
+          gt(stockBatches.qtyRemaining, 0),
+        ),
+      )
+      .for('update');
+    return batches.reduce((n, b) => n + b.qty, 0);
   }
 
   /** On-hand per tracked product id (0 when it has no batches). Untracked products are omitted. */
@@ -239,7 +269,7 @@ export class StockService {
 
   /** `GET /stock/products/:id`: on-hand and the batches still holding stock. */
   async productStock(tenantId: string, productId: string) {
-    const p = await this.product(this.db, tenantId, productId);
+    const p = await this.product(this.db, tenantId, productId, false);
     if (p.type !== 'product')
       return { productId, tracked: false, onHand: null, batches: [] };
     const batches = await this.db
@@ -266,7 +296,7 @@ export class StockService {
 
   /** `GET /stock/products/:id/movements`: the product's latest stock changes (Lakasir's stock history tab). */
   async movements(tenantId: string, productId: string) {
-    await this.product(this.db, tenantId, productId);
+    await this.product(this.db, tenantId, productId, false);
     return this.db
       .select({
         id: stockMovements.id,
