@@ -51,8 +51,7 @@ Sibling sessions: `ui-parity-b` (cashier, sales history, shift, receipt, supplie
   1280×800 in `.evidence/ui-parity-a/` (gitignored), tablet width (768) checked.
 - [x] [manual] parity table below filled with the final state per screen; UMK-1924 comment lists screens and what
   was not exercised.
-- [ ] [cmd] legacy token classes removed from `app.css` only when `grep` finds no screen using them. (Blocked: two classes
-  in u5's dashboard widgets; remove the block once they move to `text-default-success`/`text-default-error`.)
+- [x] [cmd] legacy token classes removed from `app.css` once `grep` found no screen using them (after u5's 3ed4996).
 - [x] [test] stock on-hand and movement history endpoints: own tracked products only, 404 for another store.
 
 ## Files
@@ -82,4 +81,22 @@ spot-checked; Lakasir and POS screenshots in `.evidence/ui-parity-a/` (gitignore
 
 Not exercised: device "Cabut" (same confirm path as Keluarkan, not clicked), the PIN lockout countdown (429), image
 over 2 MB refusal, product delete from the view page (deleted from the list instead). `app.css`'s legacy token block
-stays: u5's `laporan/-dashboard-widgets.tsx` still uses `text-success`/`text-error`.
+is gone (no screen used it after u5's 3ed4996).
+
+## Validation and audit pass (owner requirement 2026-11-17)
+
+- [x] [test] `common/error.filter.ts` (global): every refusal is `{ message, errors? }` in Indonesian; Nest defaults,
+  unknown routes, bad JSON (400), oversize upload (422 on `file`), Postgres 23505/23503/22P02 and unknown errors (safe
+  500, logged without values) — `error.filter.spec.ts`, `validation-catalog-staff.e2e-spec.ts`.
+- [x] [test] catalog, staff, roles, devices, auth on `common/validation.ts` with specific messages; 409 field errors for
+  duplicate SKU, barcode, category, role and staff names (staff names unique per store, case-insensitive).
+- [x] [test] cost price hidden without catalog.manage / reports.view / purchasing.manage (revert-red proven); unknown
+  UMKMall user on exchange → 401; non-UUID device header → 401; category delete race → 409.
+- [x] [test] web: `lib/validate.ts` mirrors the zod rules, `lib/refusal.ts` maps server field errors, `lib/sign-in.ts`
+  routes an expired cashier to `/kasir/masuk` and explains failed sign-ins.
+- [x] [qa] browser: product form empty / bad values / duplicate SKU, category empty / duplicate / in use, staff empty /
+  duplicate name, sign-in toast — screenshots `validation-*.jpg` in `.evidence/ui-parity-a/`.
+- Not exercised in the browser: UMKMall outage on refresh (no UMKMall locally; covered by code path only), cashier
+  expiry redirect (needs a 15-min-old cashier token), role/device empty submits (same helper as category, API-tested).
+  Staff-name uniqueness is a read-then-write check (`shortcut:` comment); a partial unique index belongs to the next
+  staff migration.

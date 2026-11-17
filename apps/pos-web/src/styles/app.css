@@ -294,28 +294,3 @@ html, body {
     animation: gallery-shimmer 1.4s linear infinite;
   }
 }
-/* ---- Legacy POS token classes (bg-brand-soft, text-ink, ...) still used by screens built before the
-   @umkmall/ui switch. The UI parity pass removes this block once no screen uses them. ---- */
-:root {
-  --brand: 0 116 231;
-  --brand-strong: 0 81 162;
-  --brand-soft: 240 247 255;
-  --text-primary: 4 38 72;
-  --text-secondary: 147 162 176;
-  --success: 14 160 110;
-  --error: 219 0 0;
-  --warning: 245 158 11;
-}
-
-@theme {
-  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
-  --color-brand: rgb(var(--brand));
-  --color-brand-strong: rgb(var(--brand-strong));
-  --color-brand-soft: rgb(var(--brand-soft));
-  --color-ink: rgb(var(--text-primary));
-  --color-ink-muted: rgb(var(--text-secondary));
-  --color-success: rgb(var(--success));
-  --color-error: rgb(var(--error));
-  --color-warning: rgb(var(--warning));
-}
-
