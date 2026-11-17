@@ -15,6 +15,15 @@ function code(value: string, what: string): string | undefined {
   if (value.length > 64) return `${what} maksimal 64 karakter`
 }
 
+/**
+ * Accepts Indonesian thousand dots only when they group correctly ("5.000", "1.250.000" → digits); anything else
+ * ("1.5", "-2", "1,5") is returned unchanged so the whole-number check names it.
+ */
+export const plainNumber = (text: string) => {
+  const t = text.trim()
+  return /^\d{1,3}(\.\d{3})+$/.test(t) ? t.replace(/\./g, '') : t
+}
+
 const compact = (e: Record<string, string | undefined>): Errors =>
   Object.fromEntries(Object.entries(e).filter((kv): kv is [string, string] => Boolean(kv[1])))
 
@@ -34,8 +43,8 @@ export type ProductFields = {
  * cleaned: "-2" or "1,5" gets a message instead of becoming 2 or 15.
  */
 export function productErrors(f: ProductFields, editing: boolean): Errors {
-  const sellingText = f.sellingPrice.trim()
-  const costText = f.costPrice.trim() || '0'
+  const sellingText = plainNumber(f.sellingPrice)
+  const costText = plainNumber(f.costPrice) || '0'
   const sellingBad = sellingText === '' ? 'Harga jual wajib diisi' : check.wholeNumber(sellingText, { min: 1, label: 'Harga jual' })
   const costBad = check.wholeNumber(costText, { label: 'Harga modal' })
   const selling = Number(sellingText)
@@ -54,7 +63,7 @@ export function productErrors(f: ProductFields, editing: boolean): Errors {
     e[`barcodes.${i}`] = code(v, 'Barcode') ?? (seen.has(v) ? 'Barcode tidak boleh ganda' : undefined)
     seen.add(v)
   })
-  if (f.stock.trim() !== '') e.stock = check.wholeNumber(f.stock, { label: 'Stok awal' })
+  if (f.stock.trim() !== '') e.stock = check.wholeNumber(plainNumber(f.stock), { label: 'Stok awal' })
   return compact(e)
 }
 

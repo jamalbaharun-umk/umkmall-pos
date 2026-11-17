@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { productErrors, required, splitImages, staffErrors } from './validate'
+import { plainNumber, productErrors, required, splitImages, staffErrors } from './validate'
 
 const product = {
   name: 'Es Teh',
@@ -29,11 +29,15 @@ describe('client validation mirrors the API', () => {
     })
     expect(productErrors({ ...product, sku: 'A B' }, false).sku).toBe('SKU tidak boleh berisi spasi')
     // typos get a message, never a silently different number
-    expect(productErrors({ ...product, stock: '-2', costPrice: '1,5', sellingPrice: '5.000' }, false)).toEqual({
+    expect(productErrors({ ...product, stock: '-2', costPrice: '1,5', sellingPrice: '5.5' }, false)).toEqual({
       stock: 'Stok awal tidak boleh negatif',
       costPrice: 'Harga modal harus bilangan bulat',
       sellingPrice: 'Harga jual harus bilangan bulat',
     })
+    // correctly grouped thousand dots are fine, like the cashier's money fields
+    expect(productErrors({ ...product, stock: '1.000', costPrice: '3.000', sellingPrice: '1.250.000' }, false)).toEqual({})
+    expect(plainNumber('1.250.000')).toBe('1250000')
+    expect(plainNumber('1.5')).toBe('1.5')
     expect(productErrors(product, true).sku).toBe('SKU wajib diisi')
     expect(productErrors({ ...product, barcodes: ['12', '899', '899'] }, false)).toEqual({
       'barcodes.0': 'Barcode minimal 3 karakter',

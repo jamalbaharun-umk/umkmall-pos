@@ -5,7 +5,7 @@ import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { Panel, RequiredLabel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
-import { IMAGE_ERROR, productErrors, splitImages, type Errors } from '@/lib/validate'
+import { IMAGE_ERROR, plainNumber, productErrors, splitImages, type Errors } from '@/lib/validate'
 import {
   deleteImage,
   recordOpeningStock,
@@ -79,8 +79,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     const found = productErrors(form, Boolean(product))
     setErrors(found)
     if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
-    const costPrice = Number(form.costPrice.trim() || '0')
-    const sellingPrice = Number(form.sellingPrice.trim())
+    const costPrice = Number(plainNumber(form.costPrice) || '0')
+    const sellingPrice = Number(plainNumber(form.sellingPrice))
     const input: ProductInput = {
       categoryId: form.categoryId,
       name: form.name.trim(),
@@ -105,7 +105,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       const id = product?.id ?? saved.id
       if (!id) return fail(GENERIC_ERROR)
       const problems: string[] = []
-      const qty = Number(form.stock.trim() || '0')
+      const qty = Number(plainNumber(form.stock) || '0')
       if (!product && form.type === 'product' && qty > 0) {
         const r = await recordOpeningStock({ data: { productId: id, qty } })
         if (r.error) problems.push(`Stok awal belum tercatat: ${r.error}`)
