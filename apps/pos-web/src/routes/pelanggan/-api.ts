@@ -79,6 +79,21 @@ async function mutate(path: string, method: string, body?: unknown, headers?: Re
 
 const enc = encodeURIComponent
 
+export type Paged<T> = { data: T[]; total: number; page: number; perPage: number }
+export type ReceivablePage = Paged<ReceivableSummary> & { summary: { openRest: number; openCount: number } }
+
+const query = (params: Record<string, string | number | undefined>) => {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v))
+  const s = qs.toString()
+  return s ? `?${s}` : ''
+}
+
+/** One page of members (GET /members: search name/code/phone, 20 per page). */
+export const loadMembers = createServerFn()
+  .validator((d: { q?: string; page?: number }) => d)
+  .handler(({ data }) => load<Paged<Member>>(`/members${query({ q: data.q, page: data.page })}`))
+
 export const listResource = createServerFn()
   .validator((d: { resource: Resource; q?: string }) => d)
   .handler(async ({ data }) => {
@@ -98,12 +113,10 @@ export const removeResource = createServerFn({ method: 'POST' })
   .validator((d: { resource: Resource; id: string }) => d)
   .handler(({ data }) => mutate(`/${resource(data.resource)}/${enc(data.id)}`, 'DELETE'))
 
+/** One page of receivables with the outstanding summary (GET /receivables: member name or sale number). */
 export const loadReceivables = createServerFn()
-  .validator((status?: 'open' | 'settled') => status)
-  .handler(
-    async ({ data }) =>
-      (await load<{ data: ReceivableSummary[] }>(`/receivables${data ? `?status=${enc(data)}` : ''}`)).data,
-  )
+  .validator((d: { status?: 'open' | 'settled'; q?: string; page?: number }) => d)
+  .handler(({ data }) => load<ReceivablePage>(`/receivables${query({ status: data.status, q: data.q, page: data.page })}`))
 
 export const loadReceivable = createServerFn()
   .validator((id: string) => id)

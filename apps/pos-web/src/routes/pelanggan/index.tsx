@@ -1,21 +1,25 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { TextField } from '@umkmall/ui'
 import { useState } from 'react'
-import { listResource, type Member } from './-api'
+import { loadMembers, type Member } from './-api'
 import { LoadError, Pending, ResourcePage } from './-ui'
 
 // Lakasir MemberResource: name, code, phone, address (email and identity fields dropped: minimised PII).
 export const Route = createFileRoute('/pelanggan/')({
-  validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' && s.q ? s.q : undefined }),
-  loaderDeps: ({ search }) => ({ q: search.q }),
-  loader: async ({ deps }) => (await listResource({ data: { resource: 'members', q: deps.q } })) as unknown as Member[],
+  validateSearch: (s: Record<string, unknown>): { q?: string; page?: number } => ({
+    // The router JSON-parses search values, so ?q=0812… arrives as a number.
+    q: s.q == null || s.q === '' ? undefined : String(s.q),
+    page: Number(s.page) >= 1 ? Math.floor(Number(s.page)) : undefined,
+  }),
+  loaderDeps: ({ search }) => search,
+  loader: ({ deps }) => loadMembers({ data: deps }),
   pendingComponent: Pending,
   errorComponent: LoadError,
   component: MembersPage,
 })
 
 function MembersPage() {
-  const rows = Route.useLoaderData()
+  const list = Route.useLoaderData()
   const { q } = Route.useSearch()
   const navigate = useNavigate({ from: '/pelanggan/' })
   const [query, setQuery] = useState(q ?? '')
@@ -25,8 +29,13 @@ function MembersPage() {
       crumbs={[{ label: 'Pelanggan' }, { label: 'Daftar' }]}
       singular="pelanggan"
       resource="members"
-      cap={50}
-      rows={rows}
+      rows={list.data}
+      paging={{
+        page: list.page,
+        perPage: list.perPage,
+        total: list.total,
+        onPage: (n) => void navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }) }),
+      }}
       emptyHint={
         q ? 'Tidak ada pelanggan yang cocok.' : 'Tambahkan pelanggan untuk mencatat kasbon dan riwayat belanja.'
       }
@@ -34,7 +43,7 @@ function MembersPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            void navigate({ search: { q: query.trim() || undefined } })
+            void navigate({ search: { q: query.trim() || undefined, page: undefined } })
           }}
         >
           <TextField

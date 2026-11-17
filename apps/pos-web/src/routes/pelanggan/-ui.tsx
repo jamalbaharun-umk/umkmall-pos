@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Dialog,
+  Pagination,
   Select,
   Table,
   TableBody,
@@ -36,6 +37,36 @@ export const formatDate = (iso: string) =>
 
 export type { Field } from './-form'
 
+/** Table footer like the product list: the range shown out of the total, and page buttons when there are several. */
+export function ListFooter({
+  page,
+  perPage,
+  total,
+  shown,
+  noun,
+  onPage,
+}: {
+  page: number
+  perPage: number
+  total: number
+  shown: number
+  noun: string
+  onPage: (page: number) => void
+}) {
+  const pages = Math.max(1, Math.ceil(total / perPage))
+  const first = (page - 1) * perPage + 1
+  return (
+    <div className="flex flex-col items-center gap-3 border-t border-default-primary p-4 sm:flex-row sm:justify-between">
+      <span className="text-sm text-default-secondary">
+        {shown === 0
+          ? `Halaman ${page} kosong dari ${total} ${noun}`
+          : `Menampilkan ${first}–${first + shown - 1} dari ${total} ${noun}`}
+      </span>
+      {pages > 1 && <Pagination page={page} pageCount={pages} size="small" onPageChange={onPage} />}
+    </div>
+  )
+}
+
 export type Column<T> = {
   label: string
   cell: (row: T) => ReactNode
@@ -56,8 +87,8 @@ export function ResourcePage<T extends { id: string }>(props: {
   emptyHint: string
   canManage?: (row: T) => boolean
   toolbar?: ReactNode
-  /** pos-api returns at most this many rows: say so instead of silently cutting the list. */
-  cap?: number
+  /** Server paging (Lakasir's table footer: "Menampilkan X–Y dari Z" and page buttons). */
+  paging?: { page: number; perPage: number; total: number; onPage: (page: number) => void }
 }) {
   const router = useRouter()
   const [form, setForm] = useState<{ id?: string; values: Values }>()
@@ -147,11 +178,6 @@ export function ResourcePage<T extends { id: string }>(props: {
     >
       <Card variant="outlined" padding="none" className="overflow-hidden">
         {props.toolbar && <div className="border-b border-default-primary p-4">{props.toolbar}</div>}
-        {props.cap && props.rows.length >= props.cap && (
-          <p className="border-b border-default-primary px-4 py-2 text-sm text-default-secondary">
-            Menampilkan {props.cap} data pertama. Gunakan pencarian untuk mempersempit.
-          </p>
-        )}
         {props.rows.length === 0 ? (
           <Empty title={`Belum ada ${props.singular}`}>{props.emptyHint}</Empty>
         ) : (
@@ -195,6 +221,9 @@ export function ResourcePage<T extends { id: string }>(props: {
               ))}
             </TableBody>
           </Table>
+        )}
+        {props.paging && props.paging.total > 0 && (
+          <ListFooter {...props.paging} shown={props.rows.length} noun={props.singular} />
         )}
       </Card>
 
