@@ -23,6 +23,8 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
 function send(path: string, init: RequestInit, token: string): Promise<Response> {
   const headers = new Headers(init.headers)
   headers.set('authorization', `Bearer ${token}`)
-  if (init.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
+  // FormData sets its own multipart boundary; everything else this client sends is JSON.
+  if (init.body && !(init.body instanceof FormData) && !headers.has('content-type'))
+    headers.set('content-type', 'application/json')
   return fetch(`${posApiUrl()}${path}`, { ...init, headers })
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { parse, Uuid } from '../catalog/catalog.schemas';
 import { parseId } from '../staff/http';
@@ -6,6 +6,14 @@ import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { StockService } from './stock.service';
+
+// Comma-separated product ids, at most one product-list page (100).
+const OnHandQuery = z.object({
+  ids: z
+    .string()
+    .transform((s) => s.split(',').filter(Boolean))
+    .pipe(z.array(Uuid).max(100)),
+});
 
 const OpeningInput = z
   .object({
@@ -18,6 +26,17 @@ const OpeningInput = z
 @Controller('stock')
 export class StockController {
   constructor(private readonly stock: StockService) {}
+
+  /** On-hand per tracked product, for the product list's stock column. Untracked and foreign ids are omitted. */
+  @Get('on-hand')
+  onHand(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    return this.stock.onHand(s.tenantId, parse(OnHandQuery, query).ids);
+  }
+
+  @Get('products/:id/movements')
+  movements(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    return this.stock.movements(s.tenantId, parseId(id));
+  }
 
   @Get('products/:id')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {

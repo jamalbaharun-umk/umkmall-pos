@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as CatalogRouteRouteImport } from './routes/catalog/route'
 import { Route as KeluarRouteImport } from './routes/keluar'
 import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
 import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
@@ -39,18 +38,16 @@ import { Route as StokOpnameIdRouteImport } from './routes/stok-opname/$id'
 import { Route as StokOpnameBaruRouteImport } from './routes/stok-opname/baru'
 import { Route as VoucherIndexRouteImport } from './routes/voucher/index'
 import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/products/index'
-import { Route as CatalogProductsIdRouteImport } from './routes/catalog/products/$id'
+import { Route as CatalogProductsBaruRouteImport } from './routes/catalog/products/baru'
 import { Route as KasirStrukIdRouteImport } from './routes/kasir/struk.$id'
 import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis'
+import { Route as CatalogProductsIdIndexRouteImport } from './routes/catalog/products/$id/index'
+import { Route as CatalogProductsIdUbahRouteImport } from './routes/catalog/products/$id/ubah'
+import { Route as CatalogProductsIdGambarImageIdRouteImport } from './routes/catalog/products/$id/gambar.$imageId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CatalogRouteRoute = CatalogRouteRouteImport.update({
-  id: '/catalog',
-  path: '/catalog',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KeluarRoute = KeluarRouteImport.update({
@@ -64,9 +61,9 @@ const CatalogIndexRoute = CatalogIndexRouteImport.update({
   getParentRoute: () => CatalogRouteRoute,
 } as any)
 const CatalogCategoriesRoute = CatalogCategoriesRouteImport.update({
-  id: '/categories',
-  path: '/categories',
-  getParentRoute: () => CatalogRouteRoute,
+  id: '/catalog/categories',
+  path: '/catalog/categories',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const KasirIndexRoute = KasirIndexRouteImport.update({
   id: '/kasir/',
@@ -189,14 +186,14 @@ const VoucherIndexRoute = VoucherIndexRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const CatalogProductsIndexRoute = CatalogProductsIndexRouteImport.update({
-  id: '/products/',
-  path: '/products/',
-  getParentRoute: () => CatalogRouteRoute,
+  id: '/catalog/products/',
+  path: '/catalog/products/',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const CatalogProductsIdRoute = CatalogProductsIdRouteImport.update({
-  id: '/products/$id',
-  path: '/products/$id',
-  getParentRoute: () => CatalogRouteRoute,
+const CatalogProductsBaruRoute = CatalogProductsBaruRouteImport.update({
+  id: '/catalog/products/baru',
+  path: '/catalog/products/baru',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const KasirStrukIdRoute = KasirStrukIdRouteImport.update({
   id: '/kasir/struk/$id',
@@ -208,10 +205,25 @@ const LaporanCsvJenisRoute = LaporanCsvJenisRouteImport.update({
   path: '/laporan/csv/$jenis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CatalogProductsIdIndexRoute = CatalogProductsIdIndexRouteImport.update({
+  id: '/catalog/products/$id/',
+  path: '/catalog/products/$id/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CatalogProductsIdUbahRoute = CatalogProductsIdUbahRouteImport.update({
+  id: '/catalog/products/$id/ubah',
+  path: '/catalog/products/$id/ubah',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CatalogProductsIdGambarImageIdRoute =
+  CatalogProductsIdGambarImageIdRouteImport.update({
+    id: '/catalog/products/$id/gambar/$imageId',
+    path: '/catalog/products/$id/gambar/$imageId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/catalog': typeof CatalogRouteRouteWithChildren
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
@@ -239,10 +251,13 @@ export interface FileRoutesByFullPath {
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
-  '/catalog/products/$id': typeof CatalogProductsIdRoute
+  '/catalog/products/baru': typeof CatalogProductsBaruRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
+  '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
+  '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
+  '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -273,15 +288,17 @@ export interface FileRoutesByTo {
   '/staf': typeof StafIndexRoute
   '/stok-opname': typeof StokOpnameIndexRoute
   '/voucher': typeof VoucherIndexRoute
-  '/catalog/products/$id': typeof CatalogProductsIdRoute
+  '/catalog/products/baru': typeof CatalogProductsBaruRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
+  '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
+  '/catalog/products/$id': typeof CatalogProductsIdIndexRoute
+  '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/catalog': typeof CatalogRouteRouteWithChildren
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
@@ -309,16 +326,18 @@ export interface FileRoutesById {
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
-  '/catalog/products/$id': typeof CatalogProductsIdRoute
+  '/catalog/products/baru': typeof CatalogProductsBaruRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
+  '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
+  '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
+  '/catalog/products/$id/gambar/$imageId': typeof CatalogProductsIdGambarImageIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/catalog'
     | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
@@ -346,10 +365,13 @@ export interface FileRouteTypes {
     | '/staf/'
     | '/stok-opname/'
     | '/voucher/'
-    | '/catalog/products/$id'
+    | '/catalog/products/baru'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/catalog/products/'
+    | '/catalog/products/$id/ubah'
+    | '/catalog/products/$id/'
+    | '/catalog/products/$id/gambar/$imageId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -380,14 +402,16 @@ export interface FileRouteTypes {
     | '/staf'
     | '/stok-opname'
     | '/voucher'
-    | '/catalog/products/$id'
+    | '/catalog/products/baru'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/catalog/products'
+    | '/catalog/products/$id/ubah'
+    | '/catalog/products/$id'
+    | '/catalog/products/$id/gambar/$imageId'
   id:
     | '__root__'
     | '/'
-    | '/catalog'
     | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
@@ -415,16 +439,19 @@ export interface FileRouteTypes {
     | '/staf/'
     | '/stok-opname/'
     | '/voucher/'
-    | '/catalog/products/$id'
+    | '/catalog/products/baru'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/catalog/products/'
+    | '/catalog/products/$id/ubah'
+    | '/catalog/products/$id/'
+    | '/catalog/products/$id/gambar/$imageId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CatalogRouteRoute: typeof CatalogRouteRouteWithChildren
   KeluarRoute: typeof KeluarRoute
+  CatalogCategoriesRoute: typeof CatalogCategoriesRoute
   KasirMasukRoute: typeof KasirMasukRoute
   KasirRiwayatRoute: typeof KasirRiwayatRoute
   KasirTutupRoute: typeof KasirTutupRoute
@@ -449,8 +476,13 @@ export interface RootRouteChildren {
   StafIndexRoute: typeof StafIndexRoute
   StokOpnameIndexRoute: typeof StokOpnameIndexRoute
   VoucherIndexRoute: typeof VoucherIndexRoute
+  CatalogProductsBaruRoute: typeof CatalogProductsBaruRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
+  CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
+  CatalogProductsIdUbahRoute: typeof CatalogProductsIdUbahRoute
+  CatalogProductsIdIndexRoute: typeof CatalogProductsIdIndexRoute
+  CatalogProductsIdGambarImageIdRoute: typeof CatalogProductsIdGambarImageIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -460,13 +492,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/catalog': {
-      id: '/catalog'
-      path: '/catalog'
-      fullPath: '/catalog'
-      preLoaderRoute: typeof CatalogRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/keluar': {
@@ -485,10 +510,10 @@ declare module '@tanstack/react-router' {
     }
     '/catalog/categories': {
       id: '/catalog/categories'
-      path: '/categories'
+      path: '/catalog/categories'
       fullPath: '/catalog/categories'
       preLoaderRoute: typeof CatalogCategoriesRouteImport
-      parentRoute: typeof CatalogRouteRoute
+      parentRoute: typeof rootRouteImport
     }
     '/kasir/': {
       id: '/kasir/'
@@ -660,17 +685,17 @@ declare module '@tanstack/react-router' {
     }
     '/catalog/products/': {
       id: '/catalog/products/'
-      path: '/products'
+      path: '/catalog/products'
       fullPath: '/catalog/products/'
       preLoaderRoute: typeof CatalogProductsIndexRouteImport
-      parentRoute: typeof CatalogRouteRoute
+      parentRoute: typeof rootRouteImport
     }
-    '/catalog/products/$id': {
-      id: '/catalog/products/$id'
-      path: '/products/$id'
-      fullPath: '/catalog/products/$id'
-      preLoaderRoute: typeof CatalogProductsIdRouteImport
-      parentRoute: typeof CatalogRouteRoute
+    '/catalog/products/baru': {
+      id: '/catalog/products/baru'
+      path: '/catalog/products/baru'
+      fullPath: '/catalog/products/baru'
+      preLoaderRoute: typeof CatalogProductsBaruRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/kasir/struk/$id': {
       id: '/kasir/struk/$id'
@@ -686,31 +711,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaporanCsvJenisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/catalog/products/$id/': {
+      id: '/catalog/products/$id/'
+      path: '/catalog/products/$id'
+      fullPath: '/catalog/products/$id/'
+      preLoaderRoute: typeof CatalogProductsIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/catalog/products/$id/ubah': {
+      id: '/catalog/products/$id/ubah'
+      path: '/catalog/products/$id/ubah'
+      fullPath: '/catalog/products/$id/ubah'
+      preLoaderRoute: typeof CatalogProductsIdUbahRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/catalog/products/$id/gambar/$imageId': {
+      id: '/catalog/products/$id/gambar/$imageId'
+      path: '/catalog/products/$id/gambar/$imageId'
+      fullPath: '/catalog/products/$id/gambar/$imageId'
+      preLoaderRoute: typeof CatalogProductsIdGambarImageIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
-interface CatalogRouteRouteChildren {
-  CatalogCategoriesRoute: typeof CatalogCategoriesRoute
-  CatalogIndexRoute: typeof CatalogIndexRoute
-  CatalogProductsIdRoute: typeof CatalogProductsIdRoute
-  CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
-}
-
-const CatalogRouteRouteChildren: CatalogRouteRouteChildren = {
-  CatalogCategoriesRoute: CatalogCategoriesRoute,
-  CatalogIndexRoute: CatalogIndexRoute,
-  CatalogProductsIdRoute: CatalogProductsIdRoute,
-  CatalogProductsIndexRoute: CatalogProductsIndexRoute,
-}
-
-const CatalogRouteRouteWithChildren = CatalogRouteRoute._addFileChildren(
-  CatalogRouteRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CatalogRouteRoute: CatalogRouteRouteWithChildren,
   KeluarRoute: KeluarRoute,
+  CatalogCategoriesRoute: CatalogCategoriesRoute,
   KasirMasukRoute: KasirMasukRoute,
   KasirRiwayatRoute: KasirRiwayatRoute,
   KasirTutupRoute: KasirTutupRoute,
@@ -735,8 +763,13 @@ const rootRouteChildren: RootRouteChildren = {
   StafIndexRoute: StafIndexRoute,
   StokOpnameIndexRoute: StokOpnameIndexRoute,
   VoucherIndexRoute: VoucherIndexRoute,
+  CatalogProductsBaruRoute: CatalogProductsBaruRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
+  CatalogProductsIndexRoute: CatalogProductsIndexRoute,
+  CatalogProductsIdUbahRoute: CatalogProductsIdUbahRoute,
+  CatalogProductsIdIndexRoute: CatalogProductsIdIndexRoute,
+  CatalogProductsIdGambarImageIdRoute: CatalogProductsIdGambarImageIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

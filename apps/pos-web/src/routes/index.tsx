@@ -80,7 +80,7 @@ function Dashboard({ products }: { products: number }) {
             title="Belum ada produk"
             action={
               <Button asChild type="primary" color="primary" size="small" width="auto">
-                <Link to="/catalog/products/$id" params={{ id: 'baru' }}>Tambah produk</Link>
+                <Link to="/catalog/products/baru">Tambah produk</Link>
               </Button>
             }
           >

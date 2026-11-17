@@ -2,7 +2,7 @@ import { AppShell } from '@umkmall/ui/layouts'
 import { Header, Menu, Sidebar, SidebarMenuItem } from '@umkmall/ui/primitives'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { LogOut, Menu as MenuIcon, Store } from 'lucide-react'
-import { forwardRef, useRef, useState, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NAV, activeNav, visibleNav } from '@/nav'
 
 export type Me = {
@@ -22,6 +22,11 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const signOut = useRef<HTMLFormElement>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  // The page scrolls inside the shell, not the window, so the router's scroll reset never reaches it.
+  useEffect(() => {
+    scroller.current?.scrollTo(0, 0)
+  }, [pathname])
 
   const exists = (to: string) => Boolean((router.routesByPath as unknown as Record<string, unknown>)[to])
   const groups = visibleNav(NAV, exists, me.actor.permissions)
@@ -127,7 +132,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
       // Sidebar draws a rail and a drawer; this copy is only for its drawer, so it is hidden from md up.
       mobileSidebar={<div className="md:hidden">{nav(true, 'Navigasi seluler')}</div>}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto bg-default-secondary">{children}</div>
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto bg-default-secondary">{children}</div>
     </AppShell>
   )
 }

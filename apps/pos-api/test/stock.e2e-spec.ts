@@ -224,4 +224,40 @@ describe('stock (U3)', () => {
       .set('Authorization', a.auth)
       .expect(404);
   });
+
+  it('on-hand for the product list: own tracked products only', async () => {
+    const tracked = await product(a);
+    const service = await product(a, { type: 'service' });
+    const foreign = await product(b);
+    await receive(a, tracked, 7, 1000);
+    await receive(b, foreign, 3, 1000);
+    const res = await http()
+      .get(`/stock/on-hand?ids=${tracked},${service},${foreign}`)
+      .set('Authorization', a.auth)
+      .expect(200);
+    expect(res.body).toEqual({ [tracked]: 7 });
+    await http()
+      .get('/stock/on-hand?ids=not-a-uuid')
+      .set('Authorization', a.auth)
+      .expect(422);
+  });
+
+  it('movement history, newest first; 404 for another store', async () => {
+    const id = await product(a);
+    await receive(a, id, 5, 1000);
+    await consume(a, id, 2);
+    const res = await http()
+      .get(`/stock/products/${id}/movements`)
+      .set('Authorization', a.auth)
+      .expect(200);
+    const moves = res.body as { delta: number; reason: string }[];
+    expect(moves.map((m) => [m.reason, m.delta])).toEqual([
+      ['sale', -2],
+      ['purchase', 5],
+    ]);
+    await http()
+      .get(`/stock/products/${id}/movements`)
+      .set('Authorization', b.auth)
+      .expect(404);
+  });
 });

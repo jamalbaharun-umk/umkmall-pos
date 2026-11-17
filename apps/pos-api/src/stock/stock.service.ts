@@ -264,6 +264,27 @@ export class StockService {
     return { productId, tracked: true, onHand, batches };
   }
 
+  /** `GET /stock/products/:id/movements`: the product's latest stock changes (Lakasir's stock history tab). */
+  async movements(tenantId: string, productId: string) {
+    await this.product(this.db, tenantId, productId);
+    return this.db
+      .select({
+        id: stockMovements.id,
+        delta: stockMovements.delta,
+        reason: stockMovements.reason,
+        createdAt: stockMovements.createdAt,
+      })
+      .from(stockMovements)
+      .where(
+        and(
+          eq(stockMovements.tenantId, tenantId),
+          eq(stockMovements.productId, productId),
+        ),
+      )
+      .orderBy(desc(stockMovements.createdAt), desc(stockMovements.id))
+      .limit(50);
+  }
+
   /** `POST /stock/opening`: once per product (later stock is a purchase or opname, U6). */
   async opening(
     tenantId: string,

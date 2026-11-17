@@ -1,5 +1,6 @@
 import { HeadContent, Outlet, Scripts, createRootRoute, useMatches } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
+import { Toaster } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
 import { Shell, type Me } from '@/components/shell'
 import { api } from '@/lib/api.server'
@@ -54,6 +55,7 @@ function RootDocument({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        <Toaster position="top-right" />
         <Scripts />
       </body>
     </html>

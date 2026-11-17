@@ -18,8 +18,12 @@ export type Product = {
   categoryId: string
   category: Category
   barcodes: string[]
+  images?: { id: string }[]
 }
 export type ProductPage = { data: Product[]; page: number; perPage: number; total: number }
+export type Movement = { id: string; delta: number; reason: string; createdAt: string }
+export type Batch = { id: string; qtyInitial: number; qtyRemaining: number; unitCost: number; source: string; receivedAt: string }
+export type ProductStock = { tracked: boolean; onHand: number | null; batches: Batch[] }
 export type ProductInput = {
   categoryId: string
   name: string
@@ -31,7 +35,7 @@ export type ProductInput = {
   isActive: boolean
   barcodes: string[]
 }
-type Result = { error?: string }
+type Result = { error?: string; id?: string }
 
 const FIELD_LABELS: Record<string, string> = {
   name: 'nama',
@@ -64,7 +68,9 @@ async function read<T>(path: string): Promise<T> {
 
 async function write(path: string, method: string, body?: unknown): Promise<Result> {
   const res = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })
-  return res.ok ? {} : { error: await errorOf(res) }
+  if (!res.ok) return { error: await errorOf(res) }
+  const json = (await res.json().catch(() => null)) as { id?: string } | null
+  return { id: json?.id }
 }
 
 export const listCategories = createServerFn({ method: 'GET' }).handler(async () =>
@@ -85,15 +91,58 @@ export const deleteCategory = createServerFn({ method: 'POST' })
 
 export type ProductSearch = { q?: string; categoryId?: string; page?: number }
 
+export const PER_PAGE = 10
+
+/** A product page plus on-hand per tracked product (Lakasir's "stocks" column). */
 export const listProducts = createServerFn({ method: 'GET' })
   .validator((d: ProductSearch) => d)
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     const qs = new URLSearchParams()
     if (data.q) qs.set('q', data.q)
     if (data.categoryId) qs.set('categoryId', data.categoryId)
     qs.set('page', String(data.page ?? 1))
-    return read<ProductPage>(`/catalog/products?${qs}`)
+    qs.set('perPage', String(PER_PAGE))
+    const page = await read<ProductPage>(`/catalog/products?${qs}`)
+    const ids = page.data.map((p) => p.id).join(',')
+    const stock = ids ? await read<Record<string, number>>(`/stock/on-hand?ids=${ids}`) : {}
+    return { ...page, stock }
   })
+
+export const getProductDetail = createServerFn({ method: 'GET' })
+  .validator((id: string) => id)
+  .handler(async ({ data }) => {
+    const id = encodeURIComponent(data)
+    const [product, stock, movements] = await Promise.all([
+      read<Product>(`/catalog/products/${id}`),
+      read<ProductStock>(`/stock/products/${id}`),
+      read<Movement[]>(`/stock/products/${id}/movements`),
+    ])
+    return { product, stock, movements }
+  })
+
+/** Lakasir's "Stock" field on create: recorded as the product's opening stock (once, at its cost price). */
+export const recordOpeningStock = createServerFn({ method: 'POST' })
+  .validator((d: { productId: string; qty: number }) => d)
+  .handler(({ data }) => write('/stock/opening', 'POST', data))
+
+export const uploadImage = createServerFn({ method: 'POST' })
+  .validator((d: FormData) => d)
+  .handler(async ({ data }): Promise<Result> => {
+    const id = data.get('productId')
+    const file = data.get('file')
+    if (typeof id !== 'string' || !(file instanceof File)) return { error: 'Gambar tidak valid.' }
+    const body = new FormData()
+    body.set('file', file)
+    const res = await api(`/catalog/products/${encodeURIComponent(id)}/images`, { method: 'POST', body })
+    if (res.ok) return {}
+    return { error: res.status === 422 || res.status === 413 ? 'Gambar harus JPG, PNG atau WebP, paling besar 2 MB.' : await errorOf(res) }
+  })
+
+export const deleteImage = createServerFn({ method: 'POST' })
+  .validator((d: { productId: string; imageId: string }) => d)
+  .handler(({ data }) =>
+    write(`/catalog/products/${encodeURIComponent(data.productId)}/images/${encodeURIComponent(data.imageId)}`, 'DELETE'),
+  )
 
 export const getProduct = createServerFn({ method: 'GET' })
   .validator((id: string) => id)
