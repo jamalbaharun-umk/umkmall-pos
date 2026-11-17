@@ -79,7 +79,7 @@ function Stat({ value, previous, money, prevLabel }: { value: number; previous: 
           <>Belum ada data {prevLabel}</>
         ) : (
           <>
-            <span className={pct >= 0 ? 'text-success' : 'text-error'}>{pct >= 0 ? '▲' : '▼'} {Math.abs(pct)}%</span> dari {fmt(previous)} {prevLabel}
+            <span className={pct >= 0 ? 'text-default-success' : 'text-default-error'}>{pct >= 0 ? '▲' : '▼'} {Math.abs(pct)}%</span> dari {fmt(previous)} {prevLabel}
           </>
         )}
       </p>
