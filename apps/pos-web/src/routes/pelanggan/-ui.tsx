@@ -32,8 +32,7 @@ export const rupiah = (n: number) =>
 
 export { Empty, Page, PageError as LoadError, PageLoading as Pending }
 
-export const formatDate = (iso: string) =>
-  new Date(iso.length === 10 ? `${iso}T00:00:00` : iso).toLocaleDateString('id-ID', { dateStyle: 'medium' })
+export { formatDay, formatMomentDay } from './-form'
 
 export type { Field } from './-form'
 

@@ -15,7 +15,7 @@ import {
 } from '@umkmall/ui'
 import { useState } from 'react'
 import { loadReceivables } from '../pelanggan/-api'
-import { Empty, formatDate, ListFooter, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
+import { Empty, formatDay, formatMomentDay, ListFooter, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
 
 type Status = 'open' | 'settled' | undefined
 
@@ -123,8 +123,8 @@ function ReceivablesPage() {
                   <TableCell>#{r.saleNumber}</TableCell>
                   <TableCell className="text-right">{rupiah(r.total)}</TableCell>
                   <TableCell className="text-right">{rupiah(r.rest)}</TableCell>
-                  <TableCell>{formatDate(r.dueDate)}</TableCell>
-                  <TableCell>{r.lastPaymentAt ? formatDate(r.lastPaymentAt) : '–'}</TableCell>
+                  <TableCell>{formatDay(r.dueDate)}</TableCell>
+                  <TableCell>{r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}</TableCell>
                   <TableCell>
                     {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
                   </TableCell>

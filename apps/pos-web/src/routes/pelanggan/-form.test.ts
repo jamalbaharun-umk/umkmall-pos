@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { checkFields, isPhone, parseRupiah, toBody, type Field } from './-form'
+import { afterAll, describe, expect, it } from 'vitest'
+import { checkFields, formatDay, formatMomentDay, isPhone, parseRupiah, toBody, type Field } from './-form'
 
 const fields: Field[] = [
   { name: 'name', label: 'Nama', max: 5 },
@@ -67,5 +67,27 @@ describe('U7 form checks', () => {
       start: 'x',
       end: 'y',
     })
+  })
+})
+
+describe('U7 dates are the same in every timezone', () => {
+  const zones = ['UTC', 'Asia/Jakarta', 'Pacific/Honolulu', 'Pacific/Kiritimati']
+  const original = process.env.TZ
+  afterAll(() => {
+    process.env.TZ = original
+  })
+
+  it('a due date prints its own day, whatever the runtime timezone', () => {
+    for (const tz of zones) {
+      process.env.TZ = tz
+      expect(formatDay('2026-12-02')).toBe('2 Des 2026')
+    }
+  })
+
+  it('a sale at 00:22 WIB (17:22 UTC the day before) is on the WIB day everywhere', () => {
+    for (const tz of zones) {
+      process.env.TZ = tz
+      expect(formatMomentDay('2026-11-17T17:22:00.000Z')).toBe('18 Nov 2026')
+    }
   })
 })

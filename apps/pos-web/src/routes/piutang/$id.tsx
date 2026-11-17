@@ -19,7 +19,7 @@ import {
 import { useRef, useState, type FormEvent } from 'react'
 import { loadReceivable, payReceivable } from '../pelanggan/-api'
 import { parseRupiah } from '../pelanggan/-form'
-import { formatDate, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
+import { formatDay, formatMomentDay, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
 
 // Lakasir ViewReceivable: details, the sale's items, the payment history and the "add payment" action.
 export const Route = createFileRoute('/piutang/$id')({
@@ -115,9 +115,9 @@ function ReceivablePage() {
           <dt className="font-medium">Penjualan</dt>
           <dd className="text-right">#{r.saleNumber}</dd>
           <dt className="font-medium">Tanggal</dt>
-          <dd className="text-right">{formatDate(r.createdAt)}</dd>
+          <dd className="text-right">{formatMomentDay(r.createdAt)}</dd>
           <dt className="font-medium">Jatuh tempo</dt>
-          <dd className="text-right">{formatDate(r.dueDate)}</dd>
+          <dd className="text-right">{formatDay(r.dueDate)}</dd>
           <dt className="font-medium">Total piutang</dt>
           <dd className="text-right">{rupiah(r.total)}</dd>
           <dt className="font-bold">Sisa piutang</dt>
@@ -173,7 +173,7 @@ function ReceivablePage() {
               <TableBody>
                 {r.payments.map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell>{formatDate(p.createdAt)}</TableCell>
+                    <TableCell>{formatMomentDay(p.createdAt)}</TableCell>
                     <TableCell>{p.paymentMethod}</TableCell>
                     <TableCell className="text-right">{rupiah(p.restBefore)}</TableCell>
                     <TableCell className="text-right">{rupiah(p.amount)}</TableCell>

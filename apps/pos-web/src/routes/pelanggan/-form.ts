@@ -67,3 +67,28 @@ export function toBody(fields: Field[], values: Values) {
     }),
   )
 }
+
+// ---- Dates (QA: a receivable showed "3 Des" in the list and "2 Des" on its page) ----
+
+const DAY_FORMAT = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+
+/**
+ * A calendar date from pos-api ('YYYY-MM-DD': due date, voucher dates) shown as-is: no timezone conversion, so the
+ * server render (any TZ) and the browser always print the same day.
+ */
+export function formatDay(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day)
+  if (!m) return day
+  return DAY_FORMAT.format(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))))
+}
+
+// shortcut: the store timezone is pos-api's report setting (default Asia/Jakarta); screens pin Asia/Jakarta until the
+// web loads that setting. Pinning it (instead of the runtime's TZ) keeps server render and browser in agreement.
+const STORE_TZ = 'Asia/Jakarta'
+const MOMENT_DAY = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: STORE_TZ })
+
+/** A moment from pos-api (ISO timestamp: sale time, payment time) shown as its day in the store's timezone. */
+export function formatMomentDay(iso: string): string {
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? iso : MOMENT_DAY.format(new Date(t))
+}

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { listResource, type Voucher } from '../pelanggan/-api'
 import { parseRupiah } from '../pelanggan/-form'
-import { formatDate, LoadError, Pending, ResourcePage, rupiah } from '../pelanggan/-ui'
+import { formatDay, LoadError, Pending, ResourcePage, rupiah } from '../pelanggan/-ui'
 
 // Lakasir VoucherResource: percentage or flat, minimum purchase, quota, date range (inclusive, WIB).
 export const Route = createFileRoute('/voucher/')({
@@ -26,8 +26,8 @@ export const Route = createFileRoute('/voucher/')({
         },
         { label: 'Min. belanja', cell: (v) => rupiah(v.minimalBuying), right: true },
         { label: 'Kuota', cell: (v) => v.kuota, right: true },
-        { label: 'Mulai', cell: (v) => formatDate(v.startDate) },
-        { label: 'Berakhir', cell: (v) => formatDate(v.expired) },
+        { label: 'Mulai', cell: (v) => formatDay(v.startDate) },
+        { label: 'Berakhir', cell: (v) => formatDay(v.expired) },
       ]}
       fields={[
         { name: 'name', label: 'Nama', max: 120 },
