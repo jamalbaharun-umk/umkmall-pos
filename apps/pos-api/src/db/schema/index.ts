@@ -4,3 +4,4 @@ export * from './tenants';
 export * from './catalog';
 export * from './handoff-jtis';
 export * from './staff';
+export * from './stock';
