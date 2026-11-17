@@ -8,8 +8,9 @@ export const Route = createFileRoute('/masuk/umkmall')({
       POST: async ({ request }) => {
         const form = await request.formData().catch(() => null)
         const token = form?.get('token')
-        const ok = typeof token === 'string' && token.length > 0 && (await exchangeHandoff(token))
-        return seeOther(ok ? '/' : '/?gagal=1')
+        const result = typeof token === 'string' && token.length > 0 ? await exchangeHandoff(token) : 422
+        // `gagal` carries only the status, so the sign-in page can say why (expired link vs. UMKMall unreachable).
+        return seeOther(typeof result === 'string' ? '/?masuk=1' : `/?gagal=${result}`)
       },
     },
   },

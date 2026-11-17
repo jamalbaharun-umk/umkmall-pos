@@ -3,7 +3,9 @@ import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { Plus, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
-import { Panel } from '@/components/page'
+import { Panel, RequiredLabel } from '@/components/page'
+import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
+import { productErrors, type Errors } from '@/lib/validate'
 import {
   deleteImage,
   recordOpeningStock,
@@ -20,6 +22,7 @@ const TYPES = (Object.keys(TYPE_LABEL) as ProductType[]).map((value) => ({ value
 
 // Whole rupiah only: digits, no decimals (the API refuses fractions too).
 const digits = (s: string) => s.replace(/\D/g, '')
+const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'file'] as const
 
 /**
  * Lakasir's product form: images, name, barcodes (repeater), SKU (blank = generated), category, stock (create only),
@@ -60,16 +63,26 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
   const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
-  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }))
+  const [errors, setErrors] = useState<Errors>({})
+  // Editing a field clears its message; the next submit checks again.
+  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => {
+    setForm((f) => ({ ...f, [k]: v }))
+    setErrors(({ [k]: _gone, ...rest }) => rest)
+  }
+  const fail = (message: string) => {
+    setError(message)
+    toast(message, { variant: 'danger' })
+  }
 
   async function submit(e: FormEvent, again = false) {
     e.preventDefault()
+    if (busy) return
     setError(undefined)
+    const found = productErrors(form, Boolean(product))
+    setErrors(found)
+    if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
     const costPrice = Number(form.costPrice || '0')
     const sellingPrice = Number(form.sellingPrice)
-    if (!form.name.trim()) return setError('Nama produk wajib diisi.')
-    if (!form.sellingPrice || !Number.isSafeInteger(sellingPrice)) return setError('Harga jual wajib diisi.')
-    if (costPrice > sellingPrice) return setError('Harga modal tidak boleh melebihi harga jual.')
     const input: ProductInput = {
       categoryId: form.categoryId,
       name: form.name.trim(),
@@ -84,9 +97,15 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     setBusy(true)
     try {
       const saved = await saveProduct({ data: { id: product?.id, input } })
-      if (saved.error) return setError(saved.error)
+      if (saved.error) {
+        const placed = placeErrors({ error: saved.error, errors: saved.errors }, FIELDS)
+        setErrors(placed.byField)
+        if (placed.formError) setError(placed.formError)
+        toast(saved.error, { variant: 'danger' })
+        return
+      }
       const id = product?.id ?? saved.id
-      if (!id) return setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
+      if (!id) return fail(GENERIC_ERROR)
       const problems: string[] = []
       const qty = Number(form.stock || '0')
       if (!product && form.type === 'product' && qty > 0) {
@@ -100,21 +119,21 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
         const r = await uploadImage({ data: body })
         if (r.error) problems.push(`${file.name}: ${r.error}`)
       }
-      toast(product ? 'Produk tersimpan' : 'Produk dibuat', { variant: 'success' })
+      toast(product ? 'Produk disimpan' : 'Produk dibuat', { variant: 'success' })
       if (problems.length) toast(problems.join(' '), { variant: 'warning' })
       if (again) {
         setForm(blank)
         setFiles([])
       } else await navigate({ to: '/catalog/products/$id', params: { id } })
     } catch {
-      setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
+      fail(GENERIC_ERROR)
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
+    <form noValidate onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
       <Panel className="grid gap-5 p-6 md:grid-cols-2">
         <div className="flex flex-col gap-3 md:col-span-2">
           <Upload
@@ -125,6 +144,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             onFilesChange={(picked) => setFiles((f) => [...f, ...picked])}
             helperText="JPG, PNG atau WebP, paling besar 2 MB per gambar."
             browseLabel="Pilih"
+            error={errors.file}
           >
             {files.length ? `${files.length} gambar siap diunggah` : 'Tarik gambar ke sini atau pilih dari perangkat'}
           </Upload>
@@ -164,6 +184,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             placeholder="Contoh: Es Teh Manis"
             maxLength={120}
             required
+            error={errors.name}
           />
         </div>
 
@@ -174,21 +195,26 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
               <TextField
                 aria-label={`Barcode ${i + 1}`}
                 value={code}
-                onChange={(e) =>
+                onChange={(e) => {
                   set(
                     'barcodes',
                     form.barcodes.map((b, j) => (j === i ? e.target.value.replace(/\s/g, '') : b)),
                   )
-                }
+                  setErrors(({ [`barcodes.${i}`]: _gone, ...rest }) => rest)
+                }}
                 maxLength={64}
                 className="flex-1"
+                error={errors[`barcodes.${i}`] ?? (i === 0 ? errors.barcodes : undefined)}
               />
               <Button
                 type="text"
                 color="danger"
                 iconOnly
                 aria-label={`Hapus barcode ${i + 1}`}
-                onClick={() => set('barcodes', form.barcodes.filter((_, j) => j !== i))}
+                onClick={() => {
+                  set('barcodes', form.barcodes.filter((_, j) => j !== i))
+                  setErrors((all) => Object.fromEntries(Object.entries(all).filter(([k]) => !k.startsWith('barcodes'))))
+                }}
               >
                 <X className="size-4" aria-hidden />
               </Button>
@@ -213,17 +239,19 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             onChange={(e) => set('sku', e.target.value.replace(/\s/g, ''))}
             maxLength={64}
             required={Boolean(product)}
+            error={errors.sku}
           />
           {!product && <span className="text-xs text-default-secondary">Kosongkan agar dibuat otomatis.</span>}
         </div>
         <Select
-          label="Kategori"
+          label={<RequiredLabel>Kategori</RequiredLabel>}
           options={categories.map((c) => ({ value: c.id, label: c.name }))}
           value={form.categoryId}
           onValueChange={(v) => set('categoryId', v)}
           showSearch
           searchPlaceholder="Cari kategori"
           emptyMessage="Kategori tidak ditemukan"
+          error={errors.categoryId}
         />
 
         {!product && (
@@ -234,9 +262,17 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             onChange={(e) => set('stock', digits(e.target.value))}
             disabled={form.type !== 'product'}
             placeholder={form.type === 'product' ? '0' : 'Tidak memakai stok'}
+            error={errors.stock}
           />
         )}
-        <TextField label="Satuan" value={form.unit} onChange={(e) => set('unit', e.target.value)} maxLength={20} required />
+        <TextField
+          label="Satuan"
+          value={form.unit}
+          onChange={(e) => set('unit', e.target.value)}
+          maxLength={20}
+          required
+          error={errors.unit}
+        />
 
         <TextField
           label="Harga modal"
@@ -245,6 +281,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           value={form.costPrice}
           onChange={(e) => set('costPrice', digits(e.target.value))}
           required
+          error={errors.costPrice}
         />
         <TextField
           label="Harga jual"
@@ -254,6 +291,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           onChange={(e) => set('sellingPrice', digits(e.target.value))}
           placeholder="5000"
           required
+          error={errors.sellingPrice}
         />
 
         <Select

@@ -19,7 +19,13 @@ import { RequirePermission } from './require-permission';
 import { hashSecret, newDeviceSecret } from './secrets';
 import { StaffAccess } from './staff-access';
 
-const BindDevice = z.object({ name: z.string().trim().min(1).max(60) });
+const BindDevice = z.object({
+  name: z
+    .string({ required_error: 'Nama perangkat wajib diisi' })
+    .trim()
+    .min(1, 'Nama perangkat wajib diisi')
+    .max(60, 'Maksimal 60 karakter'),
+});
 
 const deviceView = {
   id: devices.id,

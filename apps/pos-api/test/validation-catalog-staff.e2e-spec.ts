@@ -294,6 +294,27 @@ describe('validation: catalog, staff, roles, error filter', () => {
       await post('/staff', { name: 'Budi', pin: '1234' }, b).expect(201);
     });
 
+    it('role and device names are required', async () => {
+      await refused(
+        post('/roles', { permissions: [] }),
+        422,
+        'name',
+        'Nama peran wajib diisi',
+      );
+      await refused(
+        post('/roles', { name: ' ' }),
+        422,
+        'name',
+        'Nama peran wajib diisi',
+      );
+      await refused(
+        post('/staff/devices', {}),
+        422,
+        'name',
+        'Nama perangkat wajib diisi',
+      );
+    });
+
     it('role name duplicate → 409 on name', async () => {
       await post('/roles', { name: 'Gudang', permissions: [] }).expect(201);
       await refused(

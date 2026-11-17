@@ -102,3 +102,15 @@ export const rupiah = (n: number) => `Rp${n.toLocaleString('id-ID')}`
 
 export const dateTime = (iso: string) =>
   new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
+
+/** A label with the required mark, for controls that take a label but no `required` prop (Select). */
+export function RequiredLabel({ children }: { children: ReactNode }) {
+  return (
+    <>
+      {children}
+      <span aria-hidden className="text-default-error">
+        *
+      </span>
+    </>
+  )
+}

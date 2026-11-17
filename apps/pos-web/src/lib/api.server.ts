@@ -1,10 +1,15 @@
 import { redirect } from '@tanstack/react-router'
 import { clearSessionToken, getSessionToken, posApiUrl, startSession } from './session.server'
+import { sessionKind } from './sign-in'
+
+export const UMKMALL_DOWN = 'UMKMall sedang tidak bisa dihubungi, coba lagi'
 
 /**
- * Server-side pos-api client for server functions and loaders. Sends the session cookie as a bearer;
- * on a 401 it refreshes the session once and retries; when the refresh fails it clears the cookie and
- * redirects to `/` (the sign-in page). Other statuses are returned for the caller to handle.
+ * Server-side pos-api client for server functions and loaders. Sends the session cookie as a bearer.
+ * On a 401: a cashier session cannot refresh, so it is cleared and sent to `/kasir/masuk` (PIN sign-in); an owner
+ * session refreshes once and retries. A refused refresh (401) clears the cookie and redirects to `/`; UMKMall being
+ * unreachable (503, or pos-api down) keeps the session and throws a retryable message instead of signing out.
+ * Other statuses are returned for the caller to handle.
  */
 export async function api(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getSessionToken()
@@ -12,12 +17,15 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
   const res = await send(path, init, token)
   if (res.status !== 401) return res
 
-  const fresh = await startSession('/auth/refresh', {}, token)
-  if (!fresh) {
+  if (sessionKind(token) === 'cashier') {
     clearSessionToken()
-    throw redirect({ to: '/' })
+    throw redirect({ to: '/kasir/masuk' })
   }
-  return send(path, init, fresh)
+  const fresh = await startSession('/auth/refresh', {}, token)
+  if (typeof fresh === 'string') return send(path, init, fresh)
+  if (fresh === 0 || fresh >= 500) throw new Error(UMKMALL_DOWN)
+  clearSessionToken()
+  throw redirect({ to: '/' })
 }
 
 function send(path: string, init: RequestInit, token: string): Promise<Response> {

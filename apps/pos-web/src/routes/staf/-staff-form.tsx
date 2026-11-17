@@ -2,6 +2,8 @@ import { Alert, Button, CheckBox, Select, TextField, toast } from '@umkmall/ui/p
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
 import { Panel } from '@/components/page'
+import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
+import { staffErrors, type Errors } from '@/lib/validate'
 import { saveStaff, type Role, type Staff } from './-api'
 
 /**
@@ -17,21 +19,29 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
   const [roleIds, setRoleIds] = useState<string[]>(member?.roles.map((r) => r.id) ?? defaults)
   const [active, setActive] = useState(member?.active ?? true)
   const [error, setError] = useState<string>()
+  const [errors, setErrors] = useState<Errors>({})
   const [busy, setBusy] = useState(false)
+  const clear = (field: string) => setErrors(({ [field]: _gone, ...rest }) => rest)
 
   async function submit(e: FormEvent, again = false) {
     e.preventDefault()
+    if (busy) return
     setError(undefined)
-    if (!name.trim()) return setError('Nama wajib diisi.')
-    if (!(/^\d{4,8}$/.test(pin) || (member && pin === ''))) return setError('PIN harus 4 sampai 8 angka.')
-    if (pin !== pin2) return setError('Konfirmasi PIN tidak sama.')
+    const found = staffErrors({ name, pin, pin2 }, Boolean(member))
+    setErrors(found)
+    if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
     setBusy(true)
     const res = await saveStaff({
       data: { id: member?.id, name: name.trim(), pin: pin || undefined, roleIds, active },
-    }).catch(() => ({ ok: false as const, error: 'Gagal menyimpan, coba lagi.' }))
+    }).catch(() => ({ ok: false as const, error: GENERIC_ERROR }))
     setBusy(false)
-    if (!res.ok) return setError(res.error)
-    toast(member ? 'Staf tersimpan' : 'Staf ditambahkan', { variant: 'success' })
+    if (!res.ok) {
+      const placed = placeErrors(res, ['name', 'pin', 'roleIds'])
+      setErrors(placed.byField)
+      setError(placed.formError)
+      return toast(res.error, { variant: 'danger' })
+    }
+    toast(member ? 'Staf disimpan' : 'Staf ditambahkan', { variant: 'success' })
     if (again) {
       setName('')
       setPin('')
@@ -43,10 +53,20 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
   const digits = (s: string) => s.replace(/\D/g, '').slice(0, 8)
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
+    <form noValidate onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
       <Panel className="grid gap-5 p-6 md:grid-cols-2">
         <div className="md:col-span-2">
-          <TextField label="Nama" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
+          <TextField
+            label="Nama"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value)
+              clear('name')
+            }}
+            maxLength={100}
+            required
+            error={errors.name}
+          />
         </div>
         <TextField
           label={member ? 'PIN baru' : 'PIN'}
@@ -56,8 +76,12 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
           autoComplete="new-password"
           placeholder={member ? 'Kosongkan bila tetap' : '4–8 angka'}
           value={pin}
-          onChange={(e) => setPin(digits(e.target.value))}
+          onChange={(e) => {
+            setPin(digits(e.target.value))
+            clear('pin')
+          }}
           required={!member}
+          error={errors.pin}
         />
         <TextField
           label="Konfirmasi PIN"
@@ -66,8 +90,12 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
           inputMode="numeric"
           autoComplete="new-password"
           value={pin2}
-          onChange={(e) => setPin2(digits(e.target.value))}
+          onChange={(e) => {
+            setPin2(digits(e.target.value))
+            clear('pin2')
+          }}
           required={!member}
+          error={errors.pin2}
         />
         <Select
           label="Peran"
@@ -77,6 +105,7 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
           onValueChange={setRoleIds}
           placeholder="Tanpa peran"
           emptyMessage="Belum ada peran"
+          error={errors.roleIds}
         />
         {member && (
           <div className="flex items-end pb-3">

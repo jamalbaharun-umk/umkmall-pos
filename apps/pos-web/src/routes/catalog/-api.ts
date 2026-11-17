@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
+import { refusalOf } from '@/lib/refusal'
 
 // Server functions for the catalog screens: every call goes server-side through the session client,
 // so the browser never holds the POS token. Mutations return { error } instead of throwing, for forms.
@@ -35,13 +36,10 @@ export type ProductInput = {
   isActive: boolean
   barcodes: string[]
 }
-type Result = { error?: string; id?: string }
+type Result = { error?: string; errors?: Record<string, string>; id?: string }
 
 async function errorOf(res: Response): Promise<string> {
-  const body = (await res.json().catch(() => ({}))) as { message?: unknown }
-  // pos-api answers every refusal with an Indonesian `message` (common/error.filter.ts).
-  if (res.status < 500 && typeof body.message === 'string') return body.message
-  return 'Terjadi kesalahan. Coba lagi sebentar lagi.'
+  return (await refusalOf(res)).error
 }
 
 async function read<T>(path: string): Promise<T> {
@@ -52,7 +50,7 @@ async function read<T>(path: string): Promise<T> {
 
 async function write(path: string, method: string, body?: unknown): Promise<Result> {
   const res = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })
-  if (!res.ok) return { error: await errorOf(res) }
+  if (!res.ok) return refusalOf(res)
   const json = (await res.json().catch(() => null)) as { id?: string } | null
   return { id: json?.id }
 }
@@ -118,8 +116,7 @@ export const uploadImage = createServerFn({ method: 'POST' })
     const body = new FormData()
     body.set('file', file)
     const res = await api(`/catalog/products/${encodeURIComponent(id)}/images`, { method: 'POST', body })
-    if (res.ok) return {}
-    return { error: res.status === 422 || res.status === 413 ? 'Gambar harus JPG, PNG atau WebP, paling besar 2 MB.' : await errorOf(res) }
+    return res.ok ? {} : refusalOf(res)
   })
 
 export const deleteImage = createServerFn({ method: 'POST' })

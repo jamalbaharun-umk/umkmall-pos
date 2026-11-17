@@ -10,7 +10,7 @@ export const Route = createFileRoute('/masuk/dev')({
         const userId = process.env.POS_DEV_USER_ID
         if (process.env.NODE_ENV === 'production' || !userId) return new Response(null, { status: 404 })
         const ok = await startSession('/auth/dev/sign-in', { userId })
-        return seeOther(ok ? '/' : '/?gagal=1')
+        return seeOther(typeof ok === 'string' ? '/?masuk=1' : `/?gagal=${ok}`)
       },
     },
   },

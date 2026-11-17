@@ -1,4 +1,4 @@
-import { Button, Dialog } from '@umkmall/ui/primitives'
+import { Button, Dialog, toast } from '@umkmall/ui/primitives'
 import { useState, type ReactNode } from 'react'
 
 /**
@@ -50,8 +50,10 @@ export function useConfirm() {
               setBusy(true)
               const failed = await state.run().catch(() => 'Terjadi kesalahan. Coba lagi sebentar lagi.')
               setBusy(false)
-              if (failed) setError(failed)
-              else setState(null)
+              if (failed) {
+                setError(failed)
+                toast(failed, { variant: 'danger' })
+              } else setState(null)
             }}
           >
             {state?.label}

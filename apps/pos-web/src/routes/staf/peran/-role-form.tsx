@@ -3,6 +3,8 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { Search } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { Panel } from '@/components/page'
+import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
+import { required } from '@/lib/validate'
 import { PERMISSION_LABELS, saveRole, type Role } from '../-api'
 
 /** Lakasir's role form: a name, then the permissions as a searchable checkbox grid with select/deselect all. */
@@ -12,6 +14,7 @@ export function RoleForm({ role, permissions }: { role?: Role; permissions: stri
   const [granted, setGranted] = useState<string[]>(role?.permissions ?? [])
   const [q, setQ] = useState('')
   const [error, setError] = useState<string>()
+  const [nameError, setNameError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const label = (p: string) => PERMISSION_LABELS[p] ?? p
   const shown = permissions.filter((p) => label(p).toLowerCase().includes(q.trim().toLowerCase()))
@@ -19,23 +22,41 @@ export function RoleForm({ role, permissions }: { role?: Role; permissions: stri
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return setError('Nama peran wajib diisi.')
-    setBusy(true)
+    if (busy) return
     setError(undefined)
+    const missing = required(name, 'Nama peran wajib diisi')
+    setNameError(missing)
+    if (missing) return toast('Periksa kembali isian kamu', { variant: 'danger' })
+    setBusy(true)
     const res = await saveRole({ data: { id: role?.id, name: name.trim(), permissions: granted } }).catch(() => ({
       ok: false as const,
-      error: 'Gagal menyimpan, coba lagi.',
+      error: GENERIC_ERROR,
     }))
     setBusy(false)
-    if (!res.ok) return setError(res.error)
-    toast(role ? 'Peran tersimpan' : 'Peran dibuat', { variant: 'success' })
+    if (!res.ok) {
+      const placed = placeErrors(res, ['name'])
+      setNameError(placed.byField.name)
+      setError(placed.formError)
+      return toast(res.error, { variant: 'danger' })
+    }
+    toast(role ? 'Peran disimpan' : 'Peran dibuat', { variant: 'success' })
     await navigate({ to: '/staf/peran' })
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
+    <form noValidate onSubmit={(e) => void submit(e)} className="flex flex-col gap-6">
       <Panel className="flex flex-col gap-5 p-6">
-        <TextField label="Nama" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} required />
+        <TextField
+          label="Nama"
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value)
+            setNameError(undefined)
+          }}
+          maxLength={60}
+          required
+          error={nameError}
+        />
         <fieldset className="flex flex-col gap-3">
           <legend className="mb-2 text-sm font-medium text-default-primary">Izin</legend>
           <TextField

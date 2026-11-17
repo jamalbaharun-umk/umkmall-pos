@@ -1,4 +1,4 @@
-import { Alert, Button, Spinner } from '@umkmall/ui/primitives'
+import { Alert, Button, Spinner, toast } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft, Delete, UserRound } from 'lucide-react'
@@ -106,6 +106,7 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
     setBusy(false)
     setPin('')
     if (res.ok) {
+      toast(`Selamat bertugas, ${staff.name}`, { variant: 'success' })
       await router.invalidate() // the shell's "who is signed in" is cached at the root
       return navigate({ to: '/kasir' })
     }

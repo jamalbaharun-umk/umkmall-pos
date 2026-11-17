@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getCookie, setCookie } from '@tanstack/react-start/server'
 import { api } from '@/lib/api.server'
+import { refusalOf } from '@/lib/refusal'
 import { posApiUrl, setSessionToken } from '@/lib/session.server'
 
 // Server functions for the U4 screens. pos-api validates every body (zod, 422); these only relay.
@@ -15,7 +16,9 @@ export type CashierSession = {
   createdAt: string
   expiresAt: string
 }
-export type Result = { ok: true } | { ok: false; error: string; retryAfter?: number }
+export type Result =
+  | { ok: true }
+  | { ok: false; error: string; errors?: Record<string, string>; retryAfter?: number }
 
 export const PERMISSION_LABELS: Record<string, string> = {
   'sales.create': 'Membuat penjualan',
@@ -29,22 +32,15 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'receivables.manage': 'Mengelola piutang',
 }
 
-const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk ini.',
-  404: 'Data tidak ditemukan, mungkin sudah dihapus.',
-  409: 'Nama itu sudah dipakai.',
-  422: 'Data belum benar. Periksa isian kamu.',
-}
-
 async function load<T>(path: string): Promise<T> {
   const res = await api(path)
-  if (!res.ok) throw new Error(ERRORS[res.status] ?? 'Gagal memuat data.')
+  if (!res.ok) throw new Error((await refusalOf(res)).error)
   return (await res.json()) as T
 }
 
 async function mutate(path: string, method: string, body?: unknown): Promise<Result> {
   const res = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })
-  return res.ok ? { ok: true } : { ok: false, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
+  return res.ok ? { ok: true } : { ok: false, ...(await refusalOf(res)) }
 }
 
 export const loadStaffPage = createServerFn().handler(async () => ({
@@ -107,7 +103,7 @@ export const bindThisDevice = createServerFn({ method: 'POST' })
   .validator((name: string) => name)
   .handler(async ({ data }): Promise<Result> => {
     const res = await api('/staff/devices', { method: 'POST', body: JSON.stringify({ name: data }) })
-    if (!res.ok) return { ok: false, error: ERRORS[res.status] ?? 'Gagal menghubungkan perangkat.' }
+    if (!res.ok) return { ok: false, ...(await refusalOf(res)) }
     const { deviceToken: token } = (await res.json()) as { deviceToken: string }
     setCookie(DEVICE_COOKIE, token, {
       httpOnly: true,

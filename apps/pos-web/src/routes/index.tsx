@@ -1,12 +1,13 @@
-import { Alert, Button } from '@umkmall/ui/primitives'
+import { Alert, Button, toast } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Store } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
+import { failureText } from '@/lib/sign-in'
 import { MetricWidgets } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
@@ -19,7 +20,13 @@ const getHome = createServerFn().handler(async () => {
 })
 
 export const Route = createFileRoute('/')({
-  validateSearch: (search): { gagal?: boolean } => (search.gagal ? { gagal: true } : {}),
+  validateSearch: (search): { gagal?: number; masuk?: 1; keluar?: 1 } => ({
+    ...(search.gagal === undefined
+      ? {}
+      : { gagal: Number.isInteger(Number(search.gagal)) ? Number(search.gagal) : 1 }),
+    ...(search.masuk ? { masuk: 1 as const } : {}),
+    ...(search.keluar ? { keluar: 1 as const } : {}),
+  }),
   loader: () => getHome(),
   component: Home,
   pendingComponent: PageLoading,
@@ -28,12 +35,21 @@ export const Route = createFileRoute('/')({
 
 function Home() {
   const home = Route.useLoaderData()
-  const { gagal } = Route.useSearch()
-  return home.signedIn ? <Dashboard products={home.products} /> : <SignIn failed={Boolean(gagal)} devSignIn={home.devSignIn} />
+  const { gagal, masuk, keluar } = Route.useSearch()
+  const navigate = useNavigate({ from: '/' })
+  // Sign-in and sign-out are full-page POSTs; they land here with a one-shot flag for the toast.
+  useEffect(() => {
+    if (!masuk && !keluar) return
+    // Next tick: the Toaster renders after the page, so it subscribes after this effect runs.
+    // Not cleared on re-run: stripping the flag below re-runs this effect before the timer fires.
+    setTimeout(() => toast(masuk ? 'Berhasil masuk' : 'Kamu sudah keluar', { variant: 'success' }))
+    void navigate({ search: ({ masuk: _m, keluar: _k, ...rest }) => rest, replace: true })
+  }, [masuk, keluar, navigate])
+  return home.signedIn ? <Dashboard products={home.products} /> : <SignIn failed={gagal} devSignIn={home.devSignIn} />
 }
 
 /** Lakasir's login: a centred card on the grey page. POS owners arrive from UMKMall instead of a password form. */
-function SignIn({ failed, devSignIn }: { failed: boolean; devSignIn: boolean }) {
+function SignIn({ failed, devSignIn }: { failed?: number; devSignIn: boolean }) {
   return (
     <main className="flex min-h-svh items-center justify-center bg-default-secondary px-4">
       <Card variant="outlined" padding="large" className="flex w-full max-w-md flex-col items-center gap-5 bg-default-primary text-center">
@@ -46,9 +62,9 @@ function SignIn({ failed, devSignIn }: { failed: boolean; devSignIn: boolean }) 
             Buka akun UMKMall kamu, lalu pilih Kasir untuk membuka toko di sini.
           </p>
         </div>
-        {failed && (
+        {failed !== undefined && (
           <Alert variant="danger" className="w-full text-left">
-            Gagal masuk. Tautan dari UMKMall hanya berlaku sekali dan beberapa menit, coba lagi dari UMKMall.
+            {failureText(failed)}
           </Alert>
         )}
         <Button asChild type="outline" color="primary" width="full">

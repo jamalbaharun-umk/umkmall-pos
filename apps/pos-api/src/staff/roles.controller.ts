@@ -23,7 +23,11 @@ import { RequirePermission } from './require-permission';
 import { StaffAccess, type Tx } from './staff-access';
 
 const Role = z.object({
-  name: z.string().trim().min(1).max(60),
+  name: z
+    .string({ required_error: 'Nama peran wajib diisi' })
+    .trim()
+    .min(1, 'Nama peran wajib diisi')
+    .max(60, 'Maksimal 60 karakter'),
   permissions: z.array(z.enum(PERMISSIONS)).default([]),
 });
 

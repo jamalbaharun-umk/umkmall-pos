@@ -29,15 +29,19 @@ export function clearSessionToken(): void {
 
 type SessionAnswer = { sessionToken: string; expiresIn: number }
 
-/** POSTs to a pos-api auth route and stores the session it answers. Returns the new token, or null on any refusal. */
-export async function startSession(path: string, body: unknown, bearer?: string): Promise<string | null> {
+/**
+ * POSTs to a pos-api auth route and stores the session it answers. Returns the new token, or the refusal's HTTP
+ * status (0 when pos-api could not be reached), so callers can tell "signed out" (401) from "try again" (503/0).
+ */
+export async function startSession(path: string, body: unknown, bearer?: string): Promise<string | number> {
   const res = await fetch(`${posApiUrl()}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   }).catch(() => null)
-  if (!res?.ok) return null
+  if (!res) return 0
+  if (!res.ok) return res.status
   const { sessionToken, expiresIn } = (await res.json()) as SessionAnswer
   setSessionToken(sessionToken, expiresIn)
   return sessionToken

@@ -15,6 +15,8 @@ import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { Empty, Page, PageError, PageLoading, Panel, dateTime } from '@/components/page'
+import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
+import { required } from '@/lib/validate'
 import { bindThisDevice, loadDevicesPage, revokeDevice, revokeSession, type Result } from './-api'
 
 export const Route = createFileRoute('/staf/perangkat')({
@@ -31,17 +33,26 @@ function DevicesPage() {
   const confirm = useConfirm()
   const [name, setName] = useState('')
   const [error, setError] = useState<string>()
+  const [nameError, setNameError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const thisBound = devices.some((d) => d.id === thisDeviceId && !d.revokedAt)
 
   async function bind(e: FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return setError('Beri nama perangkat ini, misalnya "Kasir depan".')
-    setBusy(true)
+    if (busy) return
     setError(undefined)
-    const res = await bindThisDevice({ data: name.trim() }).catch((): Result => ({ ok: false, error: 'Gagal, coba lagi.' }))
+    const missing = required(name, 'Nama perangkat wajib diisi')
+    setNameError(missing)
+    if (missing) return
+    setBusy(true)
+    const res = await bindThisDevice({ data: name.trim() }).catch((): Result => ({ ok: false, error: GENERIC_ERROR }))
     setBusy(false)
-    if (!res.ok) return setError(res.error)
+    if (!res.ok) {
+      const placed = placeErrors(res, ['name'])
+      setNameError(placed.byField.name)
+      setError(placed.formError)
+      return toast(res.error, { variant: 'danger' })
+    }
     setName('')
     toast('Perangkat terhubung', { variant: 'success' })
     await router.invalidate()
@@ -78,14 +89,19 @@ function DevicesPage() {
             .
           </Alert>
         ) : (
-          <form onSubmit={(e) => void bind(e)} className="flex flex-col gap-3 md:flex-row md:items-end">
+          <form noValidate onSubmit={(e) => void bind(e)} className="flex flex-col gap-3 md:flex-row md:items-end">
             <div className="md:w-96">
               <TextField
                 label="Nama perangkat"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setNameError(undefined)
+                }}
                 placeholder="Contoh: Kasir depan"
                 maxLength={60}
+                required
+                error={nameError}
               />
             </div>
             <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>

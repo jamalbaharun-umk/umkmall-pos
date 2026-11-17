@@ -8,7 +8,7 @@ export const Route = createFileRoute('/keluar')({
     handlers: {
       POST: () => {
         clearSessionToken()
-        return seeOther('/')
+        return seeOther('/?keluar=1')
       },
     },
   },

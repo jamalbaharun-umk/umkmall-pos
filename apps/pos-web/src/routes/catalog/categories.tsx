@@ -17,6 +17,8 @@ import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
+import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
+import { required } from '@/lib/validate'
 import { deleteCategory, listCategories, saveCategory, type Category } from './-api'
 
 export const Route = createFileRoute('/catalog/categories')({
@@ -137,18 +139,27 @@ function CategoryDialog({ editing, onClose }: { editing: Category | 'new' | null
   const [name, setName] = useState(existing?.name ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [nameError, setNameError] = useState<string>()
 
   async function submit(e: FormEvent, again = false) {
     e.preventDefault()
-    if (!name.trim()) return setError('Nama wajib diisi.')
-    setBusy(true)
+    if (busy) return
     setError(undefined)
-    const r = await saveCategory({ data: { id: existing?.id, name: name.trim() } }).catch(() => ({
-      error: 'Terjadi kesalahan. Coba lagi sebentar lagi.',
-    }))
+    const missing = required(name, 'Nama kategori wajib diisi')
+    setNameError(missing)
+    if (missing) return
+    setBusy(true)
+    const r: { error?: string; errors?: Record<string, string> } = await saveCategory({
+      data: { id: existing?.id, name: name.trim() },
+    }).catch(() => ({ error: GENERIC_ERROR }))
     setBusy(false)
-    if (r.error) return setError(r.error)
-    toast(existing ? 'Kategori tersimpan' : 'Kategori dibuat', { variant: 'success' })
+    if (r.error) {
+      const placed = placeErrors({ error: r.error, errors: r.errors }, ['name'])
+      setNameError(placed.byField.name)
+      setError(placed.formError)
+      return toast(r.error, { variant: 'danger' })
+    }
+    toast(existing ? 'Kategori disimpan' : 'Kategori dibuat', { variant: 'success' })
     await router.invalidate()
     if (again) setName('')
     else onClose()
@@ -163,15 +174,19 @@ function CategoryDialog({ editing, onClose }: { editing: Category | 'new' | null
       centered
       showCloseButton
     >
-      <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4 px-6 pt-2 pb-6">
+      <form noValidate onSubmit={(e) => void submit(e)} className="flex flex-col gap-4 px-6 pt-2 pb-6">
         <TextField
           label="Nama"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value)
+            setNameError(undefined)
+          }}
           placeholder="Contoh: Minuman"
           maxLength={120}
           autoFocus
           required
+          error={nameError}
         />
         {error && <Alert variant="danger">{error}</Alert>}
         <div className="flex flex-wrap justify-end gap-2">
