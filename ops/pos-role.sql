@@ -18,10 +18,19 @@ CREATE SCHEMA IF NOT EXISTS pos AUTHORIZATION pos_app;
 
 -- The only grant into UMKMall's schema: enough to declare the tenant foreign key to users(id). public.users
 -- has deny-all RLS (UMKMall migration 0058), so pos_app reads nothing there. The U8 purge asks UMKMall's
--- SECURITY DEFINER function public.pos_account_erasable(uuid) instead (UMKMall/umkmall#1839 creates it and
--- grants EXECUTE to pos_app); it takes the row lock and answers whether the account is marked to_delete.
+-- SECURITY DEFINER function public.pos_account_erasable(uuid) instead (UMKMall migration 0198,
+-- UMKMall/umkmall#1839); it takes the row lock and answers whether the account is marked to_delete.
+-- Order per environment: UMKMall migration 0198 → this script (grants EXECUTE below, also when pos_app was
+-- created after 0198 ran) → only then POS_PURGE_ENABLED=true on UMKMall's purge-pos-stores job.
 GRANT USAGE ON SCHEMA public TO pos_app;
 GRANT REFERENCES (id) ON public.users TO pos_app;
+DO $$
+BEGIN
+  IF to_regprocedure('public.pos_account_erasable(uuid)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.pos_account_erasable(uuid) TO pos_app;
+  END IF;
+END
+$$;
 -- Withdrawn 2026-11-18 (useless under RLS); revoked so environments that ran the earlier version lose it.
 -- Re-run this script on every existing environment (owner step).
 REVOKE SELECT (id, delete_status_flag) ON public.users FROM pos_app;

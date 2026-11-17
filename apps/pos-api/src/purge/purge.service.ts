@@ -92,7 +92,7 @@ export class PurgeService {
 
   private async assertBeingDeleted(db: Pick<Db, 'execute'>, userId: string) {
     // public.users has deny-all RLS and pos_app no grant on it: only UMKMall's SECURITY DEFINER function
-    // can answer (UMKMall/umkmall#1839; local stub: ops/local-pos-account-erasable.sql).
+    // can answer (UMKMall migration 0198, #1839; local stub: ops/local-public-users.sql).
     const [row] = await db.execute<{ erasable: boolean }>(
       sql`select public.pos_account_erasable(${userId}::uuid) as erasable`,
     );

@@ -19,3 +19,19 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS delete_status_flag public.user
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 -- Stand-in for UMKMall's personal columns, so tests can prove pos_app cannot read them.
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone text;
+
+-- Same definition as UMKMall migration 0198 (UMKMall/umkmall#1839), owned by the admin role. pos_app cannot
+-- read public.users; the purge asks this. EXECUTE is granted by ops/pos-role.sql, as in production.
+CREATE OR REPLACE FUNCTION public.pos_account_erasable(p_user_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  PERFORM 1 FROM public.users WHERE id = p_user_id AND delete_status_flag = 'to_delete' FOR SHARE;
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.pos_account_erasable(uuid) FROM PUBLIC;
