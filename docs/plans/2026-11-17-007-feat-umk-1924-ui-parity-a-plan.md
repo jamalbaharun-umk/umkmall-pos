@@ -42,16 +42,18 @@ Sibling sessions: `ui-parity-b` (cashier, sales history, shift, receipt, supplie
 
 ## Definition of Done
 
-- [cmd] `npm run lint && npm run typecheck && npm test && npm run build` green (`PGTEST_DB=pos_uipa`).
-- [test] `/tenant/me` returns the cashier's name and permissions, the owner's full permission set; store B's
+- [x] [cmd] `npm run lint && npm run typecheck && npm test && npm run build` green (`PGTEST_DB=pos_uipa`).
+- [x] [test] `/tenant/me` returns the cashier's name and permissions, the owner's full permission set; store B's
   session never sees store A's staff name.
-- [test] nav config: an entry whose route does not exist or whose permission is missing is hidden (pure function).
-- [qa] each screen above opened in the browser against a local pos-api, every action exercised (create, edit,
+- [x] [test] nav config: an entry whose route does not exist or whose permission is missing is hidden (pure function).
+- [x] [qa] each screen above opened in the browser against a local pos-api, every action exercised (create, edit,
   delete, search, filter, paginate, upload, bind, revoke, PIN sign-in), screenshots of Lakasir and POS at
   1280×800 in `.evidence/ui-parity-a/` (gitignored), tablet width (768) checked.
-- [manual] parity table below filled with the final state per screen; UMK-1924 comment lists screens and what
+- [x] [manual] parity table below filled with the final state per screen; UMK-1924 comment lists screens and what
   was not exercised.
-- [cmd] legacy token classes removed from `app.css` only when `grep` finds no screen using them.
+- [ ] [cmd] legacy token classes removed from `app.css` only when `grep` finds no screen using them. (Blocked: two classes
+  in u5's dashboard widgets; remove the block once they move to `text-default-success`/`text-default-error`.)
+- [x] [test] stock on-hand and movement history endpoints: own tracked products only, 404 for another store.
 
 ## Files
 
@@ -59,6 +61,25 @@ Sibling sessions: `ui-parity-b` (cashier, sales history, shift, receipt, supplie
 `routes/index.tsx`, `routes/catalog/**`, `routes/staf/**`, `routes/kasir/masuk.tsx`, `apps/pos-api/src/tenancy/`
 (+ test), CLAUDE.md (nav config note).
 
-## Final parity (filled at the end)
+## Final parity (2026-11-17)
 
-_pending_
+Exercised in the browser at 1280×800 against a local pos-api (own db `pos_uipa_dev`), tablet (768) and phone (375)
+spot-checked; Lakasir and POS screenshots in `.evidence/ui-parity-a/` (gitignored).
+
+| Screen | State | Exercised | Deliberate differences (why) |
+|---|---|---|---|
+| Shell | **Matches**: grouped left nav in Lakasir's order, active entry, collapse control, store name top-left, actor menu top-right | owner and cashier (nav filtered by permission, cashier name shown), sign-out, phone drawer, not-found page | No global search or notification bell (no POS feature behind them). Store name reads "Toko kamu" until a settings unit stores one. Nav also lists Perangkat (POS-only). |
+| Sign-in (`/`) | Centred card like Lakasir's login | dev sign-in, failure alert path | Owners arrive from UMKMall (U1), so no email/password form; "Masuk sebagai kasir (PIN)" link added. |
+| Dashboard | Title + U5 `MetricWidgets` (revenue, sales, profit by period) + start card | loading/empty/error of the widgets (error seen until migrations ran) | Lakasir's expired-product and best-seller widgets belong to U5's widget set. |
+| Products list | **Matches** columns (kategori, nama, SKU, stok, satuan, harga modal, harga jual, laba, jenis, status), search by SKU/name/barcode, filter, row actions menu, pages | search (barcode), category filter, page 2, row view/edit/delete with confirm | Filter is a category select (Lakasir: status/expired/trashed filters); no bulk delete or column toggle; 10 per page fixed. |
+| Product create/edit | **Matches** fields and order: images, nama, barcode repeater, SKU (blank = auto), kategori, stok (create only), satuan, harga modal/jual, jenis, aktif; Simpan / Simpan & buat lagi / Batal | create with image + barcode + opening stock 10 → SKU `MIN-EST-0001`, edit price, image shown through the pos-web proxy | Lakasir's "Non stock" checkbox is the Jenis select's "Tanpa stok" value. No inline "create category" button on the select. |
+| Product view | **Matches**: status badge, Ubah, more-actions menu (Hapus), stat cards, detail grid, history tabs | opened after create/edit; history shows the opening stock movement | Stat cards show stock and prices instead of sold/revenue/discount (U5 data); tabs are Riwayat stok + Batch stok (Lakasir: stock/selling history, price units — POS has no price units). |
+| Categories | **Matches** list (search, name, Ubah/Hapus) | create, edit, delete (confirm), search | Create/edit in a modal instead of a separate page (one field). |
+| Staff (Lakasir Users) | **Matches** list + create/edit page layout, Delete on the edit page | create (PIN + confirm, role), edit (second role via multi-select), delete confirm path | Name, PIN and roles instead of email/password/phone/address: POS staff sign in by PIN on a bound device (U4). |
+| Roles | **Matches**: list, form with name + searchable permission checkbox grid + select all, Delete on edit | create, edit permissions (count updates) | POS has 9 permission keys (Lakasir ~80); Lakasir's read-only Permission page is folded into the role form. |
+| Devices (POS-only) | Panels + tables | bind this browser, live session listed, "Keluarkan" ends it | No Lakasir counterpart (U4). |
+| Cashier PIN (POS-only) | Full-screen card, staff picker, keypad | wrong PIN error, correct PIN via keyboard → `/kasir`, shell shows the cashier | No Lakasir counterpart (U4). |
+
+Not exercised: device "Cabut" (same confirm path as Keluarkan, not clicked), the PIN lockout countdown (429), image
+over 2 MB refusal, product delete from the view page (deleted from the list instead). `app.css`'s legacy token block
+stays: u5's `laporan/-dashboard-widgets.tsx` still uses `text-success`/`text-error`.
