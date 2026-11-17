@@ -12,9 +12,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { and, asc, eq, ilike, isNull, or } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-import { fieldError, Phone, validate } from '../common/validation';
+import { fieldError, Paging, Phone, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { members } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -53,6 +53,7 @@ const MemberUpdate = MemberInput.partial().refine(
 );
 
 const MemberQuery = z.object({ q: z.string().trim().max(60).optional() });
+const MemberListQuery = MemberQuery.extend(Paging);
 
 const columns = {
   id: members.id,
@@ -77,25 +78,30 @@ const escapeLike = (q: string) => q.replace(/[\\%_]/g, (c) => `\\${c}`);
 export class MembersService {
   constructor(@InjectDb() private readonly db: Db) {}
 
-  list(tenantId: string, q?: string) {
-    const like = q ? `%${escapeLike(q)}%` : undefined;
-    return this.db
-      .select(columns)
-      .from(members)
-      .where(
-        and(
-          live(tenantId),
-          like
-            ? or(
-                ilike(members.name, like),
-                ilike(members.code, like),
-                ilike(members.phone, like),
-              )
-            : undefined,
-        ),
-      )
-      .orderBy(asc(members.name))
-      .limit(50);
+  /** One page of the store's members (Lakasir's table: search name/code/phone, pages, a count). */
+  async list(tenantId: string, query: z.infer<typeof MemberListQuery>) {
+    const like = query.q ? `%${escapeLike(query.q)}%` : undefined;
+    const where = and(
+      live(tenantId),
+      like
+        ? or(
+            ilike(members.name, like),
+            ilike(members.code, like),
+            ilike(members.phone, like),
+          )
+        : undefined,
+    );
+    const [data, [{ total }]] = await Promise.all([
+      this.db
+        .select(columns)
+        .from(members)
+        .where(where)
+        .orderBy(asc(members.name), asc(members.id))
+        .limit(query.perPage)
+        .offset((query.page - 1) * query.perPage),
+      this.db.select({ total: count() }).from(members).where(where),
+    ]);
+    return { data, total, page: query.page, perPage: query.perPage };
   }
 
   /** The cashier's picker: name and code only (phone and address stay behind members.manage). */
@@ -176,8 +182,7 @@ export class MembersController {
   @Get()
   @RequirePermission('members.manage')
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    const { q } = validate(MemberQuery, query);
-    return { data: await this.members.list(s.tenantId, q) };
+    return this.members.list(s.tenantId, validate(MemberListQuery, query));
   }
 
   @Get('picker')

@@ -10,12 +10,24 @@ import {
   Query,
   Headers,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gt, isNull, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  ilike,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import {
   fieldError,
   formatRupiah,
+  Paging,
   Rupiah,
   UuidField,
   validate,
@@ -47,6 +59,9 @@ type PaymentInput = z.infer<typeof PaymentInput>;
 const ReceivableQuery = z.object({
   status: z.enum(['open', 'settled']).optional(),
   memberId: UuidField.optional(),
+  // Member name, or a sale number ("12" or "#12").
+  q: z.string().trim().max(60).optional(),
+  ...Paging,
 });
 
 /** Same key + same request → the first result; same key + another request → refused. */
@@ -127,18 +142,63 @@ export class ReceivablesService {
       .innerJoin(members, eq(members.id, receivables.memberId));
   }
 
-  list(tenantId: string, q: z.infer<typeof ReceivableQuery>) {
-    return this.base()
-      .where(
-        and(
-          eq(receivables.tenantId, tenantId),
-          q.status === 'open' ? gt(receivables.rest, 0) : undefined,
-          q.status === 'settled' ? eq(receivables.rest, 0) : undefined,
-          q.memberId ? eq(receivables.memberId, q.memberId) : undefined,
-        ),
-      )
-      .orderBy(desc(receivables.createdAt))
-      .limit(200);
+  /**
+   * One page of receivables plus Lakasir's StatsReceivable: what is still owed over the search (any status),
+   * so the summary does not change with the page or the open/settled tab.
+   */
+  async list(tenantId: string, q: z.infer<typeof ReceivableQuery>) {
+    const number =
+      q.q && /^#?\d{1,9}$/.test(q.q) ? Number(q.q.replace('#', '')) : null;
+    const search = and(
+      eq(receivables.tenantId, tenantId),
+      q.memberId ? eq(receivables.memberId, q.memberId) : undefined,
+      q.q
+        ? or(
+            ilike(
+              members.name,
+              `%${q.q.replace(/[\\%_]/g, (c: string) => `\\${c}`)}%`,
+            ),
+            number !== null ? eq(sales.number, number) : undefined,
+          )
+        : undefined,
+    );
+    const where = and(
+      search,
+      q.status === 'open' ? gt(receivables.rest, 0) : undefined,
+      q.status === 'settled' ? eq(receivables.rest, 0) : undefined,
+    );
+    const [data, [{ total }], [summary]] = await Promise.all([
+      this.base()
+        .where(where)
+        .orderBy(desc(receivables.createdAt), desc(receivables.id))
+        .limit(q.perPage)
+        .offset((q.page - 1) * q.perPage),
+      this.db
+        .select({ total: count() })
+        .from(receivables)
+        .innerJoin(sales, eq(sales.id, receivables.saleId))
+        .innerJoin(members, eq(members.id, receivables.memberId))
+        .where(where),
+      this.db
+        .select({
+          openRest: sql<string>`coalesce(sum(${receivables.rest}), 0)`,
+          openCount: count(),
+        })
+        .from(receivables)
+        .innerJoin(sales, eq(sales.id, receivables.saleId))
+        .innerJoin(members, eq(members.id, receivables.memberId))
+        .where(and(search, gt(receivables.rest, 0))),
+    ]);
+    return {
+      data,
+      total,
+      page: q.page,
+      perPage: q.perPage,
+      summary: {
+        openRest: Number(summary.openRest),
+        openCount: summary.openCount,
+      },
+    };
   }
 
   async get(tenantId: string, id: string) {
@@ -293,12 +353,7 @@ export class ReceivablesController {
   @Get()
   @RequirePermission('receivables.manage')
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return {
-      data: await this.receivables.list(
-        s.tenantId,
-        validate(ReceivableQuery, query),
-      ),
-    };
+    return this.receivables.list(s.tenantId, validate(ReceivableQuery, query));
   }
 
   @Get(':id')

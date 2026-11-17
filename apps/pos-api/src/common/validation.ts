@@ -125,6 +125,12 @@ export const Phone = z
     'Nomor telepon tidak valid',
   );
 
+/** List paging like GET /sales: page from 1, at most 100 rows per page. */
+export const Paging = {
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(100).default(20),
+};
+
 export const UuidField = z.string().uuid('Pilihan tidak valid');
 
 export const formatRupiah = rp;
