@@ -93,7 +93,7 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
     }))
     setBusy(false)
     setPin('')
-    if (res.ok) return navigate({ to: '/' })
+    if (res.ok) return navigate({ to: '/kasir' })
     setError(res.error)
     if (res.retryAfter) setLockedFor(res.retryAfter)
   }
