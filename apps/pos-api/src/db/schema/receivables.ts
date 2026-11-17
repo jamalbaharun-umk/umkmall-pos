@@ -34,7 +34,8 @@ export const receivables = pos
       memberId: uuid('member_id').notNull(),
       total: rupiah('total').notNull(),
       rest: rupiah('rest').notNull(),
-      dueDate: date('due_date').notNull(),
+      // A calendar date in the store's timezone (common/store-day.ts); returned as 'YYYY-MM-DD', no time.
+      dueDate: date('due_date', { mode: 'string' }).notNull(),
       lastPaymentAt: timestamp('last_payment_at', { withTimezone: true }),
       createdAt: createdAt(),
     },

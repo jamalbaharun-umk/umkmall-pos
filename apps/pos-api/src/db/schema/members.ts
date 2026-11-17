@@ -58,7 +58,7 @@ export const vouchers = pos
       // Percent (1–100) for `percentage`, rupiah for `flat`.
       nominal: rupiah('nominal').notNull(),
       kuota: integer('kuota').notNull(),
-      // Inclusive dates in the store's day (Asia/Jakarta).
+      // Inclusive dates in the store's day (its timezone, common/store-day.ts).
       startDate: date('start_date').notNull(),
       expired: date('expired').notNull(),
       minimalBuying: rupiah('minimal_buying').notNull().default(0),

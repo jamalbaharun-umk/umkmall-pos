@@ -32,6 +32,7 @@ import {
   UuidField,
   validate,
 } from '../common/validation';
+import { storeToday } from '../common/store-day';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { type Db, InjectDb } from '../db/db.module';
 import {
@@ -112,8 +113,8 @@ export async function createReceivable(
       memberId: sale.memberId,
       total: sale.total,
       rest: sale.total - sale.paid,
-      // Lakasir's default: two weeks after the sale (store day, Asia/Jakarta).
-      dueDate: sql`((now() at time zone 'Asia/Jakarta')::date + 14)`,
+      // Lakasir's default: two weeks after the sale's day in the store's timezone; a date, no time.
+      dueDate: sql`(${storeToday(s.tenantId)} + 14)`,
       lastPaymentAt: sale.paid > 0 ? new Date() : null,
     })
     .returning({ id: receivables.id });

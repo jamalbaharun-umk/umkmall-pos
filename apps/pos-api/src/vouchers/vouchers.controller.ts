@@ -20,6 +20,7 @@ import {
   Rupiah,
   validate,
 } from '../common/validation';
+import { storeToday } from '../common/store-day';
 import { type Db, InjectDb } from '../db/db.module';
 import { VOUCHER_TYPES, vouchers } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -95,7 +96,7 @@ export async function evaluateVoucher(
   field = 'voucherCode',
 ) {
   const refuse = (message: string) => fieldError(field, message);
-  // The store's day is Asia/Jakarta: a voucher "until 17 Nov" works until midnight WIB.
+  // The store's day (its timezone): a voucher "until 17 Nov" works until midnight there.
   const [v] = await db
     .select({
       id: vouchers.id,
@@ -103,7 +104,7 @@ export async function evaluateVoucher(
       nominal: vouchers.nominal,
       kuota: vouchers.kuota,
       minimalBuying: vouchers.minimalBuying,
-      inRange: sql<boolean>`(now() at time zone 'Asia/Jakarta')::date between ${vouchers.startDate} and ${vouchers.expired}`,
+      inRange: sql<boolean>`${storeToday(tenantId)} between ${vouchers.startDate} and ${vouchers.expired}`,
     })
     .from(vouchers)
     .where(and(live(tenantId), eq(vouchers.code, voucherCode.toUpperCase())));
