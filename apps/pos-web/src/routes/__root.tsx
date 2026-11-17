@@ -4,19 +4,25 @@ import { Toaster } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
 import { Empty, Page } from '@/components/page'
 import { Shell, type Me } from '@/components/shell'
-import { api } from '@/lib/api.server'
-import { getSessionToken } from '@/lib/session.server'
+import { API_DOWN, UMKMALL_DOWN, api } from '@/lib/api.server'
+import { getSessionToken, lastMe, rememberMe } from '@/lib/session.server'
 import { BARE_ROUTES } from '@/nav'
 import appCss from '@/styles/app.css?url'
 
-// Who is signed in, for the shell. Never redirects (the root also renders the sign-in page): any failure = no shell.
+// Who is signed in, for the shell. Never redirects (the root also renders the sign-in page). When UMKMall or pos-api
+// cannot be reached, the shell keeps rendering from the last known answer, flagged `offline` for a banner.
 const getMe = createServerFn().handler(async (): Promise<Me | null> => {
   if (!getSessionToken()) return null
   try {
     const res = await api('/tenant/me')
-    return res.ok ? ((await res.json()) as Me) : null
-  } catch {
-    return null
+    if (!res.ok) return null
+    const me = (await res.json()) as Me
+    rememberMe(me)
+    return me
+  } catch (e) {
+    const offline = e instanceof Error && (e.message === UMKMALL_DOWN || e.message === API_DOWN) ? e.message : null
+    const last = offline ? lastMe<Me>() : null
+    return last ? { ...last, offline } : null
   }
 })
 

@@ -26,6 +26,30 @@ export function setSessionToken(token: string, maxAgeSeconds: number): void {
 
 export function clearSessionToken(): void {
   deleteCookie(COOKIE, { path: '/' })
+  deleteCookie(LAST_ME, { path: '/' })
+}
+
+// The last answer of /tenant/me, so the shell can still render (with a banner) while UMKMall or pos-api is
+// unreachable. Display only: every action is still authorised by pos-api.
+const LAST_ME = 'pos_me'
+
+export function rememberMe(me: unknown, maxAgeSeconds = 7 * 24 * 60 * 60): void {
+  setCookie(LAST_ME, JSON.stringify(me), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: maxAgeSeconds,
+  })
+}
+
+export function lastMe<T>(): T | null {
+  try {
+    const raw = getCookie(LAST_ME)
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null
+  }
 }
 
 const OWNER_COOKIE_SECONDS = 7 * 24 * 60 * 60

@@ -1,5 +1,5 @@
 import { AppShell } from '@umkmall/ui/layouts'
-import { Header, Menu, Sidebar, SidebarMenuItem } from '@umkmall/ui/primitives'
+import { Alert, Button, Header, Menu, Sidebar, SidebarMenuItem } from '@umkmall/ui/primitives'
 import { Link, getRouteApi, useRouter, useRouterState } from '@tanstack/react-router'
 import { LogOut, Menu as MenuIcon, Store } from 'lucide-react'
 import { forwardRef, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -8,6 +8,8 @@ import { NAV, activeNav, visibleNav } from '@/nav'
 export type Me = {
   tenant: { id: string; name?: string | null }
   actor: { id: string; kind: 'owner' | 'cashier'; name: string | null; permissions: string[] }
+  /** Set when UMKMall or pos-api could not be reached: the shell renders from the last known answer. */
+  offline?: string | null
 }
 
 const root = getRouteApi('__root__')
@@ -142,7 +144,24 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
       // Sidebar draws a rail and a drawer; this copy is only for its drawer, so it is hidden from md up.
       mobileSidebar={<div className="md:hidden">{nav(true, 'Navigasi seluler')}</div>}
     >
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto bg-default-secondary">{children}</div>
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto bg-default-secondary">
+        {me.offline && (
+          <div className="mx-auto w-full max-w-7xl px-4 pt-4 md:px-8">
+            <Alert
+              variant="warning"
+              role="status"
+              action={
+                <Button type="text" color="primary" size="small" width="auto" onClick={() => router.invalidate()}>
+                  Coba lagi
+                </Button>
+              }
+            >
+              {me.offline}
+            </Alert>
+          </div>
+        )}
+        {children}
+      </div>
     </AppShell>
   )
 }
