@@ -1,6 +1,6 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useRouter } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import { Alert } from '@umkmall/ui/primitives'
+import { Alert, Button } from '@umkmall/ui/primitives'
 import { Page, PageLoading } from '@/components/page'
 import { REPORTS } from './-reports'
 
@@ -8,7 +8,7 @@ import { REPORTS } from './-reports'
 export function ReportLayout({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Page title={title} crumbs={[{ label: 'Laporan', to: '/laporan' }, { label: title }]}>
-      <nav aria-label="Laporan" className="flex gap-1 overflow-x-auto rounded-xl bg-default-primary p-1 print:hidden">
+      <nav aria-label="Laporan" className="flex flex-wrap gap-1 rounded-xl bg-default-primary p-1 print:hidden">
         <Link to="/laporan" activeOptions={{ exact: true }} className="whitespace-nowrap rounded-lg px-3 py-2 hover:bg-weak-brand" activeProps={{ className: 'bg-weak-brand font-medium text-default-brand' }} inactiveProps={{ className: 'text-default-primary' }}>
           Semua laporan
         </Link>
@@ -26,9 +26,17 @@ export function ReportLayout({ title, children }: { title: string; children: Rea
 export const ReportPending = PageLoading
 
 export function ReportError({ message }: { message?: string }) {
+  const router = useRouter()
   return (
     <ReportLayout title="Laporan">
-      <Alert variant="danger">
+      <Alert
+        variant="danger"
+        action={
+          <Button type="outline" color="primary" size="small" width="auto" onClick={() => void router.invalidate()}>
+            Coba lagi
+          </Button>
+        }
+      >
         <strong>Laporan belum bisa dimuat.</strong> {message ?? 'Coba muat ulang halaman ini sebentar lagi.'}
       </Alert>
     </ReportLayout>

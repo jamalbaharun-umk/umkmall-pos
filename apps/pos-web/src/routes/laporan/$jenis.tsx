@@ -1,5 +1,5 @@
 import { createFileRoute, notFound, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Card } from '@umkmall/ui/compositions'
 import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField, toast } from '@umkmall/ui/primitives'
 import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
@@ -64,7 +64,7 @@ async function downloadCsv(jenis: string, from: string, to: string) {
     const body = res?.headers.get('content-type')?.includes('application/json')
       ? ((await res.json().catch(() => null)) as { message?: unknown } | null)
       : null
-    const fromServer = res && (res.status === 422 || res.status === 502) && typeof body?.message === 'string' ? body.message : null
+    const fromServer = res && [403, 422, 502].includes(res.status) && typeof body?.message === 'string' ? body.message : null
     toast(fromServer ?? 'Laporan belum bisa diunduh, coba lagi.', { variant: 'danger' })
     return
   }
@@ -81,6 +81,8 @@ function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: strin
   const [to, setTo] = useState(to0)
   const [errors, setErrors] = useState<FieldErrors>(serverErrors ?? {})
   const [exporting, setExporting] = useState(false)
+  // The busy state only applies on the next render; two clicks in one tick must still start one export.
+  const exportRunning = useRef(false)
   // Each action checks the dates first, with the same messages pos-api would answer.
   const valid = () => {
     const e = checkRange(from, to)
@@ -111,9 +113,13 @@ function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: strin
             width="auto"
             isLoading={exporting}
             onClick={async () => {
-              if (!valid()) return
+              if (exportRunning.current || !valid()) return
+              exportRunning.current = true
               setExporting(true)
-              await downloadCsv(jenis, from, to).finally(() => setExporting(false))
+              await downloadCsv(jenis, from, to).finally(() => {
+                exportRunning.current = false
+                setExporting(false)
+              })
             }}
           >
             Unduh CSV

@@ -24,6 +24,7 @@ export const REPORTS: Record<string, ReportDef> = {
     columns: [
       { key: 'number', label: 'No. struk', num: true },
       { key: 'time', label: 'Waktu' },
+      { key: 'cashier', label: 'Kasir' },
       { key: 'sku', label: 'SKU' },
       { key: 'name', label: 'Produk' },
       { key: 'qty', label: 'Qty', num: true },
@@ -51,7 +52,7 @@ export const REPORTS: Record<string, ReportDef> = {
   shift: {
     kind: 'shifts',
     title: 'Laporan kasir',
-    hint: 'Per shift kasir: penjualan dan selisih kas.',
+    hint: 'Per shift kasir, menurut tanggal shift dibuka: penjualan dan selisih kas. Penjualan per tanggal ada di laporan penjualan.',
     columns: [
       { key: 'cashier', label: 'Kasir' },
       { key: 'openedAt', label: 'Buka' },
