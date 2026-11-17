@@ -193,7 +193,8 @@ export function OrderForm({
               <Icon name="plus" size="sm" /> Tambah barang
             </Button>
           </div>
-          <Table density="comfortable">
+          {/* In-place product picker: the scroller must not clip its list (a portalled list closes on a real click). */}
+          <Table density="comfortable" containerClassName="overflow-visible">
             <TableHeader>
               <TableRow>
                 <TableHead>{req('Produk')}</TableHead>
@@ -209,7 +210,6 @@ export function OrderForm({
                   <TableCell className="min-w-56">
                     <Select
                       aria-label={`Produk baris ${i + 1}`}
-                      portal
                       size="small"
                       showSearch
                       placeholder="Pilih produk"
