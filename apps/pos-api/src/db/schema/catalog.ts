@@ -30,7 +30,13 @@ export const categories = pos
       createdAt: createdAt(),
       updatedAt: updatedAt(),
     },
-    (t) => [uniqueIndex('categories_tenant_name_uq').on(t.tenantId, t.name)],
+    // Unique ignoring case ("Minuman" = "minuman").
+    (t) => [
+      uniqueIndex('categories_tenant_name_uq').on(
+        t.tenantId,
+        sql`lower(${t.name})`,
+      ),
+    ],
   )
   .enableRLS();
 

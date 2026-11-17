@@ -6,8 +6,10 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { createdAt, id, pos, updatedAt } from './_base';
 import { tenants } from './tenants';
 
@@ -34,7 +36,13 @@ export const staff = pos
       createdAt: createdAt(),
       updatedAt: updatedAt(),
     },
-    (t) => [unique().on(t.tenantId, t.id)],
+    (t) => [
+      unique().on(t.tenantId, t.id),
+      // Live staff names are unique ignoring case, so the PIN picker never shows two identical names.
+      uniqueIndex('staff_tenant_name_uq')
+        .on(t.tenantId, sql`lower(${t.name})`)
+        .where(sql`${t.deletedAt} is null`),
+    ],
   )
   .enableRLS();
 
@@ -47,7 +55,11 @@ export const roles = pos
       name: text('name').notNull(),
       createdAt: createdAt(),
     },
-    (t) => [unique().on(t.tenantId, t.name), unique().on(t.tenantId, t.id)],
+    // Role names are unique ignoring case ("Kasir" = "kasir").
+    (t) => [
+      uniqueIndex('roles_tenant_name_uq').on(t.tenantId, sql`lower(${t.name})`),
+      unique().on(t.tenantId, t.id),
+    ],
   )
   .enableRLS();
 

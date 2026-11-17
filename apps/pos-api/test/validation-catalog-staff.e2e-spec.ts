@@ -63,12 +63,13 @@ describe('validation: catalog, staff, roles, error filter', () => {
         'Maksimal 120 karakter',
       );
       await category('Minuman');
-      await refused(
-        post('/catalog/categories', { name: 'Minuman' }),
-        409,
-        'name',
-        'Nama kategori sudah dipakai',
-      );
+      for (const name of ['Minuman', 'MINUMAN'])
+        await refused(
+          post('/catalog/categories', { name }),
+          409,
+          'name',
+          'Nama kategori sudah dipakai',
+        );
     });
   });
 
@@ -284,6 +285,12 @@ describe('validation: catalog, staff, roles, error filter', () => {
         'name',
         'Nama staf sudah dipakai',
       );
+      // A deleted staff member's name is free again (the index covers live rows only).
+      await http()
+        .delete(`/staff/${other.body.id}`)
+        .set('Authorization', a.auth)
+        .expect(204);
+      await post('/staff', { name: 'ANI', pin: '5678' }).expect(201);
       // Renaming to its own name is not a duplicate; another store may use the name.
       await http()
         .patch(`/staff/${budi.body.id}`)

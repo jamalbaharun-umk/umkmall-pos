@@ -17,7 +17,7 @@ import { InjectDb } from '../db/db.module';
 import { pinAttempts, roles, staff, staffRoles } from '../db/schema';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
-import { parseBody, parseId } from './http';
+import { isUniqueViolation, parseBody, parseId } from './http';
 import { RequirePermission } from './require-permission';
 import { hashPin } from './secrets';
 import { StaffAccess, type Tx } from './staff-access';
@@ -65,30 +65,15 @@ export class StaffController {
     private readonly access: StaffAccess,
   ) {}
 
-  /**
-   * Names are unique per store (case-insensitive), so the PIN picker never shows two identical names.
-   * shortcut: a read-then-write check, not a unique index; two simultaneous creates of one name can both pass.
-   * Upgrade to a partial unique index on (tenant_id, lower(name)) where deleted_at is null with the next staff migration.
-   */
-  private async uniqueName(
-    tx: Tx,
-    tenantId: string,
-    name: string,
-    except?: string,
-  ) {
-    const [taken] = await tx
-      .select({ id: staff.id })
-      .from(staff)
-      .where(
-        and(
-          eq(staff.tenantId, tenantId),
-          isNull(staff.deletedAt),
-          sql`lower(${staff.name}) = lower(${name})`,
-          except ? sql`${staff.id} <> ${except}` : undefined,
-        ),
-      )
-      .limit(1);
-    if (taken) throw fieldError('name', 'Nama staf sudah dipakai', 409);
+  /** The live-name unique index (case-insensitive) answers a duplicate: 409 on the field. */
+  private async uniqueName<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (isUniqueViolation(err))
+        throw fieldError('name', 'Nama staf sudah dipakai', 409);
+      throw err;
+    }
   }
 
   @Get()
@@ -105,20 +90,21 @@ export class StaffController {
   async create(@CurrentSession() s: PosSession, @Body() body: unknown) {
     const input = parseBody(CreateStaff, body);
     const pinHash = await hashPin(input.pin);
-    const id = await this.db.transaction(async (tx) => {
-      await this.uniqueName(tx, s.tenantId, input.name);
-      const [row] = await tx
-        .insert(staff)
-        .values({
-          tenantId: s.tenantId,
-          name: input.name,
-          pinHash,
-          active: input.active,
-        })
-        .returning({ id: staff.id });
-      await this.setRoles(tx, s.tenantId, row.id, input.roleIds);
-      return row.id;
-    });
+    const id = await this.uniqueName(() =>
+      this.db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(staff)
+          .values({
+            tenantId: s.tenantId,
+            name: input.name,
+            pinHash,
+            active: input.active,
+          })
+          .returning({ id: staff.id });
+        await this.setRoles(tx, s.tenantId, row.id, input.roleIds);
+        return row.id;
+      }),
+    );
     return this.one(s.tenantId, id);
   }
 
@@ -136,33 +122,35 @@ export class StaffController {
     const id = parseId(rawId);
     const input = parseBody(UpdateStaff, body);
     const pinHash = input.pin ? await hashPin(input.pin) : undefined;
-    await this.db.transaction(async (tx) => {
-      if (input.name) await this.uniqueName(tx, s.tenantId, input.name, id);
-      const [row] = await tx
-        .update(staff)
-        .set({
-          name: input.name,
-          active: input.active,
-          pinHash,
-          updatedAt: sql`now()`,
-        })
-        .where(this.mine(s.tenantId, id))
-        .returning({ id: staff.id });
-      if (!row) throw new NotFoundException();
-      if (input.roleIds) await this.setRoles(tx, s.tenantId, id, input.roleIds);
-      // A new PIN clears the lockout; deactivation ends live sessions.
-      if (pinHash)
-        await tx
-          .delete(pinAttempts)
-          .where(
-            and(
-              eq(pinAttempts.tenantId, s.tenantId),
-              eq(pinAttempts.staffId, id),
-            ),
-          );
-      if (input.active === false)
-        await this.access.revokeSessions(tx, s.tenantId, { staffId: id });
-    });
+    await this.uniqueName(() =>
+      this.db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(staff)
+          .set({
+            name: input.name,
+            active: input.active,
+            pinHash,
+            updatedAt: sql`now()`,
+          })
+          .where(this.mine(s.tenantId, id))
+          .returning({ id: staff.id });
+        if (!row) throw new NotFoundException();
+        if (input.roleIds)
+          await this.setRoles(tx, s.tenantId, id, input.roleIds);
+        // A new PIN clears the lockout; deactivation ends live sessions.
+        if (pinHash)
+          await tx
+            .delete(pinAttempts)
+            .where(
+              and(
+                eq(pinAttempts.tenantId, s.tenantId),
+                eq(pinAttempts.staffId, id),
+              ),
+            );
+        if (input.active === false)
+          await this.access.revokeSessions(tx, s.tenantId, { staffId: id });
+      }),
+    );
     return this.one(s.tenantId, id);
   }
 

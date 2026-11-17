@@ -99,6 +99,13 @@
       "when": 1794931324582,
       "tag": "0013_payment_method_name_ci",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794933336229,
+      "tag": "0014_name_ci",
+      "breakpoints": true
     }
   ]
 }
