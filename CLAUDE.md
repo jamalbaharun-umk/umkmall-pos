@@ -74,6 +74,11 @@ silent, follow the monorepo's principles.
   Layout and flows follow Lakasir screen by screen (`~/Documents/lakasir-test`, running at http://localhost:8090).
   The GPL-3 implication of bundling it is noted on UMK-1924 for legal.
 - **Copy is Indonesian,** every screen has loading, empty and error states.
+- **Navigation is one file:** `apps/pos-web/src/nav.ts` (Lakasir's groups and order). A new screen adds or fixes
+  its one line there (`{ to, label, icon, permission? }`); an entry shows only when its route exists and the actor
+  holds the permission. The shell (`components/shell.tsx`, mounted in `__root.tsx`) wraps every signed-in page except
+  the route ids in `BARE_ROUTES`. Screens use `components/page.tsx` (`Page`, `Panel`, `Empty`, `PageLoading`,
+  `PageError`) for Lakasir's page layout.
 
 ## Commands
 

@@ -1,6 +1,22 @@
-import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-router'
+import { HeadContent, Outlet, Scripts, createRootRoute, useMatches } from '@tanstack/react-router'
+import { createServerFn } from '@tanstack/react-start'
 import type { ReactNode } from 'react'
+import { Shell, type Me } from '@/components/shell'
+import { api } from '@/lib/api.server'
+import { getSessionToken } from '@/lib/session.server'
+import { BARE_ROUTES } from '@/nav'
 import appCss from '@/styles/app.css?url'
+
+// Who is signed in, for the shell. Never redirects (the root also renders the sign-in page): any failure = no shell.
+const getMe = createServerFn().handler(async (): Promise<Me | null> => {
+  if (!getSessionToken()) return null
+  try {
+    const res = await api('/tenant/me')
+    return res.ok ? ((await res.json()) as Me) : null
+  } catch {
+    return null
+  }
+})
 
 export const Route = createRootRoute({
   head: () => ({
@@ -19,12 +35,16 @@ export const Route = createRootRoute({
       },
     ],
   }),
-  component: () => (
-    <RootDocument>
-      <Outlet />
-    </RootDocument>
-  ),
+  loader: () => getMe(),
+  staleTime: 5 * 60_000, // router.invalidate() (after sign-in or any save) refreshes it sooner
+  component: Root,
 })
+
+function Root() {
+  const me = Route.useLoaderData()
+  const bare = useMatches({ select: (m) => BARE_ROUTES.includes(m.at(-1)?.routeId ?? '') })
+  return <RootDocument>{me && !bare ? <Shell me={me}><Outlet /></Shell> : <Outlet />}</RootDocument>
+}
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
@@ -32,7 +52,7 @@ function RootDocument({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body className="bg-brand-soft">
+      <body>
         {children}
         <Scripts />
       </body>

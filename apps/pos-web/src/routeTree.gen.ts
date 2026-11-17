@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CatalogRouteRouteImport } from './routes/catalog/route'
+import { Route as KeluarRouteImport } from './routes/keluar'
 import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
 import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
 import { Route as KasirIndexRouteImport } from './routes/kasir/index'
@@ -42,6 +43,11 @@ const IndexRoute = IndexRouteImport.update({
 const CatalogRouteRoute = CatalogRouteRouteImport.update({
   id: '/catalog',
   path: '/catalog',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KeluarRoute = KeluarRouteImport.update({
+  id: '/keluar',
+  path: '/keluar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CatalogIndexRoute = CatalogIndexRouteImport.update({
@@ -158,6 +164,7 @@ const KasirStrukIdRoute = KasirStrukIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRouteRouteWithChildren
+  '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/riwayat': typeof KasirRiwayatRoute
@@ -183,6 +190,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/riwayat': typeof KasirRiwayatRoute
@@ -210,6 +218,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/catalog': typeof CatalogRouteRouteWithChildren
+  '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/riwayat': typeof KasirRiwayatRoute
@@ -238,6 +247,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/catalog'
+    | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
     | '/kasir/riwayat'
@@ -263,6 +273,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
     | '/kasir/riwayat'
@@ -289,6 +300,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/catalog'
+    | '/keluar'
     | '/catalog/categories'
     | '/kasir/masuk'
     | '/kasir/riwayat'
@@ -316,6 +328,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CatalogRouteRoute: typeof CatalogRouteRouteWithChildren
+  KeluarRoute: typeof KeluarRoute
   KasirMasukRoute: typeof KasirMasukRoute
   KasirRiwayatRoute: typeof KasirRiwayatRoute
   KasirTutupRoute: typeof KasirTutupRoute
@@ -350,6 +363,13 @@ declare module '@tanstack/react-router' {
       path: '/catalog'
       fullPath: '/catalog'
       preLoaderRoute: typeof CatalogRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/keluar': {
+      id: '/keluar'
+      path: '/keluar'
+      fullPath: '/keluar'
+      preLoaderRoute: typeof KeluarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/catalog/': {
@@ -530,6 +550,7 @@ const CatalogRouteRouteWithChildren = CatalogRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CatalogRouteRoute: CatalogRouteRouteWithChildren,
+  KeluarRoute: KeluarRoute,
   KasirMasukRoute: KasirMasukRoute,
   KasirRiwayatRoute: KasirRiwayatRoute,
   KasirTutupRoute: KasirTutupRoute,

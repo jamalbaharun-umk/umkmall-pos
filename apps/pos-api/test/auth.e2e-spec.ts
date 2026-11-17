@@ -120,7 +120,7 @@ describe('UMKMall handoff exchange and owner refresh', () => {
       .set('Authorization', `Bearer ${first.body.sessionToken}`)
       .expect(200);
     expect(me.body.tenant.id).toBe(first.body.tenant.id);
-    expect(me.body.actor).toEqual({ id: sub, kind: 'owner' });
+    expect(me.body.actor).toMatchObject({ id: sub, kind: 'owner', name: null });
 
     const second = await exchange(await handoff(sub)).expect(200);
     expect(second.body.tenant.id).toBe(first.body.tenant.id);

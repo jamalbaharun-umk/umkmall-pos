@@ -243,7 +243,12 @@ describe('staff, roles, devices and PIN sign-in (U4)', () => {
         .get('/tenant/me')
         .set('Authorization', cashier.auth)
         .expect(200);
-      expect(me.body.actor).toEqual({ id: cashier.staffId, kind: 'cashier' });
+      expect(me.body.actor).toEqual({
+        id: cashier.staffId,
+        kind: 'cashier',
+        name: 'Sari',
+        permissions: ['sales.create'],
+      });
       await http()
         .get('/auth/device/staff')
         .set('X-Pos-Device', cashier.deviceToken)

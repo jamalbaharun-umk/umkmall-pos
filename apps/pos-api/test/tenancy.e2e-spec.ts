@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { signSession } from '../src/tenancy/session';
+import { PERMISSIONS } from '../src/staff/permissions';
 import { createApp, createStore } from './support/fixtures';
+import { createCashier } from './support/staff';
 
 describe('session guard and tenant context', () => {
   let app: INestApplication;
@@ -47,5 +49,46 @@ describe('session guard and tenant context', () => {
       .expect(200);
     expect(resA.body.tenant.id).toBe(a.tenantId);
     expect(resB.body.tenant.id).toBe(b.tenantId);
+  });
+
+  it('names the signed-in actor and lists their permissions', async () => {
+    const a = await createStore();
+    const owner = await request(app.getHttpServer())
+      .get('/tenant/me')
+      .set('Authorization', a.auth)
+      .expect(200);
+    expect(owner.body.actor).toEqual({
+      id: a.userId,
+      kind: 'owner',
+      name: null,
+      permissions: [...PERMISSIONS],
+    });
+    const cashier = await createCashier(app, a, [
+      'sales.create',
+      'catalog.manage',
+    ]);
+    const me = await request(app.getHttpServer())
+      .get('/tenant/me')
+      .set('Authorization', cashier.auth)
+      .expect(200);
+    expect(me.body.actor.name).toBe('Sari');
+    expect([...me.body.actor.permissions].sort()).toEqual([
+      'catalog.manage',
+      'sales.create',
+    ]);
+  });
+
+  it('never resolves a cashier of another store', async () => {
+    const a = await createStore();
+    const b = await createStore();
+    const cashier = await createCashier(app, a);
+    const forged = await signSession(
+      { tenantId: b.tenantId, actorId: cashier.staffId, kind: 'cashier' },
+      process.env.POS_SESSION_SECRET!,
+    );
+    await request(app.getHttpServer())
+      .get('/tenant/me')
+      .set('Authorization', `Bearer ${forged}`)
+      .expect(401);
   });
 });
