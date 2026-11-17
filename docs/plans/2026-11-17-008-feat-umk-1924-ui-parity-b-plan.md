@@ -83,3 +83,30 @@ Exercised in the browser against a local pos-api (own database), Lakasir and POS
 | Purchase detail | `/pembelian/$id` | Done: approve / cancel / delete with confirm | approved: Kopi Susu on hand 18 → 28 | cancel / delete paths |
 | Stock opnames | `/stok-opname` | Done: status/date filters, table | listed | Number, PIC (not in U6) |
 | Opname form / detail | `/stok-opname/baru`, `/$id` | Done | counted Es Teh 15 vs 20, approved (−5) | delete path |
+
+## Validation and audit pass (owner requirement and code audit, 2026-11-17)
+
+Shipped in e8a8f30 (pos-api) and 4557287 (pos-web).
+
+- [test] Stock opname approval reads on-hand under the batch lock at approval, stores it, and applies
+  `counted − on-hand now`; a draft shows today's on-hand (revert-red: 13 ≠ 15 with the old snapshot delta).
+- [test] Sale `Idempotency-Key` is bound to a sha256 of the normalized request (`sales.request_hash`, migration
+  0011); the same key with a different body answers 422 "Permintaan berbeda dengan transaksi sebelumnya"
+  (revert-red: replayed the old sale). The cashier renews its key when the cart, note, member or voucher changes.
+- [test] Purchase totals/unit costs hidden without `purchasing.manage`/`reports.view` (opname has no costs).
+- [test] Stock refusals name the product and what is left ("Stok Es Teh Manis tidak cukup (sisa 2)") on
+  `lines.<i>.qty`; shift state conflicts answer 409; a missing product in a body answers 422 on its field;
+  purchase qty ≤ 100.000, unit cost ≤ Rp1.000.000.000, total ≤ Rp1 triliun.
+- [test] `test/validation-sales-stock.e2e-spec.ts`: status and field message for missing, wrong type, out of
+  range, too long, unknown key, insufficient stock, underpayment and no open shift on sales, shifts, suppliers,
+  purchase orders and stock opname.
+- [test] pos-web `pembelian/-validate.test.ts`: client checks mirror the zod rules with the server's field keys.
+- [qa] Browser: supplier form empty → "Wajib diisi" + form error; saved → toast; purchase form with qty 0 and
+  cost "1,5" → field messages per line; cashier oversell → toast and inline "Stok Keripik Singkong tidak cukup
+  (sisa 20)"; merged cashier (with U7 member/voucher/method) sells with a success toast. Screenshots in
+  `.evidence/ui-parity-b/pos-*`.
+- Not exercised in the browser: the stale-total path (needs a price change between cart and pay; covered by the
+  server's `total` in the 422), the opname approve screen after a concurrent sale (covered by the e2e test),
+  network failure toasts.
+- Decision: the cashier keeps one key while only the paid amount or method changes. A changed amount after a
+  committed-but-timed-out try then gets the 422 above instead of a second sale being charged.
