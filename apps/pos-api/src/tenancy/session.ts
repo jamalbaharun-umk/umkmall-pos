@@ -1,4 +1,4 @@
-import { jwtVerify, SignJWT } from 'jose';
+import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose';
 import { z } from 'zod';
 
 // The ONLY place a POS session token is signed or verified (guard: test/guards.spec.ts).
@@ -11,12 +11,15 @@ const ClaimsSchema = z.object({
   tid: z.string().uuid(), // tenant id — the only source of tenancy for a request
   sub: z.string().min(1), // actor: UMKMall user id (owner) or POS staff id (cashier)
   kind: z.enum(['owner', 'cashier']),
+  sid: z.string().min(1).optional(), // UMKMall session id, owner sessions only (liveness refresh)
 });
 
 export type PosSession = {
   tenantId: string;
   actorId: string;
   kind: 'owner' | 'cashier';
+  /** UMKMall auth session id; present on owner sessions from the handoff, never on cashier sessions. */
+  sid?: string;
 };
 
 export async function signSession(
@@ -24,7 +27,11 @@ export async function signSession(
   secret: string,
   ttlSeconds = 15 * 60,
 ): Promise<string> {
-  return new SignJWT({ tid: session.tenantId, kind: session.kind })
+  return new SignJWT({
+    tid: session.tenantId,
+    kind: session.kind,
+    ...(session.sid ? { sid: session.sid } : {}),
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(session.actorId)
     .setIssuer(ISSUER)
@@ -50,7 +57,57 @@ export async function verifySession(
       },
     );
     const claims = ClaimsSchema.parse(payload);
-    return { tenantId: claims.tid, actorId: claims.sub, kind: claims.kind };
+    return {
+      tenantId: claims.tid,
+      actorId: claims.sub,
+      kind: claims.kind,
+      ...(claims.sid ? { sid: claims.sid } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// --- UMKMall handoff token (contract: UMKMall/umkmall#1837, docs/architecture/pos-integration.md there) ---
+
+const HandoffSchema = z.object({
+  sub: z.string().uuid(), // UMKMall users.id
+  sid: z.string().min(1), // UMKMall auth session id
+  jti: z.string().min(1),
+  exp: z.number(),
+});
+
+export type Handoff = z.infer<typeof HandoffSchema>;
+
+const jwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+/**
+ * Verifies a UMKMall handoff token against UMKMall's JWKS (cached; refetched on an unknown kid).
+ * Returns the claims, or null for any invalid, expired or foreign token. Never throws.
+ * Single use of `jti` is the caller's job (auth controller, inside its transaction).
+ */
+export async function verifyHandoff(
+  token: string,
+  jwksUrl: string,
+): Promise<Handoff | null> {
+  let jwks = jwksByUrl.get(jwksUrl);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(jwksUrl), {
+      cacheMaxAge: 5 * 60_000,
+      cooldownDuration: 5_000,
+      timeoutDuration: 5_000,
+    });
+    jwksByUrl.set(jwksUrl, jwks);
+  }
+  try {
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: 'umkmall',
+      audience: 'pos',
+      algorithms: ['EdDSA'],
+      requiredClaims: ['exp', 'jti', 'sub'],
+      maxTokenAge: '6m', // contract: exp - iat <= 300 s; refuse anything minted long ago
+    });
+    return HandoffSchema.parse(payload);
   } catch {
     return null;
   }

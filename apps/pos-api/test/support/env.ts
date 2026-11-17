@@ -26,6 +26,10 @@ process.env.NODE_ENV = 'test';
 process.env.POS_STORAGE_DIR ??= mkdtempSync(
   path.join(tmpdir(), 'pos-storage-'),
 );
+// Placeholders so AppModule boots; test/auth.e2e-spec.ts points these at its local UMKMall stub.
+process.env.UMKMALL_JWKS_URL ??= 'http://127.0.0.1:9/.well-known/pos-jwks.json';
+process.env.UMKMALL_API_URL ??= 'http://127.0.0.1:9';
+process.env.POS_SERVICE_KEY ??= randomBytes(16).toString('hex');
 
 const ADMIN_KEY = process.env.PGTEST_ADMIN_KEY ?? 'pos';
 export const TEST_DB = DB;

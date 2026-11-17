@@ -7,6 +7,11 @@ const EnvSchema = z.object({
   POS_SESSION_SECRET: z.string().min(32),
   // Local-disk image store (U2). Swap the ObjectStorage adapter for object storage in production.
   POS_STORAGE_DIR: z.string().min(1).default('.storage'),
+  // UMKMall handoff (UMK-1924 U1): JWKS for the handoff token, API base for the liveness call, and the
+  // shared service key that call sends. The POS holds no UMKMall signing key.
+  UMKMALL_JWKS_URL: z.string().url(),
+  UMKMALL_API_URL: z.string().url(),
+  POS_SERVICE_KEY: z.string().min(16),
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
