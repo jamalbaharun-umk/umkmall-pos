@@ -3,9 +3,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import postgres from 'postgres';
 import request from 'supertest';
-import { signSession } from '../src/tenancy/session';
 import { createApp, createStore } from './support/fixtures';
 import { ADMIN_DATABASE_URL } from './support/env';
+import { createCashier } from './support/staff';
 
 type Store = Awaited<ReturnType<typeof createStore>>;
 type Page = { data: { id: string; name: string }[]; total: number };
@@ -320,18 +320,16 @@ describe('catalog (U2)', () => {
     });
 
     it('lets a cashier read but not write the catalog', async () => {
-      const cashier = await signSession(
-        { tenantId: a.tenantId, actorId: 'staff-1', kind: 'cashier' },
-        process.env.POS_SESSION_SECRET!,
-      );
+      // A real PIN-signed cashier: the guard refuses cashier tokens without a live session (U4).
+      const { auth: cashier } = await createCashier(app, a);
       const p = await product(a);
       await http()
         .get(`/catalog/products/${p.id}`)
-        .set('Authorization', `Bearer ${cashier}`)
+        .set('Authorization', cashier)
         .expect(200);
       await http()
         .patch(`/catalog/products/${p.id}`)
-        .set('Authorization', `Bearer ${cashier}`)
+        .set('Authorization', cashier)
         .send({ name: 'Murah' })
         .expect(403);
     });
