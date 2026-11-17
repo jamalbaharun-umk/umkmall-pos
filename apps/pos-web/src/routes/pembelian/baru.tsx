@@ -14,8 +14,21 @@ import {
   TextField,
 } from '@umkmall/ui'
 import { useState, type FormEvent } from 'react'
-import { Empty, ErrorText, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
+import {
+  act,
+  check,
+  compact,
+  Empty,
+  ErrorText,
+  type FieldErrors,
+  LoadError,
+  Page,
+  Pending,
+  req,
+  rupiah,
+} from '@/components/pos-page'
 import { createOrder, loadOrderForm } from './-api'
+import { type OrderLine as Line, toInt, validateOrder } from './-validate'
 
 // Lakasir's create purchasing (supplier, payment method) plus its stock lines, on one screen: U6 creates the order
 // with its lines in one call.
@@ -26,9 +39,6 @@ export const Route = createFileRoute('/pembelian/baru')({
   errorComponent: LoadError,
 })
 
-type Line = { productId: string; qty: string; unitCost: string }
-const toInt = (s: string) => (/^\d+$/.test(s.trim()) ? Number(s.trim()) : NaN)
-
 function NewOrderPage() {
   const { suppliers, products } = Route.useLoaderData()
   const navigate = useNavigate()
@@ -36,6 +46,7 @@ function NewOrderPage() {
   const [paymentMethod, setPaymentMethod] = useState('Tunai')
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([{ productId: '', qty: '1', unitCost: '' }])
+  const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
 
@@ -72,38 +83,40 @@ function NewOrderPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    const parsed = lines.map((l) => ({
-      productId: l.productId,
-      qty: toInt(l.qty),
-      unitCost: toInt(l.unitCost),
-    }))
-    if (parsed.some((l) => !l.productId || !(l.qty > 0) || !(l.unitCost >= 0)))
-      return setError('Lengkapi produk, jumlah (bilangan bulat > 0) dan harga beli (rupiah tanpa desimal).')
-    if (new Set(parsed.map((l) => l.productId)).size !== parsed.length) return setError('Satu produk cukup satu baris.')
+    if (busy) return
+    const local = validateOrder({ supplierId, lines })
+    setErrors(local)
+    if (Object.keys(local).length) return setError(local.lines ?? 'Periksa kembali isian yang ditandai.')
     setBusy(true)
-    const r = await createOrder({
-      data: {
-        supplierId,
-        paymentMethod: paymentMethod.trim() || null,
-        note: note.trim() || null,
-        lines: parsed,
-      },
-    }).catch(() => ({
-      ok: false as const,
-      error: 'Gagal menyimpan, coba lagi.',
-    }))
+    setError(undefined)
+    const r = await act(
+      () =>
+        createOrder({
+          data: {
+            supplierId,
+            paymentMethod: paymentMethod.trim() || null,
+            note: note.trim() || null,
+            lines: lines.map((l) => ({ productId: l.productId, qty: toInt(l.qty), unitCost: toInt(l.unitCost) })),
+          },
+        }),
+      'Pembelian disimpan sebagai draf',
+    )
     setBusy(false)
-    if (!r.ok) return setError(r.error)
-    await navigate({ to: '/pembelian/$id', params: { id: r.id! } })
+    if (!r.ok) {
+      setErrors(r.errors)
+      return setError(r.errors.lines ?? r.error)
+    }
+    if (r.res.ok) await navigate({ to: '/pembelian/$id', params: { id: r.res.id! } })
   }
 
   return (
     <Page crumbs={[{ label: 'Pembelian', to: '/pembelian' }, { label: 'Buat' }]} title="Pembelian baru">
-      <form onSubmit={submit} className="space-y-6">
+      <form onSubmit={submit} noValidate className="space-y-6">
         <Card variant="outlined" padding="large">
           <div className="grid gap-4 md:grid-cols-2">
             <Select
-              label="Pemasok"
+              label={req('Pemasok')}
+              error={errors.supplierId}
               options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
               value={supplierId}
               onValueChange={setSupplierId}
@@ -114,6 +127,7 @@ function NewOrderPage() {
               value={paymentMethod}
               onChange={(e) => setPaymentMethod(e.target.value)}
               maxLength={60}
+              error={errors.paymentMethod}
               placeholder="Tunai, Transfer, Tempo…"
             />
             <div className="md:col-span-2">
@@ -123,6 +137,7 @@ function NewOrderPage() {
                 rows={2}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
+                error={errors.note}
                 maxLength={500}
               />
             </div>
@@ -145,9 +160,9 @@ function NewOrderPage() {
           <Table density="comfortable">
             <TableHeader>
               <TableRow>
-                <TableHead>Produk</TableHead>
-                <TableHead className="w-28">Jumlah</TableHead>
-                <TableHead className="w-40">Harga beli</TableHead>
+                <TableHead>{req('Produk')}</TableHead>
+                <TableHead className="w-28">{req('Jumlah')}</TableHead>
+                <TableHead className="w-40">{req('Harga beli')}</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
@@ -162,6 +177,7 @@ function NewOrderPage() {
                       size="small"
                       showSearch
                       placeholder="Pilih produk"
+                      error={errors[`lines.${i}.productId`]}
                       options={productOptions}
                       value={l.productId || undefined}
                       onValueChange={(v) =>
@@ -177,6 +193,8 @@ function NewOrderPage() {
                       aria-label={`Jumlah baris ${i + 1}`}
                       size="small"
                       inputMode="numeric"
+                      required
+                      error={errors[`lines.${i}.qty`]}
                       value={l.qty}
                       onChange={(e) => set(i, { qty: e.target.value })}
                     />
@@ -187,6 +205,8 @@ function NewOrderPage() {
                       size="small"
                       prefix="Rp"
                       inputMode="numeric"
+                      required
+                      error={errors[`lines.${i}.unitCost`]}
                       value={l.unitCost}
                       onChange={(e) => set(i, { unitCost: e.target.value })}
                     />
@@ -200,7 +220,10 @@ function NewOrderPage() {
                       type="text"
                       color="danger"
                       disabled={lines.length === 1}
-                      onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
+                      onClick={() => {
+                        setLines((ls) => ls.filter((_, j) => j !== i))
+                        setErrors({}) // line keys shift with the rows
+                      }}
                     >
                       <Icon name="trash" size="sm" />
                     </Button>
@@ -219,7 +242,7 @@ function NewOrderPage() {
           <Button width="auto" htmlType="submit" isLoading={busy}>
             Simpan sebagai draf
           </Button>
-          <Button width="auto" asChild type="outline" color="light">
+          <Button width="auto" asChild type="outline" color="light" disabled={busy}>
             <Link to="/pembelian">Batal</Link>
           </Button>
         </div>

@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
-import { Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
-import { useState } from 'react'
-import { ErrorText, formatDate, LoadError, Page, Pending, useConfirm } from '@/components/pos-page'
+import { Alert, Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
+import { act, formatDate, LoadError, Page, Pending, useConfirm } from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { loadOpname, opnameAction } from '../pembelian/-api'
 import { StatusBadge } from '../pembelian/-ui'
 
@@ -19,32 +19,28 @@ function OpnamePage() {
   const opname = Route.useLoaderData()
   const router = useRouter()
   const navigate = useNavigate()
-  const { confirm, dialog } = useConfirm()
-  const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState(false)
+  const { ask, dialog } = useConfirm()
+  const canManage = useCan('purchasing.manage')
 
-  async function act(action: 'approve' | 'delete') {
-    const ok =
+  const run = (action: 'approve' | 'delete') =>
+    ask(
+      action === 'approve' ? 'Setujui opname?' : 'Hapus draf?',
+      async () => {
+        const r = await act(
+          () => opnameAction({ data: { id: opname.id, action } }),
+          action === 'approve' ? 'Opname disetujui, stok disesuaikan' : 'Draf opname dihapus',
+        )
+        if (!r.ok) return r.error
+        if (action === 'delete') await navigate({ to: '/stok-opname' })
+        else await router.invalidate()
+      },
       action === 'approve'
-        ? await confirm('Setujui opname?', 'Stok disesuaikan sebesar selisihnya dan opname tidak bisa diubah lagi.', {
-            confirm: 'Setujui',
-          })
-        : await confirm('Hapus draf?', 'Draf opname ini dihapus permanen.', {
-            confirm: 'Hapus',
-            danger: true,
-          })
-    if (!ok) return
-    setBusy(true)
-    const r = await opnameAction({ data: { id: opname.id, action } }).catch(() => ({
-      ok: false as const,
-      error: 'Gagal, coba lagi.',
-    }))
-    setBusy(false)
-    if (!r.ok) return setError(r.error)
-    if (action === 'delete') return navigate({ to: '/stok-opname' })
-    setError(undefined)
-    await router.invalidate()
-  }
+        ? {
+            body: 'Stok disesuaikan ke jumlah yang dihitung, terhadap stok saat ini. Opname tidak bisa diubah lagi.',
+            label: 'Setujui',
+          }
+        : { body: 'Draf opname ini dihapus permanen.', label: 'Hapus' },
+    )
 
   return (
     <Page
@@ -55,12 +51,12 @@ function OpnamePage() {
           <Button width="auto" asChild type="outline" color="light">
             <Link to="/stok-opname">Kembali</Link>
           </Button>
-          {opname.status === 'draft' && (
+          {opname.status === 'draft' && canManage && (
             <>
-              <Button width="auto" type="ghost" color="danger" disabled={busy} onClick={() => void act('delete')}>
+              <Button width="auto" type="ghost" color="danger" onClick={() => run('delete')}>
                 Hapus draf
               </Button>
-              <Button width="auto" isLoading={busy} onClick={() => void act('approve')}>
+              <Button width="auto" onClick={() => run('approve')}>
                 Setujui dan sesuaikan stok
               </Button>
             </>
@@ -68,7 +64,11 @@ function OpnamePage() {
         </>
       }
     >
-      <ErrorText>{error}</ErrorText>
+      {opname.status === 'draft' && (
+        <Alert variant="info" treatment="accent">
+          Stok sistem di bawah adalah stok saat ini; penjualan setelah opname disimpan sudah terhitung.
+        </Alert>
+      )}
       <Card variant="outlined" padding="large">
         <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
           <dt className="font-medium">Status</dt>

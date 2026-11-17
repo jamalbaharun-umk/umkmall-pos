@@ -1,18 +1,19 @@
-import { Alert, Button, Dialog, Skeleton, Text } from '@umkmall/ui'
-import { useState, type ReactNode } from 'react'
-
-// Extras the ui-parity-b screens (kasir, pemasok, pembelian, stok-opname) add on top of the shell's page pieces
-// (./page): an inline error, a confirm dialog and the date format.
-
+import { Alert, toast } from '@umkmall/ui'
+import type { ReactNode } from 'react'
 import { Empty as PageEmpty } from './page'
 
+// Extras the ui-parity-b screens (kasir, pemasok, pembelian, stok-opname) add on top of the shell's page pieces
+// (./page, ./confirm): an inline form error, the date format, and the toast + field-error plumbing for forms.
+
 export { Page, PageError as LoadError, PageLoading as Pending, rupiah } from './page'
+export { useConfirm } from './confirm'
+export { check, compact, type FieldErrors } from '../lib/form-checks'
+import type { FieldErrors } from '../lib/form-checks'
+
+export type Outcome = { ok: true } | { ok: false; error: string; errors?: FieldErrors }
 
 export const formatDate = (iso: string) =>
-  new Date(iso).toLocaleString('id-ID', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  })
+  new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
 
 export function Empty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
   return (
@@ -30,43 +31,31 @@ export function ErrorText({ children }: { children?: ReactNode }) {
   ) : null
 }
 
-/** "Are you sure?" before an irreversible action (Filament's requiresConfirmation). */
-export function useConfirm() {
-  const [ask, setAsk] = useState<{
-    title: string
-    body: string
-    confirm: string
-    danger?: boolean
-    resolve: (ok: boolean) => void
-  }>()
-  const confirm = (title: string, body: string, opts: { confirm?: string; danger?: boolean } = {}) =>
-    new Promise<boolean>((resolve) =>
-      setAsk({
-        title,
-        body,
-        confirm: opts.confirm ?? 'Ya, lanjutkan',
-        danger: opts.danger,
-        resolve,
-      }),
-    )
-  const close = (ok: boolean) => {
-    ask?.resolve(ok)
-    setAsk(undefined)
+const OFFLINE = 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.'
+
+/**
+ * Runs one server action for a form or button: a success toast, or a failure toast with the server's message and
+ * its field errors returned for the caller to put on fields. A thrown call (network) becomes a failure, never a hang.
+ */
+export async function act<R extends Outcome>(
+  run: () => Promise<R>,
+  success: string,
+): Promise<{ ok: true; res: R } | { ok: false; error: string; errors: FieldErrors }> {
+  const res: Outcome = await run().catch(() => ({ ok: false as const, error: OFFLINE }))
+  if (res.ok) {
+    toast(success, { variant: 'success' })
+    return { ok: true, res: res as R }
   }
-  const dialog = (
-    <Dialog open={!!ask} onOpenChange={(o) => !o && close(false)} centered size="small" title={ask?.title}>
-      <div className="space-y-4 px-6 pb-6">
-        <p className="text-default-secondary">{ask?.body}</p>
-        <div className="flex justify-end gap-2">
-          <Button width="auto" type="outline" color="light" onClick={() => close(false)}>
-            Batal
-          </Button>
-          <Button width="auto" color={ask?.danger ? 'danger' : 'primary'} onClick={() => close(true)}>
-            {ask?.confirm}
-          </Button>
-        </div>
-      </div>
-    </Dialog>
-  )
-  return { confirm, dialog }
+  toast(res.error, { variant: 'danger' })
+  return { ok: false, error: res.error, errors: res.errors ?? {} }
 }
+
+/** A required marker for controls without a `required` prop (Select): the same red asterisk TextField draws. */
+export const req = (label: string) => (
+  <>
+    {label}
+    <span aria-hidden className="text-default-error">
+      *
+    </span>
+  </>
+)

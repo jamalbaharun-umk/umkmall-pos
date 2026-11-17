@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button, Card, Text, TextField } from '@umkmall/ui'
 import { useState } from 'react'
-import { Empty, ErrorText, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
+import { act, Empty, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { closeShift, loadCurrentShift, type Shift } from './-api'
 import { parseRupiah } from './-money'
 
@@ -20,19 +20,30 @@ function CloseShiftPage() {
   const [busy, setBusy] = useState(false)
   const [closed, setClosed] = useState<Shift>()
 
-  async function submit(e: React.FormEvent) {
+  const { ask, dialog } = useConfirm()
+
+  // Closing cannot be undone: check the count, then confirm (the dialog stays busy until pos-api answers).
+  function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (busy) return
+    if (!counted.trim()) return setError('Wajib diisi')
     const amount = parseRupiah(counted)
-    if (Number.isNaN(amount)) return setError('Isi uang yang dihitung dengan angka.')
-    setBusy(true)
+    if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 150.000')
     setError(undefined)
-    const res = await closeShift({ data: amount }).catch(() => ({
-      ok: false as const,
-      error: 'Gagal menutup shift, coba lagi.',
-    }))
-    setBusy(false)
-    if (!res.ok) return setError(res.error)
-    setClosed(res.data)
+    ask(
+      'Tutup shift?',
+      async () => {
+        setBusy(true)
+        const r = await act(() => closeShift({ data: amount }), 'Shift ditutup')
+        setBusy(false)
+        if (!r.ok) {
+          setError(r.errors.countedCash)
+          return r.error
+        }
+        if (r.res.ok) setClosed(r.res.data)
+      },
+      { body: `Uang dihitung ${rupiah(amount)}. Shift yang ditutup tidak bisa dibuka lagi.`, label: 'Tutup shift' },
+    )
   }
 
   return (
@@ -68,9 +79,11 @@ function CloseShiftPage() {
               <Row label={`Penjualan tunai (${shift.salesCount})`} value={rupiah(shift.cashSales)} />
               <Row label="Seharusnya di laci" value={rupiah(shift.expectedCash)} strong />
             </dl>
-            <form onSubmit={submit} className="mt-5 space-y-4">
+            <form onSubmit={submit} noValidate className="mt-5 space-y-4">
               <TextField
                 label="Uang yang dihitung"
+                required
+                error={error}
                 prefix="Rp"
                 inputMode="numeric"
                 value={counted}
@@ -78,8 +91,7 @@ function CloseShiftPage() {
                 placeholder="0"
                 autoFocus
               />
-              <ErrorText>{error}</ErrorText>
-              <Button htmlType="submit" width="full" color="danger" isLoading={busy} disabled={counted.trim() === ''}>
+              <Button htmlType="submit" width="full" color="danger" isLoading={busy}>
                 Tutup shift
               </Button>
               <Button asChild type="text" width="full">
@@ -89,6 +101,7 @@ function CloseShiftPage() {
           </>
         )}
       </Card>
+      {dialog}
     </Page>
   )
 }

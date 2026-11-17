@@ -13,8 +13,8 @@ import {
   TextField,
   toast,
 } from '@umkmall/ui'
-import { useMemo, useState } from 'react'
-import { Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
+import { useEffect, useMemo, useState } from 'react'
+import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
 import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
 import { numpadEdit, parseRupiah, quickAmounts, taxOf } from './-money'
@@ -41,16 +41,14 @@ function OpenShift() {
   const [busy, setBusy] = useState(false)
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (busy) return
     const amount = parseRupiah(cash || '0')
-    if (Number.isNaN(amount)) return setError('Isi uang awal dengan angka.')
+    if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 100.000')
     setBusy(true)
     setError(undefined)
-    const res = await openShift({ data: amount }).catch(() => ({
-      ok: false as const,
-      error: 'Gagal membuka shift, coba lagi.',
-    }))
+    const r = await act(() => openShift({ data: amount }), 'Shift dibuka. Selamat berjualan!')
     setBusy(false)
-    if (!res.ok) return setError(res.error)
+    if (!r.ok) return setError(r.errors.openingCash ?? r.error)
     await router.invalidate()
   }
   return (
@@ -60,17 +58,17 @@ function OpenShift() {
           Buka laci kas
         </Text>
         <p className="mt-1 text-sm text-default-secondary">Hitung uang di laci sebelum mulai berjualan.</p>
-        <form onSubmit={submit} className="mt-5 space-y-4">
+        <form onSubmit={submit} noValidate className="mt-5 space-y-4">
           <TextField
             label="Uang awal di laci"
             prefix="Rp"
             inputMode="numeric"
             value={cash}
             onChange={(e) => setCash(e.target.value)}
+            error={error}
             placeholder="0"
             autoFocus
           />
-          <ErrorText>{error}</ErrorText>
           <Button htmlType="submit" width="full" size="large" isLoading={busy}>
             Buka shift
           </Button>
@@ -96,8 +94,10 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const [paid, setPaid] = useState<{ id: string; change: number }>()
   const [member, setMember] = useState<MemberOption | null>(null)
   const [voucher, setVoucher] = useState<AppliedVoucher | null>(null)
-  // One key per order: a double tap or a retry after a network error sends the same key, so one sale.
+  // One key per request: a double tap or a retry of the same order sends the same key, so one sale. Any change to the
+  // cart, note, member or voucher is a new request and gets a new key (pos-api refuses a known key with another body).
   const [key, setKey] = useState(() => crypto.randomUUID())
+  useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher])
 
   const categories = useMemo(
     () =>
@@ -309,7 +309,9 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
 
         <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
           <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
-          {voucher && <Row label="Voucher" value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>} />}
+          {voucher && (
+            <Row label="Voucher" value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>} />
+          )}
           <Row label="Pajak" value={<span className="text-default-brand">{taxBps / 100}%</span>} />
           <div className="flex justify-between border-t border-default-primary pt-2 text-base font-bold">
             <dt>Total</dt>
@@ -449,18 +451,22 @@ function PayDialog({
   const isExact = method?.kind === 'debit' || method?.kind === 'wallet'
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  // The server computes the total; when it disagrees with this screen (a price changed), its figure is shown and due.
+  const [serverTotal, setServerTotal] = useState<number>()
+  const due = serverTotal ?? total
   const paid = parseRupiah(paidText)
-  const change = Number.isNaN(paid) ? null : paid - total
+  const change = Number.isNaN(paid) ? null : paid - due
 
   async function pay(amount: number) {
     if (busy) return
     if (isCredit) {
       if (!member) return setError('Pilih member untuk kasbon.')
       if (!paidText.trim()) amount = 0 // no down payment
-      if (Number.isNaN(amount) || amount >= total) return setError('Kasbon harus menyisakan sisa tagihan.')
+      if (Number.isNaN(amount) || amount >= due) return setError('Kasbon harus menyisakan sisa tagihan.')
     } else if (isExact) {
-      amount = total
-    } else if (Number.isNaN(amount) || amount < total) return setError('Uang yang dibayar kurang dari total.')
+      amount = due
+    } else if (Number.isNaN(amount)) return setError('Isi uang diterima dengan angka.')
+    else if (amount < due) return setError('Uang dibayar kurang dari total')
     setBusy(true)
     setError(undefined)
     const res = await createSale({
@@ -476,13 +482,20 @@ function PayDialog({
     }).catch(() => ({
       ok: false as const,
       error: 'Tidak bisa terhubung. Coba lagi: penjualan tidak akan tercatat dua kali.',
+      total: undefined,
+      errors: undefined,
     }))
     setBusy(false)
     if (!res.ok) {
       toast(res.error, { variant: 'danger' })
+      if (res.total !== undefined && res.total !== due) {
+        setServerTotal(res.total)
+        return setError(`Harga berubah: total terbaru ${rupiah(res.total)}. Periksa lalu bayar lagi.`)
+      }
       return setError(res.error)
     }
-    onPaid({ id: res.data.id, change: Math.max(amount - total, 0) })
+    toast('Pembayaran berhasil', { variant: 'success' })
+    onPaid({ id: res.data.id, change: Math.max(res.data.change, 0) })
   }
 
   return (
@@ -521,12 +534,15 @@ function PayDialog({
           <dl className="space-y-1 text-sm">
             <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
             {voucher && (
-              <Row label={`Voucher ${voucher.code}`} value={<span className="text-default-brand">−{rupiah(voucher.discount)}</span>} />
+              <Row
+                label={`Voucher ${voucher.code}`}
+                value={<span className="text-default-brand">−{rupiah(voucher.discount)}</span>}
+              />
             )}
             <Row label={`Pajak ${taxBps / 100}%`} value={<span className="text-default-brand">{rupiah(tax)}</span>} />
             <div className="flex justify-between border-t border-default-primary pt-2 font-bold">
               <dt>Total</dt>
-              <dd className="text-default-brand">{rupiah(total)}</dd>
+              <dd className="text-default-brand">{rupiah(due)}</dd>
             </div>
           </dl>
           <TextField
@@ -544,7 +560,7 @@ function PayDialog({
               className={`font-bold ${change !== null && change < 0 ? 'text-default-error' : 'text-default-success'}`}
             >
               {isCredit
-                ? rupiah(Math.max(total - (Number.isNaN(paid) ? 0 : paid), 0))
+                ? rupiah(Math.max(due - (Number.isNaN(paid) ? 0 : paid), 0))
                 : change === null
                   ? '—'
                   : change < 0
@@ -553,8 +569,8 @@ function PayDialog({
             </span>
           </p>
           <div className="grid grid-cols-3 gap-2" aria-label="Nominal cepat">
-            {quickAmounts(total)
-              .filter((n) => n !== total)
+            {quickAmounts(due)
+              .filter((n) => n !== due)
               .map((n) => (
                 <Button
                   width="auto"
@@ -570,10 +586,10 @@ function PayDialog({
           </div>
           <Button
             width="full"
-            type={paid === total ? 'primary' : 'outline'}
-            color={paid === total ? 'primary' : 'light'}
+            type={paid === due ? 'primary' : 'outline'}
+            color={paid === due ? 'primary' : 'light'}
             disabled={busy}
-            onClick={() => setPaidText(String(total))}
+            onClick={() => setPaidText(String(due))}
           >
             Uang pas
           </Button>

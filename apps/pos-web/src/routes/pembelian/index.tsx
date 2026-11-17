@@ -13,6 +13,7 @@ import {
 } from '@umkmall/ui'
 import { useState } from 'react'
 import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { loadOrders } from './-api'
 import { inDays, STATUS_OPTIONS, StatusBadge } from './-ui'
 
@@ -27,6 +28,7 @@ export const Route = createFileRoute('/pembelian/')({
 const ALL = 'semua'
 
 function OrdersPage() {
+  const canManage = useCan('purchasing.manage')
   const orders = Route.useLoaderData()
   const navigate = useNavigate()
   const [status, setStatus] = useState(ALL)
@@ -41,9 +43,11 @@ function OrdersPage() {
       crumbs={[{ label: 'Pembelian', to: '/pembelian' }, { label: 'Daftar' }]}
       title="Pembelian"
       actions={
-        <Button width="auto" asChild>
-          <Link to="/pembelian/baru">Pembelian baru</Link>
-        </Button>
+        canManage && (
+          <Button width="auto" asChild>
+            <Link to="/pembelian/baru">Pembelian baru</Link>
+          </Button>
+        )
       }
     >
       <Card variant="outlined" padding="none">
@@ -108,7 +112,7 @@ function OrdersPage() {
                   <TableCell className="font-medium">{o.supplierName}</TableCell>
                   <TableCell>{formatDate(o.createdAt)}</TableCell>
                   <TableCell>{o.paymentMethod ?? '–'}</TableCell>
-                  <TableCell className="text-right">{rupiah(o.total)}</TableCell>
+                  <TableCell className="text-right">{o.total === undefined ? '–' : rupiah(o.total)}</TableCell>
                   <TableCell>
                     <StatusBadge status={o.status} />
                   </TableCell>

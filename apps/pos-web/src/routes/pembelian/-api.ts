@@ -11,13 +11,13 @@ export type OrderSummary = {
   status: OrderStatus
   supplierName: string
   paymentMethod: string | null
-  total: number
+  total?: number // absent without purchasing.manage / reports.view
   createdAt: string
 }
 export type Order = OrderSummary & {
   note: string | null
   approvedAt: string | null
-  lines: { id: string; productName: string; sku: string; qty: number; unitCost: number }[]
+  lines: { id: string; productName: string; sku: string; qty: number; unitCost?: number }[]
 }
 export type OpnameSummary = { id: string; status: 'draft' | 'approved'; note: string | null; createdAt: string }
 export type Opname = OpnameSummary & {
@@ -33,7 +33,7 @@ export type Opname = OpnameSummary & {
   }[]
 }
 export type StockProduct = { id: string; name: string; sku: string; costPrice: number }
-export type Result = { ok: true; id?: string } | { ok: false; error: string }
+export type Result = { ok: true; id?: string } | { ok: false; error: string; errors?: Record<string, string> }
 
 const ERRORS: Record<number, string> = {
   403: 'Kamu tidak punya izin untuk ini.',
@@ -53,10 +53,14 @@ async function mutate(path: string, method: string, body?: unknown): Promise<Res
     const json = (await res.json().catch(() => ({}))) as { id?: string }
     return { ok: true, id: json.id }
   }
-  const err = (await res.json().catch(() => ({}))) as { message?: unknown }
-  // 409 and stock 422 ("Stok tidak cukup") carry a safe Indonesian message from pos-api.
-  if ((res.status === 409 || res.status === 422) && typeof err.message === 'string' && err.message !== 'Data tidak valid')
-    return { ok: false, error: err.message }
+  const err = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown }
+  // 409 and 422 carry a safe Indonesian message and per-field errors from pos-api.
+  if ((res.status === 409 || res.status === 422) && typeof err.message === 'string')
+    return {
+      ok: false,
+      error: err.message,
+      errors: err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined,
+    }
   return { ok: false, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
 }
 

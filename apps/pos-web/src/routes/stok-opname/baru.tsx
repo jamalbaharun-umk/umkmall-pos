@@ -15,8 +15,20 @@ import {
   TextField,
 } from '@umkmall/ui'
 import { useState, type FormEvent } from 'react'
-import { Empty, ErrorText, LoadError, Page, Pending } from '@/components/pos-page'
+import {
+  act,
+  check,
+  compact,
+  Empty,
+  ErrorText,
+  type FieldErrors,
+  LoadError,
+  Page,
+  Pending,
+  req,
+} from '@/components/pos-page'
 import { createOpname, loadOpnameForm } from '../pembelian/-api'
+import { type OpnameLine as Line, validateOpname } from '../pembelian/-validate'
 
 // Lakasir's create stock opname plus its items (product, counted qty, reason) on one screen.
 export const Route = createFileRoute('/stok-opname/baru')({
@@ -26,7 +38,6 @@ export const Route = createFileRoute('/stok-opname/baru')({
   errorComponent: LoadError,
 })
 
-type Line = { productId: string; countedQty: string; reason: string }
 const blank = (): Line => ({ productId: '', countedQty: '', reason: '' })
 
 function NewOpnamePage() {
@@ -34,6 +45,7 @@ function NewOpnamePage() {
   const navigate = useNavigate()
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([blank()])
+  const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
 
@@ -64,32 +76,40 @@ function NewOpnamePage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    const parsed = lines.map((l) => ({
-      productId: l.productId,
-      countedQty: /^\d+$/.test(l.countedQty.trim()) ? Number(l.countedQty.trim()) : NaN,
-      reason: l.reason.trim() || null,
-    }))
-    if (parsed.some((l) => !l.productId || Number.isNaN(l.countedQty)))
-      return setError('Lengkapi produk dan jumlah hitungan (bilangan bulat, boleh 0).')
-    if (new Set(parsed.map((l) => l.productId)).size !== parsed.length) return setError('Satu produk cukup satu baris.')
+    if (busy) return
+    const local = validateOpname(lines)
+    setErrors(local)
+    if (Object.keys(local).length) return setError('Periksa kembali isian yang ditandai.')
     setBusy(true)
-    const r = await createOpname({
-      data: { note: note.trim() || null, lines: parsed },
-    }).catch(() => ({
-      ok: false as const,
-      error: 'Gagal menyimpan, coba lagi.',
-    }))
+    setError(undefined)
+    const r = await act(
+      () =>
+        createOpname({
+          data: {
+            note: note.trim() || null,
+            lines: lines.map((l) => ({
+              productId: l.productId,
+              countedQty: Number(l.countedQty.trim()),
+              reason: l.reason.trim() || null,
+            })),
+          },
+        }),
+      'Opname disimpan sebagai draf',
+    )
     setBusy(false)
-    if (!r.ok) return setError(r.error)
-    await navigate({ to: '/stok-opname/$id', params: { id: r.id! } })
+    if (!r.ok) {
+      setErrors(r.errors)
+      return setError(r.error)
+    }
+    if (r.res.ok) await navigate({ to: '/stok-opname/$id', params: { id: r.res.id! } })
   }
 
   return (
     <Page crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Buat' }]} title="Stok opname baru">
       <Alert variant="info" treatment="accent">
-        Stok sistem dicatat saat kamu menyimpan. Selisihnya baru diterapkan setelah opname disetujui.
+        Jumlah yang kamu hitung menggantikan stok saat opname disetujui; penjualan sebelum itu ikut terhitung.
       </Alert>
-      <form onSubmit={submit} className="space-y-6">
+      <form onSubmit={submit} noValidate className="space-y-6">
         <Card variant="outlined" padding="large">
           <TextField
             label="Catatan"
@@ -97,6 +117,7 @@ function NewOpnamePage() {
             rows={2}
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            error={errors.note}
             maxLength={500}
             placeholder="Misal: hitung akhir bulan, rak depan"
           />
@@ -113,8 +134,8 @@ function NewOpnamePage() {
           <Table density="comfortable">
             <TableHeader>
               <TableRow>
-                <TableHead>Produk</TableHead>
-                <TableHead className="w-32">Jumlah dihitung</TableHead>
+                <TableHead>{req('Produk')}</TableHead>
+                <TableHead className="w-32">{req('Jumlah dihitung')}</TableHead>
                 <TableHead>Alasan</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
@@ -129,6 +150,7 @@ function NewOpnamePage() {
                       size="small"
                       showSearch
                       placeholder="Pilih produk"
+                      error={errors[`lines.${i}.productId`]}
                       options={productOptions}
                       value={l.productId || undefined}
                       onValueChange={(v) => set(i, { productId: v })}
@@ -139,6 +161,8 @@ function NewOpnamePage() {
                       aria-label={`Jumlah dihitung baris ${i + 1}`}
                       size="small"
                       inputMode="numeric"
+                      required
+                      error={errors[`lines.${i}.countedQty`]}
                       value={l.countedQty}
                       onChange={(e) => set(i, { countedQty: e.target.value })}
                     />
@@ -148,6 +172,7 @@ function NewOpnamePage() {
                       aria-label={`Alasan baris ${i + 1}`}
                       size="small"
                       placeholder="Rusak, hilang, kedaluwarsa…"
+                      error={errors[`lines.${i}.reason`]}
                       value={l.reason}
                       onChange={(e) => set(i, { reason: e.target.value })}
                       maxLength={200}
@@ -161,7 +186,10 @@ function NewOpnamePage() {
                       type="text"
                       color="danger"
                       disabled={lines.length === 1}
-                      onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
+                      onClick={() => {
+                        setLines((ls) => ls.filter((_, j) => j !== i))
+                        setErrors({}) // line keys shift with the rows
+                      }}
                     >
                       <Icon name="trash" size="sm" />
                     </Button>
@@ -176,7 +204,7 @@ function NewOpnamePage() {
           <Button width="auto" htmlType="submit" isLoading={busy}>
             Simpan sebagai draf
           </Button>
-          <Button width="auto" asChild type="outline" color="light">
+          <Button width="auto" asChild type="outline" color="light" disabled={busy}>
             <Link to="/stok-opname">Batal</Link>
           </Button>
         </div>

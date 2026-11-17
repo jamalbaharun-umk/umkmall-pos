@@ -52,22 +52,30 @@ export type Receipt = {
   change: number
   note: string | null
 }
-export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string }
+export type Result<T = undefined> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; errors?: Record<string, string>; total?: number }
 
 const ERRORS: Record<number, string> = {
   403: 'Kamu tidak punya izin untuk berjualan.',
   404: 'Data tidak ditemukan.',
 }
 
-/** pos-api's 409/422 messages are Indonesian and internals-free: show them as they are. */
-async function errorOf(res: Response): Promise<string> {
+type Refusal = { error: string; errors?: Record<string, string>; total?: number }
+
+/** pos-api's 409/422 bodies are Indonesian and internals-free (`{ message, errors, total? }`): pass them on. */
+async function refusalOf(res: Response): Promise<Refusal> {
   if (res.status === 409 || res.status === 422) {
-    const body = (await res.json().catch(() => null)) as { message?: unknown } | null
-    if (typeof body?.message === 'string' && body.message !== 'Data tidak valid') return body.message
-    return 'Data belum benar. Periksa isian kamu.'
+    const body = (await res.json().catch(() => null)) as { message?: unknown; errors?: unknown; total?: unknown } | null
+    return {
+      error: typeof body?.message === 'string' ? body.message : 'Data belum benar. Periksa isian kamu.',
+      errors: body?.errors && typeof body.errors === 'object' ? (body.errors as Record<string, string>) : undefined,
+      total: typeof body?.total === 'number' ? body.total : undefined,
+    }
   }
-  return ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.'
+  return { error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }
 }
+const errorOf = async (res: Response) => (await refusalOf(res)).error
 
 async function load<T>(path: string): Promise<T> {
   const res = await api(path)
@@ -78,7 +86,7 @@ async function load<T>(path: string): Promise<T> {
 async function send<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Result<T>> {
   const res = await api(path, { method: 'POST', body: JSON.stringify(body), headers }).catch(() => null)
   if (!res) return { ok: false, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
-  if (!res.ok) return { ok: false, error: await errorOf(res) }
+  if (!res.ok) return { ok: false, ...(await refusalOf(res)) }
   return { ok: true, data: (await res.json()) as T }
 }
 
@@ -114,7 +122,7 @@ type SaleInput = {
 }
 export const createSale = createServerFn({ method: 'POST' })
   .validator((d: SaleInput) => d)
-  .handler(({ data: { key, ...body } }) => send<{ id: string }>('/sales', body, { 'idempotency-key': key }))
+  .handler(({ data: { key, ...body } }) => send<{ id: string; change: number }>('/sales', body, { 'idempotency-key': key }))
 
 export const loadReceipt = createServerFn()
   .validator((id: string) => id)

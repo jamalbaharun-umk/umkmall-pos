@@ -13,6 +13,7 @@ import {
 } from '@umkmall/ui'
 import { useState } from 'react'
 import { Empty, formatDate, LoadError, Page, Pending } from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { loadOpnames } from '../pembelian/-api'
 import { inDays, StatusBadge } from '../pembelian/-ui'
 
@@ -32,6 +33,7 @@ const STATUSES = [
 ]
 
 function OpnamesPage() {
+  const canManage = useCan('purchasing.manage')
   const opnames = Route.useLoaderData()
   const navigate = useNavigate()
   const [status, setStatus] = useState(ALL)
@@ -45,9 +47,11 @@ function OpnamesPage() {
       crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Daftar' }]}
       title="Stok opname"
       actions={
-        <Button width="auto" asChild>
-          <Link to="/stok-opname/baru">Stok opname baru</Link>
-        </Button>
+        canManage && (
+          <Button width="auto" asChild>
+            <Link to="/stok-opname/baru">Stok opname baru</Link>
+          </Button>
+        )
       }
     >
       <Card variant="outlined" padding="none">

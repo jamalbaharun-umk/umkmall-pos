@@ -12,7 +12,19 @@ import {
   TextField,
 } from '@umkmall/ui'
 import { useState, type FormEvent } from 'react'
-import { Empty, ErrorText, LoadError, Page, Pending, useConfirm } from '@/components/pos-page'
+import {
+  act,
+  check,
+  compact,
+  Empty,
+  ErrorText,
+  type FieldErrors,
+  LoadError,
+  Page,
+  Pending,
+  useConfirm,
+} from '@/components/pos-page'
+import { useCan } from '@/components/shell'
 import { deleteSupplier, loadSuppliers, saveSupplier, type Supplier } from '../pembelian/-api'
 
 // Lakasir's Suppliers resource: a table (name, phone, address) with edit/delete row actions and a modal form.
@@ -24,39 +36,41 @@ export const Route = createFileRoute('/pemasok/')({
 })
 
 function SuppliersPage() {
+  const canManage = useCan('purchasing.manage')
   const suppliers = Route.useLoaderData()
   const router = useRouter()
-  const { confirm, dialog } = useConfirm()
+  const { ask, dialog } = useConfirm()
   const [editing, setEditing] = useState<Supplier | 'new' | null>(null)
   const [q, setQ] = useState('')
-  const [error, setError] = useState<string>()
   const s = q.trim().toLowerCase()
   const shown = s
     ? suppliers.filter((x) => [x.name, x.phone, x.address].some((v) => v?.toLowerCase().includes(s)))
     : suppliers
 
-  async function remove(sup: Supplier) {
-    if (
-      !(await confirm(`Hapus ${sup.name}?`, 'Pembelian lamanya tetap tersimpan.', { confirm: 'Hapus', danger: true }))
+  // The confirm dialog holds its button busy while this runs: no double delete.
+  const remove = (sup: Supplier) =>
+    ask(
+      `Hapus ${sup.name}?`,
+      async () => {
+        const r = await act(() => deleteSupplier({ data: sup.id }), `${sup.name} dihapus`)
+        if (!r.ok) return r.error
+        await router.invalidate()
+      },
+      { body: 'Pembelian lamanya tetap tersimpan.' },
     )
-      return
-    const r = await deleteSupplier({ data: sup.id })
-    if (!r.ok) return setError(r.error)
-    setError(undefined)
-    await router.invalidate()
-  }
 
   return (
     <Page
       crumbs={[{ label: 'Pemasok', to: '/pemasok' }, { label: 'Daftar' }]}
       title="Pemasok"
       actions={
-        <Button width="auto" onClick={() => setEditing('new')}>
-          Pemasok baru
-        </Button>
+        canManage && (
+          <Button width="auto" onClick={() => setEditing('new')}>
+            Pemasok baru
+          </Button>
+        )
       }
     >
-      <ErrorText>{error}</ErrorText>
       <Card variant="outlined" padding="none">
         <div className="flex justify-end p-4">
           <div className="w-full sm:w-72">
@@ -92,12 +106,16 @@ function SuppliersPage() {
                   <TableCell>{sup.phone ?? '–'}</TableCell>
                   <TableCell className="max-w-xs truncate">{sup.address ?? '–'}</TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    <Button width="auto" size="small" type="text" onClick={() => setEditing(sup)}>
-                      Ubah
-                    </Button>
-                    <Button width="auto" size="small" type="text" color="danger" onClick={() => void remove(sup)}>
-                      Hapus
-                    </Button>
+                    {canManage && (
+                      <>
+                        <Button width="auto" size="small" type="text" onClick={() => setEditing(sup)}>
+                          Ubah
+                        </Button>
+                        <Button width="auto" size="small" type="text" color="danger" onClick={() => remove(sup)}>
+                          Hapus
+                        </Button>
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -128,6 +146,14 @@ function SuppliersPage() {
   )
 }
 
+// Mirrors pos-api's SupplierInput: name 1–120, phone ≤ 30, address ≤ 500.
+const validateSupplier = (v: { name: string; phone: string; address: string }) =>
+  compact({
+    name: check.required(v.name) ?? (v.name.trim().length > 120 ? 'Maksimal 120 karakter' : undefined),
+    phone: v.phone.trim().length > 30 ? 'Maksimal 30 karakter' : undefined,
+    address: v.address.trim().length > 500 ? 'Maksimal 500 karakter' : undefined,
+  })
+
 function SupplierForm({
   supplier,
   onDone,
@@ -137,45 +163,59 @@ function SupplierForm({
   onDone: () => Promise<void>
   onCancel: () => void
 }) {
-  const [name, setName] = useState(supplier?.name ?? '')
-  const [phone, setPhone] = useState(supplier?.phone ?? '')
-  const [address, setAddress] = useState(supplier?.address ?? '')
+  const [v, setV] = useState({
+    name: supplier?.name ?? '',
+    phone: supplier?.phone ?? '',
+    address: supplier?.address ?? '',
+  })
+  const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const set = (k: keyof typeof v) => (e: { target: { value: string } }) => setV((x) => ({ ...x, [k]: e.target.value }))
 
   async function submit(e: FormEvent) {
     e.preventDefault()
+    if (busy) return
+    const local = validateSupplier(v)
+    setErrors(local)
+    if (Object.keys(local).length) return setError('Periksa kembali isian yang ditandai.')
     setBusy(true)
-    const r = await saveSupplier({
-      data: {
-        id: supplier?.id,
-        name,
-        phone: phone.trim() || null,
-        address: address.trim() || null,
-      },
-    }).catch(() => ({
-      ok: false as const,
-      error: 'Gagal menyimpan, coba lagi.',
-    }))
+    const r = await act(
+      () =>
+        saveSupplier({
+          data: {
+            id: supplier?.id,
+            name: v.name.trim(),
+            phone: v.phone.trim() || null,
+            address: v.address.trim() || null,
+          },
+        }),
+      supplier ? 'Pemasok diperbarui' : 'Pemasok ditambahkan',
+    )
     setBusy(false)
-    if (!r.ok) return setError(r.error)
+    if (!r.ok) {
+      setErrors(r.errors)
+      return setError(r.error)
+    }
     await onDone()
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4 px-6 pb-6">
+    <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">
       <TextField
         label="Nama"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
         required
+        value={v.name}
+        onChange={set('name')}
+        error={errors.name}
         maxLength={120}
         autoFocus
       />
       <TextField
         label="Nomor telepon"
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
+        value={v.phone}
+        onChange={set('phone')}
+        error={errors.phone}
         inputMode="tel"
         maxLength={30}
       />
@@ -183,8 +223,9 @@ function SupplierForm({
         label="Alamat"
         multiline
         rows={2}
-        value={address}
-        onChange={(e) => setAddress(e.target.value)}
+        value={v.address}
+        onChange={set('address')}
+        error={errors.address}
         maxLength={500}
       />
       <ErrorText>{error}</ErrorText>
@@ -192,7 +233,7 @@ function SupplierForm({
         <Button width="auto" htmlType="submit" isLoading={busy}>
           Simpan
         </Button>
-        <Button width="auto" type="outline" color="light" onClick={onCancel}>
+        <Button width="auto" type="outline" color="light" disabled={busy} onClick={onCancel}>
           Batal
         </Button>
       </div>
