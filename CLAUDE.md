@@ -67,8 +67,12 @@ silent, follow the monorepo's principles.
 - **No `console`** in `src/` (lint + guard). Never log tokens, PINs, phone numbers or customer names.
 - **Erasure:** the tenant FK to `public.users` is `ON DELETE RESTRICT`; a store is erased by the U8 purge,
   which must cover every new table and every stored image.
-- **Licence:** keep `LICENSE`/`NOTICE`. `pos-web` imports no `@umkmall/*` package (open GPL question); reuse
-  UMKMall token values only (`apps/pos-web/src/styles/app.css`).
+- **Licence:** keep `LICENSE`/`NOTICE`.
+- **UI is `@umkmall/ui` + the admin theme** (owner decision 2026-11-17): build screens from `@umkmall/ui`
+  (`/primitives`, `/compositions`, `/layouts`), styled by `apps/pos-web/src/styles/app.css` (a copy of the UMKMall
+  admin dashboard css). The package is a vendored copy in `packages/ui` (see its `POS-COPY.md`): never edit it here.
+  Layout and flows follow Lakasir screen by screen (`~/Documents/lakasir-test`, running at http://localhost:8090).
+  The GPL-3 implication of bundling it is noted on UMK-1924 for legal.
 - **Copy is Indonesian,** every screen has loading, empty and error states.
 
 ## Commands

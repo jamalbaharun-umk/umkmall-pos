@@ -1,7 +1,301 @@
+/*
+ * Copied verbatim from UMKMall apps/admin-dashboard/src/styles/app.css (monorepo commit 2f46a4230) so the POS uses
+ * the admin dashboard theme and the vendored @umkmall/ui (packages/ui). Owner decision 2026-11-17 (UMK-1924).
+ * Keep it in step with the admin file until @umkmall/ui is published as a package.
+ */
 @import "tailwindcss";
+@import "tw-animate-css";
+/*
+ * @umkmall/ui on Tailwind v4 (UMK-1192). tokens.css supplies the channel variables
+ * (--surface-*, --text-*, …) the theme's colours read; theme.v4.css is generated from the
+ * library's preset and leaves admin's breakpoints, --color-border and --font-sans alone.
+ * Two source lines, as design's config lists them: the workspace path for local dev, and the
+ * hoisted install at the repo root for the deployed image. ui-source.test.ts pins each one.
+ */
+@import "@umkmall/ui/tokens.css";
+@import "@umkmall/ui/theme.v4.css";
+@source "../../../../packages/ui/src";
+@source "../../../../node_modules/@umkmall/ui/src";
 
-/* UMKMall token VALUES only (no @umkmall/* import: the GPL-3 question on UMK-1924 is open).
-   Channels as "R G B" so Tailwind can apply opacity, same shape as UMKMall's tokens.css. */
+@custom-variant dark (&:is(.dark *));
+
+html, body {
+  width: 100%;
+  min-height: 100svh;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * cmdk list scroll — the Tailwind arbitrary value `max-h-[300px]` on
+ * the CommandList component is unreliable in Tailwind v4 (JIT skips it
+ * inconsistently across the monorepo), leaving the combobox dropdown
+ * unscrollable. This raw CSS rule guarantees the cap. `!important` is
+ * used because cmdk's runtime sets `height: var(--cmdk-list-height)`
+ * inline on the same element, and we need to ensure clipping wins.
+ */
+[cmdk-list] {
+  max-height: 300px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+:root {
+  --background: oklch(1.0000 0 0);
+  --foreground: oklch(0.2435 0 0);
+  --card: oklch(1.0000 0 0);
+  --card-foreground: oklch(0.2435 0 0);
+  --popover: oklch(1.0000 0 0);
+  --popover-foreground: oklch(0.2435 0 0);
+  --primary: oklch(0.5850 0.2350 262.0000);
+  --primary-foreground: oklch(1.0000 0 0);
+  --secondary: oklch(0.9400 0.0500 255.0000);
+  --secondary-foreground: oklch(0.4000 0.1200 262.0000);
+  --muted: oklch(0.9521 0.0100 250.0000);
+  --muted-foreground: oklch(0.5032 0 0);
+  --accent: oklch(0.9500 0.0350 258.0000);
+  --accent-foreground: oklch(0.2435 0 0);
+  --destructive: oklch(0.6271 0.1936 33.3390);
+  --destructive-foreground: oklch(1.0000 0 0);
+  --border: oklch(0.9200 0.0150 250.0000);
+  --input: oklch(0.9200 0.0150 250.0000);
+  --ring: oklch(0.5850 0.2350 262.0000);
+  --chart-1: oklch(0.5850 0.2350 262.0000);
+  --chart-2: oklch(0.6500 0.2000 245.0000);
+  --chart-3: oklch(0.7200 0.1600 230.0000);
+  --chart-4: oklch(0.7800 0.1200 255.0000);
+  --chart-5: oklch(0.4800 0.2100 270.0000);
+  --radius: 0.75rem;
+  --sidebar: oklch(1.0000 0 0);
+  --sidebar-foreground: oklch(0.3500 0.0300 262.0000);
+  --sidebar-primary: oklch(0.5850 0.2350 262.0000);
+  --sidebar-primary-foreground: oklch(1.0000 0 0);
+  --sidebar-accent: oklch(0.9500 0.0300 250.0000);
+  --sidebar-accent-foreground: oklch(0.3500 0.1200 262.0000);
+  --sidebar-border: oklch(0.9200 0.0200 250.0000);
+  --sidebar-ring: oklch(0.5850 0.2350 262.0000);
+  --font-sans: 'Be Vietnam Pro', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --shadow-color: oklch(0 0 0);
+  --shadow-opacity: 0.1;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0;
+  --shadow-offset-y: 1px;
+  --letter-spacing: 0em;
+  --spacing: 0.25rem;
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em;
+}
+
+.dark {
+  --background: oklch(0.1500 0.0150 262.0000);
+  --foreground: oklch(0.9491 0 0);
+  --card: oklch(0.2000 0.0120 262.0000);
+  --card-foreground: oklch(0.9491 0 0);
+  --popover: oklch(0.2000 0.0120 262.0000);
+  --popover-foreground: oklch(0.9491 0 0);
+  --primary: oklch(0.7500 0.1800 255.0000);
+  --primary-foreground: oklch(0.1500 0.0400 260.0000);
+  --secondary: oklch(0.3200 0.0450 258.0000);
+  --secondary-foreground: oklch(0.8800 0.0900 255.0000);
+  --muted: oklch(0.2300 0.0100 262.0000);
+  --muted-foreground: oklch(0.7699 0 0);
+  --accent: oklch(0.2500 0.0300 262.0000);
+  --accent-foreground: oklch(0.9491 0 0);
+  --destructive: oklch(0.6271 0.1936 33.3390);
+  --destructive-foreground: oklch(1.0000 0 0);
+  --border: oklch(0.2600 0.0200 262.0000);
+  --input: oklch(0.3000 0.0150 262.0000);
+  --ring: oklch(0.7500 0.1800 255.0000);
+  --chart-1: oklch(0.7500 0.1800 255.0000);
+  --chart-2: oklch(0.6500 0.1500 242.0000);
+  --chart-3: oklch(0.5000 0.1300 270.0000);
+  --chart-4: oklch(0.7000 0.1500 250.0000);
+  --chart-5: oklch(0.8500 0.1200 248.0000);
+  --sidebar: oklch(0.1800 0.0150 262.0000);
+  --sidebar-foreground: oklch(0.9200 0.0100 258.0000);
+  --sidebar-primary: oklch(0.6500 0.2000 258.0000);
+  --sidebar-primary-foreground: oklch(1.0000 0 0);
+  --sidebar-accent: oklch(0.2400 0.0200 262.0000);
+  --sidebar-accent-foreground: oklch(0.9200 0.0100 258.0000);
+  --sidebar-border: oklch(0.2600 0.0180 262.0000);
+  --sidebar-ring: oklch(0.7500 0.1800 255.0000);
+  --radius: 0.75rem;
+  --font-sans: 'Be Vietnam Pro', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --shadow-color: oklch(0 0 0);
+  --shadow-opacity: 0.1;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0;
+  --shadow-offset-y: 1px;
+  --letter-spacing: 0em;
+  --spacing: 0.25rem;
+  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10);
+  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
+  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
+  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: 'Be Vietnam Pro', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --radius: 0.5rem;
+  --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
+  --tracking-tight: calc(var(--tracking-normal) - 0.025em);
+  --tracking-wide: calc(var(--tracking-normal) + 0.025em);
+  --tracking-wider: calc(var(--tracking-normal) + 0.05em);
+  --tracking-widest: calc(var(--tracking-normal) + 0.1em);
+  --tracking-normal: var(--tracking-normal);
+  --shadow-2xl: var(--shadow-2xl);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-md: var(--shadow-md);
+  --shadow: var(--shadow);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-2xs: var(--shadow-2xs);
+  --spacing: var(--spacing);
+  --letter-spacing: var(--letter-spacing);
+  --shadow-offset-y: var(--shadow-offset-y);
+  --shadow-offset-x: var(--shadow-offset-x);
+  --shadow-spread: var(--shadow-spread);
+  --shadow-blur: var(--shadow-blur);
+  --shadow-opacity: var(--shadow-opacity);
+  --color-shadow-color: var(--shadow-color);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    letter-spacing: var(--tracking-normal);
+  }
+}
+
+/* Glassmorphism dashboard background */
+[data-slot="sidebar-wrapper"] {
+  background: oklch(1.0000 0 0);
+}
+
+.dark [data-slot="sidebar-wrapper"] {
+  background: linear-gradient(135deg,
+    oklch(0.1500 0.0200 262) 0%,
+    oklch(0.1300 0.0250 250) 50%,
+    oklch(0.1600 0.0180 270) 100%
+  );
+}
+
+/* Frosted dark mode panels */
+.dark [data-slot="sidebar-inner"] {
+  background: oklch(0.1800 0.0150 262 / 0.92);
+  border-color: oklch(0.3000 0.0200 262 / 0.3);
+}
+
+.dark [data-slot="sidebar-inset"] {
+  background: oklch(0.2000 0.0120 262 / 0.92);
+  border-color: oklch(0.3000 0.0200 262 / 0.3);
+}
+
+/* Playground: shimmer loader sweep (image/video placeholder) */
+@keyframes playground-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Playground: thinking dot — used for the text-model pre-stream indicator */
+@keyframes playground-thinking-dot {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.35; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+
+@layer utilities {
+  .animate-playground-shimmer {
+    background-size: 200% 100%;
+    animation: playground-shimmer 1.8s ease-in-out infinite;
+  }
+  .animate-playground-thinking-dot {
+    animation: playground-thinking-dot 1.2s ease-in-out infinite;
+  }
+}
+
+/* Gallery: shimmer used as the photo-tile loading state.
+ * Subtler than playground-shimmer (faster sweep, lower contrast) because
+ * the gallery shows many tiles at once and a strong animation across all
+ * of them is visually noisy. */
+@keyframes gallery-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@layer utilities {
+  .animate-gallery-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--muted) 0%,
+      color-mix(in srgb, var(--muted) 60%, var(--background) 40%) 50%,
+      var(--muted) 100%
+    );
+    background-size: 200% 100%;
+    animation: gallery-shimmer 1.4s linear infinite;
+  }
+}
+/* ---- Legacy POS token classes (bg-brand-soft, text-ink, ...) still used by screens built before the
+   @umkmall/ui switch. The UI parity pass removes this block once no screen uses them. ---- */
 :root {
   --brand: 0 116 231;
   --brand-strong: 0 81 162;
@@ -25,4 +319,3 @@
   --color-warning: rgb(var(--warning));
 }
 
-html, body { margin: 0; min-height: 100svh; color: rgb(var(--text-primary)); font-family: var(--font-sans); }
