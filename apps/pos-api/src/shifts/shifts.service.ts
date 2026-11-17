@@ -7,7 +7,7 @@ import {
 import { and, count, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { sales, shifts } from '../db/schema';
+import { paymentMethods, sales, shifts } from '../db/schema';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
@@ -53,10 +53,12 @@ export class ShiftsService {
   private async totals(db: Db | Tx, shiftId: string) {
     const [t] = await db
       .select({
-        cashSales: sql<string>`coalesce(sum(${sales.total}), 0)`,
+        // Cash in the drawer: cash sales' paid − change and a kasbon's down payment (U7); debit/wallet none.
+        cashSales: sql<string>`coalesce(sum(case when ${paymentMethods.isCash} then ${sales.paid} - ${sales.change} when ${paymentMethods.isCredit} then ${sales.paid} else 0 end), 0)`,
         salesCount: count(),
       })
       .from(sales)
+      .innerJoin(paymentMethods, eq(paymentMethods.id, sales.paymentMethodId))
       .where(eq(sales.shiftId, shiftId));
     return { cashSales: Number(t.cashSales), salesCount: t.salesCount };
   }

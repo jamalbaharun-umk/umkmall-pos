@@ -19,7 +19,9 @@ import {
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  members,
   paymentMethods,
+  receivables,
   products,
   saleLines,
   sales,
@@ -27,10 +29,15 @@ import {
   shifts,
   staff,
 } from '../db/schema';
+import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import { StockService, type Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
+import {
+  consumeVoucher,
+  evaluateVoucher,
+} from '../vouchers/vouchers.controller';
 import type { SaleInput, SalesQuery } from './sales.schemas';
 
 const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps every product in safe-integer range
@@ -141,6 +148,20 @@ export class SalesService {
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar');
     const discount = canOverride ? (input.discount ?? 0) : 0;
     if (discount > subtotal) throw fail('Diskon melebihi subtotal');
+    // U7: validated before anything is taken (Lakasir flaw 1); quota is consumed below, in this transaction.
+    const voucher = input.voucherCode
+      ? await evaluateVoucher(
+          tx,
+          s.tenantId,
+          input.voucherCode,
+          subtotal - discount,
+        )
+      : null;
+    const voucherDiscount = voucher?.discount ?? 0;
+    const memberId = input.memberId
+      ? await this.memberOf(tx, s.tenantId, input.memberId)
+      : null;
+    const method = await this.methodOf(tx, s.tenantId, input.paymentMethodId);
 
     // One row per store: the next receipt number and the tax rate, in one statement.
     const [settings] = await tx
@@ -151,12 +172,22 @@ export class SalesService {
         set: { lastSaleNumber: sql`${salesSettings.lastSaleNumber} + 1` },
       })
       .returning();
-    const tax = taxOf(subtotal - discount, settings.taxBps);
-    const total = subtotal - discount + tax;
-    if (input.paid < total)
-      throw fail('Uang yang dibayar kurang dari total', { total });
+    // Tax on the amount after the manual discount AND the voucher (Lakasir flaw 2).
+    const tax = taxOf(subtotal - discount - voucherDiscount, settings.taxBps);
+    const total = subtotal - discount - voucherDiscount + tax;
+    if (method.isCredit) {
+      // Kasbon: the rest becomes the member's receivable; paid may be 0.
+      if (!memberId) throw fail('Kasbon membutuhkan pelanggan');
+      if (input.paid >= total)
+        throw fail('Kasbon harus menyisakan sisa tagihan', { total });
+    } else if (method.isCash) {
+      if (input.paid < total)
+        throw fail('Uang yang dibayar kurang dari total', { total });
+    } else if (input.paid !== total) {
+      throw fail('Pembayaran non-tunai harus sama dengan total', { total });
+    }
+    if (voucher) await consumeVoucher(tx, s.tenantId, voucher.id);
 
-    const cash = await this.cashMethod(tx, s.tenantId);
     const overrideBy =
       discount > 0 || lines.some((l) => l.priceOverriddenBy) ? s.actorId : null;
     // Inserting the sale claims the idempotency key: a concurrent duplicate fails here and rolls back.
@@ -168,15 +199,18 @@ export class SalesService {
         shiftId: shift.id,
         actorId: s.actorId,
         actorKind: s.kind,
-        paymentMethodId: cash,
+        paymentMethodId: method.id,
         idempotencyKey: key,
         subtotal,
         discount,
+        memberId,
+        voucherId: voucher?.id ?? null,
+        voucherDiscount,
         taxBps: settings.taxBps,
         tax,
         total,
         paid: input.paid,
-        change: input.paid - total,
+        change: Math.max(input.paid - total, 0),
         costTotal: 0,
         overrideBy,
         note: input.note || null,
@@ -204,7 +238,52 @@ export class SalesService {
       });
     }
     await tx.update(sales).set({ costTotal }).where(eq(sales.id, sale.id));
+    if (method.isCredit)
+      await createReceivable(tx, s, {
+        id: sale.id,
+        memberId: memberId!,
+        total,
+        paid: input.paid,
+        cashMethodId: await this.cashMethod(tx, s.tenantId),
+      });
     return sale.id;
+  }
+
+  /** A live member of this store, else 422. */
+  private async memberOf(tx: Tx, tenantId: string, id: string) {
+    const [m] = await tx
+      .select({ id: members.id })
+      .from(members)
+      .where(
+        and(
+          eq(members.tenantId, tenantId),
+          eq(members.id, id),
+          isNull(members.deletedAt),
+        ),
+      );
+    if (!m) throw fail('Pelanggan tidak ditemukan');
+    return m.id;
+  }
+
+  /** The chosen live method of this store (default Tunai), else 422. */
+  private async methodOf(tx: Tx, tenantId: string, id?: string) {
+    const methodId = id ?? (await this.cashMethod(tx, tenantId));
+    const [m] = await tx
+      .select({
+        id: paymentMethods.id,
+        isCash: paymentMethods.isCash,
+        isCredit: paymentMethods.isCredit,
+      })
+      .from(paymentMethods)
+      .where(
+        and(
+          eq(paymentMethods.tenantId, tenantId),
+          eq(paymentMethods.id, methodId),
+          isNull(paymentMethods.deletedAt),
+        ),
+      );
+    if (!m) throw fail('Metode pembayaran tidak ditemukan');
+    return m;
   }
 
   /** The store's cash method, "Tunai", created on first use. */
@@ -304,6 +383,11 @@ export class SalesService {
         paymentMethod: paymentMethods.name,
         subtotal: sales.subtotal,
         discount: sales.discount,
+        memberId: sales.memberId,
+        memberName: members.name,
+        receivableId: receivables.id,
+        receivableRest: receivables.rest,
+        voucherDiscount: sales.voucherDiscount,
         taxBps: sales.taxBps,
         tax: sales.tax,
         total: sales.total,
@@ -316,6 +400,8 @@ export class SalesService {
       })
       .from(sales)
       .innerJoin(paymentMethods, eq(paymentMethods.id, sales.paymentMethodId))
+      .leftJoin(members, eq(members.id, sales.memberId))
+      .leftJoin(receivables, eq(receivables.saleId, sales.id))
       .where(
         and(
           own ? eq(sales.tenantId, s.tenantId) : this.scope(s),
@@ -373,6 +459,9 @@ export class SalesService {
       })),
       subtotal: sale.subtotal,
       discount: sale.discount,
+      voucherDiscount: sale.voucherDiscount,
+      memberName: sale.memberName,
+      receivableRest: sale.receivableRest,
       taxBps: sale.taxBps,
       tax: sale.tax,
       total: sale.total,

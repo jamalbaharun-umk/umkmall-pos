@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { createdAt, id, pos, rupiah } from './_base';
 import { products } from './catalog';
+import { members, vouchers } from './members';
 import { tenants } from './tenants';
 
 // U3 shifts and cash sales (ported from Lakasir cash_drawers, sellings, selling_details, payment_methods).
@@ -67,10 +68,22 @@ export const paymentMethods = pos
       id: id(),
       tenantId: tenantId(),
       name: text('name').notNull(),
+      // U7: exactly one kind (Lakasir allowed any combination). is_credit = kasbon (receivable).
       isCash: boolean('is_cash').notNull().default(false),
+      isDebit: boolean('is_debit').notNull().default(false),
+      isCredit: boolean('is_credit').notNull().default(false),
+      isWallet: boolean('is_wallet').notNull().default(false),
+      deletedAt: timestamp('deleted_at', { withTimezone: true }),
       createdAt: createdAt(),
     },
-    (t) => [unique().on(t.tenantId, t.name), unique().on(t.tenantId, t.id)],
+    (t) => [
+      unique().on(t.tenantId, t.name),
+      unique().on(t.tenantId, t.id),
+      check(
+        'payment_methods_kind_ck',
+        sql`${t.isCash}::int + ${t.isDebit}::int + ${t.isCredit}::int + ${t.isWallet}::int = 1`,
+      ),
+    ],
   )
   .enableRLS();
 
@@ -106,6 +119,10 @@ export const sales = pos
       idempotencyKey: text('idempotency_key').notNull(),
       subtotal: rupiah('subtotal').notNull(),
       discount: rupiah('discount').notNull().default(0),
+      // U7: member (required for a credit sale) and the voucher applied, with its discount.
+      memberId: uuid('member_id'),
+      voucherId: uuid('voucher_id'),
+      voucherDiscount: rupiah('voucher_discount').notNull().default(0),
       taxBps: integer('tax_bps').notNull().default(0),
       tax: rupiah('tax').notNull().default(0),
       total: rupiah('total').notNull(),
@@ -135,11 +152,22 @@ export const sales = pos
         columns: [t.tenantId, t.paymentMethodId],
         foreignColumns: [paymentMethods.tenantId, paymentMethods.id],
       }).onDelete('restrict'),
+      foreignKey({
+        columns: [t.tenantId, t.memberId],
+        foreignColumns: [members.tenantId, members.id],
+      }).onDelete('restrict'),
+      foreignKey({
+        columns: [t.tenantId, t.voucherId],
+        foreignColumns: [vouchers.tenantId, vouchers.id],
+      }).onDelete('restrict'),
+      // Underpaid (paid < total) only as a credit sale, which needs a member.
       check(
         'sales_money_ck',
-        sql`${t.subtotal} >= 0 and ${t.discount} between 0 and ${t.subtotal} and ${t.tax} >= 0
-          and ${t.total} = ${t.subtotal} - ${t.discount} + ${t.tax}
-          and ${t.change} = ${t.paid} - ${t.total} and ${t.change} >= 0 and ${t.costTotal} >= 0`,
+        sql`${t.subtotal} >= 0 and ${t.discount} >= 0 and ${t.voucherDiscount} >= 0
+          and ${t.discount} + ${t.voucherDiscount} <= ${t.subtotal} and ${t.tax} >= 0
+          and ${t.total} = ${t.subtotal} - ${t.discount} - ${t.voucherDiscount} + ${t.tax}
+          and ${t.change} = greatest(${t.paid} - ${t.total}, 0) and ${t.costTotal} >= 0
+          and (${t.paid} >= ${t.total} or ${t.memberId} is not null)`,
       ),
     ],
   )

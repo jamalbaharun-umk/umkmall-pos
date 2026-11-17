@@ -8,3 +8,5 @@ export * from './stock';
 export * from './purchasing';
 export * from './sales';
 export * from './reports';
+export * from './members';
+export * from './receivables';

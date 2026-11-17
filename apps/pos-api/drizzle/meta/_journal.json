@@ -64,6 +64,13 @@
       "when": 1794923530511,
       "tag": "0008_sale_note",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794925432694,
+      "tag": "0009_members",
+      "breakpoints": true
     }
   ]
 }

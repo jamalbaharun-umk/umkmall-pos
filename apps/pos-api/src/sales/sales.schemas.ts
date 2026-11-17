@@ -26,6 +26,10 @@ export const SaleInput = z
       ),
     // Honoured only with sales.price_override.
     discount: rupiah.optional(),
+    // U7: member (required for a credit method), voucher code, payment method (default Tunai).
+    memberId: Uuid.optional(),
+    voucherCode: z.string().trim().min(1).max(40).optional(),
+    paymentMethodId: Uuid.optional(),
     paid: rupiah,
     note: z.string().trim().max(200).optional(),
   })

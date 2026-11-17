@@ -11,6 +11,10 @@ import { StockOpnameModule } from './stock-opname/stock-opname.controller';
 import { SalesModule } from './sales/sales.module';
 import { ReportsModule } from './reports/reports.controller';
 import { ShiftsModule } from './shifts/shifts.module';
+import { MembersModule } from './members/members.controller';
+import { VouchersModule } from './vouchers/vouchers.controller';
+import { PaymentMethodsModule } from './payment-methods/payment-methods.controller';
+import { ReceivablesModule } from './receivables/receivables.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -27,6 +31,10 @@ import { TenancyController } from './tenancy/tenancy.controller';
     ShiftsModule,
     SalesModule,
     ReportsModule,
+    MembersModule,
+    VouchersModule,
+    PaymentMethodsModule,
+    ReceivablesModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [{ provide: APP_GUARD, useClass: SessionGuard }],
