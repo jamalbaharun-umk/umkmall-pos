@@ -27,6 +27,7 @@ import {
   Pending,
   req,
 } from '@/components/pos-page'
+import { clearKeys } from '../../lib/form-checks'
 import { useCan } from '@/components/shell'
 import { createOpname, loadOpnameForm } from '../pembelian/-api'
 import { type OpnameLine as Line, validateOpname } from '../pembelian/-validate'
@@ -82,8 +83,11 @@ function NewOpnamePage() {
       </Page>
     )
 
-  const set = (i: number, patch: Partial<Line>) =>
+  const set = (i: number, patch: Partial<Line>) => {
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+    // An edited field drops its own error (and the duplicate/total notes that depend on it) until the next submit.
+    setErrors((e) => clearKeys(e, [...Object.keys(patch).map((k) => `lines.${i}.${k}`), 'lines']))
+  }
   const productOptions = products.map((p) => ({
     value: p.id,
     label: p.name,

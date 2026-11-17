@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { check } from '../../lib/form-checks'
+import { check, clearKeys } from '../../lib/form-checks'
 import { validateOpname, validateOrder } from './-validate'
 
 // The client checks mirror pos-api's zod rules and use the same field keys, so both land on the same field.
@@ -51,6 +51,18 @@ describe('purchase and opname form checks', () => {
   it('phone like pos-api: digits, optional +, 8–15 digits; blank allowed', () => {
     for (const ok of ['', '081234567890', '+62 812-3456-7890']) expect(check.phone(ok)).toBeUndefined()
     for (const bad of ['abc12', '0812', '1'.repeat(16)]) expect(check.phone(bad)).toBe('Nomor telepon tidak valid')
+  })
+  it('clearKeys drops only the edited fields and keeps the object when nothing changes', () => {
+    const e = {
+      'lines.0.productId': 'Pilih produk',
+      'lines.0.unitCost': 'Harga beli wajib diisi',
+      supplierId: 'Pilih pemasok',
+    }
+    expect(clearKeys(e, ['lines.0.productId'])).toEqual({
+      'lines.0.unitCost': 'Harga beli wajib diisi',
+      supplierId: 'Pilih pemasok',
+    })
+    expect(clearKeys(e, ['lines.1.qty'])).toBe(e)
   })
   it('wholeNumber', () => {
     expect(check.wholeNumber(' 7 ', { min: 1 })).toBeUndefined()

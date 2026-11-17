@@ -27,6 +27,7 @@ import {
   req,
   rupiah,
 } from '@/components/pos-page'
+import { clearKeys } from '../../lib/form-checks'
 import { useCan } from '@/components/shell'
 import { createOrder, type Order, type StockProduct, type Supplier, updateOrder } from './-api'
 import { type OrderLine as Line, toInt, validateOrder } from './-validate'
@@ -104,8 +105,11 @@ export function OrderForm({
       </Page>
     )
 
-  const set = (i: number, patch: Partial<Line>) =>
+  const set = (i: number, patch: Partial<Line>) => {
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+    // An edited field drops its own error (and the duplicate/total notes that depend on it) until the next submit.
+    setErrors((e) => clearKeys(e, [...Object.keys(patch).map((k) => `lines.${i}.${k}`), 'lines']))
+  }
   // Preview only: pos-api computes the stored total.
   const total = lines.reduce((sum, l) => sum + (toInt(l.qty) * toInt(l.unitCost) || 0), 0)
   const productOptions = products.map((p) => ({
@@ -155,7 +159,10 @@ export function OrderForm({
               error={errors.supplierId}
               options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
               value={supplierId}
-              onValueChange={setSupplierId}
+              onValueChange={(v) => {
+                setSupplierId(v)
+                setErrors((e) => clearKeys(e, ['supplierId']))
+              }}
               showSearch
             />
             <TextField

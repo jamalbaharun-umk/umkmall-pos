@@ -18,6 +18,7 @@ import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/
 import { useCan } from '@/components/shell'
 import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
+import { readCart, restoreCart, writeCart } from './-cart'
 import { discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -106,6 +107,17 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const [voucher, setVoucher] = useState<AppliedVoucher | null>(null)
   // One key per request: a double tap or a retry of the same order sends the same key, so one sale. Any change to the
   // cart, note, member or voucher is a new request and gets a new key (pos-api refuses a known key with another body).
+  // The open bill is kept per tab while the cashier visits other pages; restored once on mount (after hydration).
+  const [restored, setRestored] = useState(false)
+  useEffect(() => {
+    const saved = restoreCart(readCart(), products)
+    if (saved.lines.length) setCart(saved.lines)
+    if (saved.note) setNote(saved.note)
+    setRestored(true)
+  }, [])
+  useEffect(() => {
+    if (restored) writeCart({ lines: cart.map((l) => ({ productId: l.product.id, qty: l.qty })), note })
+  }, [restored, cart, note])
   const [key, setKey] = useState(() => crypto.randomUUID())
   useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher, discountText])
 
@@ -240,9 +252,28 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             </Button>
           </div>
         </div>
-        <Text as="h2" variant="h6" weight="bold">
-          Pesanan
-        </Text>
+        <div className="flex items-center justify-between">
+          <Text as="h2" variant="h6" weight="bold">
+            Pesanan
+          </Text>
+          {(cart.length > 0 || note) && (
+            <Button
+              width="auto"
+              type="text"
+              size="compact"
+              color="danger"
+              onClick={() => {
+                setCart([])
+                setNote('')
+                setDiscountText('')
+                setVoucher(null)
+                setMember(null)
+              }}
+            >
+              Hapus semua
+            </Button>
+          )}
+        </div>
         <div className="min-h-24 flex-1 overflow-y-auto">
           {cart.length === 0 ? (
             <div className="flex h-full items-center justify-center gap-2 rounded-2xl border border-default-primary py-8 text-default-secondary">

@@ -28,3 +28,7 @@ export const check = {
 /** Drops undefined entries: `{ name: undefined }` means the field is fine. */
 export const compact = (e: Record<string, string | undefined>): FieldErrors =>
   Object.fromEntries(Object.entries(e).filter((x): x is [string, string] => !!x[1]))
+
+/** The errors without `keys`: an edited field stops showing its old message. Same object when nothing changes. */
+export const clearKeys = (errors: FieldErrors, keys: string[]): FieldErrors =>
+  keys.some((k) => k in errors) ? Object.fromEntries(Object.entries(errors).filter(([k]) => !keys.includes(k))) : errors
