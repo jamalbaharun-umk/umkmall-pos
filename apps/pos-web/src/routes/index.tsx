@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
@@ -68,6 +68,7 @@ function Dashboard() {
       <section className="mt-6 rounded-xl bg-white p-8 text-center">
         <h2 className="text-lg font-medium text-ink">Belum ada produk</h2>
         <p className="mt-1 text-ink-muted">Tambahkan produk pertama untuk mulai berjualan.</p>
+        <Link to="/catalog/products" className="mt-4 inline-block rounded-lg bg-brand px-4 py-2 font-medium text-white hover:bg-brand-strong">Buka katalog</Link>
       </section>
     </main>
   )
