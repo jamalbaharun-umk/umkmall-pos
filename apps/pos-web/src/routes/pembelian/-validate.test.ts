@@ -15,8 +15,8 @@ describe('purchase and opname form checks', () => {
         lines: [{ productId: '', qty: '0', unitCost: '1,5' }, line, { ...line }],
       }),
     ).toEqual({
-      supplierId: 'Wajib diisi',
-      'lines.0.productId': 'Wajib diisi',
+      supplierId: 'Pilih pemasok',
+      'lines.0.productId': 'Pilih produk',
       'lines.0.qty': 'Jumlah harus lebih dari 0',
       'lines.0.unitCost': 'Harga beli harus bilangan bulat',
       'lines.2.productId': 'Satu produk cukup satu baris',
@@ -32,11 +32,25 @@ describe('purchase and opname form checks', () => {
   it('opname: counted 0 is fine, empty and negative are not', () => {
     expect(validateOpname([{ productId: 'p', countedQty: '0', reason: '' }])).toEqual({})
     expect(validateOpname([{ productId: 'p', countedQty: '', reason: '' }])).toEqual({
-      'lines.0.countedQty': 'Wajib diisi',
+      'lines.0.countedQty': 'Jumlah dihitung wajib diisi',
     })
     expect(validateOpname([{ productId: 'p', countedQty: '-1', reason: '' }])).toEqual({
-      'lines.0.countedQty': 'Jumlah tidak boleh negatif',
+      'lines.0.countedQty': 'Jumlah dihitung tidak boleh negatif',
     })
+  })
+  it('empty line fields name what is missing', () => {
+    expect(validateOrder({ supplierId: 's', lines: [{ productId: '', qty: '', unitCost: '' }] })).toEqual({
+      'lines.0.productId': 'Pilih produk',
+      'lines.0.qty': 'Jumlah wajib diisi',
+      'lines.0.unitCost': 'Harga beli wajib diisi',
+    })
+    expect(validateOrder({ supplierId: 's', lines: [{ ...line, qty: '0' }] })['lines.0.qty']).toBe(
+      'Jumlah harus lebih dari 0',
+    )
+  })
+  it('phone like pos-api: digits, optional +, 8–15 digits; blank allowed', () => {
+    for (const ok of ['', '081234567890', '+62 812-3456-7890']) expect(check.phone(ok)).toBeUndefined()
+    for (const bad of ['abc12', '0812', '1'.repeat(16)]) expect(check.phone(bad)).toBe('Nomor telepon tidak valid')
   })
   it('wholeNumber', () => {
     expect(check.wholeNumber(' 7 ', { min: 1 })).toBeUndefined()

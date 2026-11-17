@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { validate } from '../common/validation';
+import { Phone, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { suppliers } from '../db/schema';
 import { parseId } from '../staff/http';
@@ -27,7 +27,11 @@ const optionalText = (max: number) =>
 const SupplierInput = z
   .object({
     name: z.string().trim().min(1).max(120),
-    phone: optionalText(30),
+    // Same rule as members: digits, optional leading +, 8–15 digits; blank means no phone.
+    phone: z.preprocess(
+      (v) => (typeof v === 'string' && !v.trim() ? null : v),
+      Phone.nullable().optional(),
+    ),
     address: optionalText(500),
   })
   .strict();

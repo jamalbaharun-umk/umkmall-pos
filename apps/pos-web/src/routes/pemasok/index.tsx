@@ -150,7 +150,7 @@ function SuppliersPage() {
 const validateSupplier = (v: { name: string; phone: string; address: string }) =>
   compact({
     name: check.required(v.name) ?? (v.name.trim().length > 120 ? 'Maksimal 120 karakter' : undefined),
-    phone: v.phone.trim().length > 30 ? 'Maksimal 30 karakter' : undefined,
+    phone: check.phone(v.phone),
     address: v.address.trim().length > 500 ? 'Maksimal 500 karakter' : undefined,
   })
 

@@ -123,7 +123,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     // Supplier + approved purchase order; stock opname approved.
     const sup = await post('/suppliers', {
       name: 'CV Sumber Rejeki',
-      phone: '0812',
+      phone: '081234567890',
       address: 'Jl. Pasar 1',
     }).expect(201);
     const po = await post('/purchasing/orders', {

@@ -196,12 +196,20 @@ describe('validation: sales, shifts, suppliers, purchasing, stock opname', () =>
         'name',
         'Wajib diisi',
       );
-      await refused(
-        post('/suppliers', { name: 'x', phone: '1'.repeat(31) }),
-        422,
-        'phone',
-        'Maksimal 30 karakter',
+      for (const phone of ['abc12', '0812', '1'.repeat(31)])
+        await refused(
+          post('/suppliers', { name: 'x', phone }),
+          422,
+          'phone',
+          'Nomor telepon tidak valid',
+        );
+      await post('/suppliers', { name: 'Telepon kosong', phone: '' }).expect(
+        201,
       );
+      await post('/suppliers', {
+        name: 'Telepon 62',
+        phone: '+62 812-3456-7890',
+      }).expect(201);
       await refused(
         post('/suppliers', { name: 'x', email: 'a@b.c' }),
         422,

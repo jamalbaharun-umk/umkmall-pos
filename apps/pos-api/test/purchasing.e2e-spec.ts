@@ -46,7 +46,7 @@ describe('stock in (U6)', () => {
     const res = await http()
       .post('/suppliers')
       .set('Authorization', store.auth)
-      .send({ name, phone: '0812', address: 'Jl. Pasar 1' })
+      .send({ name, phone: '081234567890', address: 'Jl. Pasar 1' })
       .expect(201);
     return res.body.id as string;
   }

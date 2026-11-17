@@ -33,7 +33,7 @@ export const NAV: NavGroup[] = [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/kasir', label: 'Kasir', icon: Zap, permission: 'sales.create' },
       { to: '/kasir/riwayat', label: 'Riwayat penjualan', icon: Banknote },
-      { to: '/pemasok', label: 'Supplier', icon: ListOrdered, permission: 'purchasing.manage' },
+      { to: '/pemasok', label: 'Pemasok', icon: ListOrdered, permission: 'purchasing.manage' },
       { to: '/pelanggan', label: 'Pelanggan', icon: UsersRound, permission: 'members.manage' },
       { to: '/metode-pembayaran', label: 'Metode pembayaran', icon: CreditCard, permission: 'catalog.manage' },
       { to: '/piutang', label: 'Piutang', icon: CalendarDays, permission: 'receivables.manage' },

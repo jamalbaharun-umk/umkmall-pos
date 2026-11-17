@@ -8,10 +8,10 @@ export const toInt = (s: string) => (/^\d+$/.test(s.trim()) ? Number(s.trim()) :
 // product, total ≤ Rp1 triliun. Field keys match the server's (`lines.0.qty`) so both land on the same field.
 export function validateOrder(v: { supplierId: string; lines: OrderLine[] }): FieldErrors {
   const seen = new Set<string>()
-  const e: Record<string, string | undefined> = { supplierId: v.supplierId ? undefined : 'Wajib diisi' }
+  const e: Record<string, string | undefined> = { supplierId: v.supplierId ? undefined : 'Pilih pemasok' }
   v.lines.forEach((l, i) => {
     e[`lines.${i}.productId`] = !l.productId
-      ? 'Wajib diisi'
+      ? 'Pilih produk'
       : seen.has(l.productId)
         ? 'Satu produk cukup satu baris'
         : undefined
@@ -30,12 +30,12 @@ export function validateOpname(lines: OpnameLine[]): FieldErrors {
   const e: Record<string, string | undefined> = {}
   lines.forEach((l, i) => {
     e[`lines.${i}.productId`] = !l.productId
-      ? 'Wajib diisi'
+      ? 'Pilih produk'
       : seen.has(l.productId)
         ? 'Satu produk cukup satu baris'
         : undefined
     seen.add(l.productId)
-    e[`lines.${i}.countedQty`] = check.wholeNumber(l.countedQty, { max: 1_000_000 })
+    e[`lines.${i}.countedQty`] = check.wholeNumber(l.countedQty, { max: 1_000_000, label: 'Jumlah dihitung' })
     e[`lines.${i}.reason`] = l.reason.trim().length > 200 ? 'Maksimal 200 karakter' : undefined
   })
   return compact(e)
