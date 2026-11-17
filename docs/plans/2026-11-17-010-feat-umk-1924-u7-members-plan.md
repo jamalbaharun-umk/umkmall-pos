@@ -107,6 +107,17 @@ change only inside locked transactions; money is integer rupiah.
 - `apps/pos-api/test/members.e2e-spec.ts`.
 - `apps/pos-web/src/routes/{pelanggan,voucher,metode-pembayaran,piutang}/`, cashier additions.
 
+## Added 2026-11-17 (owner, via the integration session)
+
+- Every body/query/header through `src/common/validation.ts`: 422 `{ message, errors: { field: message } }` in
+  Indonesian; 409 duplicates (member code, voucher code, payment method name) on their field.
+- Forms: required fields marked, client checks mirroring zod, server field errors on the field, no double submit,
+  a toast on every save/delete/payment and on voucher apply/remove in the cashier; deletes confirm in a Dialog.
+- Audit fixes: real calendar dates (2026-02-31 was a 500), member PII behind `members.manage` (cashier picker =
+  name + code), a deleted payment method's name reusable, `Idempotency-Key` on receivable payments.
+- [test] `test/members-validation.e2e-spec.ts`: status and field message per refusal; [test] web `-form.test.ts`;
+  [qa] screenshots in `.evidence/u7/` (gitignored).
+
 ## Not in this unit
 
 Receivable payments inside a shift's cash count (Lakasir has no link either), WhatsApp billing, payment
