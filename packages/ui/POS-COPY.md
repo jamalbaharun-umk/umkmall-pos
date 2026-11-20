@@ -17,7 +17,8 @@ Do not edit components here. A needed change goes to the monorepo first, then th
 - **`Select` with `portal` + `showSearch` never opens on a real pointer click** (seen 2026-11-17, UMK-1924 QA): the
   document-level outside-press handler closes the portalled list in the same pointer sequence that opened it; a
   scripted `button.click()` still opens it, so automated tests miss it (Select.tsx warns about portalled lists
-  near its outside-press handling). POS workaround: never pass `portal` (the purchase and stock-opname line pickers
+  near its outside-press handling). POS workaround: never pass `portal` together with `showSearch` (`portal` alone opens fine and is used by the dialog
+  form Selects in `routes/pelanggan/-ui.tsx`; the purchase and stock-opname line pickers
   render in place inside a table whose container is `overflow-visible`; guarded by
   `apps/pos-web/src/routes/pembelian/-no-portal.test.ts`). Fix belongs in the monorepo's `packages/ui`, then this
   copy is refreshed.

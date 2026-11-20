@@ -233,11 +233,11 @@ export function ResourcePage<T extends { id: string }>(props: {
         title={form?.id ? `Ubah ${props.singular}` : `Tambah ${props.singular}`}
       >
         <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">
-          {/* Scrolls only on phones: from sm up an overflow box would clip the in-place Select lists. */}
-          <div className="grid max-h-[60vh] gap-4 overflow-y-auto p-1 sm:max-h-none sm:grid-cols-2 sm:overflow-visible">
+          <div className="grid max-h-[60vh] gap-4 overflow-y-auto p-1 sm:grid-cols-2">
             {props.fields.map((f) =>
               f.options ? (
                 <Select
+                  portal
                   key={f.name}
                   label={f.label}
                   options={f.options}
