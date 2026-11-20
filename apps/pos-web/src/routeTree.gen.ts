@@ -18,8 +18,8 @@ import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
 import { Route as KasirTutupRouteImport } from './routes/kasir/tutup'
 import { Route as LaporanIndexRouteImport } from './routes/laporan/index'
 import { Route as LaporanJenisRouteImport } from './routes/laporan/$jenis'
+import { Route as MasukIndexRouteImport } from './routes/masuk/index'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
-import { Route as MasukUmkmallRouteImport } from './routes/masuk/umkmall'
 import { Route as MetodePembayaranIndexRouteImport } from './routes/metode-pembayaran/index'
 import { Route as PelangganIndexRouteImport } from './routes/pelanggan/index'
 import { Route as PemasokIndexRouteImport } from './routes/pemasok/index'
@@ -97,14 +97,14 @@ const LaporanJenisRoute = LaporanJenisRouteImport.update({
   path: '/laporan/$jenis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MasukIndexRoute = MasukIndexRouteImport.update({
+  id: '/masuk/',
+  path: '/masuk/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MasukDevRoute = MasukDevRouteImport.update({
   id: '/masuk/dev',
   path: '/masuk/dev',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MasukUmkmallRoute = MasukUmkmallRouteImport.update({
-  id: '/masuk/umkmall',
-  path: '/masuk/umkmall',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetodePembayaranIndexRoute = MetodePembayaranIndexRouteImport.update({
@@ -272,7 +272,6 @@ export interface FileRoutesByFullPath {
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/masuk/dev': typeof MasukDevRoute
-  '/masuk/umkmall': typeof MasukUmkmallRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
@@ -285,6 +284,7 @@ export interface FileRoutesByFullPath {
   '/catalog/': typeof CatalogIndexRoute
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
+  '/masuk/': typeof MasukIndexRoute
   '/metode-pembayaran/': typeof MetodePembayaranIndexRoute
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
@@ -316,7 +316,6 @@ export interface FileRoutesByTo {
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/masuk/dev': typeof MasukDevRoute
-  '/masuk/umkmall': typeof MasukUmkmallRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
@@ -329,6 +328,7 @@ export interface FileRoutesByTo {
   '/catalog': typeof CatalogIndexRoute
   '/kasir': typeof KasirIndexRoute
   '/laporan': typeof LaporanIndexRoute
+  '/masuk': typeof MasukIndexRoute
   '/metode-pembayaran': typeof MetodePembayaranIndexRoute
   '/pelanggan': typeof PelangganIndexRoute
   '/pemasok': typeof PemasokIndexRoute
@@ -361,7 +361,6 @@ export interface FileRoutesById {
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/masuk/dev': typeof MasukDevRoute
-  '/masuk/umkmall': typeof MasukUmkmallRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
@@ -374,6 +373,7 @@ export interface FileRoutesById {
   '/catalog/': typeof CatalogIndexRoute
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
+  '/masuk/': typeof MasukIndexRoute
   '/metode-pembayaran/': typeof MetodePembayaranIndexRoute
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
@@ -407,7 +407,6 @@ export interface FileRouteTypes {
     | '/kasir/tutup'
     | '/laporan/$jenis'
     | '/masuk/dev'
-    | '/masuk/umkmall'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/logo'
@@ -420,6 +419,7 @@ export interface FileRouteTypes {
     | '/catalog/'
     | '/kasir/'
     | '/laporan/'
+    | '/masuk/'
     | '/metode-pembayaran/'
     | '/pelanggan/'
     | '/pemasok/'
@@ -451,7 +451,6 @@ export interface FileRouteTypes {
     | '/kasir/tutup'
     | '/laporan/$jenis'
     | '/masuk/dev'
-    | '/masuk/umkmall'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/logo'
@@ -464,6 +463,7 @@ export interface FileRouteTypes {
     | '/catalog'
     | '/kasir'
     | '/laporan'
+    | '/masuk'
     | '/metode-pembayaran'
     | '/pelanggan'
     | '/pemasok'
@@ -495,7 +495,6 @@ export interface FileRouteTypes {
     | '/kasir/tutup'
     | '/laporan/$jenis'
     | '/masuk/dev'
-    | '/masuk/umkmall'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/logo'
@@ -508,6 +507,7 @@ export interface FileRouteTypes {
     | '/catalog/'
     | '/kasir/'
     | '/laporan/'
+    | '/masuk/'
     | '/metode-pembayaran/'
     | '/pelanggan/'
     | '/pemasok/'
@@ -540,7 +540,6 @@ export interface RootRouteChildren {
   KasirTutupRoute: typeof KasirTutupRoute
   LaporanJenisRoute: typeof LaporanJenisRoute
   MasukDevRoute: typeof MasukDevRoute
-  MasukUmkmallRoute: typeof MasukUmkmallRoute
   PembelianIdRoute: typeof PembelianIdRoute
   PembelianBaruRoute: typeof PembelianBaruRoute
   PengaturanLogoRoute: typeof PengaturanLogoRoute
@@ -553,6 +552,7 @@ export interface RootRouteChildren {
   CatalogIndexRoute: typeof CatalogIndexRoute
   KasirIndexRoute: typeof KasirIndexRoute
   LaporanIndexRoute: typeof LaporanIndexRoute
+  MasukIndexRoute: typeof MasukIndexRoute
   MetodePembayaranIndexRoute: typeof MetodePembayaranIndexRoute
   PelangganIndexRoute: typeof PelangganIndexRoute
   PemasokIndexRoute: typeof PemasokIndexRoute
@@ -642,18 +642,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaporanJenisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/masuk/': {
+      id: '/masuk/'
+      path: '/masuk'
+      fullPath: '/masuk/'
+      preLoaderRoute: typeof MasukIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/masuk/dev': {
       id: '/masuk/dev'
       path: '/masuk/dev'
       fullPath: '/masuk/dev'
       preLoaderRoute: typeof MasukDevRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/masuk/umkmall': {
-      id: '/masuk/umkmall'
-      path: '/masuk/umkmall'
-      fullPath: '/masuk/umkmall'
-      preLoaderRoute: typeof MasukUmkmallRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metode-pembayaran/': {
@@ -884,7 +884,6 @@ const rootRouteChildren: RootRouteChildren = {
   KasirTutupRoute: KasirTutupRoute,
   LaporanJenisRoute: LaporanJenisRoute,
   MasukDevRoute: MasukDevRoute,
-  MasukUmkmallRoute: MasukUmkmallRoute,
   PembelianIdRoute: PembelianIdRoute,
   PembelianBaruRoute: PembelianBaruRoute,
   PengaturanLogoRoute: PengaturanLogoRoute,
@@ -897,6 +896,7 @@ const rootRouteChildren: RootRouteChildren = {
   CatalogIndexRoute: CatalogIndexRoute,
   KasirIndexRoute: KasirIndexRoute,
   LaporanIndexRoute: LaporanIndexRoute,
+  MasukIndexRoute: MasukIndexRoute,
   MetodePembayaranIndexRoute: MetodePembayaranIndexRoute,
   PelangganIndexRoute: PelangganIndexRoute,
   PemasokIndexRoute: PemasokIndexRoute,

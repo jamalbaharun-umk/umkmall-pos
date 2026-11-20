@@ -1,5 +1,5 @@
-import { deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
-import { sessionKind } from './sign-in'
+import { appendResponseHeader, deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
+import { loginUrl, sessionKind } from './sign-in'
 
 // The POS session lives only in this httpOnly cookie; the browser never sees the token in JS or a URL.
 const COOKIE = 'pos_session'
@@ -59,22 +59,49 @@ type SessionAnswer = { sessionToken: string; expiresIn: number }
 /**
  * POSTs to a pos-api auth route and stores the session it answers. Returns the new token, or the refusal's HTTP
  * status (0 when pos-api could not be reached), so callers can tell "signed out" (401) from "try again" (503/0).
+ * Every Set-Cookie pos-api answers (UMKMall's renewed or newly minted login cookies) reaches the browser unchanged,
+ * refusals included: dropping one signs the owner out of UMKMall later.
  */
-export async function startSession(path: string, body: unknown, bearer?: string): Promise<string | number> {
+export async function startSession(path: string, body: unknown, headers: Record<string, string> = {}): Promise<string | number> {
   const res = await fetch(`${posApiUrl()}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   }).catch(() => null)
   if (!res) return 0
+  for (const cookie of res.headers.getSetCookie()) appendResponseHeader('set-cookie', cookie)
   if (!res.ok) return res.status
   const { sessionToken, expiresIn } = (await res.json()) as SessionAnswer
-  // An owner token lapses in minutes but stays refreshable for pos-api's REFRESH_WINDOW (7 days, gated by UMKMall
-  // liveness), so its cookie must outlive it; api() refreshes on the first 401.
+  // An owner token lapses in minutes; its cookie outlives it so api() knows to re-check UMKMall on the first 401.
   setSessionToken(sessionToken, sessionKind(sessionToken) === 'owner' ? OWNER_COOKIE_SECONDS : expiresIn)
   return sessionToken
 }
 
-/** Exchanges a UMKMall handoff token (server to server) for a POS owner session. */
-export const exchangeHandoff = (token: string) => startSession('/auth/umkmall/exchange', { token })
+/** UMKMall's login cookies; only these go to pos-api (and on to UMKMall's `/api/auth/me`). */
+const UMKMALL_COOKIES = ['auth_token', 'auth_refresh'] as const
+
+/**
+ * Owner sign-in and refresh from the shared UMKMall login cookie (UMK-1945). 401 without a call when the browser
+ * sent neither cookie (localhost, or not signed in to UMKMall).
+ */
+export async function umkmallSession(): Promise<string | number> {
+  const cookie = UMKMALL_COOKIES.flatMap((name) => {
+    const value = getCookie(name)
+    return value === undefined ? [] : [`${name}=${value}`]
+  }).join('; ')
+  return cookie ? startSession('/auth/umkmall/session', {}, { cookie }) : 401
+}
+
+/** UMKMall's login page, coming back to the POS home afterwards; `/` (the POS sign-in page) when not configured. */
+export const umkmallLoginUrl = () => loginUrl(process.env.UMKMALL_WEB_URL, process.env.POS_WEB_URL)
+
+// Set by /keluar so `/` does not sign the owner straight back in from the UMKMall cookie; cleared by /masuk.
+const SIGNED_OUT = 'pos_keluar'
+
+export const signedOut = () => getCookie(SIGNED_OUT) === '1'
+
+export function setSignedOut(on: boolean): void {
+  if (!on) return deleteCookie(SIGNED_OUT, { path: '/' })
+  setCookie(SIGNED_OUT, '1', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' })
+}

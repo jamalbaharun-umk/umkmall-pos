@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { startSession } from '@/lib/session.server'
-import { seeOther } from './umkmall'
+import { seeOther } from '@/lib/sign-in'
 
 // Local work without UMKMall: signs in as POS_DEV_USER_ID (a public.users id). Refused in production.
 export const Route = createFileRoute('/masuk/dev')({

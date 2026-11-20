@@ -1,18 +1,24 @@
 import { Alert, Button, toast } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Store } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
-import { getSessionToken } from '@/lib/session.server'
+import { getSessionToken, signedOut, umkmallSession } from '@/lib/session.server'
 import { failureText } from '@/lib/sign-in'
 import { MetricWidgets } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
   const devSignIn = process.env.NODE_ENV !== 'production' && Boolean(process.env.POS_DEV_USER_ID)
-  if (!getSessionToken()) return { signedIn: false as const, devSignIn }
+  if (!getSessionToken()) {
+    // Signed in to UMKMall already (shared cookie, UMK-1945): straight to the dashboard, unless just signed out here.
+    // The redirect reloads the page so the shell reads the new session too.
+    const result = signedOut() ? 401 : await umkmallSession()
+    if (typeof result === 'string') throw redirect({ to: '/', search: { masuk: 1 } })
+    return { signedIn: false as const, devSignIn, unreachable: result === 0 || result >= 500 }
+  }
   const res = await api('/catalog/products?perPage=1')
   if (!res.ok) throw new Error('Gagal memuat toko')
   const { total } = (await res.json()) as { total: number }
@@ -45,10 +51,14 @@ function Home() {
     setTimeout(() => toast(masuk ? 'Berhasil masuk' : 'Kamu sudah keluar', { variant: 'success' }))
     void navigate({ search: ({ masuk: _m, keluar: _k, ...rest }) => rest, replace: true })
   }, [masuk, keluar, navigate])
-  return home.signedIn ? <Dashboard products={home.products} /> : <SignIn failed={gagal} devSignIn={home.devSignIn} />
+  return home.signedIn ? (
+    <Dashboard products={home.products} />
+  ) : (
+    <SignIn failed={gagal ?? (home.unreachable ? 503 : undefined)} devSignIn={home.devSignIn} />
+  )
 }
 
-/** Lakasir's login: a centred card on the grey page. POS owners arrive from UMKMall instead of a password form. */
+/** Lakasir's login: a centred card on the grey page. Owners sign in with their UMKMall account instead of a password form. */
 function SignIn({ failed, devSignIn }: { failed?: number; devSignIn: boolean }) {
   return (
     <main className="flex min-h-svh items-center justify-center bg-default-secondary px-4">
@@ -59,7 +69,7 @@ function SignIn({ failed, devSignIn }: { failed?: number; devSignIn: boolean }) 
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold text-default-primary">Masuk ke Kasir</h1>
           <p className="text-sm text-default-secondary">
-            Buka akun UMKMall kamu, lalu pilih Kasir untuk membuka toko di sini.
+            Pemilik toko masuk dengan akun UMKMall. Kasir masuk dengan PIN.
           </p>
         </div>
         {failed !== undefined && (
@@ -67,12 +77,17 @@ function SignIn({ failed, devSignIn }: { failed?: number; devSignIn: boolean }) 
             {failureText(failed)}
           </Alert>
         )}
+        <form method="post" action="/masuk" className="w-full">
+          <Button htmlType="submit" type="primary" color="primary" width="full">
+            Masuk dengan akun UMKMall
+          </Button>
+        </form>
         <Button asChild type="outline" color="primary" width="full">
           <a href="/kasir/masuk">Masuk sebagai kasir (PIN)</a>
         </Button>
         {devSignIn && (
           <form method="post" action="/masuk/dev" className="w-full">
-            <Button htmlType="submit" type="primary" color="primary" width="full">
+            <Button htmlType="submit" type="outline" color="primary" width="full">
               Masuk (pengembangan)
             </Button>
           </form>
