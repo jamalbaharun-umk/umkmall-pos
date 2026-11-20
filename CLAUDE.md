@@ -21,7 +21,7 @@ silent, follow the monorepo's principles.
   `Refs: UMK-1924 U<n>`. Small commits on logical boundaries.
 - **Evidence over assertion.** Report only checks you ran. Every new behaviour gets a test; a guard test is
   proven once by breaking what it guards (revert-red) and restoring it.
-- **UMKMall monorepo changes** (U1 handoff/JWKS/liveness, U8 erasure hook) go through the monorepo's own
+- **UMKMall monorepo changes** (shared login cookie UMK-1947, U8 erasure hook) go through the monorepo's own
   process: `/team-plan` → `/team-work` → `/team-ship`, a PR, its review gate. Never push to its `main`.
 - When a unit is done: tick it in the epic plan's Rulings, comment on UMK-1924 (what shipped, tests, what was
   not exercised).
@@ -63,12 +63,17 @@ silent, follow the monorepo's principles.
   `hasPermission(session, key)` (U3: a client price counts only with `sales.price_override`).
 - **Validate at the boundary with zod;** a bad input answers 422 (never 500). Errors never echo internals.
 - **POS tokens are signed and verified only in `src/tenancy/session.ts`** (guard test). The POS never holds
-  UMKMall's `auth_token` HS256 key; UMKMall sign-in arrives as a handoff token (U1).
+  UMKMall's `auth_token` HS256 key. Owner sign-in (UMK-1945): pos-web forwards only UMKMall's `auth_token` and
+  `auth_refresh` cookies (shared on `.umkmall.id`, UMK-1947) to `POST /auth/umkmall/session`, which asks
+  `${UMKMALL_WEB_URL}/api/auth/me` (5 s; 401 → 401, 5xx/timeout → 503) and opens a 15-minute owner session; the owner
+  refresh repeats that call. **Every `Set-Cookie` from `/auth/me` goes back to the browser unchanged** (pos-api and
+  pos-web both relay it): it can mint UMKMall's refresh cookie once, and dropping it signs the owner out of UMKMall.
+  Never forward any other cookie to UMKMall.
 - **No `console`** in `src/` (lint + guard). Never log tokens, PINs, phone numbers or customer names.
 - **Erasure:** the tenant FK to `public.users` is `ON DELETE RESTRICT`; a store is erased by the U8 purge,
   which must cover every new table and every stored image. `POST /internal/tenants/purge` (`src/purge/`)
   deletes every `pos` table with a `tenant_id` column, discovered at runtime, so a new table needs `tenant_id`
-  (guard in `test/purge.e2e-spec.ts`; only `tenants` and `handoff_jtis` are exempt) and its images under
+  (guard in `test/purge.e2e-spec.ts`; only `tenants` is exempt) and its images under
   `tenants/<tenantId>/`. UMKMall's archival (role `postgres`) reads `pos.tenants (id, user_id)` to wait for the
   purge (migration `0012`); grant it nothing more. pos_app reads nothing in `public.users`
   (deny-all RLS); the purge asks UMKMall's SECURITY DEFINER `public.pos_account_erasable(uuid)` (UMKMall migration
@@ -97,11 +102,13 @@ npm run db:generate -w pos-api  # new migration from schema changes
 npm run dev -w pos-web          # http://localhost:3101
 ```
 
-`pos-api` needs `DATABASE_URL` (the `pos_app` role), `POS_SESSION_SECRET` (≥ 32 chars), `UMKMALL_JWKS_URL`
-(`{UMKMall API}/.well-known/pos-jwks.json`), `UMKMALL_API_URL` (liveness base) and `POS_SERVICE_KEY` (same value as
-UMKMall's) in its environment. `pos-web` needs `POS_API_URL`.
+`pos-api` needs `DATABASE_URL` (the `pos_app` role), `POS_SESSION_SECRET` (≥ 32 chars), `UMKMALL_WEB_URL` (UMKMall's
+web origin, for `/api/auth/me`) and `POS_SERVICE_KEY` (same value as UMKMall's, for the purge) in its environment.
+`pos-web` needs `POS_API_URL`, plus `UMKMALL_WEB_URL` and `POS_WEB_URL` (its own public origin) to send signed-out owners
+to UMKMall's login. Names in `.env.example`. The POS must sit under UMKMall's cookie domain: `pos.umkmall.id`, and
+`pos.preview.umkmall.id` on preview.
 
-**Signing in locally without UMKMall** (refused when `NODE_ENV=production`): create a stub UMKMall user in your
+**Signing in locally without UMKMall** (localhost gets no UMKMall cookie; refused when `NODE_ENV=production`): create a stub UMKMall user in your
 database, then start `pos-web` with `POS_DEV_USER_ID` set to it and press "Masuk (pengembangan)" on `/`
 (`POST /masuk/dev` → pos-api `POST /auth/dev/sign-in`). The dev session has no UMKMall `sid`, so it cannot refresh:
 sign in again after 15 minutes. Screens call pos-api through `api()` in `apps/pos-web/src/lib/api.server.ts`.
