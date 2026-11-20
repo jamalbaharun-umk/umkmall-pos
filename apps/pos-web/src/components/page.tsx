@@ -53,7 +53,8 @@ export function Page({
 /** The white rounded panel Lakasir puts tables and forms on. */
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <Card variant="outlined" padding="none" className={`overflow-hidden bg-default-primary ${className}`}>
+    // No overflow-hidden: it clipped the in-place Select lists (a portalled list can't be used, see POS-COPY.md).
+    <Card variant="outlined" padding="none" className={`bg-default-primary ${className}`}>
       {children}
     </Card>
   )
