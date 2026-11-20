@@ -154,8 +154,8 @@ function NewOpnamePage() {
             </Button>
           </div>
           {/* In-place product picker: the scroller must not clip its list (a portalled list closes on a real click). */}
-          <Table density="comfortable" containerClassName="overflow-visible">
-            <TableHeader>
+          <Table density="comfortable" containerClassName="overflow-visible" className="max-sm:block">
+            <TableHeader className="max-sm:hidden">
               <TableRow>
                 <TableHead>{req('Produk')}</TableHead>
                 <TableHead className="w-32">{req('Jumlah dihitung')}</TableHead>
@@ -163,10 +163,11 @@ function NewOpnamePage() {
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody className="max-sm:block">
               {lines.map((l, i) => (
-                <TableRow key={i}>
-                  <TableCell className="min-w-56">
+                <TableRow key={i} className="max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:items-end max-sm:gap-x-3">
+                  <TableCell className="sm:min-w-56 max-sm:col-span-full max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Produk</span>
                     <Select
                       aria-label={`Produk baris ${i + 1}`}
                       size="small"
@@ -178,7 +179,8 @@ function NewOpnamePage() {
                       onValueChange={(v) => set(i, { productId: v })}
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="max-sm:col-span-full max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Jumlah dihitung</span>
                     <TextField
                       aria-label={`Jumlah dihitung baris ${i + 1}`}
                       size="small"
@@ -189,7 +191,8 @@ function NewOpnamePage() {
                       onChange={(e) => set(i, { countedQty: e.target.value })}
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Alasan</span>
                     <TextField
                       aria-label={`Alasan baris ${i + 1}`}
                       size="small"
@@ -200,7 +203,7 @@ function NewOpnamePage() {
                       maxLength={200}
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="max-sm:block">
                     <Button
                       iconOnly
                       aria-label={`Hapus baris ${i + 1}`}

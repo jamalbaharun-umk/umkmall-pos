@@ -201,8 +201,8 @@ export function OrderForm({
             </Button>
           </div>
           {/* In-place product picker: the scroller must not clip its list (a portalled list closes on a real click). */}
-          <Table density="comfortable" containerClassName="overflow-visible">
-            <TableHeader>
+          <Table density="comfortable" containerClassName="overflow-visible" className="max-sm:block">
+            <TableHeader className="max-sm:hidden">
               <TableRow>
                 <TableHead>{req('Produk')}</TableHead>
                 <TableHead className="w-28">{req('Jumlah')}</TableHead>
@@ -211,10 +211,11 @@ export function OrderForm({
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody className="max-sm:block">
               {lines.map((l, i) => (
-                <TableRow key={i}>
-                  <TableCell className="min-w-56">
+                <TableRow key={i} className="max-sm:grid max-sm:grid-cols-[1fr_1fr_auto] max-sm:items-end max-sm:gap-x-3">
+                  <TableCell className="sm:min-w-56 max-sm:col-span-full max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Produk</span>
                     <Select
                       aria-label={`Produk baris ${i + 1}`}
                       size="small"
@@ -231,7 +232,8 @@ export function OrderForm({
                       }
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Jumlah</span>
                     <TextField
                       aria-label={`Jumlah baris ${i + 1}`}
                       size="small"
@@ -242,7 +244,8 @@ export function OrderForm({
                       onChange={(e) => set(i, { qty: e.target.value })}
                     />
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Harga beli</span>
                     <TextField
                       aria-label={`Harga beli baris ${i + 1}`}
                       size="small"
@@ -254,8 +257,11 @@ export function OrderForm({
                       onChange={(e) => set(i, { unitCost: e.target.value })}
                     />
                   </TableCell>
-                  <TableCell className="text-right">{rupiah(toInt(l.qty) * toInt(l.unitCost) || 0)}</TableCell>
-                  <TableCell>
+                  <TableCell className="text-right max-sm:order-last max-sm:col-span-full max-sm:block">
+                    <span className="text-xs text-default-secondary sm:hidden">Subtotal </span>
+                    {rupiah(toInt(l.qty) * toInt(l.unitCost) || 0)}
+                  </TableCell>
+                  <TableCell className="max-sm:block">
                     <Button
                       iconOnly
                       aria-label={`Hapus baris ${i + 1}`}
