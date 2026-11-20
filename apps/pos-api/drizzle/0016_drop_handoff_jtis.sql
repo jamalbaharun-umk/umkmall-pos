@@ -1,0 +1,1 @@
+DROP TABLE "pos"."handoff_jtis" CASCADE;

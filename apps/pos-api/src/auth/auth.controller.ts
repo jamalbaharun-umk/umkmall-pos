@@ -6,29 +6,43 @@ import {
   Logger,
   NotFoundException,
   Post,
+  Res,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { eq, lt } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import type { Response } from 'express';
 import { z } from 'zod';
 import { fieldError, validate } from '../common/validation';
 import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { handoffJtis, tenants } from '../db/schema';
+import { tenants } from '../db/schema';
 import { Public } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
-import { signSession, verifyHandoff, verifySession } from '../tenancy/session';
+import { signSession } from '../tenancy/session';
 
 const SESSION_TTL = 15 * 60;
-/** How long after its expiry an owner token may still be refreshed (UMKMall liveness decides the rest). */
-export const REFRESH_WINDOW = 7 * 24 * 60 * 60;
-const LIVENESS_TIMEOUT_MS = 5_000;
+const UMKMALL_TIMEOUT_MS = 5_000;
+/** UMKMall's login cookies (`@umkmall/auth` AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME); no other cookie leaves the POS. */
+const UMKMALL_COOKIES = new Set(['auth_token', 'auth_refresh']);
 
-const ExchangeBody = z.object({ token: z.string().min(1).max(4096) });
+const MeAnswer = z.object({
+  success: z.literal(true),
+  user: z.object({ id: z.string().uuid() }),
+});
 const DevBody = z.object({ userId: z.string().uuid() });
 
 const parse = validate;
+/** The `Cookie` header cut down to UMKMall's two auth cookies, or undefined when neither is there. */
+export function authCookies(header: string | undefined): string | undefined {
+  const kept = (header ?? '')
+    .split(';')
+    .map((c) => c.trim())
+    .filter((c) => UMKMALL_COOKIES.has(c.slice(0, c.indexOf('='))));
+  return kept.length > 0 ? kept.join('; ') : undefined;
+}
+
 const isMissingUser = (e: unknown) =>
   (e as { cause?: { code?: string } }).cause?.code === '23503';
 
@@ -39,64 +53,60 @@ export class AuthController {
 
   constructor(@InjectDb() private readonly db: Db) {}
 
-  /** UMKMall handoff token → 15-minute owner session. Creates the store on the user's first visit. */
+  /**
+   * The shared UMKMall login cookie (UMK-1945) → 15-minute owner session; also the owner refresh. Asks UMKMall's
+   * `/api/auth/me` with only the two auth cookies. Every Set-Cookie it answers goes back unchanged: it can renew the
+   * access cookie and mint the refresh cookie once, and dropping that signs the owner out of UMKMall later.
+   */
   @Public()
-  @Post('umkmall/exchange')
+  @Post('umkmall/session')
   @HttpCode(200)
-  async exchange(@Body() body: unknown) {
-    const { token } = parse(ExchangeBody, body);
-    const handoff = await verifyHandoff(token, this.env.UMKMALL_JWKS_URL);
-    if (!handoff) throw new UnauthorizedException();
-
-    const tenantId = await this.db
-      .transaction(async (tx) => {
-        await tx
-          .delete(handoffJtis)
-          .where(lt(handoffJtis.expiresAt, new Date()));
-        const spent = await tx
-          .insert(handoffJtis)
-          .values({ jti: handoff.jti, expiresAt: new Date(handoff.exp * 1000) })
-          .onConflictDoNothing()
-          .returning({ jti: handoffJtis.jti });
-        if (spent.length === 0) throw new UnauthorizedException(); // replayed jti
-        return this.findOrCreateTenant(tx, handoff.sub);
-      })
-      .catch((error: unknown) => {
-        // A handoff for an account UMKMall has no users row for: refuse cleanly instead of a 500.
+  async umkmallSession(
+    @Headers('cookie') cookie: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const forwarded = authCookies(cookie);
+    if (!forwarded) throw new UnauthorizedException();
+    let me: globalThis.Response;
+    try {
+      me = await fetch(
+        `${this.env.UMKMALL_WEB_URL.replace(/\/$/, '')}/api/auth/me`,
+        {
+          headers: { cookie: forwarded, accept: 'application/json' },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(UMKMALL_TIMEOUT_MS),
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `UMKMall /auth/me unreachable: ${(error as Error).name}`,
+      );
+      throw new ServiceUnavailableException();
+    }
+    const setCookies = me.headers.getSetCookie();
+    if (setCookies.length > 0) res.setHeader('set-cookie', setCookies);
+    if (me.status === 401) throw new UnauthorizedException();
+    if (me.status !== 200) {
+      this.logger.warn(`UMKMall /auth/me answered ${me.status}`);
+      throw new ServiceUnavailableException();
+    }
+    const answer = MeAnswer.safeParse(await me.json().catch(() => null));
+    if (!answer.success) throw new UnauthorizedException();
+    const userId = answer.data.user.id;
+    const tenantId = await this.findOrCreateTenant(this.db, userId).catch(
+      (error: unknown) => {
+        // A UMKMall account with no users row in this database: refuse cleanly instead of a 500.
         if (isMissingUser(error))
           throw new UnauthorizedException({
             message: 'Akun UMKMall tidak ditemukan',
           });
         throw error;
-      });
-    return this.issue({
-      tenantId,
-      actorId: handoff.sub,
-      kind: 'owner',
-      sid: handoff.sid,
-    });
+      },
+    );
+    return this.issue({ tenantId, actorId: userId, kind: 'owner' });
   }
 
-  /**
-   * A fresh owner session while UMKMall says its session is still live. Accepts an owner token that expired up to
-   * REFRESH_WINDOW ago (the client refreshes after the 15-minute token lapses), so it reads the bearer itself
-   * instead of going through the session guard, which refuses any expired token.
-   */
-  @Public()
-  @Post('refresh')
-  @HttpCode(200)
-  async refresh(@Headers('authorization') header: string | undefined) {
-    const token = header?.startsWith('Bearer ') ? header.slice(7) : '';
-    const session = token
-      ? await verifySession(token, this.env.POS_SESSION_SECRET, REFRESH_WINDOW)
-      : null;
-    if (session?.kind !== 'owner' || !session.sid)
-      throw new UnauthorizedException();
-    if (!(await this.isLive(session.sid))) throw new UnauthorizedException();
-    return this.issue(session);
-  }
-
-  /** Local work without UMKMall. Refused in production. The session has no sid, so it cannot refresh. */
+  /** Local work without UMKMall (localhost cookies carry no UMKMall login). Refused in production. */
   @Public()
   @Post('dev/sign-in')
   @HttpCode(200)
@@ -141,37 +151,5 @@ export class AuthController {
       expiresIn: SESSION_TTL,
       tenant: { id: session.tenantId },
     };
-  }
-
-  /** UMKMall liveness: true only for 200 { live: true }; false for 200 { live: false }; 503 otherwise. */
-  private async isLive(sid: string): Promise<boolean> {
-    let res: Response;
-    try {
-      res = await fetch(
-        `${this.env.UMKMALL_API_URL.replace(/\/$/, '')}/auth/pos/liveness`,
-        {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-pos-service-key': this.env.POS_SERVICE_KEY,
-          },
-          body: JSON.stringify({ sid }),
-          signal: AbortSignal.timeout(LIVENESS_TIMEOUT_MS),
-        },
-      );
-    } catch (error) {
-      this.logger.warn(
-        `UMKMall liveness unreachable: ${(error as Error).name}`,
-      );
-      throw new ServiceUnavailableException();
-    }
-    if (res.status !== 200) {
-      this.logger.warn(`UMKMall liveness answered ${res.status}`);
-      throw new ServiceUnavailableException();
-    }
-    const answer = (await res.json().catch(() => null)) as {
-      live?: unknown;
-    } | null;
-    return answer?.live === true;
   }
 }

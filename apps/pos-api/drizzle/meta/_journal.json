@@ -113,6 +113,13 @@
       "when": 1794933899631,
       "tag": "0015_store_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795145186066,
+      "tag": "0016_drop_handoff_jtis",
+      "breakpoints": true
     }
   ]
 }

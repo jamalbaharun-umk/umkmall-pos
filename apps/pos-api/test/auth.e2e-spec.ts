@@ -1,72 +1,55 @@
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { createServer, IncomingMessage, Server } from 'node:http';
+import { createServer, Server, ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
-import { exportJWK, generateKeyPair, KeyLike, SignJWT } from 'jose';
 import postgres from 'postgres';
 import request from 'supertest';
-import { createApp, createStore } from './support/fixtures';
+import { createApp } from './support/fixtures';
 import { ADMIN_DATABASE_URL } from './support/env';
 
-// A local stand-in for UMKMall (#1837): JWKS with a locally generated Ed25519 key, and the liveness route.
-type Liveness = 'live' | 'dead' | 'down';
+// A fake UMKMall `GET /api/auth/me` (UMK-1945). `answer` decides each reply; every call's Cookie header is kept.
+type Answer = (res: ServerResponse) => void;
 const stub = {
-  liveness: 'live' as Liveness,
-  calls: [] as { key?: string; body: string }[],
+  answer: (() => undefined) as Answer,
+  cookies: [] as (string | undefined)[],
 };
+const signedIn =
+  (userId: string, setCookies: string[] = []): Answer =>
+  (res) => {
+    if (setCookies.length) res.setHeader('set-cookie', setCookies);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ success: true, user: { id: userId, name: 'x' } }));
+  };
+const status =
+  (code: number, setCookies: string[] = []): Answer =>
+  (res) => {
+    if (setCookies.length) res.setHeader('set-cookie', setCookies);
+    res.statusCode = code;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ success: false, user: null }));
+  };
 
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (c: Buffer) => (data += c.toString()));
-    req.on('end', () => resolve(data));
-  });
-}
-
-describe('UMKMall handoff exchange and owner refresh', () => {
+describe('owner sign-in from the shared UMKMall cookie', () => {
   let app: INestApplication;
   let umkmall: Server;
-  let key: KeyLike;
-  let otherKey: KeyLike;
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1 });
 
   beforeAll(async () => {
-    ({ privateKey: key } = await generateKeyPair('EdDSA', { crv: 'Ed25519' }));
-    ({ privateKey: otherKey } = await generateKeyPair('EdDSA', {
-      crv: 'Ed25519',
-    }));
-    const pub = await exportJWK(key);
-    delete pub.d;
     umkmall = createServer((req, res) => {
-      if (req.url === '/.well-known/pos-jwks.json') {
-        res.setHeader('content-type', 'application/json');
-        res.end(
-          JSON.stringify({
-            keys: [{ ...pub, kid: 'k1', alg: 'EdDSA', use: 'sig' }],
-          }),
-        );
-        return;
-      }
-      if (req.url === '/auth/pos/liveness' && req.method === 'POST') {
-        if (stub.liveness === 'down') return req.socket.destroy();
-        void readBody(req).then((body) => {
-          stub.calls.push({
-            key: req.headers['x-pos-service-key'] as string,
-            body,
-          });
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ live: stub.liveness === 'live' }));
-        });
-        return;
+      if (req.url === '/api/auth/me' && req.method === 'GET') {
+        stub.cookies.push(req.headers.cookie);
+        return stub.answer(res);
       }
       res.statusCode = 404;
       res.end();
     });
     await new Promise<void>((r) => umkmall.listen(0, '127.0.0.1', r));
-    const base = `http://127.0.0.1:${(umkmall.address() as AddressInfo).port}`;
-    process.env.UMKMALL_JWKS_URL = `${base}/.well-known/pos-jwks.json`;
-    process.env.UMKMALL_API_URL = base;
+    process.env.UMKMALL_WEB_URL = `http://127.0.0.1:${(umkmall.address() as AddressInfo).port}/`;
     app = await createApp();
+  });
+
+  beforeEach(() => {
+    stub.cookies = [];
   });
 
   afterAll(async () => {
@@ -82,40 +65,16 @@ describe('UMKMall handoff exchange and owner refresh', () => {
     return u.id;
   }
 
-  function handoff(
-    sub: string,
-    opts: {
-      jti?: string;
-      iss?: string;
-      aud?: string;
-      exp?: number;
-      signer?: KeyLike;
-      kid?: string;
-    } = {},
-  ) {
-    const now = Math.floor(Date.now() / 1000);
-    return new SignJWT({ sid: 'sid-' + sub })
-      .setProtectedHeader({ alg: 'EdDSA', kid: opts.kid ?? 'k1', typ: 'JWT' })
-      .setIssuer(opts.iss ?? 'umkmall')
-      .setAudience(opts.aud ?? 'pos')
-      .setSubject(sub)
-      .setJti(opts.jti ?? randomUUID())
-      .setIssuedAt(now)
-      .setExpirationTime(opts.exp ?? now + 300)
-      .sign(opts.signer ?? key);
-  }
+  const AUTH = 'auth_token=at; auth_refresh=sid.secret';
+  const session = (cookie?: string) => {
+    const req = request(app.getHttpServer()).post('/auth/umkmall/session');
+    return cookie === undefined ? req : req.set('Cookie', cookie);
+  };
 
-  const exchange = (token: unknown) =>
-    request(app.getHttpServer()).post('/auth/umkmall/exchange').send({ token });
-
-  it('refuses a handoff for an account UMKMall has no users row for with 401, not a 500', async () => {
-    const res = await exchange(await handoff(randomUUID())).expect(401);
-    expect(res.body).toEqual({ message: 'Akun UMKMall tidak ditemukan' });
-  });
-
-  it('exchanges a handoff token for an owner session and creates the store once', async () => {
+  it('opens an owner session for the UMKMall user and creates the store once', async () => {
     const sub = await umkmallUser();
-    const first = await exchange(await handoff(sub)).expect(200);
+    stub.answer = signedIn(sub);
+    const first = await session(AUTH).expect(200);
     expect(first.body).toMatchObject({
       expiresIn: 900,
       tenant: { id: expect.any(String) },
@@ -127,156 +86,74 @@ describe('UMKMall handoff exchange and owner refresh', () => {
     expect(me.body.tenant.id).toBe(first.body.tenant.id);
     expect(me.body.actor).toMatchObject({ id: sub, kind: 'owner', name: null });
 
-    const second = await exchange(await handoff(sub)).expect(200);
+    // the owner refresh is the same call: same store, no second row
+    const second = await session(AUTH).expect(200);
     expect(second.body.tenant.id).toBe(first.body.tenant.id);
     const [{ n }] = await admin<{ n: number }[]>`
       select count(*)::int as n from pos.tenants where user_id = ${sub}`;
     expect(n).toBe(1);
   });
 
-  it('accepts each jti once', async () => {
-    const sub = await umkmallUser();
-    const token = await handoff(sub);
-    await exchange(token).expect(200);
-    await exchange(token).expect(401);
+  it('forwards only the two UMKMall auth cookies', async () => {
+    stub.answer = signedIn(await umkmallUser());
+    await session(
+      'pos_session=pos-secret; auth_token=at; _ga=x; auth_refresh=sid.secret; pos_device=d; auth_token_x=no',
+    ).expect(200);
+    expect(stub.cookies).toEqual(['auth_token=at; auth_refresh=sid.secret']);
   });
 
-  it.each<
-    [
-      string,
-      {
-        aud?: string;
-        iss?: string;
-        exp?: number;
-        kid?: string;
-        unknownKey?: boolean;
-      },
-    ]
-  >([
-    ['wrong audience', { aud: 'umkmall-web' }],
-    ['wrong issuer', { iss: 'someone-else' }],
-    ['expired', { exp: Math.floor(Date.now() / 1000) - 10 }],
-    ['signed by a key not in the JWKS', { kid: 'k-unknown', unknownKey: true }],
-  ])('refuses a token that is %s', async (_, { unknownKey, ...opts }) => {
-    const sub = await umkmallUser();
-    const signer = unknownKey ? otherKey : undefined;
-    await exchange(await handoff(sub, { ...opts, signer })).expect(401);
+  it('answers 401 without calling UMKMall when neither auth cookie is there', async () => {
+    await session().expect(401);
+    await session('pos_session=x; _ga=y').expect(401);
+    expect(stub.cookies).toEqual([]);
   });
 
-  it('refuses a token signed with HS256 instead of EdDSA', async () => {
-    const sub = await umkmallUser();
-    const forged = await new SignJWT({ sid: 's' })
-      .setProtectedHeader({ alg: 'HS256', kid: 'k1' })
-      .setIssuer('umkmall')
-      .setAudience('pos')
-      .setSubject(sub)
-      .setJti(randomUUID())
-      .setIssuedAt()
-      .setExpirationTime('5m')
-      .sign(new TextEncoder().encode('x'.repeat(32)));
-    await exchange(forged).expect(401);
+  it('relays every Set-Cookie from /auth/me unchanged', async () => {
+    const minted = [
+      'auth_token=new; Path=/; Domain=.umkmall.id; HttpOnly; Secure; SameSite=Lax; Max-Age=900',
+      'auth_refresh=sid.minted; Path=/; Domain=.umkmall.id; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000',
+    ];
+    stub.answer = signedIn(await umkmallUser(), minted);
+    const res = await session(AUTH).expect(200);
+    expect(res.headers['set-cookie']).toEqual(minted);
   });
 
-  it('answers 422 for a malformed body', async () => {
-    await exchange(undefined).expect(422);
-    await exchange(42).expect(422);
+  it('answers 401 when UMKMall refuses the cookie, still relaying its Set-Cookie', async () => {
+    const cleared = ['auth_token=; Path=/; Max-Age=0'];
+    stub.answer = status(401, cleared);
+    const res = await session(AUTH).expect(401);
+    expect(res.body.sessionToken).toBeUndefined();
+    expect(res.headers['set-cookie']).toEqual(cleared);
   });
 
-  describe('refresh', () => {
-    async function ownerSession() {
-      const sub = await umkmallUser();
-      const res = await exchange(await handoff(sub)).expect(200);
-      return {
-        sub,
-        ...(res.body as { sessionToken: string; tenant: { id: string } }),
-      };
-    }
-    const refresh = (token: string) =>
-      request(app.getHttpServer())
-        .post('/auth/refresh')
-        .set('Authorization', `Bearer ${token}`);
-
-    it('issues a fresh session for the same store while UMKMall says live', async () => {
-      stub.liveness = 'live';
-      stub.calls = [];
-      const owner = await ownerSession();
-      const res = await refresh(owner.sessionToken).expect(200);
-      expect(res.body.tenant.id).toBe(owner.tenant.id);
-      expect(stub.calls).toEqual([
-        {
-          key: process.env.POS_SERVICE_KEY,
-          body: JSON.stringify({ sid: `sid-${owner.sub}` }),
-        },
-      ]);
-      // the refreshed session still carries the sid, so it can refresh again
-      await refresh(res.body.sessionToken).expect(200);
-    });
-
-    it('refuses when UMKMall says the session is not live', async () => {
-      const owner = await ownerSession();
-      stub.liveness = 'dead';
-      await refresh(owner.sessionToken).expect(401);
-    });
-
-    it('answers 503, never a session, when UMKMall is down', async () => {
-      const owner = await ownerSession();
-      stub.liveness = 'down';
-      const res = await refresh(owner.sessionToken).expect(503);
-      expect(res.body.sessionToken).toBeUndefined();
-    });
-
-    it('refreshes an owner token that expired within the refresh window, not one older', async () => {
-      stub.liveness = 'live';
-      const owner = await ownerSession();
-      const claims = {
-        tenantId: owner.tenant.id,
-        actorId: owner.sub,
-        kind: 'owner' as const,
-        sid: `sid-${owner.sub}`,
-      };
-      const lapsed = await new SignJWT({
-        tid: claims.tenantId,
-        kind: 'owner',
-        sid: claims.sid,
-      })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setSubject(claims.actorId)
-        .setIssuer('umkmall-pos')
-        .setAudience('pos-api')
-        .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
-        .setExpirationTime(Math.floor(Date.now() / 1000) - 1800)
-        .sign(new TextEncoder().encode(process.env.POS_SESSION_SECRET));
-      // the guard still refuses it everywhere else
-      await request(app.getHttpServer())
-        .get('/tenant/me')
-        .set('Authorization', `Bearer ${lapsed}`)
-        .expect(401);
-      const res = await refresh(lapsed).expect(200);
-      expect(res.body.tenant.id).toBe(owner.tenant.id);
-      const ancient = await new SignJWT({
-        tid: claims.tenantId,
-        kind: 'owner',
-        sid: claims.sid,
-      })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setSubject(claims.actorId)
-        .setIssuer('umkmall-pos')
-        .setAudience('pos-api')
-        .setIssuedAt(Math.floor(Date.now() / 1000) - 9 * 86400)
-        .setExpirationTime(Math.floor(Date.now() / 1000) - 8 * 86400)
-        .sign(new TextEncoder().encode(process.env.POS_SESSION_SECRET));
-      await refresh(ancient).expect(401);
-      stub.liveness = 'down';
-      await refresh(lapsed).expect(503);
-      stub.liveness = 'live';
-    });
-
-    it('refuses a session without a UMKMall sid', async () => {
-      stub.liveness = 'live';
-      const store = await createStore(); // owner session signed without sid
-      await refresh(store.token).expect(401);
-    });
+  it('answers 401 for a 200 that names no user', async () => {
+    stub.answer = (res) =>
+      res.end(JSON.stringify({ success: false, user: null }));
+    await session(AUTH).expect(401);
   });
+
+  it('refuses an account with no users row here with 401, not a 500', async () => {
+    stub.answer = signedIn(randomUUID());
+    const res = await session(AUTH).expect(401);
+    expect(res.body).toEqual({ message: 'Akun UMKMall tidak ditemukan' });
+  });
+
+  it.each<[string, Answer]>([
+    ['a 5xx', status(502)],
+    ['a 429', status(429)],
+    ['a dropped connection', (res) => res.socket?.destroy()],
+  ])('answers 503, never a session, on %s', async (_, answer) => {
+    stub.answer = answer;
+    const res = await session(AUTH).expect(503);
+    expect(res.body.sessionToken).toBeUndefined();
+  });
+
+  it('answers 503 when /auth/me does not answer within 5 s', async () => {
+    stub.answer = () => undefined; // never replies
+    const started = Date.now();
+    await session(AUTH).expect(503);
+    expect(Date.now() - started).toBeLessThan(7_000);
+  }, 10_000);
 
   describe('dev sign-in', () => {
     const devSignIn = (userId: string) =>

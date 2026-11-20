@@ -21,7 +21,7 @@ const jakartaDay = (days = 0) =>
 
 // Tables without tenant_id, on purpose. Anything else in `pos` must carry tenant_id, or the purge's runtime
 // discovery (src/purge/purge.service.ts) would miss it and leave a store's rows behind after erasure.
-const GLOBAL_TABLES = ['tenants', 'handoff_jtis', '__drizzle_migrations'];
+const GLOBAL_TABLES = ['tenants', '__drizzle_migrations'];
 
 describe('store purge on UMKMall account erasure (U8)', () => {
   let app: INestApplication;

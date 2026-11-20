@@ -8,7 +8,7 @@ import type { PosSession } from './session';
 
 export const IS_PUBLIC = 'pos:isPublic';
 
-/** Opts a route out of the global session guard (health checks, the U1 handoff exchange). */
+/** Opts a route out of the global session guard (health checks, owner sign-in). */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
 export type SessionRequest = Request & { posSession?: PosSession };
