@@ -51,3 +51,8 @@ export const cashDifference = (counted: number, expected: number) => {
   const d = counted - expected
   return { label: d === 0 ? 'Pas' : d < 0 ? 'Kurang' : 'Lebih', amount: Math.abs(d), sign: Math.sign(d) as -1 | 0 | 1 }
 }
+
+/** Cash totals round up to the next Rp100 (UMK-1993); mirrors pos-api `cashRounding`. Integer rupiah only. */
+export function cashRounding(total: number): number {
+  return (100 - (total % 100)) % 100
+}

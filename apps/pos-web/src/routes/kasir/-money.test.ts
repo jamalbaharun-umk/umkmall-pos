@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cashDifference, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { cashDifference, cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 describe('cashier money helpers', () => {
   it('quick amounts: exact, then the next round notes', () => {
@@ -55,5 +55,15 @@ describe('cashier money helpers', () => {
     expect(cashDifference(133_000, 133_000)).toEqual({ label: 'Pas', amount: 0, sign: 0 })
     expect(cashDifference(130_000, 133_000)).toEqual({ label: 'Kurang', amount: 3_000, sign: -1 })
     expect(cashDifference(135_500, 133_000)).toEqual({ label: 'Lebih', amount: 2_500, sign: 1 })
+  })
+})
+
+describe('cashRounding', () => {
+  it('rounds up to the next Rp100 and leaves a boundary alone', () => {
+    expect(cashRounding(200_123)).toBe(77)
+    expect(cashRounding(200_100)).toBe(0)
+    expect(cashRounding(1)).toBe(99)
+    expect(cashRounding(99)).toBe(1)
+    expect(cashRounding(0)).toBe(0)
   })
 })

@@ -19,7 +19,7 @@ import { useCan } from '@/components/shell'
 import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
 import { readCart, restoreCart, writeCart } from './-cart'
-import { discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
 // the left, "Orders details" on the right, then the payment modal (method, quick amounts, numpad, "Pay it") and the
@@ -548,8 +548,12 @@ function PayDialog({
   // The server computes the total; when it disagrees with this screen (a price changed), its figure is shown and due.
   const [serverTotal, setServerTotal] = useState<number>()
   const due = serverTotal ?? total
+  // Cash only: the server rounds the amount due up to the next Rp100 (UMK-1993); other methods pay the exact total.
+  const isCash = method?.kind === 'cash'
+  const rounding = isCash ? cashRounding(due) : 0
+  const payable = due + rounding
   const paid = parseRupiah(paidText)
-  const change = Number.isNaN(paid) ? null : paid - due
+  const change = Number.isNaN(paid) ? null : paid - payable
 
   async function pay(amount: number) {
     if (lock.current) return
@@ -561,7 +565,7 @@ function PayDialog({
       amount = due
     } else if (!paidText.trim()) return setError('Wajib diisi: masukkan uang diterima')
     else if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 50.000')
-    else if (amount < due) return setError('Uang dibayar kurang dari total')
+    else if (amount < payable) return setError('Uang dibayar kurang dari total')
     lock.current = true
     setBusy(true)
     setError(undefined)
@@ -649,6 +653,15 @@ function PayDialog({
               <dt>Total</dt>
               <dd className="text-default-brand">{rupiah(due)}</dd>
             </div>
+            {rounding > 0 && (
+              <>
+                <Row label="Pembulatan" value={<span className="text-default-brand">{rupiah(rounding)}</span>} />
+                <div className="flex justify-between font-bold">
+                  <dt>Harus dibayar</dt>
+                  <dd className="text-default-brand">{rupiah(payable)}</dd>
+                </div>
+              </>
+            )}
           </dl>
           <TextField
             label="Uang diterima"
@@ -674,8 +687,8 @@ function PayDialog({
             </span>
           </p>
           <div className="grid grid-cols-3 gap-2" aria-label="Nominal cepat">
-            {quickAmounts(due)
-              .filter((n) => n !== due)
+            {quickAmounts(payable)
+              .filter((n) => n !== payable)
               .map((n) => (
                 <Button
                   width="auto"
@@ -691,10 +704,10 @@ function PayDialog({
           </div>
           <Button
             width="full"
-            type={paid === due ? 'primary' : 'outline'}
-            color={paid === due ? 'primary' : 'light'}
+            type={paid === payable ? 'primary' : 'outline'}
+            color={paid === payable ? 'primary' : 'light'}
             disabled={busy}
-            onClick={() => setPaidText(String(due))}
+            onClick={() => setPaidText(String(payable))}
           >
             Uang pas
           </Button>
