@@ -104,6 +104,8 @@ describe('reports and dashboard (U5)', () => {
     revenue: 44_300,
     cost: 24_000,
     grossProfit: 19_000,
+    // Cash rounding (UMK-1993): every known total is on a Rp100 boundary.
+    rounding: 0,
     voidCount: 0,
   };
 
@@ -282,11 +284,12 @@ describe('reports and dashboard (U5)', () => {
         expired: day(1),
       })
       .expect(201);
-    // 1 × Kopi Rp8.000 − voucher 950 = 7.050, tax 10% = 705, total 7.755.
+    // 1 × Kopi Rp8.000 − voucher 950 = 7.050, tax 10% = 705, total 7.755. A cash sale: the amount due is
+    // rounded up to 7.800 (UMK-1993); the 45 is its own figure, outside revenue and gross profit.
     await sell(store, {
       lines: [{ productId: kopi, qty: 1 }],
       voucherCode: v.body.code,
-      paid: 7755,
+      paid: 7800,
     });
     const expected = {
       salesCount: 4,
@@ -297,6 +300,7 @@ describe('reports and dashboard (U5)', () => {
       revenue: 52_055,
       cost: 28_000,
       grossProfit: 22_050,
+      rounding: 45,
       voidCount: 0,
     };
     const reconciles = (t: typeof expected) =>

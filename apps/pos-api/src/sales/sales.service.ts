@@ -49,6 +49,12 @@ const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps e
 export const taxOf = (taxable: number, bps: number) =>
   Number((BigInt(taxable) * BigInt(bps) + 5000n) / 10000n);
 
+/**
+ * UMK-1993: what a CASH total adds to reach the next Rp100, so no coin below Rp100 is needed
+ * (Rp200.123 -> 77, amount due Rp200.200). 0 on a Rp100 boundary. Integer rupiah.
+ */
+export const cashRounding = (total: number) => (100 - (total % 100)) % 100;
+
 /** Order-independent fingerprint of a sale request (lines sorted, keys sorted). */
 export const requestHash = (input: SaleInput) => {
   const lines = [...input.lines].sort((x, y) =>
@@ -227,14 +233,22 @@ export class SalesService {
     // Tax on the amount after the manual discount AND the voucher (Lakasir flaw 2).
     const tax = taxOf(subtotal - discount - voucherDiscount, settings.taxBps);
     const total = subtotal - discount - voucherDiscount + tax;
+    // UMK-1993: only a cash sale is rounded, after tax, outside `total` (the tax base and the revenue do
+    // not change). A kasbon and every non-cash method owe the exact total.
+    const rounding = method.isCash ? cashRounding(total) : 0;
+    const amountDue = total + rounding;
     if (method.isCredit) {
       // Kasbon: the rest becomes the member's receivable; paid may be 0.
       if (!memberId) throw fail('Pilih member untuk kasbon', {}, 'memberId');
       if (input.paid >= total)
         throw fail('Kasbon harus menyisakan sisa tagihan', { total }, 'paid');
     } else if (method.isCash) {
-      if (input.paid < total)
-        throw fail('Uang dibayar kurang dari total', { total }, 'paid');
+      if (input.paid < amountDue)
+        throw fail(
+          'Uang dibayar kurang dari total',
+          { total, rounding, amountDue },
+          'paid',
+        );
     } else if (input.paid !== total) {
       throw fail(
         'Pembayaran non-tunai harus sama dengan total',
@@ -266,8 +280,9 @@ export class SalesService {
         taxBps: settings.taxBps,
         tax,
         total,
+        rounding,
         paid: input.paid,
-        change: Math.max(input.paid - total, 0),
+        change: Math.max(input.paid - amountDue, 0),
         costTotal: 0,
         overrideBy,
         note: input.note || null,
@@ -404,6 +419,7 @@ export class SalesService {
           voucherDiscount: sales.voucherDiscount,
           tax: sales.tax,
           total: sales.total,
+          rounding: sales.rounding,
           paid: sales.paid,
           change: sales.change,
           costTotal: sales.costTotal,
@@ -424,6 +440,7 @@ export class SalesService {
         .select({
           count: count(),
           revenue: total(sales.total),
+          rounding: total(sales.rounding),
           discount: total(sales.discount),
           voucherDiscount: total(sales.voucherDiscount),
         })
@@ -434,6 +451,7 @@ export class SalesService {
         .select({
           count: count(),
           revenue: total(saleVoids.total),
+          rounding: total(saleVoids.rounding),
           discount: total(saleVoids.discount),
           voucherDiscount: total(saleVoids.voucherDiscount),
         })
@@ -460,6 +478,8 @@ export class SalesService {
     const summary = {
       count: rung.count - reversed.count,
       revenue: rung.revenue - reversed.revenue,
+      // UMK-1993: cash rounding, outside revenue; revenue + rounding is what customers owed.
+      rounding: rung.rounding - reversed.rounding,
       discount: rung.discount - reversed.discount,
       voucherDiscount: rung.voucherDiscount - reversed.voucherDiscount,
       // Voids done in the window: what was subtracted above.
@@ -468,6 +488,7 @@ export class SalesService {
     return {
       data: rows.map((r) => ({
         ...r,
+        amountDue: r.total + r.rounding,
         costTotal: showCost ? r.costTotal : undefined,
       })),
       total: rung.count,
@@ -495,6 +516,7 @@ export class SalesService {
         taxBps: sales.taxBps,
         tax: sales.tax,
         total: sales.total,
+        rounding: sales.rounding,
         paid: sales.paid,
         change: sales.change,
         costTotal: sales.costTotal,
@@ -533,6 +555,8 @@ export class SalesService {
     const showCost = hasPermission(s, 'reports.view');
     return {
       ...sale,
+      // UMK-1993: what the customer owes; `rounding` is its own line ("Pembulatan"), 0 unless cash.
+      amountDue: sale.total + sale.rounding,
       costTotal: showCost ? sale.costTotal : undefined,
       lines: lines.map((l) => ({
         ...l,
@@ -571,6 +595,8 @@ export class SalesService {
       taxBps: sale.taxBps,
       tax: sale.tax,
       total: sale.total,
+      rounding: sale.rounding,
+      amountDue: sale.amountDue,
       paid: sale.paid,
       change: sale.change,
       note: sale.note,

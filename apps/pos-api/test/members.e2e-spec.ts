@@ -106,14 +106,17 @@ describe('members, vouchers and credit sales (U7)', () => {
       paid: 5000,
     }).expect(201);
     // 4.000 − 500 = 3.500; voucher 10 % = 350 → 3.150 taxable; tax 315; total 3.465.
+    // Cash: the amount due is rounded up to 3.500 (UMK-1993), so the change is 1.500.
     expect(res.body).toMatchObject({
       subtotal: 4000,
       discount: 500,
       voucherDiscount: 350,
       tax: 315,
       total: 3465,
+      rounding: 35,
+      amountDue: 3500,
       paid: 5000,
-      change: 1535,
+      change: 1500,
     });
     // History (riwayat) rows and summary carry the voucher so a row adds up: 4.000 − 500 − 350 + 315 = 3.465.
     const list = await get(s.auth, '/sales').expect(200);

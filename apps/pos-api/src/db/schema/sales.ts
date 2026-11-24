@@ -134,6 +134,9 @@ export const sales = pos
       taxBps: integer('tax_bps').notNull().default(0),
       tax: rupiah('tax').notNull().default(0),
       total: rupiah('total').notNull(),
+      // UMK-1993: what a CASH sale adds to reach the next Rp100 (0-99); 0 for every other method. It is
+      // outside `total` (not taxed, not product revenue); the customer owes `total + rounding`.
+      rounding: rupiah('rounding').notNull().default(0),
       paid: rupiah('paid').notNull(),
       change: rupiah('change').notNull(),
       costTotal: rupiah('cost_total').notNull(),
@@ -176,14 +179,17 @@ export const sales = pos
         columns: [t.tenantId, t.voucherId],
         foreignColumns: [vouchers.tenantId, vouchers.id],
       }).onDelete('restrict'),
-      // Underpaid (paid < total) only as a credit sale, which needs a member.
+      // Underpaid (paid < total + rounding) only as a credit sale, which needs a member. `rounding` is
+      // counted once: in the amount due, never in `total`.
       check(
         'sales_money_ck',
         sql`${t.subtotal} >= 0 and ${t.discount} >= 0 and ${t.voucherDiscount} >= 0
           and ${t.discount} + ${t.voucherDiscount} <= ${t.subtotal} and ${t.tax} >= 0
           and ${t.total} = ${t.subtotal} - ${t.discount} - ${t.voucherDiscount} + ${t.tax}
-          and ${t.change} = greatest(${t.paid} - ${t.total}, 0) and ${t.costTotal} >= 0
-          and (${t.paid} >= ${t.total} or ${t.memberId} is not null)`,
+          and ${t.rounding} between 0 and 99
+          and (${t.rounding} = 0 or (${t.total} + ${t.rounding}) % 100 = 0)
+          and ${t.change} = greatest(${t.paid} - ${t.total} - ${t.rounding}, 0) and ${t.costTotal} >= 0
+          and (${t.paid} >= ${t.total} + ${t.rounding} or ${t.memberId} is not null)`,
       ),
     ],
   )
