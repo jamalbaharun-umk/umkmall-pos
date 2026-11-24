@@ -61,7 +61,11 @@ export class ShiftsService {
       .select({
         // Cash in the drawer: cash sales' paid − change and a kasbon's down payment (U7); debit/wallet none.
         cashSales: sql<string>`coalesce(sum(case when ${paymentMethods.isCash} then ${sales.paid} - ${sales.change} when ${paymentMethods.isCredit} then ${sales.paid} else 0 end), 0)`,
-        salesCount: count(),
+        // The cash of a voided sale did come in (its return is a ledger cash-out), but it is no sale.
+        salesCount:
+          sql<number>`count(*) filter (where ${sales.status} <> 'void')`.mapWith(
+            Number,
+          ),
       })
       .from(sales)
       .innerJoin(paymentMethods, eq(paymentMethods.id, sales.paymentMethodId))

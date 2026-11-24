@@ -1,0 +1,301 @@
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { fieldError } from '../common/validation';
+import type { Db } from '../db/db.module';
+import { InjectDb } from '../db/db.module';
+import {
+  rolePermissions,
+  staff,
+  staffRoles,
+  tenants,
+  voidPins,
+} from '../db/schema';
+import { hashPin, verifyPin } from '../staff/secrets';
+import type { Tx } from '../stock/stock.service';
+import type { PosSession } from '../tenancy/session';
+
+export const MAX_PIN_FAILURES = 5;
+export const PIN_LOCK_SECONDS = 5 * 60;
+
+export type Approver = { id: string; kind: 'owner' | 'cashier'; name: string };
+
+type PinRow = typeof voidPins.$inferSelect;
+type Check =
+  { ok: true } | { ok: false; retryAfter?: number; attemptsLeft?: number };
+
+const WRONG_PIN = 'PIN salah';
+
+const wrongPin = (field: string) => fieldError(field, WRONG_PIN);
+
+const locked = (field: string, retryAfter: number) => {
+  const message = `Terlalu banyak PIN salah. Coba lagi dalam ${Math.ceil(retryAfter / 60)} menit, minta admin lain, atau minta pemilik membuka kuncinya.`;
+  return new HttpException(
+    { message, errors: { [field]: message }, retryAfter },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+};
+
+/**
+ * The void PIN (UMK-1962): the 6-digit PIN an approver types to approve a void. The only file that reads
+ * or writes pos.void_pins (guard in src/guards.spec.ts), so the hash never reaches a response or a log.
+ *
+ * Lockout: every guess runs under the PIN row's lock, so parallel guesses are counted one by one. The
+ * 5th wrong PIN in a row locks that approver for 5 minutes; a guess during the lock is refused without
+ * being checked and does not extend it; after the lock the count starts again at 0. A correct PIN
+ * resets the count. The owner can unlock, and can remove a forgotten PIN.
+ */
+@Injectable()
+export class VoidPins {
+  constructor(@InjectDb() private readonly db: Db) {}
+
+  private where(tenantId: string, actorId: string) {
+    return and(eq(voidPins.tenantId, tenantId), eq(voidPins.actorId, actorId));
+  }
+
+  /** One guess against a locked row. The caller commits the transaction before answering. */
+  private async check(tx: Tx, row: PinRow, pin: string): Promise<Check> {
+    const now = Date.now();
+    if (row.lockedUntil && row.lockedUntil.getTime() > now)
+      return {
+        ok: false,
+        retryAfter: Math.ceil((row.lockedUntil.getTime() - now) / 1000),
+      };
+    const where = this.where(row.tenantId, row.actorId);
+    if (await verifyPin(pin, row.pinHash)) {
+      await tx
+        .update(voidPins)
+        .set({ failures: 0, lockedUntil: null })
+        .where(where);
+      return { ok: true };
+    }
+    // A lock that has run out is over: the count starts again.
+    const failures = (row.lockedUntil ? 0 : row.failures) + 1;
+    const lock = failures >= MAX_PIN_FAILURES;
+    await tx
+      .update(voidPins)
+      .set({
+        failures,
+        lockedUntil: lock ? new Date(now + PIN_LOCK_SECONDS * 1000) : null,
+      })
+      .where(where);
+    return lock
+      ? { ok: false, retryAfter: PIN_LOCK_SECONDS }
+      : { ok: false, attemptsLeft: MAX_PIN_FAILURES - failures };
+  }
+
+  private async lockRow(tx: Tx, tenantId: string, actorId: string) {
+    const [row] = await tx
+      .select()
+      .from(voidPins)
+      .where(this.where(tenantId, actorId))
+      .for('update');
+    return row;
+  }
+
+  /** Staff of this store who hold `sales.void` (active, not deleted), by id. */
+  private async staffApprovers(tenantId: string, id?: string) {
+    return this.db
+      .selectDistinct({ id: staff.id, name: staff.name })
+      .from(staff)
+      .innerJoin(
+        staffRoles,
+        and(
+          eq(staffRoles.tenantId, staff.tenantId),
+          eq(staffRoles.staffId, staff.id),
+        ),
+      )
+      .innerJoin(
+        rolePermissions,
+        and(
+          eq(rolePermissions.tenantId, staffRoles.tenantId),
+          eq(rolePermissions.roleId, staffRoles.roleId),
+        ),
+      )
+      .where(
+        and(
+          eq(staff.tenantId, tenantId),
+          eq(staff.active, true),
+          isNull(staff.deletedAt),
+          eq(rolePermissions.permission, 'sales.void'),
+          id ? eq(staff.id, id) : undefined,
+        ),
+      )
+      .orderBy(asc(staff.name));
+  }
+
+  private async ownerId(tenantId: string) {
+    const [t] = await this.db
+      .select({ userId: tenants.userId })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId));
+    return t?.userId ?? null;
+  }
+
+  /** The store's owner or a live staff member holding `sales.void`; null for anyone else. */
+  private async approver(
+    tenantId: string,
+    actorId: string,
+  ): Promise<Approver | null> {
+    if ((await this.ownerId(tenantId)) === actorId)
+      return { id: actorId, kind: 'owner', name: 'Pemilik' };
+    const [member] = await this.staffApprovers(tenantId, actorId);
+    return member ? { ...member, kind: 'cashier' } : null;
+  }
+
+  /** Who can approve a void in this store, and whether each can right now. Never the PIN or its hash. */
+  async approvers(tenantId: string) {
+    const ownerId = await this.ownerId(tenantId);
+    const all: Approver[] = [
+      ...(ownerId
+        ? [{ id: ownerId, kind: 'owner' as const, name: 'Pemilik' }]
+        : []),
+      ...(await this.staffApprovers(tenantId)).map((m) => ({
+        ...m,
+        kind: 'cashier' as const,
+      })),
+    ];
+    const pins = all.length
+      ? await this.db
+          .select({
+            actorId: voidPins.actorId,
+            lockedUntil: voidPins.lockedUntil,
+          })
+          .from(voidPins)
+          .where(
+            and(
+              eq(voidPins.tenantId, tenantId),
+              inArray(
+                voidPins.actorId,
+                all.map((a) => a.id),
+              ),
+            ),
+          )
+      : [];
+    const byId = new Map(pins.map((p) => [p.actorId, p]));
+    const now = Date.now();
+    return all.map((a) => {
+      const pin = byId.get(a.id);
+      const until = pin?.lockedUntil;
+      return {
+        ...a,
+        hasPin: !!pin,
+        lockedUntil: until && until.getTime() > now ? until : null,
+      };
+    });
+  }
+
+  /** The signed-in actor's own PIN state. */
+  async status(s: PosSession) {
+    const [row] = await this.db
+      .select({ lockedUntil: voidPins.lockedUntil })
+      .from(voidPins)
+      .where(this.where(s.tenantId, s.actorId));
+    const until = row?.lockedUntil;
+    return {
+      hasPin: !!row,
+      lockedUntil: until && until.getTime() > Date.now() ? until : null,
+    };
+  }
+
+  /**
+   * Checks `pin` for `approverId` and returns the approver. An unknown id, another store's id, a
+   * deactivated staff member and one without `sales.void` all get the wrong-PIN answer and count nowhere.
+   */
+  async verify(
+    tenantId: string,
+    approverId: string,
+    pin: string,
+  ): Promise<Approver> {
+    const approver = await this.approver(tenantId, approverId);
+    if (!approver) throw wrongPin('pin');
+    const outcome = await this.db.transaction(async (tx) => {
+      const row = await this.lockRow(tx, tenantId, approverId);
+      return row ? this.check(tx, row, pin) : null;
+    });
+    if (!outcome)
+      throw fieldError(
+        'approverId',
+        'Admin ini belum membuat PIN pembatalan. Buat dulu di Pengaturan, Keamanan.',
+      );
+    if (!outcome.ok)
+      throw outcome.retryAfter
+        ? locked('pin', outcome.retryAfter)
+        : wrongPin('pin');
+    return approver;
+  }
+
+  /** Sets the actor's own PIN; changing an existing one needs the current PIN (counted like a void's). */
+  async set(s: PosSession, pin: string, currentPin?: string) {
+    const pinHash = await hashPin(pin);
+    const outcome = await this.db.transaction(async (tx): Promise<Check> => {
+      const row = await this.lockRow(tx, s.tenantId, s.actorId);
+      if (!row) {
+        // On conflict: a concurrent first set won; this one is refused below like a missing current PIN.
+        const made = await tx
+          .insert(voidPins)
+          .values({
+            tenantId: s.tenantId,
+            actorId: s.actorId,
+            actorKind: s.kind,
+            pinHash,
+          })
+          .onConflictDoNothing()
+          .returning({ actorId: voidPins.actorId });
+        return made.length ? { ok: true } : { ok: false, attemptsLeft: -1 };
+      }
+      if (currentPin === undefined) return { ok: false, attemptsLeft: -1 };
+      const checked = await this.check(tx, row, currentPin);
+      if (checked.ok)
+        await tx
+          .update(voidPins)
+          .set({ pinHash, updatedAt: new Date() })
+          .where(this.where(s.tenantId, s.actorId));
+      return checked;
+    });
+    if (!outcome.ok) {
+      if (outcome.retryAfter) throw locked('currentPin', outcome.retryAfter);
+      throw outcome.attemptsLeft === -1
+        ? fieldError('currentPin', 'Masukkan PIN lama untuk menggantinya')
+        : wrongPin('currentPin');
+    }
+    return this.status(s);
+  }
+
+  private ownerOnly(s: PosSession) {
+    if (s.kind !== 'owner') throw new ForbiddenException();
+  }
+
+  /** Owner only: clears an approver's lock and count. 404 for an id without a PIN in this store. */
+  async unlock(s: PosSession, actorId: string) {
+    this.ownerOnly(s);
+    const rows = await this.db
+      .update(voidPins)
+      .set({
+        failures: 0,
+        lockedUntil: null,
+        unlockedAt: new Date(),
+        unlockedBy: s.actorId,
+      })
+      .where(this.where(s.tenantId, actorId))
+      .returning({ actorId: voidPins.actorId });
+    if (!rows.length) throw new NotFoundException();
+    return { actorId, hasPin: true, lockedUntil: null };
+  }
+
+  /** Owner only: removes a forgotten PIN, so its holder sets a new one. */
+  async reset(s: PosSession, actorId: string) {
+    this.ownerOnly(s);
+    const rows = await this.db
+      .delete(voidPins)
+      .where(this.where(s.tenantId, actorId))
+      .returning({ actorId: voidPins.actorId });
+    if (!rows.length) throw new NotFoundException();
+    return { actorId, hasPin: false, lockedUntil: null };
+  }
+}

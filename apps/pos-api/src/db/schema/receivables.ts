@@ -37,6 +37,9 @@ export const receivables = pos
       // A calendar date in the store's timezone (common/store-day.ts); returned as 'YYYY-MM-DD', no time.
       dueDate: date('due_date', { mode: 'string' }).notNull(),
       lastPaymentAt: timestamp('last_payment_at', { withTimezone: true }),
+      // Set when the sale is voided (UMK-1962): `rest` drops to 0 and what was still owed is kept here.
+      cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+      cancelledAmount: rupiah('cancelled_amount').notNull().default(0),
       createdAt: createdAt(),
     },
     (t) => [
@@ -54,6 +57,12 @@ export const receivables = pos
       check(
         'receivables_ck',
         sql`${t.total} > 0 and ${t.rest} between 0 and ${t.total}`,
+      ),
+      check(
+        'receivables_cancel_ck',
+        sql`${t.cancelledAmount} between 0 and ${t.total}
+          and (${t.cancelledAt} is not null or ${t.cancelledAmount} = 0)
+          and (${t.cancelledAt} is null or ${t.rest} = 0)`,
       ),
     ],
   )

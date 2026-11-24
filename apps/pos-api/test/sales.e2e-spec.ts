@@ -442,6 +442,7 @@ describe('sales and shifts (U3)', () => {
       revenue: 15_000,
       discount: 0,
       voucherDiscount: 0,
+      voidedCount: 0,
     });
 
     const hour = 60 * 60 * 1000;

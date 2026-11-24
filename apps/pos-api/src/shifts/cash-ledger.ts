@@ -34,12 +34,15 @@ export type CashTotals = {
   cashOut: number;
   /** Cash kasbon payments taken in the shift (part of cashIn). */
   receivablePayments: number;
+  /** Cash given back for voided sales in the shift (part of cashOut). */
+  voidRefunds: number;
 };
 
 export const NO_CASH: CashTotals = {
   cashIn: 0,
   cashOut: 0,
   receivablePayments: 0,
+  voidRefunds: 0,
 };
 
 /** The actor's open shift, row-locked until the transaction ends; null when none is open. */
@@ -62,8 +65,9 @@ export async function lockOpenShift(tx: Tx, s: PosSession) {
  * Adds one cash movement to the actor's open shift, inside the caller's transaction. Answers 422 with
  * `noShiftMessage` when the actor has no open shift. Returns the shift's id.
  *
- * Lock order: a caller that also locks its own row (a receivable, a purchase order) locks that row
- * first and calls this after; nothing locks a shift and then such a row.
+ * Lock order: a caller that also locks its own row (a sale, a receivable, a purchase order) locks that
+ * row first and calls this after; nothing locks a shift and then such a row. Stock batches and voucher
+ * quota are taken after the shift, as a sale does.
  */
 export async function recordShiftCash(
   tx: Tx,
@@ -105,6 +109,9 @@ export async function cashTotals(
       receivablePayments: sum(
         sql`${e.direction} = 'in' and ${e.kind} = 'receivable_payment'`,
       ),
+      voidRefunds: sum(
+        sql`${e.direction} = 'out' and ${e.kind} = 'void_refund'`,
+      ),
     })
     .from(e)
     .where(and(eq(e.tenantId, tenantId), inArray(e.shiftId, shiftIds)))
@@ -116,6 +123,7 @@ export async function cashTotals(
         cashIn: Number(r.cashIn),
         cashOut: Number(r.cashOut),
         receivablePayments: Number(r.receivablePayments),
+        voidRefunds: Number(r.voidRefunds),
       },
     ]),
   );

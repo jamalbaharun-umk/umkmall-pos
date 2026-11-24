@@ -18,6 +18,7 @@ import { PaymentMethodsModule } from './payment-methods/payment-methods.controll
 import { ReceivablesModule } from './receivables/receivables.controller';
 import { PurgeModule } from './purge/purge.controller';
 import { StoreModule } from './store/store.controller';
+import { VoidModule } from './void/void.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -40,6 +41,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     ReceivablesModule,
     PurgeModule,
     StoreModule,
+    VoidModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [

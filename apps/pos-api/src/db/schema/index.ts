@@ -10,4 +10,5 @@ export * from './reports';
 export * from './members';
 export * from './receivables';
 export * from './shift-cash';
+export * from './voids';
 export * from './store';

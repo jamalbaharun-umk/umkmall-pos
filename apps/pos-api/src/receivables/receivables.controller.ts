@@ -18,6 +18,7 @@ import {
   eq,
   gt,
   ilike,
+  isNotNull,
   isNull,
   or,
   sql,
@@ -59,7 +60,8 @@ const PaymentInput = z
 type PaymentInput = z.infer<typeof PaymentInput>;
 
 const ReceivableQuery = z.object({
-  status: z.enum(['open', 'settled']).optional(),
+  // `settled` = paid in full; `cancelled` = its sale was voided (UMK-1962).
+  status: z.enum(['open', 'settled', 'cancelled']).optional(),
   memberId: UuidField.optional(),
   // Member name, or a sale number ("12" or "#12").
   q: z.string().trim().max(60).optional(),
@@ -88,6 +90,8 @@ const columns = {
   rest: receivables.rest,
   dueDate: receivables.dueDate,
   lastPaymentAt: receivables.lastPaymentAt,
+  cancelledAt: receivables.cancelledAt,
+  cancelledAmount: receivables.cancelledAmount,
   createdAt: receivables.createdAt,
 };
 
@@ -131,6 +135,53 @@ export async function createReceivable(
     });
 }
 
+/**
+ * Cancels the receivable of a voided kasbon sale, inside the void's transaction (UMK-1962). Takes the
+ * receivable's row lock (the one a payment takes), so a payment lands wholly before or is refused after.
+ * What was still owed is cancelled; the payments already received are returned for the void to give back.
+ */
+export async function cancelReceivable(
+  tx: Tx,
+  tenantId: string,
+  saleId: string,
+) {
+  const [r] = await tx
+    .select({ id: receivables.id, rest: receivables.rest })
+    .from(receivables)
+    .where(
+      and(eq(receivables.tenantId, tenantId), eq(receivables.saleId, saleId)),
+    )
+    .for('update');
+  if (!r) return null;
+  const payments = await tx
+    .select({
+      id: receivablePayments.id,
+      amount: receivablePayments.amount,
+      paymentMethodId: receivablePayments.paymentMethodId,
+      isCash: paymentMethods.isCash,
+    })
+    .from(receivablePayments)
+    .innerJoin(
+      paymentMethods,
+      and(
+        eq(paymentMethods.tenantId, receivablePayments.tenantId),
+        eq(paymentMethods.id, receivablePayments.paymentMethodId),
+      ),
+    )
+    .where(
+      and(
+        eq(receivablePayments.tenantId, tenantId),
+        eq(receivablePayments.receivableId, r.id),
+      ),
+    )
+    .orderBy(asc(receivablePayments.createdAt), asc(receivablePayments.id));
+  await tx
+    .update(receivables)
+    .set({ rest: 0, cancelledAt: new Date(), cancelledAmount: r.rest })
+    .where(eq(receivables.id, r.id));
+  return { id: r.id, cancelled: r.rest, payments };
+}
+
 /** Receivables (Lakasir ReceivableResource + ReceivablePaymentService), append-only payments. */
 @Injectable()
 export class ReceivablesService {
@@ -167,7 +218,10 @@ export class ReceivablesService {
     const where = and(
       search,
       q.status === 'open' ? gt(receivables.rest, 0) : undefined,
-      q.status === 'settled' ? eq(receivables.rest, 0) : undefined,
+      q.status === 'settled'
+        ? and(eq(receivables.rest, 0), isNull(receivables.cancelledAt))
+        : undefined,
+      q.status === 'cancelled' ? isNotNull(receivables.cancelledAt) : undefined,
     );
     const [data, [{ total }], [summary]] = await Promise.all([
       this.base()
@@ -256,7 +310,10 @@ export class ReceivablesService {
       .transaction(async (tx) => {
         // Row lock: two payments on one receivable apply one after the other.
         const [r] = await tx
-          .select({ rest: receivables.rest })
+          .select({
+            rest: receivables.rest,
+            cancelledAt: receivables.cancelledAt,
+          })
           .from(receivables)
           .where(
             and(eq(receivables.tenantId, s.tenantId), eq(receivables.id, id)),
@@ -281,6 +338,11 @@ export class ReceivablesService {
             );
           return;
         }
+        if (r.cancelledAt)
+          throw fieldError(
+            'amount',
+            'Piutang ini sudah dibatalkan bersama struknya',
+          );
         if (r.rest === 0) throw fieldError('amount', 'Piutang sudah lunas');
         if (input.amount > r.rest)
           throw fieldError(

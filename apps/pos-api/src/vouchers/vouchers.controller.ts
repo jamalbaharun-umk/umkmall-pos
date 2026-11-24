@@ -132,6 +132,17 @@ export async function consumeVoucher(tx: Tx, tenantId: string, id: string) {
   if (!rows.length) throw fieldError('voucherCode', 'Voucher sudah habis');
 }
 
+/**
+ * Gives one use back inside a void's transaction (UMK-1962): atomic, the mirror of `consumeVoucher`.
+ * A voucher deleted or expired since the sale still gets its use back, so its count stays true.
+ */
+export async function restoreVoucher(tx: Tx, tenantId: string, id: string) {
+  await tx
+    .update(vouchers)
+    .set({ kuota: sql`${vouchers.kuota} + 1` })
+    .where(and(eq(vouchers.tenantId, tenantId), eq(vouchers.id, id)));
+}
+
 /** Vouchers (Lakasir VoucherResource + VoucherService). */
 @Injectable()
 export class VouchersService {

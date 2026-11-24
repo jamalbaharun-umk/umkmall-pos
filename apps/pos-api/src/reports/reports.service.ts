@@ -22,6 +22,8 @@ const TRUNC: Record<Period, string> = {
 };
 
 type Row = Record<string, unknown>;
+/** A voided sale (UMK-1962) is in no report: its row stays in pos.sales, so every query on it adds this. */
+const NOT_VOID = sql.raw(`status <> 'void'`);
 const n = (v: unknown) => Number(v ?? 0);
 /** Who rang it up: the owner, or the cashier's name (Lakasir's cashier report shows the seller of each sale). */
 const cashierName = (r: Row) =>
@@ -104,7 +106,8 @@ export class ReportsService {
              coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
              coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost
         from pos.sales
-       where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end}`);
+       where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end}
+         and ${NOT_VOID}`);
     return metrics(r);
   }
 
@@ -155,7 +158,7 @@ export class ReportsService {
           join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
           join pos.products p on p.tenant_id = l.tenant_id and p.id = l.product_id
           left join pos.staff st on st.tenant_id = s.tenant_id and st.id = s.actor_id
-         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
+         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end} and s.${NOT_VOID}
          order by s.created_at, s.number, l.id
          limit ${ROW_CAP + 1}`),
       this.salesMetrics(tenantId, start, end),
@@ -163,7 +166,7 @@ export class ReportsService {
         select coalesce(sum(l.qty), 0) as qty
           from pos.sale_lines l
           join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
-         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}`),
+         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end} and s.${NOT_VOID}`),
     ]);
     return {
       ...range,
@@ -196,7 +199,7 @@ export class ReportsService {
           from pos.sale_lines l
           join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
           join pos.products p on p.tenant_id = l.tenant_id and p.id = l.product_id
-         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
+         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end} and s.${NOT_VOID}
          group by p.id
          order by sales desc, p.name`),
       this.salesMetrics(tenantId, start, end),
@@ -227,24 +230,26 @@ export class ReportsService {
              to_char(sh.opened_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as opened_at,
              to_char(sh.closed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as closed_at,
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
-             c.cash_in, c.cash_out, c.receivable_payments,
+             c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds,
              count(s.id) as sales_count, coalesce(sum(s.subtotal), 0) as gross_sales,
              coalesce(sum(s.discount), 0) as discount,
              coalesce(sum(s.voucher_discount), 0) as voucher, coalesce(sum(s.tax), 0) as tax,
              coalesce(sum(s.total), 0) as revenue, coalesce(sum(s.cost_total), 0) as cost
         from pos.shifts sh
         left join pos.staff st on st.tenant_id = sh.tenant_id and st.id = sh.actor_id
-        left join pos.sales s on s.tenant_id = sh.tenant_id and s.shift_id = sh.id
+        left join pos.sales s on s.tenant_id = sh.tenant_id and s.shift_id = sh.id and s.${NOT_VOID}
         -- The shift's cash ledger (UMK-1963), aggregated apart so it does not multiply the sales rows.
         cross join lateral (
           select coalesce(sum(e.amount) filter (where e.direction = 'in'), 0) as cash_in,
                  coalesce(sum(e.amount) filter (where e.direction = 'out'), 0) as cash_out,
                  coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'receivable_payment'), 0)
-                   as receivable_payments
+                   as receivable_payments,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'void_refund'), 0)
+                   as void_refunds
             from pos.shift_cash_entries e
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
-       group by sh.id, st.name, c.cash_in, c.cash_out, c.receivable_payments
+       group by sh.id, st.name, c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds
        order by sh.opened_at`);
     const items = rows.map((r) => {
       const counted = r.counted_cash == null ? null : n(r.counted_cash);
@@ -256,6 +261,7 @@ export class ReportsService {
         closedAt: (r.closed_at as string | null) ?? null,
         openingCash: n(r.opening_cash),
         receivablePayments: n(r.receivable_payments),
+        voidRefunds: n(r.void_refunds),
         cashIn: n(r.cash_in),
         cashOut: n(r.cash_out),
         expectedCash: expected,

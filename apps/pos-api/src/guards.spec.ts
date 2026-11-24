@@ -57,4 +57,16 @@ describe('repo guards', () => {
       .map(({ f }) => f);
     expect(offenders).toEqual([]);
   });
+
+  it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {
+    const offenders = files
+      .filter(
+        ({ f }) =>
+          f !== path.join('void', 'void-pin.ts') &&
+          f !== path.join('db', 'schema', 'voids.ts'),
+      )
+      .filter(({ text }) => /\bvoidPins\b|\bvoid_pins\b/.test(text))
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
 });

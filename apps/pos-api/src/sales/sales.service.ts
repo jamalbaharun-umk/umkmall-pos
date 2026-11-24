@@ -17,6 +17,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
@@ -64,6 +65,12 @@ export const requestHash = (input: SaleInput) => {
   );
   return createHash('sha256').update(stable).digest('hex');
 };
+
+/** Sum of a money column over the sales that are not voided. */
+const live = (column: AnyPgColumn) =>
+  sql<number>`coalesce(sum(${column}) filter (where ${sales.status} <> 'void'), 0)::bigint`.mapWith(
+    Number,
+  );
 
 /** A 422 in the shared shape; `field` puts the message on that input (`paid`, `lines.0.qty`). */
 const fail = (
@@ -384,7 +391,7 @@ export class SalesService {
       q.to ? lt(sales.createdAt, new Date(q.to)) : undefined,
     );
     const showCost = hasPermission(s, 'reports.view');
-    const [rows, [summary]] = await Promise.all([
+    const [rows, [{ rows: pageTotal, ...summary }]] = await Promise.all([
       this.db
         .select({
           id: sales.id,
@@ -401,6 +408,8 @@ export class SalesService {
           paid: sales.paid,
           change: sales.change,
           costTotal: sales.costTotal,
+          status: sales.status,
+          voidedAt: sales.voidedAt,
           createdAt: sales.createdAt,
         })
         .from(sales)
@@ -414,17 +423,17 @@ export class SalesService {
         .offset((q.page - 1) * q.perPage),
       this.db
         .select({
-          count: count(),
-          revenue:
-            sql<number>`coalesce(sum(${sales.total}), 0)::bigint`.mapWith(
+          rows: count(),
+          // The summary leaves voided sales out (UMK-1962); the rows above still list them.
+          count:
+            sql<number>`count(*) filter (where ${sales.status} <> 'void')`.mapWith(
               Number,
             ),
-          discount:
-            sql<number>`coalesce(sum(${sales.discount}), 0)::bigint`.mapWith(
-              Number,
-            ),
-          voucherDiscount:
-            sql<number>`coalesce(sum(${sales.voucherDiscount}), 0)::bigint`.mapWith(
+          revenue: live(sales.total),
+          discount: live(sales.discount),
+          voucherDiscount: live(sales.voucherDiscount),
+          voidedCount:
+            sql<number>`count(*) filter (where ${sales.status} = 'void')`.mapWith(
               Number,
             ),
         })
@@ -436,7 +445,7 @@ export class SalesService {
         ...r,
         costTotal: showCost ? r.costTotal : undefined,
       })),
-      total: summary.count,
+      total: pageTotal,
       summary,
     };
   }
@@ -466,6 +475,8 @@ export class SalesService {
         costTotal: sales.costTotal,
         overrideBy: sales.overrideBy,
         note: sales.note,
+        status: sales.status,
+        voidedAt: sales.voidedAt,
         createdAt: sales.createdAt,
       })
       .from(sales)
@@ -538,6 +549,9 @@ export class SalesService {
       paid: sale.paid,
       change: sale.change,
       note: sale.note,
+      // A reprint of a voided receipt must say so.
+      status: sale.status,
+      voidedAt: sale.voidedAt,
     };
   }
 

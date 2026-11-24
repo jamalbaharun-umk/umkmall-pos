@@ -187,6 +187,19 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       { amount: 1000 },
       randomUUID(),
     ).expect(201);
+
+    // A void PIN and a voided cash sale (UMK-1962): void_pins, sale_voids, sale_void_returns.
+    await put('/void-pin', { pin: '482913' }).expect(200);
+    const voided = await post(
+      '/sales',
+      { lines: [{ productId, qty: 1 }], paid: 10_000 },
+      randomUUID(),
+    ).expect(201);
+    await post(
+      `/sales/${voided.body.id}/void`,
+      { reasonCode: 'customer_cancelled', approverId: s.userId, pin: '482913' },
+      randomUUID(),
+    ).expect(201);
     return s;
   }
 

@@ -220,6 +220,70 @@ export class StockService {
     return { costTotal };
   }
 
+  /**
+   * Puts back what a voided sale drew (UMK-1962): every unit returns to the batch it came from, so it
+   * keeps that batch's cost and its place in the FIFO order. The caller holds the sale's row lock and
+   * has checked the sale is not voided yet, so this runs once per sale. Batches are locked in the
+   * order a sale locks them (product id, then FIFO). A product that draws no stock has nothing to return.
+   */
+  async restoreSale(
+    tx: Tx,
+    input: { tenantId: string; saleId: string; actorId: string },
+  ): Promise<{ qty: number }> {
+    const drawn = await tx
+      .select({
+        batchId: stockMovements.batchId,
+        productId: stockMovements.productId,
+        qty: sql<string>`-sum(${stockMovements.delta})`,
+      })
+      .from(stockMovements)
+      .where(
+        and(
+          eq(stockMovements.tenantId, input.tenantId),
+          eq(stockMovements.refId, input.saleId),
+          eq(stockMovements.reason, 'sale'),
+        ),
+      )
+      .groupBy(stockMovements.batchId, stockMovements.productId);
+    if (drawn.length === 0) return { qty: 0 };
+    const byBatch = new Map(drawn.map((d) => [d.batchId, d]));
+    const batches = await tx
+      .select({ id: stockBatches.id })
+      .from(stockBatches)
+      .where(
+        and(
+          eq(stockBatches.tenantId, input.tenantId),
+          inArray(stockBatches.id, [...byBatch.keys()]),
+        ),
+      )
+      .orderBy(
+        asc(stockBatches.productId),
+        asc(stockBatches.receivedAt),
+        asc(stockBatches.id),
+      )
+      .for('update');
+    let total = 0;
+    for (const b of batches) {
+      const d = byBatch.get(b.id)!;
+      const qty = Number(d.qty);
+      await tx
+        .update(stockBatches)
+        .set({ qtyRemaining: sql`${stockBatches.qtyRemaining} + ${qty}` })
+        .where(eq(stockBatches.id, b.id));
+      await tx.insert(stockMovements).values({
+        tenantId: input.tenantId,
+        productId: d.productId,
+        batchId: b.id,
+        delta: qty,
+        reason: 'sale_void',
+        refId: input.saleId,
+        actorId: input.actorId,
+      });
+      total += qty;
+    }
+    return { qty: total };
+  }
+
   /** On-hand of one product with its batches locked FOR UPDATE: a concurrent sale waits until the caller commits. */
   async lockedOnHand(tx: Tx, tenantId: string, productId: string) {
     const batches = await tx
