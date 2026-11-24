@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, ne } from 'drizzle-orm';
 import {
   CancelContext,
   ChargeResult,
@@ -53,7 +53,12 @@ export interface MoveMeta {
   patch?: Partial<
     Pick<
       PaymentRow,
-      'providerRef' | 'checkout' | 'expiresAt' | 'paidReceiptRef' | 'feeAmount'
+      | 'providerRef'
+      | 'checkout'
+      | 'expiresAt'
+      | 'paidReceiptRef'
+      | 'feeAmount'
+      | 'refundKey'
     >
   >;
 }
@@ -293,7 +298,18 @@ export class SettlementService {
   ): Promise<FollowUp> {
     let row = before;
     let refundPayment = false;
-    const receipts = answer.receipts ?? [];
+    // Money is whole rupiah. A receipt the adapter reports otherwise is an adapter fault: it neither pays the
+    // payment nor is refunded by the system; a person looks at it.
+    const reported = answer.receipts ?? [];
+    const receipts = reported.filter(
+      (r) =>
+        Number.isSafeInteger(r.grossAmount) &&
+        r.grossAmount >= 0 &&
+        Number.isSafeInteger(r.feeAmount) &&
+        r.feeAmount >= 0,
+    );
+    if (receipts.length < reported.length)
+      row = await this.flag(tx, row, 'invalid_gateway_amount', source);
     const patch = {
       providerRef: answer.providerRef,
       expiresAt: answer.expiresAt,
@@ -301,8 +317,11 @@ export class SettlementService {
     };
 
     if (row.status === 'refund_pending') {
-      const request = await this.refundRequest(tx, row.id);
-      const refund = request ? answer.refunds?.[request.id] : undefined;
+      // Always the key stored on the payment: an audit note written while the refund is under way (unmatched
+      // money, a review flag) must never look like a new refund request.
+      const refund = row.refundKey
+        ? answer.refunds?.[row.refundKey]
+        : undefined;
       if (refund === 'succeeded')
         row = await this.move(tx, row, 'refunded', {
           source,
@@ -374,10 +393,42 @@ export class SettlementService {
           feeAmount: paying.feeAmount,
         },
       });
+    // The PG knows the bill again: an earlier "no such bill" was a lag and no longer counts.
+    if (answer.status !== 'not_found' && row.notFoundAt) {
+      await tx
+        .update(payments)
+        .set({ notFoundAt: null })
+        .where(eq(payments.id, row.id));
+      row = { ...row, notFoundAt: null };
+    }
     switch (answer.status) {
-      case 'paid':
+      case 'paid': {
         // Paid at the PG, but not in the amount we charged: never marked paid (the receipts become unmatched).
-        return row;
+        // The payment must still close, or the order could never be charged again.
+        // A single-use bill that took other money is used up: closed at once.
+        if (receipts.length > 0 && this.adapterOf(row).singleUseQr)
+          return this.move(tx, row, 'failed', {
+            source,
+            review: 'amount_mismatch',
+            note: 'the bill was paid at the gateway in another amount',
+          });
+        // Otherwise the right money may still come while the bill lives; after its expiry and the grace
+        // period it is closed on our clock (the PG will never call this bill expired).
+        const expiresAt =
+          row.expiresAt ??
+          answer.expiresAt ??
+          new Date(row.createdAt.getTime() + this.settings.qrTtlMs);
+        return this.clock.now().getTime() <
+          expiresAt.getTime() + this.settings.expiryGraceMs
+          ? row
+          : this.move(tx, row, 'expired', {
+              source,
+              review:
+                receipts.length > 0
+                  ? 'amount_mismatch'
+                  : 'paid_without_receipt',
+            });
+      }
       case 'pending':
         return row.status === 'created'
           ? this.move(tx, row, 'pending', { source, patch })
@@ -396,22 +447,27 @@ export class SettlementService {
       case 'failed':
         return this.move(tx, row, answer.status, { source });
       case 'not_found': {
-        if (row.status === 'pending')
-          return this.flag(tx, row, 'missing_at_gateway', source);
         // One "no such bill" proves nothing (the PG may lag, or still accept the timed-out request).
-        // Failed only when a second lookup, at least the configured time later, says the same.
+        // Failed only when a second lookup, at least the configured time later, says the same. A bill the PG
+        // once confirmed (`pending`) and now denies is flagged for a person as well, and closed the same way:
+        // it must not hold the order's live slot for ever.
         const now = this.clock.now();
+        const lost = row.status === 'pending';
         if (!row.notFoundAt) {
           await tx
             .update(payments)
             .set({ notFoundAt: now })
             .where(eq(payments.id, row.id));
-          return { ...row, notFoundAt: now };
+          const noted = { ...row, notFoundAt: now };
+          return lost
+            ? this.flag(tx, noted, 'missing_at_gateway', source)
+            : noted;
         }
         return now.getTime() - row.notFoundAt.getTime() >=
           this.settings.notFoundConfirmMs
           ? this.move(tx, row, 'failed', {
               source,
+              review: lost ? 'missing_at_gateway' : undefined,
               note: 'no bill at the gateway on two lookups',
             })
           : row;
@@ -529,7 +585,10 @@ export class SettlementService {
     });
   }
 
-  /** The audit row of the refund now under way; its id is that refund's idempotency key at the PG. */
+  /**
+   * The audit row of the refund now under way: who asked and why. Never the refund's key at the PG (that is
+   * `payments.refund_key`). Notes written while the refund waits (`refund_pending → refund_pending`) are skipped.
+   */
   private async refundRequest(tx: Tx, paymentId: string) {
     const [request] = await tx
       .select()
@@ -538,6 +597,7 @@ export class SettlementService {
         and(
           eq(paymentEvents.paymentId, paymentId),
           eq(paymentEvents.toStatus, 'refund_pending'),
+          ne(paymentEvents.fromStatus, 'refund_pending'),
         ),
       )
       .orderBy(desc(paymentEvents.createdAt), desc(paymentEvents.id))
@@ -566,9 +626,10 @@ export class SettlementService {
         ({ status } = await this.adapterOf(row).refund(
           toRef(row),
           {
-            // One key per refund request: a retry after a refusal is a new refund at the PG, while a
-            // repeated call for the same request is the same one.
-            key: request?.id ?? row.id,
+            // One key per refund request, stored on the payment when it moved to `refund_pending`: a retry
+            // after a refusal is a new refund at the PG, while a repeated call for the same request is the
+            // same one.
+            key: row.refundKey ?? row.id,
             receiptId: row.paidReceiptRef,
             amount: row.amount,
           },

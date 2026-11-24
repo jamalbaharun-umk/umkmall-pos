@@ -621,7 +621,7 @@ describe('PG flow and edge cases', () => {
       await h.deliver(p.id).expect(200);
       await sync(s, p.id);
       const after = await s.read(p.id);
-      expect(after.status).toBe('pending');
+      expect(after.status).toBe('failed');
       expect(after.paidAt).toBeNull();
       expect(after.unmatchedReceipts).toMatchObject([
         {
@@ -786,7 +786,7 @@ describe('PG flow and edge cases', () => {
     const q = await s.qr({ amount: 10_000 });
     h.pg.pay(q.id, 10_001);
     const off = (await sync(s, q.id)).body;
-    expect(off.status).toBe('pending');
+    expect(off.status).toBe('failed');
     expect(off.unmatchedReceipts).toMatchObject([
       { kind: 'amount_mismatch', grossAmount: 10_001 },
     ]);

@@ -7,7 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { and, asc, count, desc, eq } from 'drizzle-orm';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PaymentAdapter } from '../adapters/adapter';
 import { AdapterRegistry } from '../adapters/adapters.module';
 import { fieldError, isUuid } from '../common/validation';
@@ -336,21 +336,23 @@ export class PaymentsService {
         if (adapter.canCancel) await adapter.cancelPending?.(toRef(row));
         return adapter.getStatus(toRef(row));
       });
-      if (
-        answer.status === 'paid' ||
-        answer.receipts?.some((r) => r.grossAmount === row.amount)
-      ) {
+      // Paid in full: the cancel is refused. Money in another amount, or a "paid" without a receipt, does not
+      // pay this payment, so the cancel goes on and that money is recorded (and refunded) as unmatched.
+      if (answer.receipts?.some((r) => r.grossAmount === row.amount)) {
         const follow = await this.settlement.apply(tx, row, answer, 'cancel');
         return { row: follow.row, paid: follow.row.status === 'paid', follow };
       }
-      // A PG that can close bills must have closed this one; otherwise it is still payable and stays pending.
-      if (adapter.canCancel && answer.status === 'pending') throw gatewayDown();
+      // The bill is still open at the PG: it cannot close bills, or it did not close this one.
+      const stillOpen = !adapter.canCancel || answer.status === 'pending';
+      // Then the cashier may cancel anyway only when configured; otherwise the payment stays pending.
+      if (stillOpen && !this.settings.cancelWithoutGatewayClose)
+        throw gatewayDown();
       const cancelled = await this.settlement.move(tx, row, 'cancelled', {
         source: 'cancel',
         actorRef,
-        note: adapter.canCancel
-          ? null
-          : 'bill could not be closed at the gateway; later money on it is refunded',
+        note: stillOpen
+          ? 'bill could not be closed at the gateway; later money on it is refunded'
+          : null,
       });
       // Wrong-amount money already on the bill is recorded now.
       const follow = await this.settlement.apply(
@@ -426,6 +428,8 @@ export class PaymentsService {
         approvedBy: input.approvedBy,
         reasonCode: input.reasonCode,
         note: input.note ?? null,
+        // This refund's idempotency key at the PG, fixed for as long as it is under way.
+        patch: { refundKey: randomUUID() },
       });
     });
     const after =

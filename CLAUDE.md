@@ -114,7 +114,7 @@ test per resource, idempotent money changes), with these differences:
   `handleWebhook`, plus `supportsVoid`/`supportsRefund`). A new PG is one adapter added to `PAYMENT_ADAPTERS`; callers
   and routes do not change. CASHAC methods (`cash`, `edc_debit`, `static_qris`) are cancelled by **void**, with
   no outbound call; PG payments are cancelled by **refund**. Kasbon is not a payment method: the caller keeps the
-  receivable and each instalment is its own payment. No PG adapter before the legal gate (UMK-1977); nothing
+  receivable and each instalment is its own payment with its own `orderRef` (`<receivableId>:<n>`). No PG adapter before the legal gate (UMK-1977); nothing
   under `src/` may call out (guard test) until then. The PG flow is proven with `test/support/fake-gateway.ts`.
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;
   payment-api stores it, pos-api verifies it). Every status change writes a `payment_events` audit row and an `outbox`
@@ -127,7 +127,10 @@ test per resource, idempotent money changes), with these differences:
   again from the PG. The tenant of a webhook or a reconciliation sweep comes from our payment row, never the payload.
 - **Money that arrives is never dropped.** A payment the PG reports after the bill closed, a second payment or another
   amount becomes an `unmatched_receipts` row (`needs_review`), refunded automatically when
-  `PAYMENT_LATE_AUTO_REFUND` is on. A closed payment never becomes `paid`.
+  `PAYMENT_LATE_AUTO_REFUND` is on. A closed payment never becomes `paid`. The reconciliation keeps asking about
+  closed bills until expiry plus `PAYMENT_LATE_SWEEP_SECONDS`, so a lost webhook does not hide late money.
+- **A refund's key at the PG is `payments.refund_key`,** set when the payment moves to `refund_pending`. Never derive
+  an idempotency key from the audit trail: notes are written there too.
 - **Purge:** `POST /internal/tenants/purge` deletes every `payment` table row with the header's `tenant_id`, discovered
   at runtime; a new table needs `tenant_id` (guard in `test/purge.e2e-spec.ts`). It answers 409 `payments_in_flight`
   while money is still moving.

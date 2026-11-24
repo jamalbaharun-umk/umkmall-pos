@@ -131,8 +131,9 @@ section wins. Still no real PG adapter (UMK-1977): the flow is proven with `test
 
 1. One live payment per `(tenant, orderRef)`: partial unique index for `created`, `pending`, `paid`.
 2. The row is written as `created` and committed before the PG is called.
-3. Our payment id is the PG reference and the charge idempotency key. A refund's key is the id of its
-   `refund_pending` audit event, so a retry after a refused refund uses a new key.
+3. Our payment id is the PG reference and the charge idempotency key. A refund's key is `payments.refund_key`,
+   set when the payment moves to `refund_pending`: one key for as long as that refund is under way, a new key for
+   a retry after a refusal. It is never derived from the audit trail.
 4. The caller's `Idempotency-Key` is the order reference plus the attempt number; the body carries `attempt`
    (default 1). Unique `(tenant, orderRef, attempt)`. A new attempt is accepted only once the previous payment is
    closed; an old key always answers its old payment.
@@ -151,7 +152,16 @@ section wins. Still no real PG adapter (UMK-1977): the flow is proven with `test
    after `PAYMENT_WEBHOOK_MAX_ATTEMPTS`.
 10. The tenant of a webhook or a reconciliation sweep comes from our payment row, never from the payload.
 11. A `created` payment becomes `failed` only after two "no such bill" answers at least
-    `PAYMENT_NOT_FOUND_CONFIRM_SECONDS` apart, or at once when the PG was certainly never reached.
+    `PAYMENT_NOT_FOUND_CONFIRM_SECONDS` apart, or at once when the PG was certainly never reached. A `pending`
+    payment the PG no longer knows closes the same way, flagged `missing_at_gateway`. A "found" answer in between
+    resets the count.
+14. No payment waits for ever. The PG says paid in another amount: a single-use bill is `failed` at once
+    (`amount_mismatch`); a reusable one, or a "paid" with no receipt, is `expired` after the bill's expiry plus the
+    grace period. Cancel always reaches `cancelled` unless a receipt for the exact amount exists.
+15. A receipt whose amount is not a whole, safe integer never pays and is never refunded by the system: the payment
+    is flagged `invalid_gateway_amount`.
+16. A debt paid in instalments (kasbon) is one order reference per instalment, `<receivableId>:<n>`, set by the
+    caller. The one-live-payment rule then protects each instalment from a double charge.
 12. An adapter declares `supportsVoid`, `supportsRefund`, `canCancel` and `singleUseQr`, and reports each receipt as
     the gross amount with the fee apart.
 13. A paid CASHAC payment is never voided automatically.
@@ -167,7 +177,8 @@ for the caller). **The outbox dispatcher is not built** (it needs pos-api's endp
   cancel at any time: the bill is closed at the PG when the adapter can (`canCancel`), then its status is asked;
   paid there → 409 `already_paid` and the payment becomes `paid`; else `cancelled`. An adapter that cannot close a
   bill: cancelled anyway when `PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE` is on (later money is an unmatched receipt),
-  else 409 `cancel_not_supported` with the expiry time.
+  else 409 `cancel_not_supported` with the expiry time. A PG that takes the cancel and leaves the bill open: the
+  same switch decides between `cancelled` and 503 `gateway_unavailable`.
 - Void and refund body: `{ reasonCode, note?, actorRef, approvedBy }`. `reasonCode` is one of `wrong_item_or_qty`,
   `wrong_payment_method`, `customer_cancelled`, `duplicate_transaction`, `goods_returned`, `other` (`note` required).
 - Refund: `paid` → `refund_pending` (committed) → adapter → `refunded`, stays `refund_pending`, or `refund_failed`
@@ -179,7 +190,9 @@ for the caller). **The outbox dispatcher is not built** (it needs pos-api's endp
 - Purge answers 409 `payments_in_flight` while the tenant has a `created`, `pending` or `refund_pending` payment, or
   a `refund_failed` one younger than `PAYMENT_PURGE_FAILED_REFUND_BLOCK_DAYS`.
 - `ReconciliationService.tick()` on a timer: settles payments in flight older than the threshold, expires bills
-  past expiry plus the grace period, retries inbox events.
+  past expiry plus the grace period, retries inbox events. It also keeps asking about closed payments
+  (`cancelled`, `expired`, `failed`) until the bill's expiry plus `PAYMENT_LATE_SWEEP_SECONDS` (default one hour),
+  so late money whose webhook was lost is found and refunded. Longest unasked first.
 
 ### Configurable
 
@@ -204,6 +217,18 @@ blocks the purge for 30 days. Still a proposal: the 10-minute grace before the a
 - pos-api: the two-step sale, sale cancel ordering (M16), refusing a shift close while a sale awaits payment (M17),
   and the supervisor PIN check.
 
+From the review of 24 Nov 2026 (tracked, not built):
+
+- Refund of an unmatched receipt that the PG refused: a retry and a "returned by hand" route, as payments have.
+- PG calls inside a database transaction (`settle`, `executeRefund`, `executeReceiptRefund`, cancel): a slow PG
+  holds a row lock and a connection. Move the call outside, keeping the lock only for the write.
+- The purge leaves webhook events that were never matched to a payment (no tenant on the row). Give them a
+  retention period, or match them before the purge.
+- A purge safeguard flag (as pos-api's `POS_PURGE_ENABLED`), so the endpoint is off until the caller's checks exist.
+- A bill the PG keeps reporting `pending` after its expiry is closed only by a cancel, never on our clock alone.
+- Money that arrives on a closed bill after the late sweep ended is found only by a webhook or by the daily
+  matching (not built).
+
 ## Open points for the owner
 
 - payment-api cannot check that an account is erasable (it does not share UMKMall's database). The purge trusts the
@@ -211,7 +236,8 @@ blocks the purge for 30 days. Still a proposal: the 10-minute grace before the a
 - Tax and bookkeeping law may require payment records to be kept after a store is erased. The purge deletes them,
   as pos-api's does.
 - A zero-rupiah payment is accepted (an order fully covered by a voucher still gets one payment record).
-- Kasbon instalments with `orderRef` = the receivable id: only one live payment per `orderRef` is allowed, so a
-  second instalment is refused while the first is `paid`. The caller needs a reference per instalment, or the rule
-  needs an exception.
+- Kasbon instalments use one order reference per instalment (`<receivableId>:<n>`, rule 16). To list a
+  receivable's payments the caller asks per instalment; a prefix filter on `orderRef` can be added if needed.
+- A single-use QR paid in another amount fails the payment at once and the money is refunded; the cashier charges
+  again with a new attempt. Confirm this is the wanted cashier flow.
 

@@ -57,6 +57,9 @@ export const payments = payment
       // The PG receipt that paid this payment, and the PG's fee on it (reported apart from the gross amount).
       paidReceiptRef: text('paid_receipt_ref'),
       feeAmount: rupiah('fee_amount'),
+      // The idempotency key of the refund under way at the PG. Set when the payment moves to `refund_pending`
+      // (a new one for a retry after a refusal) and used for every call about that refund.
+      refundKey: uuid('refund_key'),
       checkout: jsonb('checkout').$type<Checkout>(),
       expiresAt: timestamp('expires_at', { withTimezone: true }),
       paidAt: timestamp('paid_at', { withTimezone: true }),
@@ -73,6 +76,7 @@ export const payments = payment
         t.idempotencyKey,
       ),
       // One live payment per order, enforced by the database: no split payment, no double charge.
+      // A debt paid in instalments is one order reference per instalment (`<receivableId>:<n>`), set by the caller.
       uniqueIndex('payments_tenant_order_live')
         .on(t.tenantId, t.orderRef)
         .where(sql`${t.status} in ('created', 'pending', 'paid')`),

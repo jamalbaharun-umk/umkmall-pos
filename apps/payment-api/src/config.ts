@@ -33,6 +33,9 @@ const EnvSchema = z.object({
   // After the bill's expiry, how long a payment on its way is still waited for before the AUTOMATIC `expired`
   // (a proposal, not yet an owner decision). A cashier's own cancel never waits for it.
   PAYMENT_EXPIRY_GRACE_SECONDS: count(600),
+  // A closed online payment (cancelled, expired, failed) is still asked about at the PG until this long after
+  // its bill's expiry, so late money whose webhook was lost is found and refunded.
+  PAYMENT_LATE_SWEEP_SECONDS: count(3600),
   // When the PG cannot close an unpaid QR, the cashier may still cancel and switch to cash; later money on
   // that QR is refunded automatically (owner decision, D13). Off = cancel is refused until the QR expires.
   PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE: flag(true),
@@ -69,6 +72,7 @@ export class PaymentSettings {
   manualRefundMark: boolean;
   qrTtlMs: number;
   expiryGraceMs: number;
+  lateSweepMs: number;
   cancelWithoutGatewayClose: boolean;
   syncMinIntervalMs: number;
   reconcileAfterMs: number;
@@ -83,6 +87,7 @@ export class PaymentSettings {
     this.manualRefundMark = env.PAYMENT_MANUAL_REFUND_MARK;
     this.qrTtlMs = env.PAYMENT_QR_TTL_SECONDS * 1000;
     this.expiryGraceMs = env.PAYMENT_EXPIRY_GRACE_SECONDS * 1000;
+    this.lateSweepMs = env.PAYMENT_LATE_SWEEP_SECONDS * 1000;
     this.cancelWithoutGatewayClose = env.PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE;
     this.syncMinIntervalMs = env.PAYMENT_SYNC_MIN_INTERVAL_SECONDS * 1000;
     this.reconcileAfterMs = env.PAYMENT_RECONCILE_AFTER_SECONDS * 1000;

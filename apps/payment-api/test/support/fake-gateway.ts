@@ -77,6 +77,8 @@ export class FakeGateway implements PaymentAdapter {
   lookupsDown = 0;
   /** The next N cancel calls fail like a PG that is down. */
   cancelsDown = 0;
+  /** The PG accepts a cancel call and leaves the bill open. */
+  cancelIgnored = false;
   refundMode: RefundMode = 'succeed';
   /** The PG's fee on each receipt. It stores receipts net of it. */
   fee = 0;
@@ -95,6 +97,7 @@ export class FakeGateway implements PaymentAdapter {
     this.lookupsNotFound = 0;
     this.lookupsDown = 0;
     this.cancelsDown = 0;
+    this.cancelIgnored = false;
     this.refundMode = 'succeed';
     this.fee = 0;
     this.onCharge = undefined;
@@ -245,7 +248,8 @@ export class FakeGateway implements PaymentAdapter {
       return Promise.reject(new Error('fake gateway: down'));
     }
     const bill = this.bills.get(payment.id);
-    if (bill?.status === 'pending') bill.status = 'cancelled';
+    if (bill?.status === 'pending' && !this.cancelIgnored)
+      bill.status = 'cancelled';
     return Promise.resolve();
   }
 

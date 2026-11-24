@@ -4,13 +4,13 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, lte } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { Clock, PaymentSettings } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { payments, unmatchedReceipts } from '../db/schema';
 import { SettlementService } from './settlement.service';
-import { IN_FLIGHT } from './transitions';
+import { CLOSED_UNPAID, IN_FLIGHT } from './transitions';
 import { WebhooksService } from './webhooks.service';
 
 /**
@@ -38,7 +38,13 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     if (this.settings.reconcileIntervalMs <= 0) return;
     this.timer = setInterval(
-      () => void this.tick().catch(() => undefined),
+      () =>
+        void this.tick().catch((error) =>
+          // The next tick tries again; the failure must be seen. The name only: a message can carry internals.
+          this.logger.error(
+            `reconciliation tick failed: ${(error as Error).name}`,
+          ),
+        ),
       this.settings.reconcileIntervalMs,
     );
     this.timer.unref();
@@ -55,6 +61,8 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
       const cutoff = new Date(
         this.clock.now().getTime() - this.settings.reconcileAfterMs,
       );
+      // Longest unasked first, so a backlog larger than the limit is still worked through.
+      const longestUnasked = sql`${payments.lastSyncedAt} asc nulls first`;
       const inFlight = await this.db
         .select({ id: payments.id })
         .from(payments)
@@ -64,7 +72,28 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
             lte(payments.updatedAt, cutoff),
           ),
         )
-        .orderBy(asc(payments.updatedAt))
+        .orderBy(longestUnasked, asc(payments.updatedAt))
+        .limit(limit);
+      // A closed bill can still take money (a QR the PG could not close, a payment on its way at expiry), and
+      // its webhook can be lost. Closed payments are asked about until the bill's expiry plus the margin; the
+      // money is then recorded as unmatched and refunded by `settle`. A CASHAC payment is never closed unpaid.
+      const stillPayableSince = new Date(
+        this.clock.now().getTime() - this.settings.lateSweepMs,
+      );
+      const closed = await this.db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(
+          and(
+            inArray(payments.status, [...CLOSED_UNPAID]),
+            sql`coalesce(${payments.expiresAt}, ${payments.updatedAt}) >= ${stillPayableSince.toISOString()}::timestamptz`,
+            or(
+              isNull(payments.lastSyncedAt),
+              lte(payments.lastSyncedAt, cutoff),
+            ),
+          ),
+        )
+        .orderBy(longestUnasked)
         .limit(limit);
       const refunding = await this.db
         .selectDistinct({ id: unmatchedReceipts.paymentId })
@@ -76,7 +105,9 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
           ),
         )
         .limit(limit);
-      const ids = [...new Set([...inFlight, ...refunding].map((r) => r.id))];
+      const ids = [
+        ...new Set([...inFlight, ...closed, ...refunding].map((r) => r.id)),
+      ];
       let settled = 0;
       let failed = 0;
       for (const id of ids) {
