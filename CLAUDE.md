@@ -92,6 +92,36 @@ silent, follow the monorepo's principles.
   the route ids in `BARE_ROUTES`. Screens use `components/page.tsx` (`Page`, `Panel`, `Empty`, `PageLoading`,
   `PageError`) for Lakasir's page layout.
 
+## payment-api (UMK-1991)
+
+`apps/payment-api` is the one service that records payments and, later, talks to a payment gateway (PG). Plan:
+[docs/plans/2026-11-24-003-feat-umk-1991-payment-api-plan.md](docs/plans/2026-11-24-003-feat-umk-1991-payment-api-plan.md).
+The rules above apply to it (integer rupiah, zod → 422, no `console`, RLS and `tenant_id` on every table, cross-tenant
+test per resource, idempotent money changes), with these differences:
+
+- **Own database, own role.** Database `payment`, schema `payment`, role `payment_app` (`ops/payment-role.sql`, run once
+  per environment by a database owner, after `CREATE DATABASE payment`). It shares nothing with `pos` or UMKMall's
+  `public`: no cross-database foreign key, so `tenant_id` is a plain uuid.
+- **Own test database.** `PAYTEST_DB` (default `payment_test`; a name starting with `pos` is refused). Parallel
+  sessions each set their own: `PAYTEST_DB=pay_u2 npx jest --runInBand` in `apps/payment-api`.
+- **Service to service only.** Every route but `/health` needs `X-Payment-Service-Key` (env `PAYMENT_SERVICE_KEY`,
+  constant-time compare). **The tenant comes from the `X-Tenant-Id` header only**, set by the calling service from its
+  own session and read only after the key check, in `src/auth/service.guard.ts` (guard test). Never from body, query
+  or path. Never expose payment-api to a browser.
+- **Generic contract.** Order reference (`orderRef`), actor reference, never sale, shift or cashier. One live payment
+  per order (no split payment). Void and refund are for the full amount.
+- **Only adapters talk to a PG.** One contract (`src/adapters/adapter.ts`: `charge`, `getStatus`, `void`, `refund`,
+  `handleWebhook`, plus `supportsVoid`/`supportsRefund`). A new PG is one adapter added to `PAYMENT_ADAPTERS`; callers
+  and routes do not change. CASHAC methods (`cash`, `edc_debit`, `static_qris`, `kasbon`) are cancelled by **void**, with
+  no outbound call; PG payments are cancelled by **refund**. No PG adapter before the legal gate (UMK-1977); nothing
+  under `src/` may call out (guard test) until then.
+- **Void and refund need `reason`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN; payment-api
+  stores it, pos-api verifies it). Each writes a `payment_events` audit row.
+- **Purge:** `POST /internal/tenants/purge` deletes every `payment` table row with the header's `tenant_id`, discovered
+  at runtime; a new table needs `tenant_id` (guard in `test/purge.e2e-spec.ts`).
+- Env: `DATABASE_URL` (the `payment_app` role), `PAYMENT_SERVICE_KEY` (≥ 16 chars, the same value in every caller),
+  `PORT` (default 3001). Commit scope: `payment-api`.
+
 ## Commands
 
 ```bash
