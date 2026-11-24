@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
+import { DB, Db } from '../src/db/db.module';
+import { SettlementService } from '../src/payments/settlement.service';
 import {
   auditOf,
   createApp,
@@ -839,5 +841,21 @@ describe('PG flow and edge cases', () => {
       code: 'gateway_unavailable',
     });
     expect((await s.read(p.id)).status).toBe('pending');
+  });
+
+  it('Rule 6: a move the transition table does not allow changes nothing and writes no audit or outbox row', async () => {
+    const s = createStore(h.app);
+    const p = await s.qr();
+    await s.post(`/payments/${p.id}/cancel`, { actorRef: 'cashier-1' });
+    const before = (await auditOf(h.sql, p.id)).length;
+    const notices = (await outboxOf(h.sql, p.id)).length;
+    const settlement = h.app.get(SettlementService);
+    await h.app.get<Db>(DB).transaction(async (tx) => {
+      const row = await settlement.lock(tx, p.id);
+      await settlement.move(tx, row!, 'paid', { source: 'webhook' });
+    });
+    expect((await s.read(p.id)).status).toBe('cancelled');
+    expect((await auditOf(h.sql, p.id)).length).toBe(before);
+    expect((await outboxOf(h.sql, p.id)).length).toBe(notices);
   });
 });
