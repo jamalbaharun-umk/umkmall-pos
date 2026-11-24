@@ -188,18 +188,34 @@ describe('U7 lists: paging, search, cross-tenant', () => {
       const p2 = await list(a, 'perPage=2&page=2');
       expect(p2.data.map((r) => r.id)).toEqual([sales[0].receivableId]);
       // Open: Bu Sari 6.000 + 18.000; Pak Budi settled.
-      expect(p1.summary).toEqual({ openRest: 24_000, openCount: 2 });
-      expect(p2.summary).toEqual({ openRest: 24_000, openCount: 2 });
+      expect(p1.summary).toEqual({
+        openRest: 24_000,
+        openCount: 2,
+        outsideShiftCollected: 0,
+      });
+      expect(p2.summary).toEqual({
+        openRest: 24_000,
+        openCount: 2,
+        outsideShiftCollected: 0,
+      });
       // The tab filters rows, not the summary.
       const settled = await list(a, 'status=settled');
       expect(settled.data.map((r) => r.memberName)).toEqual(['Pak Budi']);
-      expect(settled.summary).toEqual({ openRest: 24_000, openCount: 2 });
+      expect(settled.summary).toEqual({
+        openRest: 24_000,
+        openCount: 2,
+        outsideShiftCollected: 0,
+      });
     });
 
     it('searches by member name or sale number', async () => {
       const sari = await list(a, 'q=sari');
       expect(sari.total).toBe(2);
-      expect(sari.summary).toEqual({ openRest: 24_000, openCount: 2 });
+      expect(sari.summary).toEqual({
+        openRest: 24_000,
+        openCount: 2,
+        outsideShiftCollected: 0,
+      });
       const budi = await list(a, 'q=budi');
       expect(budi).toMatchObject({
         total: 1,

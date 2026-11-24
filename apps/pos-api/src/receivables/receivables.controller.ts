@@ -24,7 +24,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { z } from 'zod';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   fieldError,
   formatRupiah,
@@ -43,11 +43,14 @@ import {
   receivables,
   saleLines,
   sales,
+  shiftCashEntries,
+  staff,
 } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
-import { RequirePermission } from '../staff/require-permission';
-import { recordShiftCash } from '../shifts/cash-ledger';
+import { hasPermission, RequirePermission } from '../staff/require-permission';
+import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
+import { recordStoreCash } from '../store-cash/store-cash-ledger';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
@@ -80,6 +83,16 @@ const requestHash = (receivableId: string, input: PaymentInput) =>
     )
     .digest('hex');
 
+/**
+ * Cash instalments of the receivable that were taken while the collector had no open shift (UMK-1963):
+ * money that is in no shift's expected cash, so it is shown as its own amount.
+ */
+const outsideShiftCollected = sql<string>`(
+  select coalesce(sum(${receivablePayments.amount}), 0) from ${receivablePayments}
+  where ${receivablePayments.tenantId} = ${receivables.tenantId}
+    and ${receivablePayments.receivableId} = ${receivables.id}
+    and ${receivablePayments.collectedOutsideShift})`.mapWith(Number);
+
 const columns = {
   id: receivables.id,
   saleId: receivables.saleId,
@@ -92,6 +105,7 @@ const columns = {
   lastPaymentAt: receivables.lastPaymentAt,
   cancelledAt: receivables.cancelledAt,
   cancelledAmount: receivables.cancelledAmount,
+  outsideShiftCollected,
   createdAt: receivables.createdAt,
 };
 
@@ -238,13 +252,14 @@ export class ReceivablesService {
         .where(where),
       this.db
         .select({
-          openRest: sql<string>`coalesce(sum(${receivables.rest}), 0)`,
-          openCount: count(),
+          openRest: sql<string>`coalesce(sum(${receivables.rest}) filter (where ${receivables.rest} > 0), 0)`,
+          openCount: sql<string>`count(*) filter (where ${receivables.rest} > 0)`,
+          outsideShiftCollected: sql<string>`coalesce(sum(${outsideShiftCollected}), 0)`,
         })
         .from(receivables)
         .innerJoin(sales, eq(sales.id, receivables.saleId))
         .innerJoin(members, eq(members.id, receivables.memberId))
-        .where(and(search, gt(receivables.rest, 0))),
+        .where(search),
     ]);
     return {
       data,
@@ -253,7 +268,9 @@ export class ReceivablesService {
       perPage: q.perPage,
       summary: {
         openRest: Number(summary.openRest),
-        openCount: summary.openCount,
+        openCount: Number(summary.openCount),
+        // Cash taken without an open shift, over the same search: in no shift's expected cash.
+        outsideShiftCollected: Number(summary.outsideShiftCollected),
       },
     };
   }
@@ -286,13 +303,36 @@ export class ReceivablesService {
           amount: receivablePayments.amount,
           restBefore: receivablePayments.restBefore,
           paymentMethod: paymentMethods.name,
+          // Who collected it and when; a payment is in one shift's ledger (`shiftId`), or was taken
+          // without a shift (`collectedOutsideShift`), or never reached a drawer ledger (down payment,
+          // debit, wallet: both empty).
+          actorId: receivablePayments.actorId,
           actorKind: receivablePayments.actorKind,
+          actorName: sql<string>`case when ${receivablePayments.actorKind} = 'owner' then 'Pemilik'
+            else coalesce(${staff.name}, 'Staf') end`,
+          collectedOutsideShift: receivablePayments.collectedOutsideShift,
+          shiftId: shiftCashEntries.shiftId,
           createdAt: receivablePayments.createdAt,
         })
         .from(receivablePayments)
         .innerJoin(
           paymentMethods,
           eq(paymentMethods.id, receivablePayments.paymentMethodId),
+        )
+        .leftJoin(
+          staff,
+          and(
+            eq(staff.tenantId, receivablePayments.tenantId),
+            eq(staff.id, receivablePayments.actorId),
+          ),
+        )
+        .leftJoin(
+          shiftCashEntries,
+          and(
+            eq(shiftCashEntries.tenantId, receivablePayments.tenantId),
+            eq(shiftCashEntries.kind, 'receivable_payment'),
+            eq(shiftCashEntries.refId, receivablePayments.id),
+          ),
         )
         .where(
           and(
@@ -351,34 +391,45 @@ export class ReceivablesService {
             `Pembayaran melebihi sisa piutang (${formatRupiah(r.rest)})`,
           );
         const method = await this.method(tx, s.tenantId, input.paymentMethodId);
-        const [payment] = await tx
-          .insert(receivablePayments)
-          .values({
-            tenantId: s.tenantId,
-            receivableId: id,
-            amount: input.amount,
-            paymentMethodId: method.id,
-            restBefore: r.rest,
-            actorId: s.actorId,
-            actorKind: s.kind,
-            idempotencyKey: key,
-            requestHash: hash,
-          })
-          .returning({ id: receivablePayments.id });
-        // Cash goes into the actor's drawer: it needs their open shift, like a sale, and raises that
-        // shift's expected cash (UMK-1963). Debit and wallet money never reaches the drawer.
-        if (method.isCash)
-          await recordShiftCash(
-            tx,
-            s,
-            {
-              direction: 'in',
-              kind: 'receivable_payment',
-              amount: input.amount,
-              refId: payment.id,
-            },
-            'Buka shift dulu sebelum menerima pembayaran tunai',
-          );
+        // Cash taken while the actor has an open shift goes into that drawer: a ledger entry raises the
+        // shift's expected cash (UMK-1963). An actor who can open a shift (`sales.create`; every owner)
+        // must open one first. Only an actor who cannot (e.g. `receivables.manage` alone) collects
+        // outside a shift (owner ruling 2026-11-24): the payment is marked and the cash goes into the
+        // store's cash ledger, so no shift ever counts it. Decided once, here, under the shift's row
+        // lock: a cash payment is in a shift's ledger or in the store's, never both, never neither.
+        // Debit and wallet money is in none.
+        const paymentId = randomUUID();
+        const cashIn = {
+          direction: 'in',
+          kind: 'receivable_payment',
+          amount: input.amount,
+          refId: paymentId,
+        } as const;
+        const shiftId = method.isCash
+          ? await recordShiftCashIfOpen(tx, s, cashIn)
+          : null;
+        const outsideShift = method.isCash && !shiftId;
+        if (outsideShift) {
+          if (hasPermission(s, 'sales.create'))
+            throw fieldError(
+              '_',
+              'Buka shift dulu sebelum menerima pembayaran tunai',
+            );
+          await recordStoreCash(tx, s, cashIn);
+        }
+        await tx.insert(receivablePayments).values({
+          id: paymentId,
+          tenantId: s.tenantId,
+          receivableId: id,
+          amount: input.amount,
+          paymentMethodId: method.id,
+          restBefore: r.rest,
+          actorId: s.actorId,
+          actorKind: s.kind,
+          idempotencyKey: key,
+          requestHash: hash,
+          collectedOutsideShift: outsideShift,
+        });
         await tx
           .update(receivables)
           .set({ rest: r.rest - input.amount, lastPaymentAt: new Date() })

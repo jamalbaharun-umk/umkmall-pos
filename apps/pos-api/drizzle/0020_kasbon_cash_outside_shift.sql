@@ -1,0 +1,1 @@
+ALTER TABLE "pos"."receivable_payments" ADD COLUMN "collected_outside_shift" boolean DEFAULT false NOT NULL;

@@ -411,6 +411,9 @@ export class VoidService {
           paymentMethod: paymentMethods.name,
           fromDrawer: saleVoidReturns.fromDrawer,
           receivablePaymentId: saleVoidReturns.receivablePaymentId,
+          // A kasbon instalment that was taken without an open shift (UMK-1963): its cash comes out of
+          // this void's drawer although no shift's expected cash ever held it.
+          collectedOutsideShift: sql<boolean>`coalesce(${receivablePayments.collectedOutsideShift}, false)`,
         })
         .from(saleVoidReturns)
         .innerJoin(

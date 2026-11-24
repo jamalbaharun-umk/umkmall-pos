@@ -522,7 +522,11 @@ describe('void a full sale (UMK-1962)', () => {
         ),
       );
       expect(lists.map((l) => l.body.total as number)).toEqual([0, 0, 1]);
-      expect(lists[2].body.summary).toEqual({ openRest: 0, openCount: 0 });
+      expect(lists[2].body.summary).toEqual({
+        openRest: 0,
+        openCount: 0,
+        outsideShiftCollected: 0,
+      });
     });
 
     it('partly paid: the rest is cancelled, cash payments leave the drawer, a debit payment goes back by transfer', async () => {
@@ -606,6 +610,82 @@ describe('void a full sale (UMK-1962)', () => {
       expect((await current(s.auth)).expectedCash).toBe(97_500);
       const old = await get(s.auth, `/shifts/${first.body.id}`).expect(200);
       expect(old.body).toMatchObject({ expectedCash: 102_500, cashOut: 0 });
+    });
+
+    it('an instalment collected outside any shift: needs an open shift, and is paid out of that drawer', async () => {
+      const s = await shop();
+      const first = await open(s.auth);
+      const sale = await kasbonSale(s, 0);
+      const rid = sale.body.receivableId as string;
+      await close(s.auth, 100_000);
+      // Taken by an actor who cannot open a shift (UMK-1963 ruling): in the store cash, in no shift.
+      const collector = await createCashier(app, s, ['receivables.manage']);
+      const paid = await pay(collector.auth, rid, { amount: 2500 }).expect(201);
+      expect(paid.body.payments).toEqual([
+        expect.objectContaining({ collectedOutsideShift: true, shiftId: null }),
+      ]);
+      expect(await ledger(s.tenantId)).toEqual([]);
+
+      // No drawer to give the cash back from: refused, and nothing changes.
+      const blocked = await voidSale(s.auth, sale.body.id, s.approval);
+      expect(blocked.status).toBe(422);
+      expect(blocked.body.message).toBe(
+        'Buka shift dulu untuk membatalkan struk tunai',
+      );
+      expect(await statusOf(sale.body.id)).toBe('completed');
+      expect(
+        (await get(s.auth, `/receivables/${rid}`).expect(200)).body,
+      ).toMatchObject({ rest: 7500, cancelledAt: null });
+
+      const second = await open(s.auth);
+      const res = await voidSale(s.auth, sale.body.id, s.approval).expect(201);
+      expect(res.body).toMatchObject({
+        shiftId: second.body.id,
+        cashReturned: 2500,
+        transferReturned: 0,
+        receivableCancelled: 7500,
+        returns: [
+          {
+            amount: 2500,
+            fromDrawer: true,
+            receivablePaymentId: paid.body.payments[0].id,
+            collectedOutsideShift: true,
+          },
+        ],
+      });
+      // The cash leaves the drawer open now, like an instalment taken in another shift.
+      expect(await current(s.auth)).toMatchObject({
+        cashIn: 0,
+        cashOut: 2500,
+        voidRefunds: 2500,
+        expectedCash: 97_500,
+      });
+      expect(await ledger(s.tenantId)).toEqual([
+        expect.objectContaining({
+          shift_id: second.body.id,
+          direction: 'out',
+          kind: 'void_refund',
+          amount: '2500',
+          ref_id: res.body.id,
+        }),
+      ]);
+      const old = await get(s.auth, `/shifts/${first.body.id}`).expect(200);
+      expect(old.body).toMatchObject({ expectedCash: 100_000, cashOut: 0 });
+      // The store cash still holds what the collector took in: the drawer paid the customer back.
+      const cash = await get(s.auth, '/store-cash').expect(200);
+      expect(cash.body.summary).toEqual({
+        cashIn: 2500,
+        cashOut: 0,
+        balance: 2500,
+      });
+      // The payment row keeps its audit: still marked, still not in a shift.
+      const r = await get(s.auth, `/receivables/${rid}`).expect(200);
+      expect(r.body).toMatchObject({
+        rest: 0,
+        cancelledAmount: 7500,
+        outsideShiftCollected: 2500,
+        payments: [{ collectedOutsideShift: true, shiftId: null }],
+      });
     });
 
     it('fully paid: every payment is returned and nothing is left to cancel', async () => {

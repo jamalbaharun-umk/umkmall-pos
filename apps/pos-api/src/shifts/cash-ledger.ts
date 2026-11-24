@@ -62,21 +62,20 @@ export async function lockOpenShift(tx: Tx, s: PosSession) {
 }
 
 /**
- * Adds one cash movement to the actor's open shift, inside the caller's transaction. Answers 422 with
- * `noShiftMessage` when the actor has no open shift. Returns the shift's id.
+ * Adds one cash movement to the actor's open shift, inside the caller's transaction, and returns the
+ * shift's id; returns null and writes nothing when the actor has no open shift.
  *
  * Lock order: a caller that also locks its own row (a sale, a receivable, a purchase order) locks that
  * row first and calls this after; nothing locks a shift and then such a row. Stock batches and voucher
  * quota are taken after the shift, as a sale does.
  */
-export async function recordShiftCash(
+export async function recordShiftCashIfOpen(
   tx: Tx,
   s: PosSession,
   entry: CashEntry,
-  noShiftMessage: string,
-): Promise<string> {
+): Promise<string | null> {
   const shift = await lockOpenShift(tx, s);
-  if (!shift) throw fieldError('_', noShiftMessage);
+  if (!shift) return null;
   await tx.insert(shiftCashEntries).values({
     tenantId: s.tenantId,
     shiftId: shift.id,
@@ -89,6 +88,18 @@ export async function recordShiftCash(
     actorKind: s.kind,
   });
   return shift.id;
+}
+
+/** `recordShiftCashIfOpen` for a movement that needs a drawer: 422 with `noShiftMessage` without a shift. */
+export async function recordShiftCash(
+  tx: Tx,
+  s: PosSession,
+  entry: CashEntry,
+  noShiftMessage: string,
+): Promise<string> {
+  const shiftId = await recordShiftCashIfOpen(tx, s, entry);
+  if (!shiftId) throw fieldError('_', noShiftMessage);
+  return shiftId;
 }
 
 /** Ledger totals per shift, one grouped query; a shift without entries is absent (use NO_CASH). */
