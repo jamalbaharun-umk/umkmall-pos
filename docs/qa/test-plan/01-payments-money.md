@@ -1359,4 +1359,4 @@ Source: PRD "Keputusan pembayaran", UMK-1962, UMK-1993, payment-api spec rev 17+
 | RND-010 | P1 | Rounding with voucher/discount and 11% tax | Tax computed after discounts and before rounding; rounding applied last |
 | RND-011 | P1 | Reports: revenue, tax, profit with rounding rows | Rounding never changes tax base, revenue by method sums to cash received |
 
-**Pending (still the payment thread's assumptions, not owner-approved)**: cash only; the difference stored in a separate `rounding` field shown as "Pembulatan" and outside the tax base; kasbon not rounded. Mark RND-007 (kasbon part), RND-008 and RND-011 as *pending owner confirmation*; the other rounding cases hold either way.
+**Confirmed by the owner (24 Nov, UMK-1993):** cash only; the difference is a separate "Pembulatan" line outside the tax base; kasbon is not rounded. No rounding case is pending any more, including RND-007 (kasbon), RND-008 and RND-011.
