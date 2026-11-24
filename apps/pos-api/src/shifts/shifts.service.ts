@@ -3,14 +3,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, count, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { paymentMethods, sales, shifts } from '../db/schema';
+import { paymentMethods, sales, shiftCashEntries, shifts } from '../db/schema';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
+import {
+  cashTotals,
+  expectedCash,
+  lockOpenShift,
+  NO_CASH,
+} from './cash-ledger';
 
 const shiftColumns = {
   id: shifts.id,
@@ -43,7 +49,8 @@ const withDifference = <T extends ShiftRow>(s: T) => ({
 
 /**
  * Cash shifts (Lakasir CashDrawer), one open per actor. Fixes flaw 4: the shift is required by every
- * sale and closing reconciles counted cash against the shift's own sales.
+ * sale and closing reconciles counted cash against the shift's own sales and its cash ledger
+ * (cash-ledger.ts): expected cash = opening cash + cash sales + cash in − cash out.
  */
 @Injectable()
 export class ShiftsService {
@@ -62,6 +69,10 @@ export class ShiftsService {
     return { cashSales: Number(t.cashSales), salesCount: t.salesCount };
   }
 
+  private async cashOf(db: Db | Tx, tenantId: string, shiftId: string) {
+    return (await cashTotals(db, tenantId, [shiftId])).get(shiftId) ?? NO_CASH;
+  }
+
   /** The actor's open shift with its running totals, or null. */
   async current(s: PosSession) {
     const [shift] = await this.db
@@ -75,11 +86,15 @@ export class ShiftsService {
         ),
       );
     if (!shift) return null;
-    const t = await this.totals(this.db, shift.id);
+    const [t, cash] = await Promise.all([
+      this.totals(this.db, shift.id),
+      this.cashOf(this.db, s.tenantId, shift.id),
+    ]);
     return {
       ...withDifference(shift),
       ...t,
-      expectedCash: shift.openingCash + t.cashSales,
+      ...cash,
+      expectedCash: expectedCash(shift.openingCash, t.cashSales, cash),
     };
   }
 
@@ -94,7 +109,7 @@ export class ShiftsService {
           openingCash,
         })
         .returning(shiftColumns);
-      return withDifference(row);
+      return { ...withDifference(row), ...NO_CASH };
     } catch (e) {
       if (isUniqueViolation(e))
         throw new ConflictException('Shift Anda masih terbuka');
@@ -102,34 +117,25 @@ export class ShiftsService {
     }
   }
 
-  /** Locks the shift row (the lock every sale takes), so no sale lands after the count. */
+  /** Locks the shift row (the lock every sale and cash movement takes), so nothing lands after the count. */
   async close(s: PosSession, countedCash: number) {
     return this.db.transaction(async (tx) => {
-      const [shift] = await tx
-        .select({ id: shifts.id, openingCash: shifts.openingCash })
-        .from(shifts)
-        .where(
-          and(
-            eq(shifts.tenantId, s.tenantId),
-            eq(shifts.actorId, s.actorId),
-            isNull(shifts.closedAt),
-          ),
-        )
-        .for('update');
+      const shift = await lockOpenShift(tx, s);
       if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
       const t = await this.totals(tx, shift.id);
+      const cash = await this.cashOf(tx, s.tenantId, shift.id);
       const [row] = await tx
         .update(shifts)
         .set({
           closedAt: new Date(),
           countedCash,
-          expectedCash: shift.openingCash + t.cashSales,
+          expectedCash: expectedCash(shift.openingCash, t.cashSales, cash),
           cashSales: t.cashSales,
           salesCount: t.salesCount,
         })
         .where(eq(shifts.id, shift.id))
         .returning(shiftColumns);
-      return withDifference(row);
+      return { ...withDifference(row), ...cash };
     });
   }
 
@@ -152,7 +158,18 @@ export class ShiftsService {
         .offset((page - 1) * perPage),
       this.db.select({ total: count() }).from(shifts).where(where),
     ]);
-    return { data: rows.map(withDifference), total };
+    const cash = await cashTotals(
+      this.db,
+      s.tenantId,
+      rows.map((r) => r.id),
+    );
+    return {
+      data: rows.map((r) => ({
+        ...withDifference(r),
+        ...(cash.get(r.id) ?? NO_CASH),
+      })),
+      total,
+    };
   }
 
   async get(s: PosSession, id: string) {
@@ -161,6 +178,23 @@ export class ShiftsService {
       .from(shifts)
       .where(and(this.scope(s), eq(shifts.id, id)));
     if (!row) throw new NotFoundException();
-    return withDifference(row);
+    const e = shiftCashEntries;
+    const [cash, cashEntries] = await Promise.all([
+      this.cashOf(this.db, s.tenantId, id),
+      this.db
+        .select({
+          id: e.id,
+          direction: e.direction,
+          kind: e.kind,
+          amount: e.amount,
+          refId: e.refId,
+          note: e.note,
+          createdAt: e.createdAt,
+        })
+        .from(e)
+        .where(and(eq(e.tenantId, s.tenantId), eq(e.shiftId, id)))
+        .orderBy(asc(e.createdAt), asc(e.id)),
+    ]);
+    return { ...withDifference(row), ...cash, cashEntries };
   }
 }

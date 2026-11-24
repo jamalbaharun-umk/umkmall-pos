@@ -263,4 +263,29 @@ describe('stock (U3)', () => {
       .set('Authorization', b.auth)
       .expect(404);
   });
+
+  it('product list returns on-hand stock: tracked products only, tenant scoped', async () => {
+    const withStock = await product(a);
+    const empty = await product(a, { name: 'Kosong' });
+    const service = await product(a, { name: 'Jasa', type: 'service' });
+    await receive(a, withStock, 7, 1000);
+    const res = await http()
+      .get('/catalog/products')
+      .set('Authorization', a.auth)
+      .expect(200);
+    type Row = { id: string; stock: number | null };
+    const rows = (res.body as { data: Row[] }).data;
+    const by = Object.fromEntries(rows.map((p) => [p.id, p.stock]));
+    expect(by[withStock]).toBe(7);
+    expect(by[empty]).toBe(0);
+    expect(by[service]).toBeNull();
+    // Store B never sees A's quantities.
+    const other = await http()
+      .get('/catalog/products')
+      .set('Authorization', b.auth)
+      .expect(200);
+    expect(
+      (other.body as { data: Row[] }).data.some((p) => p.id === withStock),
+    ).toBe(false);
+  });
 });

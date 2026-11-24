@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1795499311491,
+      "tag": "0000_init_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795501006371,
+      "tag": "0001_refund_key",
+      "breakpoints": true
+    }
+  ]
+}

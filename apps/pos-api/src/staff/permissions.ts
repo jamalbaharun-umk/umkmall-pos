@@ -9,6 +9,8 @@ export const PERMISSIONS = [
   'members.manage',
   'vouchers.manage',
   'receivables.manage',
+  'sales.void',
+  'expenses.manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

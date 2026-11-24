@@ -4,6 +4,6 @@
     "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".output/**"] },
     "lint": {},
     "typecheck": {},
-    "test": { "passThroughEnv": ["DATABASE_URL", "POS_SESSION_SECRET", "PGTEST_DB", "PGTEST_HOST", "PGTEST_ADMIN_KEY", "PGTEST_APP_KEY"] }
+    "test": { "passThroughEnv": ["DATABASE_URL", "POS_SESSION_SECRET", "PGTEST_DB", "PAYTEST_DB", "PAYTEST_APP_KEY", "PAYMENT_SERVICE_KEY", "PGTEST_HOST", "PGTEST_ADMIN_KEY", "PGTEST_APP_KEY"] }
   }
 }
