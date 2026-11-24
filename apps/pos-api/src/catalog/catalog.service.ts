@@ -17,6 +17,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { StockService } from '../stock/stock.service';
 import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -90,6 +91,7 @@ export class CatalogService {
   constructor(
     @InjectDb() private readonly db: Db,
     @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+    private readonly stock: StockService,
   ) {}
 
   // ---------- categories ----------
@@ -192,9 +194,19 @@ export class CatalogService {
         .offset((q.page - 1) * q.perPage),
       this.db.select({ total: count() }).from(products).where(where),
     ]);
-    const codes = await this.barcodesOf(rows.map((r) => r.id));
+    const [codes, onHand] = await Promise.all([
+      this.barcodesOf(rows.map((r) => r.id)),
+      this.stock.onHand(
+        tenantId,
+        rows.filter((r) => r.type === 'product').map((r) => r.id),
+      ),
+    ]);
     return {
-      data: rows.map((r) => this.present(r, codes.get(r.id) ?? [])),
+      data: rows.map((r) => ({
+        ...this.present(r, codes.get(r.id) ?? []),
+        // Only `product` tracks stock; service and non_stock rows answer null.
+        stock: r.type === 'product' ? (onHand[r.id] ?? 0) : null,
+      })),
       page: q.page,
       perPage: q.perPage,
       total,
