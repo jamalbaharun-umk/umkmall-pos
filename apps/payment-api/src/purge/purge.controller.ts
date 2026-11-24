@@ -1,10 +1,11 @@
 import { Controller, HttpCode, Module, Post } from '@nestjs/common';
 import { TenantId } from '../auth/service.guard';
+import { PaymentsModule } from '../payments/payments.controller';
 import { PurgeService } from './purge.service';
 
 /**
  * Caller → payment-api when a store is erased. Same door as every other route: the service key, and the
- * tenant from the X-Tenant-Id header (no body). Idempotent: a retry answers `purged: false`.
+ * tenant from the trusted tenant header (no body). Idempotent: a retry answers `purged: false`.
  */
 @Controller('internal/tenants')
 export class PurgeController {
@@ -17,5 +18,9 @@ export class PurgeController {
   }
 }
 
-@Module({ controllers: [PurgeController], providers: [PurgeService] })
+@Module({
+  imports: [PaymentsModule],
+  controllers: [PurgeController],
+  providers: [PurgeService],
+})
 export class PurgeModule {}

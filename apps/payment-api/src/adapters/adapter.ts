@@ -2,12 +2,13 @@
  * The one contract every payment method implements. payment-api's routes and its callers know only this:
  * adding a payment gateway (PG) means adding one adapter to PAYMENT_ADAPTERS, nothing else.
  *
- * - `cashac`: the payment was taken at the cashier (cash, EDC debit, the store's static QRIS, kasbon). The
- *   adapter never calls out. Cancelled by VOID: the store returns the money itself.
+ * - `cashac`: the payment was taken at the cashier (cash, EDC debit, the store's static QRIS). The adapter
+ *   never calls out. Cancelled by VOID: the store returns the money itself.
  * - `online`: the payment goes through a PG (dynamic QRIS, VA). Cancelled by REFUND: the adapter calls the PG.
  *
- * Only adapters may talk to a PG. An adapter must make `charge`, `void` and `refund` idempotent on
- * `payment.id` at the PG: payment-api may repeat a call whose answer it never stored.
+ * Only adapters may talk to a PG. `payment.id` is the reference AND the idempotency key an adapter gives the PG
+ * for the charge; a refund carries its own key. payment-api repeats a call whose answer it never stored, and
+ * that must never create a second bill or a second refund.
  */
 export type AdapterKind = 'cashac' | 'online';
 
@@ -19,51 +20,123 @@ export interface PaymentRef {
   method: string;
   amount: number;
   providerRef: string | null;
+  /** When the bill should stop accepting payment (the configured QR lifetime). */
+  expiresAt: Date | null;
 }
 
 export interface ChargeResult {
-  /** `pending`: the payer has not paid yet (ask again with getStatus, or wait for the webhook). */
+  /** `pending`: the bill exists and the payer has not paid yet. `failed`: the PG refused it. */
   status: 'paid' | 'pending' | 'failed';
   providerRef?: string;
+  expiresAt?: Date;
+  /** What the payer needs (QR string, VA number). */
+  checkout?: Record<string, string>;
+}
+
+/**
+ * One receipt of money at the PG for a bill. The adapter normalises to the GROSS amount charged to the payer
+ * and reports the PG's fee apart from it, whatever the PG's own convention (net of fee, fee added).
+ */
+export interface Receipt {
+  /** The PG's id for this receipt. Stable: the same money is always reported under the same id. */
+  id: string;
+  grossAmount: number;
+  feeAmount: number;
 }
 
 export interface StatusResult {
-  status: 'pending' | 'paid' | 'failed' | 'expired';
+  /**
+   * `not_found`: the PG has no bill for this reference. One such answer proves nothing (PGs lag);
+   * payment-api fails a payment only on a second one later.
+   */
+  status: 'not_found' | 'pending' | 'paid' | 'failed' | 'expired' | 'cancelled';
   providerRef?: string;
+  expiresAt?: Date;
+  checkout?: Record<string, string>;
+  /**
+   * ALL money received on this bill: also after it expired or was cancelled, also a second payment.
+   * A payment counts as paid only by a receipt whose gross amount equals its amount exactly; every other
+   * receipt is recorded as unmatched money and refunded.
+   */
+  receipts?: Receipt[];
+  /** Where each refund asked on this bill stands, by the `key` of its RefundRequest. */
+  refunds?: Record<string, 'pending' | 'succeeded' | 'failed'>;
 }
 
-/** Who cancels and why. `approvedBy` is the supervisor the caller verified. */
+/** What to refund. Always a whole receipt. */
+export interface RefundRequest {
+  /** Idempotency key at the PG: the payment id, or the unmatched receipt's id. */
+  key: string;
+  receiptId: string | null;
+  amount: number;
+}
+
+/** Who cancels and why. `approvedBy` is the supervisor the caller verified; `system` for an automatic refund. */
 export interface CancelContext {
-  reason: string;
+  reasonCode: string;
+  note: string | null;
   actorRef: string;
   approvedBy: string;
 }
 
+export interface RefundResult {
+  /** `pending`: the PG accepted the refund and the money is on its way. `failed`: the PG refused it. */
+  status: 'pending' | 'succeeded' | 'failed';
+}
+
 export interface WebhookInput {
-  headers: Record<string, string | undefined>;
+  headers: Record<string, string | string[] | undefined>;
   rawBody: Buffer;
 }
 
-export interface WebhookResult {
-  providerRef: string;
-  status: StatusResult['status'] | 'refunded';
+/**
+ * A verified notification. It carries no status on purpose: a webhook only says "look at this payment";
+ * payment-api then asks `getStatus` for the status and the exact amount.
+ */
+export interface WebhookNotice {
+  /** The PG's id for this delivery: the same event delivered twice has the same id. */
+  eventId: string;
+  /** Our payment id as the PG sent it back; null when the notification names none. */
+  reference: string | null;
 }
 
 export interface PaymentAdapter {
   /** The method name callers charge with. Unique across adapters. */
   readonly method: string;
   readonly kind: AdapterKind;
+  /** The PG behind an online adapter: the `<provider>` of `POST /webhooks/<provider>`. */
+  readonly provider?: string;
   readonly supportsVoid: boolean;
   readonly supportsRefund: boolean;
+  /** The PG can close an unpaid bill (`cancelPending`). Many cannot close a dynamic QR. */
+  readonly canCancel: boolean;
+  /** The PG rejects a second payment on the same QR. When false, a duplicate receipt is possible. */
+  readonly singleUseQr: boolean;
 
+  /**
+   * Throws GatewayUnreachableError when the request certainly never reached the PG; any other error means
+   * the outcome is unknown and the bill may exist.
+   */
   charge(payment: PaymentRef): Promise<ChargeResult>;
   getStatus(payment: PaymentRef): Promise<StatusResult>;
   /** Called only when `supportsVoid`. */
   void(payment: PaymentRef, context: CancelContext): Promise<void>;
-  /** Called only when `supportsRefund`. */
-  refund(payment: PaymentRef, context: CancelContext): Promise<void>;
-  /** Verifies and reads a PG notification. No route delivers one yet (it ships with the first PG adapter). */
-  handleWebhook(input: WebhookInput): Promise<WebhookResult>;
+  /** Called only when `supportsRefund`. A whole receipt, idempotent on `request.key`. */
+  refund(
+    payment: PaymentRef,
+    request: RefundRequest,
+    context: CancelContext,
+  ): Promise<RefundResult>;
+  /**
+   * Checks the signature or token in constant time and reads the notification.
+   * Throws WebhookSignatureError when it does not verify.
+   */
+  handleWebhook(input: WebhookInput): Promise<WebhookNotice>;
+  /**
+   * Only when `canCancel`: closes an unpaid bill so it can no longer be paid. payment-api asks `getStatus`
+   * afterwards and trusts only that answer (the payer may have paid a moment earlier).
+   */
+  cancelPending?(payment: PaymentRef): Promise<void>;
 }
 
 /** An adapter was asked for something it declared it cannot do. A bug in the caller, never a client error. */
@@ -71,6 +144,20 @@ export class UnsupportedOperationError extends Error {
   constructor(method: string, operation: string) {
     super(`${method} does not support ${operation}`);
     this.name = 'UnsupportedOperationError';
+  }
+}
+
+export class GatewayUnreachableError extends Error {
+  constructor() {
+    super('gateway unreachable');
+    this.name = 'GatewayUnreachableError';
+  }
+}
+
+export class WebhookSignatureError extends Error {
+  constructor() {
+    super('webhook signature does not verify');
+    this.name = 'WebhookSignatureError';
   }
 }
 

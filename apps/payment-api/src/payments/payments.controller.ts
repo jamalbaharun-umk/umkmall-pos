@@ -8,19 +8,28 @@ import {
   Param,
   Post,
   Query,
+  Req,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { AdaptersModule } from '../adapters/adapters.module';
-import { TenantId } from '../auth/service.guard';
+import { Public, TenantId } from '../auth/service.guard';
 import { fieldError, validate } from '../common/validation';
+import { Clock, PaymentSettings } from '../config';
 import {
+  AnyCancelBody,
   CancelBody,
   ChargeBody,
   IdempotencyKey,
   ListQuery,
+  ManualRefundBody,
+  ReceiptListQuery,
 } from './payments.schemas';
 import { PaymentsService } from './payments.service';
+import { ReconciliationService } from './reconciliation.service';
+import { SettlementService } from './settlement.service';
+import { WebhooksService } from './webhooks.service';
 
 @Controller('payments')
 export class PaymentsController {
@@ -62,7 +71,7 @@ export class PaymentsController {
     return this.payments.sync(tenantId, id);
   }
 
-  /** payment-api picks void or refund by what the payment's adapter supports. */
+  /** payment-api picks: close an unpaid bill, void (CASHAC) or refund (PG). */
   @Post(':id/cancel')
   @HttpCode(200)
   cancel(
@@ -70,12 +79,7 @@ export class PaymentsController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.payments.cancel(
-      tenantId,
-      id,
-      'cancel',
-      validate(CancelBody, body),
-    );
+    return this.payments.cancel(tenantId, id, validate(AnyCancelBody, body));
   }
 
   @Post(':id/void')
@@ -85,12 +89,7 @@ export class PaymentsController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.payments.cancel(
-      tenantId,
-      id,
-      'void',
-      validate(CancelBody, body),
-    );
+    return this.payments.void(tenantId, id, validate(CancelBody, body));
   }
 
   @Post(':id/refund')
@@ -100,18 +99,74 @@ export class PaymentsController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.payments.cancel(
+    return this.payments.refund(tenantId, id, validate(CancelBody, body));
+  }
+
+  @Post(':id/refund/manual')
+  @HttpCode(200)
+  manualRefund(
+    @TenantId() tenantId: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.payments.markRefundedManually(
       tenantId,
       id,
-      'refund',
-      validate(CancelBody, body),
+      validate(ManualRefundBody, body),
     );
+  }
+}
+
+@Controller('unmatched-receipts')
+export class UnmatchedReceiptsController {
+  constructor(private readonly payments: PaymentsService) {}
+
+  @Get()
+  list(@TenantId() tenantId: string, @Query() query: unknown) {
+    return this.payments.listUnmatched(
+      tenantId,
+      validate(ReceiptListQuery, query),
+    );
+  }
+}
+
+/**
+ * PG → payment-api. No service key and no tenant header: the PG has neither. The adapter verifies the PG's
+ * signature (401 otherwise), and the tenant is the one on our own payment row.
+ */
+@Controller('webhooks')
+export class WebhooksController {
+  constructor(private readonly webhooks: WebhooksService) {}
+
+  @Public()
+  @Post(':provider')
+  @HttpCode(200)
+  receive(
+    @Param('provider') provider: string,
+    @Req() req: RawBodyRequest<Request>,
+  ) {
+    return this.webhooks.receive(provider, {
+      headers: req.headers,
+      rawBody: req.rawBody ?? Buffer.alloc(0),
+    });
   }
 }
 
 @Module({
   imports: [AdaptersModule],
-  controllers: [PaymentsController],
-  providers: [PaymentsService],
+  controllers: [
+    PaymentsController,
+    UnmatchedReceiptsController,
+    WebhooksController,
+  ],
+  providers: [
+    PaymentSettings,
+    Clock,
+    SettlementService,
+    PaymentsService,
+    WebhooksService,
+    ReconciliationService,
+  ],
+  exports: [PaymentSettings, Clock],
 })
 export class PaymentsModule {}

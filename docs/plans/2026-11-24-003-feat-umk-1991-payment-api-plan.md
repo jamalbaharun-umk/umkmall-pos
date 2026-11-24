@@ -62,14 +62,12 @@ One contract, `PaymentAdapter` (`src/adapters/adapter.ts`): `method`, `kind` (`c
 (`PAYMENT_ADAPTERS`); the registry maps `method` → adapter. Adding a PG adds one adapter to the list; no caller
 and no route changes.
 
-Shipped: `cash`, `edc_debit`, `static_qris`, `kasbon`, all CASHAC: `charge` answers `paid` at once, void is
-supported, refund is not, and nothing calls out of the process. `kasbon` is `paid` from the payment service's view
-(the order is settled by credit); the receivable stays in pos-api.
+Shipped: `cash`, `edc_debit`, `static_qris`, all CASHAC: `charge` answers `paid` at once, void is
+supported, refund is not, and nothing calls out of the process. Kasbon is not a payment method (stage 2): the
+caller keeps the receivable, and each instalment is its own payment.
 
-No PG adapter ships before the legal gate (UMK-1977). A fake `online` adapter (refund only, charge answers
-`pending`) lives in `test/support/` and proves the refusal rules and the pending → paid → refunded path.
-No webhook route ships: `handleWebhook` is in the contract only; the route and its authentication come with the
-first PG adapter.
+No PG adapter ships before the legal gate (UMK-1977). A scriptable fake `online` adapter lives in `test/support/`
+and proves the PG flow (stage 2 below, which replaces this section's first version where they differ).
 
 ## Data
 
@@ -123,6 +121,89 @@ Database `payment`, schema `payment`, role `payment_app` (`ops/payment-role.sql`
 - `ops/payment-role.sql`, `.env.example`, `turbo.json` (`PAYTEST_DB`), `commitlint.config.js` (scope
   `payment-api`), `CLAUDE.md` (payment-api section).
 
+## Stage 2 — PG flow and edge cases
+
+Source: the design doc "Payment-api: alur pembayaran PG dan kasus tepi" (final revision, 24 Nov 2026) and the QA
+review. Where it differs from the sections above (statuses, cancel body, kasbon, the fake adapter, test files), this
+section wins. Still no real PG adapter (UMK-1977): the flow is proven with `test/support/fake-gateway.ts`.
+
+### Rules built
+
+1. One live payment per `(tenant, orderRef)`: partial unique index for `created`, `pending`, `paid`.
+2. The row is written as `created` and committed before the PG is called.
+3. Our payment id is the PG reference and the charge idempotency key. A refund's key is the id of its
+   `refund_pending` audit event, so a retry after a refused refund uses a new key.
+4. The caller's `Idempotency-Key` is the order reference plus the attempt number; the body carries `attempt`
+   (default 1). Unique `(tenant, orderRef, attempt)`. A new attempt is accepted only once the previous payment is
+   closed; an old key always answers its old payment.
+5. One `settle` function (`src/payments/settlement.service.ts`) used by webhook, manual sync and reconciliation. It
+   locks the row (`select … for update`), asks the adapter, and moves the status at most once.
+6. Statuses move forward only, by rank (`src/payments/transitions.ts`): `created` 0, `pending` 1, `failed` /
+   `expired` / `cancelled` 2, `paid` 3, `refund_pending` 4, `refunded` / `refund_failed` / `voided` 5. The one
+   backward move is `refund_failed` → `refund_pending`. A closed unpaid payment never becomes `paid`.
+   `needs_review` is a flag with a reason, not a status.
+7. Money that matches no open payment is never dropped and never changes a closed payment: it becomes an
+   `unmatched_receipts` row (`late`, `duplicate` or `amount_mismatch`), flagged for review and, when
+   `PAYMENT_LATE_AUTO_REFUND` is on, refunded by actor `system`. Settling never fails on the unique index.
+8. A webhook is never trusted: signature first (401), then status and exact amount are fetched again from the PG.
+9. Webhook inbox `webhook_events`, unique `(provider, event_id)`, stored before processing. An unknown reference is
+   kept as `unmatched`. A failed processing is retried with a growing delay and parked, with an alert log line,
+   after `PAYMENT_WEBHOOK_MAX_ATTEMPTS`.
+10. The tenant of a webhook or a reconciliation sweep comes from our payment row, never from the payload.
+11. A `created` payment becomes `failed` only after two "no such bill" answers at least
+    `PAYMENT_NOT_FOUND_CONFIRM_SECONDS` apart, or at once when the PG was certainly never reached.
+12. An adapter declares `supportsVoid`, `supportsRefund`, `canCancel` and `singleUseQr`, and reports each receipt as
+    the gross amount with the fee apart.
+13. A paid CASHAC payment is never voided automatically.
+
+Every status change writes, in the same transaction, one `payment_events` audit row and one `outbox` row (the notice
+for the caller). **The outbox dispatcher is not built** (it needs pos-api's endpoint).
+
+### Routes added or changed
+
+- `POST /payments` body: `{ orderRef, method, amount, attempt?, actorRef }`. Codes: `idempotency_key_reused`,
+  `attempt_already_used`, `order_has_live_payment`.
+- `POST /payments/:id/cancel`: `paid` → void or refund by adapter capability. `created` / `pending` → the cashier may
+  cancel at any time: the bill is closed at the PG when the adapter can (`canCancel`), then its status is asked;
+  paid there → 409 `already_paid` and the payment becomes `paid`; else `cancelled`. An adapter that cannot close a
+  bill: cancelled anyway when `PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE` is on (later money is an unmatched receipt),
+  else 409 `cancel_not_supported` with the expiry time.
+- Void and refund body: `{ reasonCode, note?, actorRef, approvedBy }`. `reasonCode` is one of `wrong_item_or_qty`,
+  `wrong_payment_method`, `customer_cancelled`, `duplicate_transaction`, `goods_returned`, `other` (`note` required).
+- Refund: `paid` → `refund_pending` (committed) → adapter → `refunded`, stays `refund_pending`, or `refund_failed`
+  with `needs_review`. A `refund_failed` payment can be refunded again.
+- `POST /payments/:id/refund/manual` `{ note, actorRef, approvedBy }`: `refund_failed` → `refunded` (the owner
+  returned the money by hand). Off → 409 `manual_refund_disabled`.
+- `POST /webhooks/:provider`: no service key; authenticated by the adapter's signature check.
+- `GET /payments?needsReview=true`, `GET /unmatched-receipts?needsReview=true`.
+- Purge answers 409 `payments_in_flight` while the tenant has a `created`, `pending` or `refund_pending` payment, or
+  a `refund_failed` one younger than `PAYMENT_PURGE_FAILED_REFUND_BLOCK_DAYS`.
+- `ReconciliationService.tick()` on a timer: settles payments in flight older than the threshold, expires bills
+  past expiry plus the grace period, retries inbox events.
+
+### Configurable
+
+Env names and defaults are in `src/config.ts` and `.env.example`. Owner decisions: late money is refunded
+automatically; a QR lives 15 minutes; a refused refund can be marked returned by hand, with a note; a failed refund
+blocks the purge for 30 days. Still a proposal: the 10-minute grace before the automatic `expired`.
+
+### Definition of Done (stage 2)
+
+- [test] Each edge-case code has at least one test whose name carries it: D1–D7, D9–D13, M1–M15, M18–M20, M22,
+  V1–V5, V9. Not mapped (caller behaviour or not built): D8, M16, M17, M21, V6, V7, V8. Partly: M4 (the outbox row
+  is written; nothing delivers it).
+- [test] Race: webhook, manual sync and reconciliation at once for one payment → one transition, one audit row,
+  one outbox row. Revert-red once by removing the row lock in `settle`.
+- [test] Transition table: unit test over every pair of statuses.
+- [cmd] The same gate as stage 1.
+
+### Not built, follow-ups
+
+- The outbox dispatcher; the daily matching against the PG's settlement report; an endpoint to resolve a
+  `needs_review` flag or a failed refund of an unmatched receipt.
+- pos-api: the two-step sale, sale cancel ordering (M16), refusing a shift close while a sale awaits payment (M17),
+  and the supervisor PIN check.
+
 ## Open points for the owner
 
 - payment-api cannot check that an account is erasable (it does not share UMKMall's database). The purge trusts the
@@ -130,3 +211,7 @@ Database `payment`, schema `payment`, role `payment_app` (`ops/payment-role.sql`
 - Tax and bookkeeping law may require payment records to be kept after a store is erased. The purge deletes them,
   as pos-api's does.
 - A zero-rupiah payment is accepted (an order fully covered by a voucher still gets one payment record).
+- Kasbon instalments with `orderRef` = the receivable id: only one live payment per `orderRef` is allowed, so a
+  second instalment is refused while the first is `paid`. The caller needs a reference per instalment, or the rule
+  needs an exception.
+

@@ -20,6 +20,8 @@ process.env.PAYTEST_APP_KEY ??= createHash('sha256')
   .digest('hex');
 process.env.NODE_ENV = 'test';
 process.env.PAYMENT_SERVICE_KEY ??= randomBytes(16).toString('hex');
+// No timer in tests: each test calls the reconciliation tick itself, on a fake clock.
+process.env.PAYMENT_RECONCILE_INTERVAL_SECONDS = '0';
 
 const ADMIN_KEY = process.env.PGTEST_ADMIN_KEY ?? 'pos';
 export const TEST_DB = DB;

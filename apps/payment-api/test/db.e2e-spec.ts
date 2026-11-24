@@ -27,8 +27,11 @@ describe('payment schema and role', () => {
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'payment' and c.relkind = 'r' and c.relname <> '__drizzle_migrations'`;
     expect(rows.map((r) => r.relname).sort()).toEqual([
+      'outbox',
       'payment_events',
       'payments',
+      'unmatched_receipts',
+      'webhook_events',
     ]);
     expect(rows.filter((r) => !r.relrowsecurity).map((r) => r.relname)).toEqual(
       [],
@@ -67,19 +70,57 @@ describe('payment schema and role', () => {
     expect(col.data_type).toBe('bigint');
 
     const tenant = randomUUID();
-    const insert = (amount: number, key: string, status = 'paid') =>
+    const insert = (
+      amount: number,
+      key: string,
+      attempt: number,
+      status = 'paid',
+    ) =>
       app`insert into payment.payments
-            (tenant_id, order_ref, method, amount, status, idempotency_key, request_hash)
-          values (${tenant}, 'o-1', 'cash', ${amount}, ${status}::payment.payment_status, ${key}, 'h')`;
-    await expect(insert(-1, 'k-neg')).rejects.toThrow(/amount_non_negative/);
-    await insert(1, 'k-1');
-    await expect(insert(1, 'k-1b', 'failed')).resolves.toBeDefined();
-    await expect(insert(1, 'k-2', 'pending')).rejects.toThrow(
-      /payments_tenant_order_live/,
-    );
-    await expect(insert(1, 'k-1', 'failed')).rejects.toThrow(
+            (tenant_id, order_ref, attempt, method, amount, status, idempotency_key, request_hash)
+          values (${tenant}, 'o-1', ${attempt}, 'cash', ${amount},
+                  ${status}::payment.payment_status, ${key}, 'h')`;
+    await expect(insert(-1, 'k-neg', 1)).rejects.toThrow(/amount_non_negative/);
+    await expect(insert(1, 'k-zero', 0)).rejects.toThrow(/attempt_positive/);
+    await insert(1, 'k-1', 1);
+    // Closed payments of the same order do not take the live slot…
+    for (const [n, status] of ['failed', 'expired', 'cancelled'].entries())
+      await expect(
+        insert(1, `k-closed-${n}`, 10 + n, status),
+      ).resolves.toBeDefined();
+    // …a second created, pending or paid one is refused by the database itself.
+    for (const status of ['created', 'pending', 'paid'])
+      await expect(insert(1, `k-${status}`, 2, status)).rejects.toThrow(
+        /payments_tenant_order_live/,
+      );
+    await expect(insert(1, 'k-1', 3, 'failed')).rejects.toThrow(
       /payments_tenant_idempotency_key/,
     );
+    await expect(insert(1, 'k-again', 1, 'failed')).rejects.toThrow(
+      /payments_tenant_order_attempt/,
+    );
     await app`delete from payment.payments where tenant_id = ${tenant}`;
+  });
+
+  it('records unmatched money and webhook events once each, at the database', async () => {
+    const tenant = randomUUID();
+    const [p] = await app<{ id: string }[]>`
+      insert into payment.payments
+        (tenant_id, order_ref, method, amount, status, idempotency_key, request_hash)
+      values (${tenant}, 'o-u', 'cash', 1, 'expired', 'k-u', 'h') returning id`;
+    const receipt = () =>
+      app`insert into payment.unmatched_receipts (tenant_id, payment_id, receipt_ref, kind, gross_amount)
+          values (${tenant}, ${p.id}, 'r-1', 'late_payment', 1)`;
+    await receipt();
+    await expect(receipt()).rejects.toThrow(
+      /unmatched_receipts_payment_receipt/,
+    );
+    const event = () =>
+      app`insert into payment.webhook_events (provider, event_id, body) values ('fake', ${`e-${tenant}`}, '{}')`;
+    await event();
+    await expect(event()).rejects.toThrow(/webhook_events_provider_event/);
+    await app`delete from payment.unmatched_receipts where tenant_id = ${tenant}`;
+    await app`delete from payment.payments where tenant_id = ${tenant}`;
+    await app`delete from payment.webhook_events where event_id = ${`e-${tenant}`}`;
   });
 });

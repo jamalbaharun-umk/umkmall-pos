@@ -21,6 +21,7 @@ type Body = {
   message: string;
   code?: string;
   errors?: Record<string, string>;
+  meta?: Record<string, unknown>;
 };
 
 function pgCode(err: unknown): string | undefined {
@@ -53,6 +54,9 @@ export function toResponse(err: unknown): { status: number; body: Body } {
     if (typeof own.code === 'string') body.code = own.code;
     if (typeof own.errors === 'object' && own.errors !== null)
       body.errors = own.errors as Record<string, string>;
+    // Facts a refusal carries on purpose for the caller's screen (until when a QR stays payable).
+    if (typeof own.meta === 'object' && own.meta !== null)
+      body.meta = own.meta as Record<string, unknown>;
     return { status, body };
   }
   const e = err as { type?: string } | undefined;

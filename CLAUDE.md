@@ -112,15 +112,28 @@ test per resource, idempotent money changes), with these differences:
   per order (no split payment). Void and refund are for the full amount.
 - **Only adapters talk to a PG.** One contract (`src/adapters/adapter.ts`: `charge`, `getStatus`, `void`, `refund`,
   `handleWebhook`, plus `supportsVoid`/`supportsRefund`). A new PG is one adapter added to `PAYMENT_ADAPTERS`; callers
-  and routes do not change. CASHAC methods (`cash`, `edc_debit`, `static_qris`, `kasbon`) are cancelled by **void**, with
-  no outbound call; PG payments are cancelled by **refund**. No PG adapter before the legal gate (UMK-1977); nothing
-  under `src/` may call out (guard test) until then.
-- **Void and refund need `reason`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN; payment-api
-  stores it, pos-api verifies it). Each writes a `payment_events` audit row.
+  and routes do not change. CASHAC methods (`cash`, `edc_debit`, `static_qris`) are cancelled by **void**, with
+  no outbound call; PG payments are cancelled by **refund**. Kasbon is not a payment method: the caller keeps the
+  receivable and each instalment is its own payment. No PG adapter before the legal gate (UMK-1977); nothing
+  under `src/` may call out (guard test) until then. The PG flow is proven with `test/support/fake-gateway.ts`.
+- **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;
+  payment-api stores it, pos-api verifies it). Every status change writes a `payment_events` audit row and an `outbox`
+  row in the same transaction.
+- **One place changes a payment's status:** `src/payments/settlement.service.ts`, under `select … for update`, by the
+  table in `src/payments/transitions.ts` (forward only; the one backward move is `refund_failed` → `refund_pending`).
+  Webhook, manual sync and reconciliation all call `settle`. The row is committed as `created` before the PG is called.
+- **A webhook is never trusted.** `POST /webhooks/:provider` is the one route without the service key: the adapter
+  checks the signature (401), the event is stored once per `(provider, event_id)`, then status and amount are fetched
+  again from the PG. The tenant of a webhook or a reconciliation sweep comes from our payment row, never the payload.
+- **Money that arrives is never dropped.** A payment the PG reports after the bill closed, a second payment or another
+  amount becomes an `unmatched_receipts` row (`needs_review`), refunded automatically when
+  `PAYMENT_LATE_AUTO_REFUND` is on. A closed payment never becomes `paid`.
 - **Purge:** `POST /internal/tenants/purge` deletes every `payment` table row with the header's `tenant_id`, discovered
-  at runtime; a new table needs `tenant_id` (guard in `test/purge.e2e-spec.ts`).
+  at runtime; a new table needs `tenant_id` (guard in `test/purge.e2e-spec.ts`). It answers 409 `payments_in_flight`
+  while money is still moving.
 - Env: `DATABASE_URL` (the `payment_app` role), `PAYMENT_SERVICE_KEY` (≥ 16 chars, the same value in every caller),
-  `PORT` (default 3001). Commit scope: `payment-api`.
+  `PORT` (default 3001), and the optional `PAYMENT_*` flow settings (`src/config.ts`, names in `.env.example`).
+  Commit scope: `payment-api`.
 
 ## Commands
 
