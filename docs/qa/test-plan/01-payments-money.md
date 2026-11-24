@@ -1332,3 +1332,31 @@ If the owner decides store-QRIS voids are returned by bank transfer, row 14 has 
 - **G-24** Agent and drawer cash-in (cash kasbon payment, cash sale are not "cash-out"); assumed refused for kasbon cash only: PAY-134.
 - **G-25** Void of an EDC debit receipt is not covered by the rules: PAY-058.
 - **G-26** Tax rounding mode and the discount allocation rule are not written in the owner rules (half-up and largest-remainder assumed): PAY-006, PAY-008.
+
+---
+
+## Addendum: owner decisions of 24 Nov 2026 (supersede open decisions O-1, O-2 and gaps G about them)
+
+Source: PRD "Keputusan pembayaran", UMK-1962, UMK-1993, payment-api spec rev 17+.
+
+1. **Void of transfer, store QRIS or EDC receipts is returned by transfer back, never from the drawer; expected cash is unchanged.** PAY-056 and every case that expected a drawer cash-out for these methods now expects: no drawer row, expected cash unchanged (not -30.536), the void still records reason, PIN, approver and a "return by transfer" marker. Scenario S3 closes at the figure given for the bank-transfer variant (Rp330.100), not Rp176.500. Cash receipts still go out of the drawer.
+2. **An admin may void or refund their own transaction** (PIN and audit still required). Any case that expected refusal of self-approval now expects success with both fields (starter, approver) holding the same person.
+3. **A closed-shift void belongs to the shift open at the time of the void** (the old shift is untouched). This answers the "which shift" gap: the shift open when the void is done.
+
+### Cash rounding (owner: cash totals round up to the next Rp100)
+
+| ID | Pri | Case | Expected |
+|---|---|---|---|
+| RND-001 | P0 | Cash total Rp200.123 | Charged Rp200.200; rounding Rp77 |
+| RND-002 | P0 | Cash total on a Rp100 boundary (Rp130.600, Rp100, Rp0 not allowed) | Unchanged; rounding Rp0 |
+| RND-003 | P0 | Design cart total Rp130.536, cash, tendered Rp140.000 | Payable Rp130.600 (rounding Rp64); change Rp9.400 |
+| RND-004 | P0 | Tendered exactly the rounded total ("Uang pas") | Change Rp0; "uang pas" button uses the rounded amount |
+| RND-005 | P0 | Tendered Rp130.599 for payable Rp130.600 | Rejected 422 (below rounded total) |
+| RND-006 | P0 | Totals of Rp1, Rp99, Rp101 | Rp100, Rp100, Rp200 |
+| RND-007 | P0 | Non-cash methods (QRIS toko, transfer, EDC) | No rounding; exact total |
+| RND-008 | P0 | Void of a rounded cash receipt (paid Rp130.600, total Rp130.536) | Cash returned from drawer is Rp130.600 (what was received), expected cash reconciles exactly; reversal of revenue uses the total Rp130.536 and the rounding Rp64 |
+| RND-009 | P0 | Shift close after rounded cash sales | Expected cash uses rounded cash amounts; screen shows total "Pembulatan" separately |
+| RND-010 | P1 | Rounding with voucher/discount and 11% tax | Tax computed after discounts and before rounding; rounding applied last |
+| RND-011 | P1 | Reports: revenue, tax, profit with rounding rows | Rounding never changes tax base, revenue by method sums to cash received |
+
+**Pending (still the payment thread's assumptions, not owner-approved)**: cash only; the difference stored in a separate `rounding` field shown as "Pembulatan" and outside the tax base; kasbon not rounded. Mark RND-007 (kasbon part), RND-008 and RND-011 as *pending owner confirmation*; the other rounding cases hold either way.
