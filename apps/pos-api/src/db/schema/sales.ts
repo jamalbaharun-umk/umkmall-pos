@@ -108,6 +108,9 @@ export const salesSettings = pos
   )
   .enableRLS();
 
+/** `void`: cancelled in full by a pos.sale_voids row (UMK-1962); the sale's own figures stay as rung up. */
+export const SALE_STATUSES = ['completed', 'void'] as const;
+
 export const sales = pos
   .table(
     'sales',
@@ -138,10 +141,18 @@ export const sales = pos
       overrideBy: uuid('override_by'),
       // Lakasir's order note, typed by the cashier; shown on the receipt.
       note: text('note'),
+      status: text('status', { enum: SALE_STATUSES })
+        .notNull()
+        .default('completed'),
+      voidedAt: ts('voided_at'),
       createdAt: createdAt(),
     },
     (t) => [
       unique().on(t.tenantId, t.id),
+      check(
+        'sales_status_ck',
+        sql`${t.status} in ('completed', 'void') and (${t.status} = 'void') = (${t.voidedAt} is not null)`,
+      ),
       uniqueIndex('sales_tenant_idempotency_uq').on(
         t.tenantId,
         t.idempotencyKey,

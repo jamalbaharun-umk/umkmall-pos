@@ -61,6 +61,8 @@ export class ShiftsService {
       .select({
         // Cash in the drawer: cash sales' paid − change and a kasbon's down payment (U7); debit/wallet none.
         cashSales: sql<string>`coalesce(sum(case when ${paymentMethods.isCash} then ${sales.paid} - ${sales.change} when ${paymentMethods.isCredit} then ${sales.paid} else 0 end), 0)`,
+        // Sales rung up in the shift. A voided one still counts here: its cash came in, and its return is
+        // a ledger cash-out in the shift where the void was done (UMK-1962).
         salesCount: count(),
       })
       .from(sales)

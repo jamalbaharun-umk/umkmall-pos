@@ -17,6 +17,7 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
@@ -26,6 +27,7 @@ import {
   products,
   saleLines,
   sales,
+  saleVoids,
   salesSettings,
   shifts,
   staff,
@@ -64,6 +66,10 @@ export const requestHash = (input: SaleInput) => {
   );
   return createHash('sha256').update(stable).digest('hex');
 };
+
+/** Sum of a money column, as a JS number. */
+const total = (column: AnyPgColumn) =>
+  sql<number>`coalesce(sum(${column}), 0)::bigint`.mapWith(Number);
 
 /** A 422 in the shared shape; `field` puts the message on that input (`paid`, `lines.0.qty`). */
 const fail = (
@@ -384,7 +390,7 @@ export class SalesService {
       q.to ? lt(sales.createdAt, new Date(q.to)) : undefined,
     );
     const showCost = hasPermission(s, 'reports.view');
-    const [rows, [summary]] = await Promise.all([
+    const [rows, [rung], [reversed]] = await Promise.all([
       this.db
         .select({
           id: sales.id,
@@ -401,6 +407,8 @@ export class SalesService {
           paid: sales.paid,
           change: sales.change,
           costTotal: sales.costTotal,
+          status: sales.status,
+          voidedAt: sales.voidedAt,
           createdAt: sales.createdAt,
         })
         .from(sales)
@@ -415,28 +423,54 @@ export class SalesService {
       this.db
         .select({
           count: count(),
-          revenue:
-            sql<number>`coalesce(sum(${sales.total}), 0)::bigint`.mapWith(
-              Number,
-            ),
-          discount:
-            sql<number>`coalesce(sum(${sales.discount}), 0)::bigint`.mapWith(
-              Number,
-            ),
-          voucherDiscount:
-            sql<number>`coalesce(sum(${sales.voucherDiscount}), 0)::bigint`.mapWith(
-              Number,
-            ),
+          revenue: total(sales.total),
+          discount: total(sales.discount),
+          voucherDiscount: total(sales.voucherDiscount),
         })
         .from(sales)
         .where(where),
+      // The reversals: voids DONE in the same window (and shift), of sales the actor may see.
+      this.db
+        .select({
+          count: count(),
+          revenue: total(saleVoids.total),
+          discount: total(saleVoids.discount),
+          voucherDiscount: total(saleVoids.voucherDiscount),
+        })
+        .from(saleVoids)
+        .innerJoin(
+          sales,
+          and(
+            eq(sales.tenantId, saleVoids.tenantId),
+            eq(sales.id, saleVoids.saleId),
+          ),
+        )
+        .where(
+          and(
+            this.scope(s),
+            q.shiftId ? eq(saleVoids.shiftId, q.shiftId) : undefined,
+            q.from ? gte(saleVoids.createdAt, new Date(q.from)) : undefined,
+            q.to ? lt(saleVoids.createdAt, new Date(q.to)) : undefined,
+          ),
+        ),
     ]);
+    // Dated like the reports (UMK-1962): a receipt stays in the summary of the window it was rung up in,
+    // and its void is subtracted in the window the void was done. So the summary of an earlier day never
+    // changes, a same-day void nets to zero, and the figures agree with /reports/sales for the same range.
+    const summary = {
+      count: rung.count - reversed.count,
+      revenue: rung.revenue - reversed.revenue,
+      discount: rung.discount - reversed.discount,
+      voucherDiscount: rung.voucherDiscount - reversed.voucherDiscount,
+      // Voids done in the window: what was subtracted above.
+      voidedCount: reversed.count,
+    };
     return {
       data: rows.map((r) => ({
         ...r,
         costTotal: showCost ? r.costTotal : undefined,
       })),
-      total: summary.count,
+      total: rung.count,
       summary,
     };
   }
@@ -466,6 +500,8 @@ export class SalesService {
         costTotal: sales.costTotal,
         overrideBy: sales.overrideBy,
         note: sales.note,
+        status: sales.status,
+        voidedAt: sales.voidedAt,
         createdAt: sales.createdAt,
       })
       .from(sales)
@@ -538,6 +574,9 @@ export class SalesService {
       paid: sale.paid,
       change: sale.change,
       note: sale.note,
+      // A reprint of a voided receipt must say so.
+      status: sale.status,
+      voidedAt: sale.voidedAt,
     };
   }
 

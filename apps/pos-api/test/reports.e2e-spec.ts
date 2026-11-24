@@ -104,6 +104,7 @@ describe('reports and dashboard (U5)', () => {
     revenue: 44_300,
     cost: 24_000,
     grossProfit: 19_000,
+    voidCount: 0,
   };
 
   const today = (tz = 'Asia/Jakarta') =>
@@ -296,6 +297,7 @@ describe('reports and dashboard (U5)', () => {
       revenue: 52_055,
       cost: 28_000,
       grossProfit: 22_050,
+      voidCount: 0,
     };
     const reconciles = (t: typeof expected) =>
       expect(t.grossSales - t.discount - t.voucher + t.tax).toBe(t.revenue);

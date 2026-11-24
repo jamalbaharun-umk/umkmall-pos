@@ -22,8 +22,9 @@ export const CASH_DIRECTIONS = ['in', 'out'] as const;
  * What moved the cash; `ref_id` is that kind's source row. A new kind (supplier payment, expense,
  * void cash out) is added here and needs no migration.
  * - receivable_payment (in): ref_id = pos.receivable_payments.id
+ * - void_refund (out): ref_id = pos.sale_voids.id, the cash given back for a voided sale (UMK-1962)
  */
-export const CASH_ENTRY_KINDS = ['receivable_payment'] as const;
+export const CASH_ENTRY_KINDS = ['receivable_payment', 'void_refund'] as const;
 
 export const shiftCashEntries = pos
   .table(
