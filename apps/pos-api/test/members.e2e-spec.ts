@@ -461,12 +461,9 @@ describe('members, vouchers and credit sales (U7)', () => {
       amount: 6000,
     }).expect(200);
 
-    // A cash payment goes into the taker's drawer, so it also needs their open shift (UMK-1963).
-    const granted = await createCashier(app, s, [
-      'receivables.manage',
-      'sales.create',
-    ]);
-    await post(granted.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+    // `receivables.manage` alone is enough to take a cash instalment: no shift needed (UMK-1963,
+    // owner ruling 2026-11-24).
+    const granted = await createCashier(app, s, ['receivables.manage']);
     await pay(granted.auth, rid, {
       amount: 1,
     }).expect(201);

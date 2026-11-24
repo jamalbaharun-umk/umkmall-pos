@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   date,
   foreignKey,
@@ -84,6 +85,12 @@ export const receivablePayments = pos
       // Idempotency-Key of the request and a hash of its body (null for a kasbon's down payment).
       idempotencyKey: text('idempotency_key'),
       requestHash: text('request_hash'),
+      // A cash instalment taken while its collector (actor_id, at created_at) had no open shift
+      // (owner ruling 2026-11-24, UMK-1963): it is in no shift's cash ledger and no expected cash.
+      // A payment taken in a shift is linked by its pos.shift_cash_entries row instead; never both.
+      collectedOutsideShift: boolean('collected_outside_shift')
+        .notNull()
+        .default(false),
       createdAt: createdAt(),
     },
     (t) => [

@@ -141,6 +141,13 @@
       "when": 1795503604843,
       "tag": "0019_sale_rounding",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795505005002,
+      "tag": "0020_kasbon_cash_outside_shift",
+      "breakpoints": true
     }
   ]
 }

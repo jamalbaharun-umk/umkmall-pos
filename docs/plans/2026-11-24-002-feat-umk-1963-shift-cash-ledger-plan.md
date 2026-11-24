@@ -12,6 +12,9 @@ cash is a ledger entry. This change writes the first kind, `receivable_payment`.
 drawer (UMK-1970), expenses (UMK-1984) and void cash out (UMK-1962) add a kind and call the same function;
 they need no schema change.
 
+Superseded in one point by `2026-11-24-006` (owner ruling, same day): a cash receivable payment without an
+open shift is no longer refused; it is recorded as collected outside any shift.
+
 The screens wait for an owner-approved design (label "Needs design"): no pos-web change here.
 
 ## Behaviour
