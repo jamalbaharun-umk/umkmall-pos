@@ -96,7 +96,7 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
         .orderBy(longestUnasked)
         .limit(limit);
       const refunding = await this.db
-        .selectDistinct({ id: unmatchedReceipts.paymentId })
+        .select({ id: unmatchedReceipts.paymentId })
         .from(unmatchedReceipts)
         .where(
           and(
@@ -104,6 +104,9 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
             lte(unmatchedReceipts.updatedAt, cutoff),
           ),
         )
+        .groupBy(unmatchedReceipts.paymentId)
+        // Longest waiting first, so the limit never starves the same refunds.
+        .orderBy(sql`min(${unmatchedReceipts.updatedAt})`)
         .limit(limit);
       const ids = [
         ...new Set([...inFlight, ...closed, ...refunding].map((r) => r.id)),

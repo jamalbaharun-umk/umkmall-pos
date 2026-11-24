@@ -11,47 +11,58 @@ const count = (fallback: number) =>
   z.coerce.number().int().nonnegative().default(fallback);
 
 // Config comes from the environment only, validated once at boot (fail fast on a bad deploy).
-const EnvSchema = z.object({
-  // The payment_app role in the payment database (ops/payment-role.sql). Never the POS database.
-  DATABASE_URL: z.string().url(),
-  // Shared with every calling service: authenticates each request (header X-Payment-Service-Key).
-  PAYMENT_SERVICE_KEY: z.string().min(16),
-  PORT: z.coerce.number().int().positive().default(3001),
-  NODE_ENV: z
-    .enum(['development', 'test', 'production'])
-    .default('development'),
+const EnvSchema = z
+  .object({
+    // The payment_app role in the payment database (ops/payment-role.sql). Never the POS database.
+    DATABASE_URL: z.string().url(),
+    // Shared with every calling service: authenticates each request (header X-Payment-Service-Key).
+    PAYMENT_SERVICE_KEY: z.string().min(16),
+    PORT: z.coerce.number().int().positive().default(3001),
+    NODE_ENV: z
+      .enum(['development', 'test', 'production'])
+      .default('development'),
 
-  // Values of the payment flow (design doc "Payment-api: alur pembayaran PG dan kasus tepi"). All are
-  // configuration, so an owner decision changes a deploy variable and no code.
-  // Money that matches no payment (late, duplicate, wrong amount) is refunded automatically by `system`
-  // (owner decision); off = it waits, flagged needs_review, for the owner.
-  PAYMENT_LATE_AUTO_REFUND: flag(true),
-  // The owner may mark a refund the PG refused as "returned by hand" (owner decision).
-  PAYMENT_MANUAL_REFUND_MARK: flag(true),
-  // How long a QR or VA accepts payment (owner decision: 15 minutes).
-  PAYMENT_QR_TTL_SECONDS: count(900),
-  // After the bill's expiry, how long a payment on its way is still waited for before the AUTOMATIC `expired`
-  // (a proposal, not yet an owner decision). A cashier's own cancel never waits for it.
-  PAYMENT_EXPIRY_GRACE_SECONDS: count(600),
-  // A closed online payment (cancelled, expired, failed) is still asked about at the PG until this long after
-  // its bill's expiry, so late money whose webhook was lost is found and refunded.
-  PAYMENT_LATE_SWEEP_SECONDS: count(3600),
-  // When the PG cannot close an unpaid QR, the cashier may still cancel and switch to cash; later money on
-  // that QR is refunded automatically (owner decision, D13). Off = cancel is refused until the QR expires.
-  PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE: flag(true),
-  // A manual status check asks the PG at most once per this interval per payment (PG rate limits).
-  PAYMENT_SYNC_MIN_INTERVAL_SECONDS: count(5),
-  // The reconciliation asks the PG about payments still in flight after this long…
-  PAYMENT_RECONCILE_AFTER_SECONDS: count(120),
-  // …every this often. 0 = no timer (tests, or a deploy that runs it elsewhere).
-  PAYMENT_RECONCILE_INTERVAL_SECONDS: count(60),
-  // A `created` payment is failed only after two "no such bill" answers at least this far apart.
-  PAYMENT_NOT_FOUND_CONFIRM_SECONDS: count(60),
-  // A webhook event that keeps failing is parked after this many attempts.
-  PAYMENT_WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().positive().default(10),
-  // A refused refund blocks the tenant purge for this many days, then no longer (owner decision, M19).
-  PAYMENT_PURGE_FAILED_REFUND_BLOCK_DAYS: count(30),
-});
+    // Values of the payment flow (design doc "Payment-api: alur pembayaran PG dan kasus tepi"). All are
+    // configuration, so an owner decision changes a deploy variable and no code.
+    // Money that matches no payment (late, duplicate, wrong amount) is refunded automatically by `system`
+    // (owner decision); off = it waits, flagged needs_review, for the owner.
+    PAYMENT_LATE_AUTO_REFUND: flag(true),
+    // The owner may mark a refund the PG refused as "returned by hand" (owner decision).
+    PAYMENT_MANUAL_REFUND_MARK: flag(true),
+    // How long a QR or VA accepts payment (owner decision: 15 minutes).
+    PAYMENT_QR_TTL_SECONDS: count(900),
+    // After the bill's expiry, how long a payment on its way is still waited for before the AUTOMATIC `expired`
+    // (a proposal, not yet an owner decision). A cashier's own cancel never waits for it.
+    PAYMENT_EXPIRY_GRACE_SECONDS: count(600),
+    // A closed online payment (cancelled, expired, failed) is still asked about at the PG until this long after
+    // its bill's expiry, so late money whose webhook was lost is found and refunded.
+    PAYMENT_LATE_SWEEP_SECONDS: count(3600),
+    // When the PG cannot close an unpaid QR, the cashier may still cancel and switch to cash; later money on
+    // that QR is refunded automatically (owner decision, D13). Off = cancel is refused until the QR expires.
+    PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE: flag(true),
+    // A manual status check asks the PG at most once per this interval per payment (PG rate limits).
+    PAYMENT_SYNC_MIN_INTERVAL_SECONDS: count(5),
+    // The reconciliation asks the PG about payments still in flight after this long…
+    PAYMENT_RECONCILE_AFTER_SECONDS: count(120),
+    // …every this often. 0 = no timer (tests, or a deploy that runs it elsewhere).
+    PAYMENT_RECONCILE_INTERVAL_SECONDS: count(60),
+    // A `created` payment is failed only after two "no such bill" answers at least this far apart.
+    PAYMENT_NOT_FOUND_CONFIRM_SECONDS: count(60),
+    // A webhook event that keeps failing is parked after this many attempts.
+    PAYMENT_WEBHOOK_MAX_ATTEMPTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10),
+    // A refused refund blocks the tenant purge for this many days, then no longer (owner decision, M19).
+    PAYMENT_PURGE_FAILED_REFUND_BLOCK_DAYS: count(30),
+  })
+  // A bill becomes `expired` only at its expiry plus the grace. A sweep that ended before that would never
+  // look at an expired bill for late money.
+  .refine(
+    (env) => env.PAYMENT_LATE_SWEEP_SECONDS >= env.PAYMENT_EXPIRY_GRACE_SECONDS,
+    { path: ['PAYMENT_LATE_SWEEP_SECONDS'] },
+  );
 
 export type Env = z.infer<typeof EnvSchema>;
 

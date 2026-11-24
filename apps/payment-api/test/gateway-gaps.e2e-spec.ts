@@ -203,6 +203,33 @@ describe('PG flow: review gaps', () => {
     ]);
   });
 
+  it('D5 cancel when the PG says paid but the receipt has not arrived: cancelled and flagged for review; the receipt, when it comes, is late money refunded once', async () => {
+    const s = createStore(h.app);
+    const p = await s.qr();
+    h.pg.bills.get(p.id)!.status = 'paid';
+    expect((await cancel(s, p.id).expect(200)).body).toMatchObject({
+      status: 'cancelled',
+      needsReview: true,
+      reviewReason: 'paid_without_receipt',
+    });
+    const review = await s.get('/payments?needsReview=true').expect(200);
+    expect(review.body.items.map((i: { id: string }) => i.id)).toEqual([p.id]);
+
+    h.pg.pay(p.id);
+    await tickLater();
+    expect((await s.read(p.id)).status).toBe('cancelled');
+    expect(await unmatchedOf(h.sql, p.id)).toMatchObject([
+      { kind: 'late_payment', refund_status: 'refunded' },
+    ]);
+    expect(h.pg.count('refund', p.id)).toBe(1);
+
+    // An ordinary cancel is not flagged.
+    const plain = await s.qr();
+    expect((await cancel(s, plain.id).expect(200)).body.needsReview).toBe(
+      false,
+    );
+  });
+
   it('D5 the PG takes the cancel but leaves the bill open: cancelled anyway when configured (later money is refunded), 503 and still pending when not', async () => {
     const s = createStore(h.app);
     h.pg.cancelIgnored = true;

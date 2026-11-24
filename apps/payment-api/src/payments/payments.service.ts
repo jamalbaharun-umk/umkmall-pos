@@ -347,9 +347,14 @@ export class PaymentsService {
       // Then the cashier may cancel anyway only when configured; otherwise the payment stays pending.
       if (stillOpen && !this.settings.cancelWithoutGatewayClose)
         throw gatewayDown();
+      // The PG says paid but shows no receipt yet: the money is probably on its way. The cashier may still
+      // cancel (it will be refunded as late money), but a person must look at this one.
+      const paidUnseen =
+        answer.status === 'paid' && !(answer.receipts ?? []).length;
       const cancelled = await this.settlement.move(tx, row, 'cancelled', {
         source: 'cancel',
         actorRef,
+        review: paidUnseen ? 'paid_without_receipt' : undefined,
         note: stillOpen
           ? 'bill could not be closed at the gateway; later money on it is refunded'
           : null,

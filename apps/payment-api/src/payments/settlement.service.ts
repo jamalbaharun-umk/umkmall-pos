@@ -614,6 +614,10 @@ export class SettlementService {
     return this.db.transaction(async (tx) => {
       const row = await this.lock(tx, id);
       if (!row || row.status !== 'refund_pending') return row;
+      // Every move to `refund_pending` stores the key. Without it no refund is sent: a made-up key could send
+      // the same refund twice.
+      const key = row.refundKey;
+      if (!key) throw new Error('A refund_pending payment has no refund key');
       const request = await this.refundRequest(tx, id);
       const context: CancelContext = {
         reasonCode: request?.reasonCode ?? 'other',
@@ -629,7 +633,7 @@ export class SettlementService {
             // One key per refund request, stored on the payment when it moved to `refund_pending`: a retry
             // after a refusal is a new refund at the PG, while a repeated call for the same request is the
             // same one.
-            key: row.refundKey ?? row.id,
+            key,
             receiptId: row.paidReceiptRef,
             amount: row.amount,
           },

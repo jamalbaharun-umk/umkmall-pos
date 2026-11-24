@@ -157,7 +157,9 @@ section wins. Still no real PG adapter (UMK-1977): the flow is proven with `test
     resets the count.
 14. No payment waits for ever. The PG says paid in another amount: a single-use bill is `failed` at once
     (`amount_mismatch`); a reusable one, or a "paid" with no receipt, is `expired` after the bill's expiry plus the
-    grace period. Cancel always reaches `cancelled` unless a receipt for the exact amount exists.
+    grace period. Cancel always reaches `cancelled` unless a receipt for the exact amount exists; a cancel while
+    the PG says paid with no receipt yet is flagged `paid_without_receipt`. The environment is refused at boot
+    when `PAYMENT_LATE_SWEEP_SECONDS` is below `PAYMENT_EXPIRY_GRACE_SECONDS`.
 15. A receipt whose amount is not a whole, safe integer never pays and is never refunded by the system: the payment
     is flagged `invalid_gateway_amount`.
 16. A debt paid in instalments (kasbon) is one order reference per instalment, `<receivableId>:<n>`, set by the
@@ -226,6 +228,15 @@ From the review of 24 Nov 2026 (tracked, not built):
   retention period, or match them before the purge.
 - A purge safeguard flag (as pos-api's `POS_PURGE_ENABLED`), so the endpoint is off until the caller's checks exist.
 - A bill the PG keeps reporting `pending` after its expiry is closed only by a cancel, never on our clock alone.
+- The sweep of closed payments has no index of its own (it filters on status and expiry). Add a partial index
+  when volume asks for it.
+- Head-of-line blocking in the sweep: a payment whose lookup keeps failing never gets a new `lastSyncedAt`, so it
+  stays first in the "longest unasked first" order and can crowd out others at the limit. Record the last attempt
+  apart from the last answer.
+- Cancel can answer 200 with a payment still `pending` when the only receipt for the exact amount has an invalid
+  fee amount: the receipt is set aside as an adapter fault and nothing pays or closes the payment in that call.
+- A `pending` bill the PG no longer knows is failed after the same confirmation time as a `created` one (60 s).
+  A bill the PG once confirmed may deserve a longer one, with its own setting.
 - Money that arrives on a closed bill after the late sweep ended is found only by a webhook or by the daily
   matching (not built).
 
