@@ -103,6 +103,8 @@ export const saleVoids = pos
       voucherDiscount: rupiah('voucher_discount').notNull(),
       tax: rupiah('tax').notNull(),
       total: rupiah('total').notNull(),
+      // UMK-1993: the sale's cash rounding, given back with the total (outside `total`).
+      rounding: rupiah('rounding').notNull().default(0),
       costTotal: rupiah('cost_total').notNull(),
       createdAt: createdAt(),
     },
@@ -123,7 +125,8 @@ export const saleVoids = pos
       check(
         'sale_voids_ck',
         sql`${t.cashReturned} >= 0 and ${t.transferReturned} >= 0 and ${t.receivableCancelled} >= 0
-          and ${t.cashReturned} + ${t.transferReturned} + ${t.receivableCancelled} = ${t.total}
+          and ${t.cashReturned} + ${t.transferReturned} + ${t.receivableCancelled} = ${t.total} + ${t.rounding}
+          and ${t.rounding} between 0 and 99
           and (${t.cashReturned} = 0 or ${t.shiftId} is not null)
           and (${t.reasonCode} <> 'other' or ${t.note} is not null)`,
       ),

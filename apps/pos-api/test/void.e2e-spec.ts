@@ -1201,6 +1201,7 @@ describe('void a full sale (UMK-1962)', () => {
       expect(after.history.summary).toEqual({
         count: 1,
         revenue: 10_000,
+        rounding: 0,
         discount: 0,
         voucherDiscount: 0,
         voidedCount: 1,
@@ -1251,6 +1252,7 @@ describe('void a full sale (UMK-1962)', () => {
       expect(historyBefore).toEqual({
         count: 1,
         revenue: 16_500,
+        rounding: 0,
         discount: 0,
         voucherDiscount: 0,
         voidedCount: 0,
@@ -1281,6 +1283,7 @@ describe('void a full sale (UMK-1962)', () => {
       expect(await history(today(), jakartaDay(1))).toEqual({
         count: 0,
         revenue: -11_000,
+        rounding: 0,
         discount: 0,
         voucherDiscount: 0,
         voidedCount: 1,
@@ -1288,6 +1291,7 @@ describe('void a full sale (UMK-1962)', () => {
       expect(await history(jakartaDay(-1), jakartaDay(1))).toEqual({
         count: 1,
         revenue: 5500,
+        rounding: 0,
         discount: 0,
         voucherDiscount: 0,
         voidedCount: 1,

@@ -138,6 +138,7 @@ export class VoidService {
       .select({
         status: sales.status,
         total: sales.total,
+        rounding: sales.rounding,
         isCash: paymentMethods.isCash,
         isCredit: paymentMethods.isCredit,
       })
@@ -153,7 +154,7 @@ export class VoidService {
     if (!sale) throw new NotFoundException();
     if (sale.status === 'void') throw new ConflictException(ALREADY_VOID);
 
-    let cashDue = sale.isCash ? sale.total : 0;
+    let cashDue = sale.isCash ? sale.total + sale.rounding : 0;
     if (sale.isCredit) {
       const paid = await this.db
         .select({ amount: receivablePayments.amount })
@@ -254,10 +255,11 @@ export class VoidService {
         receivablePaymentId: p.id,
       }));
     } else if (sale.total > 0) {
-      // A cash sale gives back the total (paid − change), not the amount tendered.
+      // A cash sale gives back what it took in (paid − change = total + rounding, UMK-1993), not the
+      // amount tendered. `rounding` is 0 for every other method.
       returns = [
         {
-          amount: sale.total,
+          amount: sale.total + sale.rounding,
           paymentMethodId: sale.paymentMethodId,
           fromDrawer: method.isCash,
           receivablePaymentId: null,
@@ -319,6 +321,7 @@ export class VoidService {
       voucherDiscount: sale.voucherDiscount,
       tax: sale.tax,
       total: sale.total,
+      rounding: sale.rounding,
       costTotal: sale.costTotal,
     });
     if (returns.length)
@@ -387,6 +390,7 @@ export class VoidService {
         voucherDiscount: saleVoids.voucherDiscount,
         tax: saleVoids.tax,
         total: saleVoids.total,
+        rounding: saleVoids.rounding,
         costTotal: saleVoids.costTotal,
         createdAt: saleVoids.createdAt,
       })

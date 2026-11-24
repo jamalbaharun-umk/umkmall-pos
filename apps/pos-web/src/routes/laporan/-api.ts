@@ -13,6 +13,8 @@ export type Metrics = {
   revenue: number
   cost: number
   grossProfit: number
+  // UMK-1993: cash rounding, its own figure outside revenue and gross profit
+  rounding: number
 }
 export type Period = 'today' | 'week' | 'month' | 'year'
 export type Dashboard = { period: Period; timezone: string; from: string; to: string; current: Metrics; previous: Metrics }

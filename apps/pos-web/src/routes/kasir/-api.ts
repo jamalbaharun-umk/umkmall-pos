@@ -32,12 +32,15 @@ export type SaleRow = {
   voucherDiscount: number
   tax: number
   total: number
+  // UMK-1993: cash rounding and what the customer owed (total + rounding)
+  rounding: number
+  amountDue: number
   paid: number
   change: number
   costTotal?: number
   createdAt: string
 }
-export type SalesSummary = { count: number; revenue: number; discount: number; voucherDiscount: number }
+export type SalesSummary = { count: number; revenue: number; discount: number; voucherDiscount: number; rounding: number }
 export type Receipt = {
   number: number
   createdAt: string
@@ -49,6 +52,8 @@ export type Receipt = {
   taxBps: number
   tax: number
   total: number
+  rounding: number
+  amountDue: number
   paid: number
   change: number
   note: string | null

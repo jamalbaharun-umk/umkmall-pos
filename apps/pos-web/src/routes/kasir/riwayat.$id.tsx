@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
 import { formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { loadReceipt } from './-api'
+import { hasRounding } from './-money'
 
 // Lakasir's "View selling": selling details, product table, totals, and the print-receipt action.
 export const Route = createFileRoute('/kasir/riwayat/$id')({
@@ -102,6 +103,14 @@ function SalePage() {
           <dd className="text-right">{rupiah(r.tax)}</dd>
           <dt className="font-bold">Total</dt>
           <dd className="text-right font-bold">{rupiah(r.total)}</dd>
+          {hasRounding(r) && (
+            <>
+              <dt className="font-medium">Pembulatan</dt>
+              <dd className="text-right">{rupiah(r.rounding)}</dd>
+              <dt className="font-bold">Harus dibayar</dt>
+              <dd className="text-right font-bold">{rupiah(r.amountDue)}</dd>
+            </>
+          )}
           <dt className="font-medium">Uang dibayar</dt>
           <dd className="text-right">{rupiah(r.paid)}</dd>
           <dt className="font-medium">Kembalian</dt>

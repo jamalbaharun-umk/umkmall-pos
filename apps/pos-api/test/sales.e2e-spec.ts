@@ -440,6 +440,7 @@ describe('sales and shifts (U3)', () => {
     expect(all.body.summary).toEqual({
       count: 2,
       revenue: 15_000,
+      rounding: 0,
       discount: 0,
       voucherDiscount: 0,
       voidedCount: 0,

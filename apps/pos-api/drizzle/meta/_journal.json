@@ -134,6 +134,13 @@
       "when": 1795502867020,
       "tag": "0018_sale_voids",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795503604843,
+      "tag": "0019_sale_rounding",
+      "breakpoints": true
     }
   ]
 }

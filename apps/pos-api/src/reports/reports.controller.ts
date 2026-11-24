@@ -117,6 +117,19 @@ export class ReportsController {
           null,
           null,
         ],
+        // UMK-1993: cash rounding, its own line outside revenue and gross profit.
+        [
+          'Pembulatan',
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          t.rounding,
+          null,
+          null,
+        ],
       ],
     );
   }
@@ -149,6 +162,7 @@ export class ReportsController {
         ['Pajak', null, null, t.tax, null, null],
         ['Pendapatan', null, null, t.revenue, null, null],
         ['Laba kotor', null, null, t.grossProfit, null, null],
+        ['Pembulatan', null, null, t.rounding, null, null],
       ],
     );
   }
@@ -173,6 +187,7 @@ export class ReportsController {
         'Pendapatan',
         'Modal',
         'Laba kotor',
+        'Pembulatan',
         'Kas awal',
         'Pembayaran piutang',
         'Kas masuk',
@@ -190,6 +205,7 @@ export class ReportsController {
           x.revenue,
           x.cost,
           x.grossProfit,
+          x.rounding,
           x.openingCash,
           x.receivablePayments,
           x.cashIn,
@@ -206,6 +222,7 @@ export class ReportsController {
           t.revenue,
           t.cost,
           t.grossProfit,
+          t.rounding,
           null,
           null,
           null,

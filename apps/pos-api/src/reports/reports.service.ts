@@ -33,6 +33,8 @@ const cashierName = (r: Row) =>
  * The one place a metric is defined (Lakasir swapped revenue and profit, flaw 5).
  * revenue = Σ sale totals = grossSales − discount − voucher + tax (paid by customers);
  * grossProfit = revenue − tax − cost (tax is owed, not earned; equals revenue − cost at tax 0).
+ * rounding = Σ cash rounding (UMK-1993): its own line, outside revenue and gross profit;
+ * revenue + rounding is what customers owed.
  */
 function metrics(r: Row) {
   const revenue = n(r.revenue);
@@ -47,6 +49,7 @@ function metrics(r: Row) {
     revenue,
     cost,
     grossProfit: revenue - tax - cost,
+    rounding: n(r.rounding),
   };
 }
 
@@ -109,14 +112,15 @@ export class ReportsService {
       (select count(*) as n, coalesce(sum(subtotal), 0) as gross_sales,
               coalesce(sum(discount), 0) as discount,
               coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
-              coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost
+              coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost,
+              coalesce(sum(rounding), 0) as rounding
          from ${table}
         where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end})`;
     const [r] = await this.rows(sql`
       select s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
-             v.n as void_count
+             s.rounding - v.rounding as rounding, v.n as void_count
         from ${sums(sql`pos.sales`)} s, ${sums(sql`pos.sale_voids`)} v`);
     return { ...metrics(r), voidCount: n(r.void_count) };
   }
@@ -257,7 +261,8 @@ export class ReportsService {
       select count(*) as n, coalesce(sum(x.subtotal), 0) as gross_sales,
              coalesce(sum(x.discount), 0) as discount,
              coalesce(sum(x.voucher_discount), 0) as voucher, coalesce(sum(x.tax), 0) as tax,
-             coalesce(sum(x.total), 0) as revenue, coalesce(sum(x.cost_total), 0) as cost
+             coalesce(sum(x.total), 0) as revenue, coalesce(sum(x.cost_total), 0) as cost,
+             coalesce(sum(x.rounding), 0) as rounding
         from ${table} x
        where x.tenant_id = sh.tenant_id and x.shift_id = sh.id`;
     // A shift's row = the sales rung up in it minus the voids done in it (UMK-1962). The shift a voided
@@ -272,7 +277,7 @@ export class ReportsService {
              s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
-             v.n as void_count
+             s.rounding - v.rounding as rounding, v.n as void_count
         from pos.shifts sh
         left join pos.staff st on st.tenant_id = sh.tenant_id and st.id = sh.actor_id
         cross join lateral (${sums(sql`pos.sales`)}) s
@@ -319,6 +324,7 @@ export class ReportsService {
         | 'revenue'
         | 'cost'
         | 'grossProfit'
+        | 'rounding'
         | 'voidCount',
     ) => items.reduce((a, r) => a + r[k], 0);
     return {
@@ -335,6 +341,7 @@ export class ReportsService {
         revenue: sum('revenue'),
         cost: sum('cost'),
         grossProfit: sum('grossProfit'),
+        rounding: sum('rounding'),
         voidCount: sum('voidCount'),
       },
     };

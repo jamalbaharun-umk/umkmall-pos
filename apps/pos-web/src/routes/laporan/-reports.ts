@@ -15,6 +15,7 @@ const salesTotals: TotalLine[] = [
   { key: 'revenue', label: 'Pendapatan', money: true },
   { key: 'cost', label: 'Modal', money: true },
   { key: 'grossProfit', label: 'Laba kotor', money: true },
+  { key: 'rounding', label: 'Pembulatan', money: true },
 ]
 
 export const REPORTS: Record<string, ReportDef> = {
@@ -61,6 +62,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'salesCount', label: 'Transaksi', num: true },
       { key: 'revenue', label: 'Pendapatan', money: true },
       { key: 'grossProfit', label: 'Laba kotor', money: true },
+      { key: 'rounding', label: 'Pembulatan', money: true },
       { key: 'openingCash', label: 'Kas awal', money: true },
       { key: 'expectedCash', label: 'Kas seharusnya', money: true },
       { key: 'countedCash', label: 'Kas dihitung', money: true },
@@ -72,6 +74,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'revenue', label: 'Pendapatan', money: true },
       { key: 'cost', label: 'Modal', money: true },
       { key: 'grossProfit', label: 'Laba kotor', money: true },
+      { key: 'rounding', label: 'Pembulatan', money: true },
     ],
   },
   pembelian: {
