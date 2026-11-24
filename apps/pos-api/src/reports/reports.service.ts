@@ -227,6 +227,7 @@ export class ReportsService {
              to_char(sh.opened_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as opened_at,
              to_char(sh.closed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as closed_at,
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
+             c.cash_in, c.cash_out, c.receivable_payments,
              count(s.id) as sales_count, coalesce(sum(s.subtotal), 0) as gross_sales,
              coalesce(sum(s.discount), 0) as discount,
              coalesce(sum(s.voucher_discount), 0) as voucher, coalesce(sum(s.tax), 0) as tax,
@@ -234,8 +235,16 @@ export class ReportsService {
         from pos.shifts sh
         left join pos.staff st on st.tenant_id = sh.tenant_id and st.id = sh.actor_id
         left join pos.sales s on s.tenant_id = sh.tenant_id and s.shift_id = sh.id
+        -- The shift's cash ledger (UMK-1963), aggregated apart so it does not multiply the sales rows.
+        cross join lateral (
+          select coalesce(sum(e.amount) filter (where e.direction = 'in'), 0) as cash_in,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out'), 0) as cash_out,
+                 coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'receivable_payment'), 0)
+                   as receivable_payments
+            from pos.shift_cash_entries e
+           where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
-       group by sh.id, st.name
+       group by sh.id, st.name, c.cash_in, c.cash_out, c.receivable_payments
        order by sh.opened_at`);
     const items = rows.map((r) => {
       const counted = r.counted_cash == null ? null : n(r.counted_cash);
@@ -246,6 +255,9 @@ export class ReportsService {
         openedAt: r.opened_at as string,
         closedAt: (r.closed_at as string | null) ?? null,
         openingCash: n(r.opening_cash),
+        receivablePayments: n(r.receivable_payments),
+        cashIn: n(r.cash_in),
+        cashOut: n(r.cash_out),
         expectedCash: expected,
         countedCash: counted,
         difference:

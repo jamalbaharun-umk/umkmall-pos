@@ -45,6 +45,7 @@ import {
 } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
+import { recordShiftCash } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
@@ -286,22 +287,35 @@ export class ReceivablesService {
             'amount',
             `Pembayaran melebihi sisa piutang (${formatRupiah(r.rest)})`,
           );
-        const methodId = await this.method(
-          tx,
-          s.tenantId,
-          input.paymentMethodId,
-        );
-        await tx.insert(receivablePayments).values({
-          tenantId: s.tenantId,
-          receivableId: id,
-          amount: input.amount,
-          paymentMethodId: methodId,
-          restBefore: r.rest,
-          actorId: s.actorId,
-          actorKind: s.kind,
-          idempotencyKey: key,
-          requestHash: hash,
-        });
+        const method = await this.method(tx, s.tenantId, input.paymentMethodId);
+        const [payment] = await tx
+          .insert(receivablePayments)
+          .values({
+            tenantId: s.tenantId,
+            receivableId: id,
+            amount: input.amount,
+            paymentMethodId: method.id,
+            restBefore: r.rest,
+            actorId: s.actorId,
+            actorKind: s.kind,
+            idempotencyKey: key,
+            requestHash: hash,
+          })
+          .returning({ id: receivablePayments.id });
+        // Cash goes into the actor's drawer: it needs their open shift, like a sale, and raises that
+        // shift's expected cash (UMK-1963). Debit and wallet money never reaches the drawer.
+        if (method.isCash)
+          await recordShiftCash(
+            tx,
+            s,
+            {
+              direction: 'in',
+              kind: 'receivable_payment',
+              amount: input.amount,
+              refId: payment.id,
+            },
+            'Buka shift dulu sebelum menerima pembayaran tunai',
+          );
         await tx
           .update(receivables)
           .set({ rest: r.rest - input.amount, lastPaymentAt: new Date() })
@@ -327,7 +341,11 @@ export class ReceivablesService {
         .values({ tenantId, name: 'Tunai', isCash: true })
         .onConflictDoNothing();
     const [m] = await tx
-      .select({ id: paymentMethods.id, isCredit: paymentMethods.isCredit })
+      .select({
+        id: paymentMethods.id,
+        isCash: paymentMethods.isCash,
+        isCredit: paymentMethods.isCredit,
+      })
       .from(paymentMethods)
       .where(
         and(
@@ -343,7 +361,7 @@ export class ReceivablesService {
         'paymentMethodId',
         'Piutang tidak dapat dibayar dengan kasbon',
       );
-    return m.id;
+    return { id: m.id, isCash: m.isCash };
   }
 }
 

@@ -9,4 +9,5 @@ export * from './sales';
 export * from './reports';
 export * from './members';
 export * from './receivables';
+export * from './shift-cash';
 export * from './store';

@@ -45,4 +45,16 @@ describe('repo guards', () => {
       .map(({ f }) => f);
     expect(offenders).toEqual([]);
   });
+
+  it('writes the shift cash ledger only in shifts/cash-ledger.ts (under the open shift lock)', () => {
+    const offenders = files
+      .filter(({ f }) => f !== path.join('shifts', 'cash-ledger.ts'))
+      .filter(({ text }) =>
+        /\.(insert|update|delete)\(\s*shiftCashEntries\b|(insert\s+into|update|delete\s+from)\s+pos\.shift_cash_entries/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
 });
