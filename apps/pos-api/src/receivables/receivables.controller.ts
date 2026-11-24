@@ -47,9 +47,10 @@ import {
   staff,
 } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
-import { RequirePermission } from '../staff/require-permission';
+import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
+import { recordStoreCash } from '../store-cash/store-cash-ledger';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
@@ -391,19 +392,31 @@ export class ReceivablesService {
           );
         const method = await this.method(tx, s.tenantId, input.paymentMethodId);
         // Cash taken while the actor has an open shift goes into that drawer: a ledger entry raises the
-        // shift's expected cash (UMK-1963). Without an open shift the cash is still accepted (owner ruling
-        // 2026-11-24: staff with only `receivables.manage` cannot open one) and marked as collected
-        // outside any shift, so no shift ever counts it. Decided once, here, under the shift's row lock:
-        // a payment has a ledger entry or the marker, never both. Debit and wallet money has neither.
+        // shift's expected cash (UMK-1963). An actor who can open a shift (`sales.create`; every owner)
+        // must open one first. Only an actor who cannot (e.g. `receivables.manage` alone) collects
+        // outside a shift (owner ruling 2026-11-24): the payment is marked and the cash goes into the
+        // store's cash ledger, so no shift ever counts it. Decided once, here, under the shift's row
+        // lock: a cash payment is in a shift's ledger or in the store's, never both, never neither.
+        // Debit and wallet money is in none.
         const paymentId = randomUUID();
+        const cashIn = {
+          direction: 'in',
+          kind: 'receivable_payment',
+          amount: input.amount,
+          refId: paymentId,
+        } as const;
         const shiftId = method.isCash
-          ? await recordShiftCashIfOpen(tx, s, {
-              direction: 'in',
-              kind: 'receivable_payment',
-              amount: input.amount,
-              refId: paymentId,
-            })
+          ? await recordShiftCashIfOpen(tx, s, cashIn)
           : null;
+        const outsideShift = method.isCash && !shiftId;
+        if (outsideShift) {
+          if (hasPermission(s, 'sales.create'))
+            throw fieldError(
+              '_',
+              'Buka shift dulu sebelum menerima pembayaran tunai',
+            );
+          await recordStoreCash(tx, s, cashIn);
+        }
         await tx.insert(receivablePayments).values({
           id: paymentId,
           tenantId: s.tenantId,
@@ -415,7 +428,7 @@ export class ReceivablesService {
           actorKind: s.kind,
           idempotencyKey: key,
           requestHash: hash,
-          collectedOutsideShift: method.isCash && !shiftId,
+          collectedOutsideShift: outsideShift,
         });
         await tx
           .update(receivables)

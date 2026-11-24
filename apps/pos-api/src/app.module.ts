@@ -16,6 +16,7 @@ import { MembersModule } from './members/members.controller';
 import { VouchersModule } from './vouchers/vouchers.controller';
 import { PaymentMethodsModule } from './payment-methods/payment-methods.controller';
 import { ReceivablesModule } from './receivables/receivables.controller';
+import { StoreCashModule } from './store-cash/store-cash.controller';
 import { PurgeModule } from './purge/purge.controller';
 import { StoreModule } from './store/store.controller';
 import { VoidModule } from './void/void.controller';
@@ -39,6 +40,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     VouchersModule,
     PaymentMethodsModule,
     ReceivablesModule,
+    StoreCashModule,
     PurgeModule,
     StoreModule,
     VoidModule,

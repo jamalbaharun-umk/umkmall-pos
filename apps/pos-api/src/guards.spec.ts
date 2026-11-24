@@ -58,6 +58,18 @@ describe('repo guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('writes the store cash ledger only in store-cash/store-cash-ledger.ts', () => {
+    const offenders = files
+      .filter(({ f }) => f !== path.join('store-cash', 'store-cash-ledger.ts'))
+      .filter(({ text }) =>
+        /\.(insert|update|delete)\(\s*storeCashEntries\b|(insert\s+into|update|delete\s+from)\s+pos\.store_cash_entries/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+  });
+
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {
     const offenders = files
       .filter(

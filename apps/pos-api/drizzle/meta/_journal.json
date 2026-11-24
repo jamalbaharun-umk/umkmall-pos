@@ -148,6 +148,13 @@
       "when": 1795505005002,
       "tag": "0020_kasbon_cash_outside_shift",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795505721056,
+      "tag": "0021_store_cash_entries",
+      "breakpoints": true
     }
   ]
 }

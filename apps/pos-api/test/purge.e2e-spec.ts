@@ -187,6 +187,14 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       { amount: 1000 },
       randomUUID(),
     ).expect(201);
+    // A cash instalment taken by a collector who cannot open a shift (UMK-1963): store_cash_entries.
+    const collector = await createCashier(app, s, ['receivables.manage']);
+    await http()
+      .post(`/receivables/${credit.body.receivableId}/payments`)
+      .set('Authorization', collector.auth)
+      .set('Idempotency-Key', randomUUID())
+      .send({ amount: 500 })
+      .expect(201);
 
     // A void PIN and a voided cash sale (UMK-1962): void_pins, sale_voids, sale_void_returns.
     await put('/void-pin', { pin: '482913' }).expect(200);

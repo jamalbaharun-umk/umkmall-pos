@@ -618,8 +618,9 @@ describe('void a full sale (UMK-1962)', () => {
       const sale = await kasbonSale(s, 0);
       const rid = sale.body.receivableId as string;
       await close(s.auth, 100_000);
-      // Taken with no shift open (UMK-1963 ruling): in no shift's expected cash.
-      const paid = await pay(s.auth, rid, { amount: 2500 }).expect(201);
+      // Taken by an actor who cannot open a shift (UMK-1963 ruling): in the store cash, in no shift.
+      const collector = await createCashier(app, s, ['receivables.manage']);
+      const paid = await pay(collector.auth, rid, { amount: 2500 }).expect(201);
       expect(paid.body.payments).toEqual([
         expect.objectContaining({ collectedOutsideShift: true, shiftId: null }),
       ]);
@@ -670,6 +671,13 @@ describe('void a full sale (UMK-1962)', () => {
       ]);
       const old = await get(s.auth, `/shifts/${first.body.id}`).expect(200);
       expect(old.body).toMatchObject({ expectedCash: 100_000, cashOut: 0 });
+      // The store cash still holds what the collector took in: the drawer paid the customer back.
+      const cash = await get(s.auth, '/store-cash').expect(200);
+      expect(cash.body.summary).toEqual({
+        cashIn: 2500,
+        cashOut: 0,
+        balance: 2500,
+      });
       // The payment row keeps its audit: still marked, still not in a shift.
       const r = await get(s.auth, `/receivables/${rid}`).expect(200);
       expect(r.body).toMatchObject({
