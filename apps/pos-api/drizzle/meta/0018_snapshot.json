@@ -1,5 +1,5 @@
 {
-  "id": "a60f9692-27c2-4bd9-add9-57d731a8a918",
+  "id": "c32d08ef-dd52-4f29-ba93-12edd56fb9ee",
   "prevId": "8f191e08-5455-478e-8559-4f9b27d27fc1",
   "version": "7",
   "dialect": "postgresql",
@@ -3348,7 +3348,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "receivable_payments_tenant_id_id_unique": {
+          "name": "receivable_payments_tenant_id_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "receivable_payments_ck": {
@@ -3802,20 +3811,6 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "sale_void_returns_receivable_payment_id_receivable_payments_id_fk": {
-          "name": "sale_void_returns_receivable_payment_id_receivable_payments_id_fk",
-          "tableFrom": "sale_void_returns",
-          "tableTo": "receivable_payments",
-          "schemaTo": "pos",
-          "columnsFrom": [
-            "receivable_payment_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
         "sale_void_returns_tenant_id_void_id_sale_voids_tenant_id_id_fk": {
           "name": "sale_void_returns_tenant_id_void_id_sale_voids_tenant_id_id_fk",
           "tableFrom": "sale_void_returns",
@@ -3824,6 +3819,22 @@
           "columnsFrom": [
             "tenant_id",
             "void_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "sale_void_returns_receivable_payment_fk": {
+          "name": "sale_void_returns_receivable_payment_fk",
+          "tableFrom": "sale_void_returns",
+          "tableTo": "receivable_payments",
+          "schemaTo": "pos",
+          "columnsFrom": [
+            "tenant_id",
+            "receivable_payment_id"
           ],
           "columnsTo": [
             "tenant_id",

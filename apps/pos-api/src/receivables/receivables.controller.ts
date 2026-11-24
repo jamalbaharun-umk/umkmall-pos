@@ -177,8 +177,9 @@ export async function cancelReceivable(
     .orderBy(asc(receivablePayments.createdAt), asc(receivablePayments.id));
   await tx
     .update(receivables)
-    .set({ rest: 0, cancelledAt: new Date(), cancelledAmount: r.rest })
-    .where(eq(receivables.id, r.id));
+    // now() is the transaction's start time: the same instant as the void's own row.
+    .set({ rest: 0, cancelledAt: sql`now()`, cancelledAmount: r.rest })
+    .where(and(eq(receivables.tenantId, tenantId), eq(receivables.id, r.id)));
   return { id: r.id, cancelled: r.rest, payments };
 }
 

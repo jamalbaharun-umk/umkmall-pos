@@ -62,9 +62,10 @@ ALTER TABLE "pos"."sales" ADD COLUMN "status" text DEFAULT 'completed' NOT NULL;
 ALTER TABLE "pos"."sales" ADD COLUMN "voided_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "pos"."receivables" ADD COLUMN "cancelled_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "pos"."receivables" ADD COLUMN "cancelled_amount" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "pos"."receivable_payments" ADD CONSTRAINT "receivable_payments_tenant_id_id_unique" UNIQUE("tenant_id","id");--> statement-breakpoint
 ALTER TABLE "pos"."sale_void_returns" ADD CONSTRAINT "sale_void_returns_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "pos"."tenants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "pos"."sale_void_returns" ADD CONSTRAINT "sale_void_returns_receivable_payment_id_receivable_payments_id_fk" FOREIGN KEY ("receivable_payment_id") REFERENCES "pos"."receivable_payments"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pos"."sale_void_returns" ADD CONSTRAINT "sale_void_returns_tenant_id_void_id_sale_voids_tenant_id_id_fk" FOREIGN KEY ("tenant_id","void_id") REFERENCES "pos"."sale_voids"("tenant_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "pos"."sale_void_returns" ADD CONSTRAINT "sale_void_returns_receivable_payment_fk" FOREIGN KEY ("tenant_id","receivable_payment_id") REFERENCES "pos"."receivable_payments"("tenant_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pos"."sale_void_returns" ADD CONSTRAINT "sale_void_returns_tenant_id_payment_method_id_payment_methods_tenant_id_id_fk" FOREIGN KEY ("tenant_id","payment_method_id") REFERENCES "pos"."payment_methods"("tenant_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pos"."sale_voids" ADD CONSTRAINT "sale_voids_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "pos"."tenants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pos"."sale_voids" ADD CONSTRAINT "sale_voids_tenant_id_sale_id_sales_tenant_id_id_fk" FOREIGN KEY ("tenant_id","sale_id") REFERENCES "pos"."sales"("tenant_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint

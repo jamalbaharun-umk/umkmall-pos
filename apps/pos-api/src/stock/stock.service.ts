@@ -269,7 +269,12 @@ export class StockService {
       await tx
         .update(stockBatches)
         .set({ qtyRemaining: sql`${stockBatches.qtyRemaining} + ${qty}` })
-        .where(eq(stockBatches.id, b.id));
+        .where(
+          and(
+            eq(stockBatches.tenantId, input.tenantId),
+            eq(stockBatches.id, b.id),
+          ),
+        );
       await tx.insert(stockMovements).values({
         tenantId: input.tenantId,
         productId: d.productId,

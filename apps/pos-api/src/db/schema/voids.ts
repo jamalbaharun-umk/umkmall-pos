@@ -143,10 +143,7 @@ export const saleVoidReturns = pos
       tenantId: tenantId(),
       voidId: uuid('void_id').notNull(),
       // The kasbon payment given back; null for the sale's own payment.
-      receivablePaymentId: uuid('receivable_payment_id').references(
-        () => receivablePayments.id,
-        { onDelete: 'restrict' },
-      ),
+      receivablePaymentId: uuid('receivable_payment_id'),
       paymentMethodId: uuid('payment_method_id').notNull(),
       amount: rupiah('amount').notNull(),
       fromDrawer: boolean('from_drawer').notNull(),
@@ -157,6 +154,11 @@ export const saleVoidReturns = pos
       foreignKey({
         columns: [t.tenantId, t.voidId],
         foreignColumns: [saleVoids.tenantId, saleVoids.id],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'sale_void_returns_receivable_payment_fk',
+        columns: [t.tenantId, t.receivablePaymentId],
+        foreignColumns: [receivablePayments.tenantId, receivablePayments.id],
       }).onDelete('restrict'),
       foreignKey({
         columns: [t.tenantId, t.paymentMethodId],

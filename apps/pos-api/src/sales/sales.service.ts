@@ -27,6 +27,7 @@ import {
   products,
   saleLines,
   sales,
+  saleVoids,
   salesSettings,
   shifts,
   staff,
@@ -66,11 +67,9 @@ export const requestHash = (input: SaleInput) => {
   return createHash('sha256').update(stable).digest('hex');
 };
 
-/** Sum of a money column over the sales that are not voided. */
-const live = (column: AnyPgColumn) =>
-  sql<number>`coalesce(sum(${column}) filter (where ${sales.status} <> 'void'), 0)::bigint`.mapWith(
-    Number,
-  );
+/** Sum of a money column, as a JS number. */
+const total = (column: AnyPgColumn) =>
+  sql<number>`coalesce(sum(${column}), 0)::bigint`.mapWith(Number);
 
 /** A 422 in the shared shape; `field` puts the message on that input (`paid`, `lines.0.qty`). */
 const fail = (
@@ -391,7 +390,7 @@ export class SalesService {
       q.to ? lt(sales.createdAt, new Date(q.to)) : undefined,
     );
     const showCost = hasPermission(s, 'reports.view');
-    const [rows, [{ rows: pageTotal, ...summary }]] = await Promise.all([
+    const [rows, [rung], [reversed]] = await Promise.all([
       this.db
         .select({
           id: sales.id,
@@ -423,29 +422,55 @@ export class SalesService {
         .offset((q.page - 1) * q.perPage),
       this.db
         .select({
-          rows: count(),
-          // The summary leaves voided sales out (UMK-1962); the rows above still list them.
-          count:
-            sql<number>`count(*) filter (where ${sales.status} <> 'void')`.mapWith(
-              Number,
-            ),
-          revenue: live(sales.total),
-          discount: live(sales.discount),
-          voucherDiscount: live(sales.voucherDiscount),
-          voidedCount:
-            sql<number>`count(*) filter (where ${sales.status} = 'void')`.mapWith(
-              Number,
-            ),
+          count: count(),
+          revenue: total(sales.total),
+          discount: total(sales.discount),
+          voucherDiscount: total(sales.voucherDiscount),
         })
         .from(sales)
         .where(where),
+      // The reversals: voids DONE in the same window (and shift), of sales the actor may see.
+      this.db
+        .select({
+          count: count(),
+          revenue: total(saleVoids.total),
+          discount: total(saleVoids.discount),
+          voucherDiscount: total(saleVoids.voucherDiscount),
+        })
+        .from(saleVoids)
+        .innerJoin(
+          sales,
+          and(
+            eq(sales.tenantId, saleVoids.tenantId),
+            eq(sales.id, saleVoids.saleId),
+          ),
+        )
+        .where(
+          and(
+            this.scope(s),
+            q.shiftId ? eq(saleVoids.shiftId, q.shiftId) : undefined,
+            q.from ? gte(saleVoids.createdAt, new Date(q.from)) : undefined,
+            q.to ? lt(saleVoids.createdAt, new Date(q.to)) : undefined,
+          ),
+        ),
     ]);
+    // Dated like the reports (UMK-1962): a receipt stays in the summary of the window it was rung up in,
+    // and its void is subtracted in the window the void was done. So the summary of an earlier day never
+    // changes, a same-day void nets to zero, and the figures agree with /reports/sales for the same range.
+    const summary = {
+      count: rung.count - reversed.count,
+      revenue: rung.revenue - reversed.revenue,
+      discount: rung.discount - reversed.discount,
+      voucherDiscount: rung.voucherDiscount - reversed.voucherDiscount,
+      // Voids done in the window: what was subtracted above.
+      voidedCount: reversed.count,
+    };
     return {
       data: rows.map((r) => ({
         ...r,
         costTotal: showCost ? r.costTotal : undefined,
       })),
-      total: pageTotal,
+      total: rung.count,
       summary,
     };
   }

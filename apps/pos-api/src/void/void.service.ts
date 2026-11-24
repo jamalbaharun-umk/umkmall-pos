@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -57,6 +57,9 @@ type Return = {
  * Void of a full sale (UMK-1962), for CASHAC payments: cash, debit/wallet (EDC, transfer, the store's
  * QRIS) and kasbon. The sale and its lines stay as rung up; the sale moves to status `void` and a
  * pos.sale_voids row records the reversal and who started and approved it.
+ *
+ * Every timestamp of a void is the database's `now()`, which is the transaction's start time: the sale's
+ * `voided_at`, the receivable's `cancelled_at`, the void's and the ledger entry's `created_at` are equal.
  *
  * One transaction, in this lock order (the order a sale and a kasbon payment use, so they cannot
  * deadlock): sale row, receivable row, the actor's open shift (cash ledger), voucher quota, stock batches.
@@ -326,8 +329,8 @@ export class VoidService {
         );
     await tx
       .update(sales)
-      .set({ status: 'void', voidedAt: new Date() })
-      .where(eq(sales.id, saleId));
+      .set({ status: 'void', voidedAt: sql`now()` })
+      .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, saleId)));
     return id;
   }
 

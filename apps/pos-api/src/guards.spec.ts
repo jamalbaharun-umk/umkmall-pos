@@ -69,4 +69,35 @@ describe('repo guards', () => {
       .map(({ f }) => f);
     expect(offenders).toEqual([]);
   });
+
+  it('filters every write of a void by tenant (void/, cancelReceivable, restoreSale): no `.where(eq(x.id, …))` alone', () => {
+    const text = (f: string) => files.find((x) => x.f === f)!.text;
+    const slice = (f: string, from: string, to: string) => {
+      const t = text(f);
+      const i = t.indexOf(from);
+      expect(i).toBeGreaterThan(-1);
+      return t.slice(i, t.indexOf(to, i + from.length));
+    };
+    const parts: Record<string, string> = {
+      'void/void.service.ts': text(path.join('void', 'void.service.ts')),
+      'void/void-pin.ts': text(path.join('void', 'void-pin.ts')),
+      cancelReceivable: slice(
+        path.join('receivables', 'receivables.controller.ts'),
+        'export async function cancelReceivable',
+        '\n}\n',
+      ),
+      restoreSale: slice(
+        path.join('stock', 'stock.service.ts'),
+        'async restoreSale(',
+        '\n  }\n',
+      ),
+    };
+    for (const part of Object.values(parts))
+      expect(part.length).toBeGreaterThan(200);
+    // A where clause whose whole condition is one `eq(table.id, …)` has no tenant filter.
+    const offenders = Object.entries(parts)
+      .filter(([, t]) => /\.where\(\s*eq\(\s*(?!tenants\.)\w+\.id\s*,/.test(t))
+      .map(([name]) => name);
+    expect(offenders).toEqual([]);
+  });
 });

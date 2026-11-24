@@ -87,6 +87,7 @@ export const receivablePayments = pos
       createdAt: createdAt(),
     },
     (t) => [
+      unique().on(t.tenantId, t.id),
       index('receivable_payments_receivable_idx').on(t.receivableId),
       uniqueIndex('receivable_payments_tenant_key_uq')
         .on(t.tenantId, t.idempotencyKey)

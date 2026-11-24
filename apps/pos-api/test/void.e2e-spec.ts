@@ -567,6 +567,22 @@ describe('void a full sale (UMK-1962)', () => {
       const r = await get(s.auth, `/receivables/${rid}`).expect(200);
       expect(r.body).toMatchObject({ rest: 0, cancelledAmount: 6000 });
       expect(r.body.payments).toHaveLength(3); // the payment history is kept
+
+      // One instant for the whole void: sale, receivable, void record and ledger entry.
+      const [t] = await admin`
+        select s.voided_at, r.cancelled_at, v.created_at as void_at, e.created_at as entry_at
+          from pos.sale_voids v
+          join pos.sales s on s.id = v.sale_id
+          join pos.receivables r on r.sale_id = v.sale_id
+          join pos.shift_cash_entries e on e.ref_id = v.id
+         where v.id = ${res.body.id}`;
+      expect(t.voided_at).toBeInstanceOf(Date);
+      expect([t.cancelled_at, t.void_at, t.entry_at]).toEqual([
+        t.voided_at,
+        t.voided_at,
+        t.voided_at,
+      ]);
+      expect(r.body.cancelledAt).toBe((t.voided_at as Date).toISOString());
     });
 
     it('partly paid in a closed shift: needs an open shift, and pays out of that one', async () => {
@@ -1223,6 +1239,22 @@ describe('void a full sale (UMK-1962)', () => {
       };
       const yesterday = day(jakartaDay(-1));
       const before = await read(yesterday);
+      // The receipt history of a window (GET /sales) follows the same dating.
+      const history = async (from: string, to: string) =>
+        (
+          await get(
+            s.auth,
+            `/sales?from=${from}T00:00:00%2B07:00&to=${to}T00:00:00%2B07:00`,
+          ).expect(200)
+        ).body.summary as Record<string, number>;
+      const historyBefore = await history(jakartaDay(-1), today());
+      expect(historyBefore).toEqual({
+        count: 1,
+        revenue: 16_500,
+        discount: 0,
+        voucherDiscount: 0,
+        voidedCount: 0,
+      });
       expect(before.sales.totals).toMatchObject({
         salesCount: 1,
         qty: 3,
@@ -1244,6 +1276,22 @@ describe('void a full sale (UMK-1962)', () => {
 
       // Yesterday is exactly as it was: totals, rows, the closed shift's row.
       expect(await read(yesterday)).toEqual(before);
+
+      expect(await history(jakartaDay(-1), today())).toEqual(historyBefore);
+      expect(await history(today(), jakartaDay(1))).toEqual({
+        count: 0,
+        revenue: -11_000,
+        discount: 0,
+        voucherDiscount: 0,
+        voidedCount: 1,
+      });
+      expect(await history(jakartaDay(-1), jakartaDay(1))).toEqual({
+        count: 1,
+        revenue: 5500,
+        discount: 0,
+        voucherDiscount: 0,
+        voidedCount: 1,
+      });
 
       // Today carries the reversal: 5.500 − 16.500, and so on for every figure.
       const net = {
