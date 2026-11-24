@@ -128,6 +128,24 @@ describe('validation: catalog, staff, roles, error filter', () => {
         'Harga modal tidak boleh melebihi harga jual',
       );
       await refused(
+        product({ ...base, lowStockThreshold: -1 }),
+        422,
+        'lowStockThreshold',
+        'Batas stok menipis tidak boleh negatif',
+      );
+      await refused(
+        product({ ...base, lowStockThreshold: 2.5 }),
+        422,
+        'lowStockThreshold',
+        'Batas stok menipis harus bilangan bulat',
+      );
+      await refused(
+        product({ ...base, lowStockThreshold: '5' }),
+        422,
+        'lowStockThreshold',
+        'Batas stok menipis harus berupa angka',
+      );
+      await refused(
         product({ ...base, sku: 'A B C' }),
         422,
         'sku',

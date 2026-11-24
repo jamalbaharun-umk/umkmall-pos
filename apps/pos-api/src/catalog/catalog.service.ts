@@ -26,6 +26,7 @@ import {
   productBarcodes,
   productImages,
   products,
+  stockBatches,
 } from '../db/schema';
 import type {
   ProductCreate,
@@ -80,6 +81,7 @@ const productColumns = {
   sellingPrice: products.sellingPrice,
   type: products.type,
   isActive: products.isActive,
+  lowStockThreshold: products.lowStockThreshold,
   createdAt: products.createdAt,
   updatedAt: products.updatedAt,
 };
@@ -182,8 +184,11 @@ export class CatalogService {
         ),
       );
     }
+    // Counts for the "Menipis (n)" / "Habis (n)" filters follow the search and category, not the stock filter.
+    const countsWhere = and(...filters);
+    if (q.stock) filters.push(this.stockStateIs(tenantId, q.stock));
     const where = and(...filters);
-    const [rows, [{ total }]] = await Promise.all([
+    const [rows, [{ total }], [stockCounts]] = await Promise.all([
       this.db
         .select(productColumns)
         .from(products)
@@ -193,6 +198,13 @@ export class CatalogService {
         .limit(q.perPage)
         .offset((q.page - 1) * q.perPage),
       this.db.select({ total: count() }).from(products).where(where),
+      this.db
+        .select({
+          low: sql<number>`count(*) filter (where ${this.stockStateIs(tenantId, 'low')})::int`,
+          out: sql<number>`count(*) filter (where ${this.stockStateIs(tenantId, 'out')})::int`,
+        })
+        .from(products)
+        .where(countsWhere),
     ]);
     const [codes, onHand] = await Promise.all([
       this.barcodesOf(rows.map((r) => r.id)),
@@ -210,7 +222,16 @@ export class CatalogService {
       page: q.page,
       perPage: q.perPage,
       total,
+      stockCounts: { low: stockCounts.low, out: stockCounts.out },
     };
+  }
+
+  /** On-hand from the batches (the only truth, see StockService.onHand) against the product's threshold. */
+  private stockStateIs(tenantId: string, state: 'low' | 'out') {
+    const onHand = sql`coalesce((select sum(b.qty_remaining) from ${stockBatches} b where b.product_id = ${products.id} and b.tenant_id = ${tenantId}), 0)`;
+    return state === 'out'
+      ? sql`(${products.type} = 'product' and ${onHand} = 0)`
+      : sql`(${products.type} = 'product' and ${onHand} > 0 and ${onHand} <= ${products.lowStockThreshold})`;
   }
 
   async getProduct(tenantId: string, id: string) {
@@ -268,6 +289,7 @@ export class CatalogService {
               sellingPrice: input.sellingPrice,
               type: input.type,
               isActive: input.isActive,
+              lowStockThreshold: input.lowStockThreshold,
             })
             .returning({ id: products.id });
           await this.replaceBarcodes(

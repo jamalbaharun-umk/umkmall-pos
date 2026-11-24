@@ -416,6 +416,88 @@ describe('catalog (U2)', () => {
     });
   });
 
+  describe('lowStockThreshold (UMK-1966)', () => {
+    it('defaults to 5, is set on create and changed on update', async () => {
+      const dflt = await product(a);
+      expect(dflt).toMatchObject({ lowStockThreshold: 5 });
+      const custom = await product(a, { lowStockThreshold: 12 });
+      expect(custom).toMatchObject({ lowStockThreshold: 12 });
+      const upd = await http()
+        .patch(`/catalog/products/${custom.id}`)
+        .set('Authorization', a.auth)
+        .send({ lowStockThreshold: 0 })
+        .expect(200);
+      expect(upd.body.lowStockThreshold).toBe(0);
+      const list = await http()
+        .get('/catalog/products')
+        .set('Authorization', a.auth)
+        .expect(200);
+      const row = (
+        list.body as { data: { id: string; lowStockThreshold: number }[] }
+      ).data.find((r) => r.id === custom.id);
+      expect(row?.lowStockThreshold).toBe(0);
+    });
+
+    it('answers 422 to a negative or fractional update', async () => {
+      const p = await product(a);
+      for (const lowStockThreshold of [-1, 1.5]) {
+        await http()
+          .patch(`/catalog/products/${p.id}`)
+          .set('Authorization', a.auth)
+          .send({ lowStockThreshold })
+          .expect(422);
+      }
+    });
+
+    it('?stock=low|out filters by on-hand against the threshold, with counts; B sees none of it', async () => {
+      const store = await createStore();
+      const mk = async (name: string, extra: Record<string, unknown> = {}) =>
+        (await product(store, { name, ...extra })).id;
+      const stockOf = (productId: string, qty: number) =>
+        http()
+          .post('/stock/opening')
+          .set('Authorization', store.auth)
+          .send({ productId, qty })
+          .expect(201);
+      const enough = await mk('Cukup');
+      await stockOf(enough, 50);
+      const low = await mk('Menipis');
+      await stockOf(low, 3);
+      const edge = await mk('Tepat batas', { lowStockThreshold: 10 });
+      await stockOf(edge, 10);
+      const out = await mk('Habis'); // no batches
+      await mk('Jasa', { type: 'service' });
+      const get = (auth: string, query: object) =>
+        http().get('/catalog/products').query(query).set('Authorization', auth);
+      const lowRes = await get(store.auth, { stock: 'low' }).expect(200);
+      expect(ids(lowRes.body).sort()).toEqual([low, edge].sort());
+      expect(lowRes.body.total).toBe(2);
+      const outRes = await get(store.auth, { stock: 'out' }).expect(200);
+      expect(ids(outRes.body)).toEqual([out]);
+      const all = await get(store.auth, {}).expect(200);
+      expect(all.body.total).toBe(5);
+      expect(all.body.stockCounts).toEqual({ low: 2, out: 1 });
+      // The counts ignore the stock filter itself.
+      expect(lowRes.body.stockCounts).toEqual({ low: 2, out: 1 });
+      await get(store.auth, { stock: 'nope' }).expect(422);
+      const other = await get(b.auth, { stock: 'out' }).expect(200);
+      expect(ids(other.body)).not.toContain(out);
+    });
+
+    it('B cannot change the threshold of an A product (404)', async () => {
+      const p = await product(a);
+      await http()
+        .patch(`/catalog/products/${p.id}`)
+        .set('Authorization', b.auth)
+        .send({ lowStockThreshold: 99 })
+        .expect(404);
+      const again = await http()
+        .get(`/catalog/products/${p.id}`)
+        .set('Authorization', a.auth);
+      expect(again.body.lowStockThreshold).toBe(5);
+    });
+  });
+
   describe('cross-tenant: store B never reaches store A', () => {
     let pA: { id: string; categoryId: string };
     let imageA: string;
