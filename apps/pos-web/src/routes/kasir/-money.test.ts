@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cashDifference, cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { cashDifference, cashRounding, hasRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 describe('cashier money helpers', () => {
   it('quick amounts: exact, then the next round notes', () => {
@@ -65,5 +65,13 @@ describe('cashRounding', () => {
     expect(cashRounding(1)).toBe(99)
     expect(cashRounding(99)).toBe(1)
     expect(cashRounding(0)).toBe(0)
+  })
+})
+
+describe('hasRounding', () => {
+  it('is true only for a positive rounding; missing or zero shows no line', () => {
+    expect(hasRounding({ rounding: 50 })).toBe(true)
+    expect(hasRounding({ rounding: 0 })).toBe(false)
+    expect(hasRounding({})).toBe(false)
   })
 })

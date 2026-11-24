@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cashDiff, change, checkRange } from './-reports'
+import { cashDiff, change, checkRange, REPORTS } from './-reports'
 
 describe('change', () => {
   it('rounds the percentage and refuses a zero base', () => {
@@ -30,5 +30,19 @@ describe('cashDiff', () => {
     expect(cashDiff(-500)).toBe('Kurang Rp500')
     expect(cashDiff(2500)).toBe('Lebih Rp2.500')
     expect(cashDiff(0)).toBe('Pas')
+  })
+})
+
+describe('rounding in reports (UMK-1993)', () => {
+  it('is its own total line, apart from revenue and profit, on sales, products and shift reports', () => {
+    for (const k of ['penjualan', 'produk', 'shift']) {
+      const keys = REPORTS[k].totals.map((t) => t.key)
+      expect(keys).toContain('rounding')
+      expect(REPORTS[k].totals.find((t) => t.key === 'rounding')).toMatchObject({ label: 'Pembulatan', money: true })
+    }
+    expect(REPORTS.pembelian.totals.map((t) => t.key)).not.toContain('rounding')
+  })
+  it('shows rounding per shift row', () => {
+    expect(REPORTS.shift.columns.find((c) => c.key === 'rounding')).toMatchObject({ label: 'Pembulatan', money: true })
   })
 })

@@ -565,7 +565,7 @@ function PayDialog({
       amount = due
     } else if (!paidText.trim()) return setError('Wajib diisi: masukkan uang diterima')
     else if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 50.000')
-    else if (amount < payable) return setError('Uang dibayar kurang dari total')
+    else if (amount < payable) return setError('Uang dibayar kurang dari jumlah yang harus dibayar')
     lock.current = true
     setBusy(true)
     setError(undefined)

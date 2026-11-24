@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button } from '@umkmall/ui'
 import { LoadError, Pending, rupiah } from '@/components/pos-page'
 import { loadReceipt } from './-api'
+import { hasRounding } from './-money'
 
 // Printable receipt (Lakasir's browser printer): the browser's print dialog, sized for 58/80 mm paper.
 export const Route = createFileRoute('/kasir/struk/$id')({
@@ -52,6 +53,8 @@ function ReceiptPage() {
             <span>Total</span>
             <span>{rupiah(r.total)}</span>
           </p>
+          {hasRounding(r) && <Line label="Pembulatan" value={r.rounding} />}
+          {hasRounding(r) && <Line label="Harus dibayar" value={r.amountDue} />}
           <Line label={r.paymentMethod} value={r.paid} />
           <Line label="Kembalian" value={r.change} />
           {r.receivableRest !== null && <Line label="Sisa kasbon" value={r.receivableRest} />}

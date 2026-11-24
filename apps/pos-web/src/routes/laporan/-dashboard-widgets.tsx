@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card } from '@umkmall/ui/compositions'
 import { Alert, SegmentedControl, Skeleton } from '@umkmall/ui/primitives'
 import { loadDashboard, rupiah, type Dashboard, type Metrics, type Period } from './-api'
+import { hasRounding } from '../kasir/-money'
 import { change } from './-reports'
 
 // U5 dashboard widgets, rendered by the dashboard page on `/` (owned by the UI parity slice) with one line.
@@ -64,6 +65,11 @@ export function MetricWidgets() {
           </Card>
         ))}
       </div>
+      {state.status === 'ok' && hasRounding(state.data.current) && (
+        <p className="text-sm text-default-secondary">
+          Pembulatan {rupiah(state.data.current.rounding)} (di luar pendapatan dan laba kotor)
+        </p>
+      )}
     </section>
   )
 }

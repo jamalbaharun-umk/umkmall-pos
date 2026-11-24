@@ -147,7 +147,7 @@ describe('validation: sales, shifts, suppliers, purchasing, stock opname', () =>
         sell({ lines: [{ productId, qty: 1 }], paid: 4999 }),
         422,
         'paid',
-        'Uang dibayar kurang dari total',
+        'Uang dibayar kurang dari jumlah yang harus dibayar',
       );
       expect((under as unknown as { total: number }).total).toBe(5000);
     });

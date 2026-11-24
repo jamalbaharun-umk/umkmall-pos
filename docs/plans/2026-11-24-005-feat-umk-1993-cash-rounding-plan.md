@@ -1,7 +1,7 @@
 # UMK-1993: round cash totals up to the next Rp100, server part
 
 Unit: U3 follow-up (sales), touching the void (UMK-1962), the shift cash figures (UMK-1963) and the reports (U5).
-Linear: UMK-1993. UI ("Pembulatan" line on the cashier screen and the receipt) is a later change.
+Linear: UMK-1993. UI ("Pembulatan" on the cashier screen, receipt and reports) is in pos-web (see the [qa] line).
 
 ## Goal
 
@@ -30,7 +30,7 @@ tax base and product revenue stay exactly as they are today.
   - `sale_voids_ck`: `cash_returned + transfer_returned + receivable_cancelled = total + rounding`.
   The database cannot see the payment method in a row check, so "non-cash is 0" is enforced by the service and
   pinned by tests.
-- **Sale endpoint:** a cash sale needs `paid >= amountDue` (422 "Uang dibayar kurang dari total", with `total`,
+- **Sale endpoint:** a cash sale needs `paid >= amountDue` (422 "Uang dibayar kurang dari jumlah yang harus dibayar", with `total`,
   `rounding` and `amountDue` in the body); `change = paid - amountDue`. Non-cash still needs `paid = total`.
   The request has no rounding field (strict schema): the server computes it.
 - **Responses:** `POST /sales`, `GET /sales/:id` and `GET /sales/:id/receipt` carry `rounding` and `amountDue`
@@ -70,9 +70,13 @@ tax base and product revenue stay exactly as they are today.
 - [test] Revert-red: the service line that rounds, the void amount, and the report reversal are each broken
   once to see the tests fail, then restored.
 - [test] The amount charged through payment-api equals the amount due including rounding. NOT done here:
-  pos-api does not call payment-api yet (see Follow-ups).
+  stays a follow-up, pos-api does not call payment-api yet (see Follow-ups).
 - [cmd] `npm run lint && npm run typecheck && npm run build`, `PGTEST_DB=pos_u1993 npx jest --runInBand`.
-- [qa] Not in this change: cashier screen and receipt show "Pembulatan" when it is not zero (UMK-1993 UI).
+- [qa] Done (pos-web): the cashier screen shows "Pembulatan" and "Harus dibayar" for cash and computes change from
+  the amount due; the printed receipt and the sale detail show both rows when rounding is above zero; the
+  dashboard, the sales, products and shift reports and the history summary show "Pembulatan" as a line of its
+  own, outside revenue and profit. Covered by unit tests of the pure helpers only (`hasRounding`, `cashRounding`,
+  the report definitions); the screens themselves were not exercised in a browser.
 
 ## Files
 
@@ -93,11 +97,8 @@ the new fields.
 
 - **payment-api integration:** when pos-api starts to record payments in payment-api, the amount of a cash
   payment is `amountDue` (`total + rounding`), and a void asks for that amount back. Add the DoD test there.
-- **UI (UMK-1993), needed before this reaches cashiers:** `apps/pos-web/src/routes/kasir/index.tsx` still
-  computes the amount due and the change from `total`. Until it applies the same formula, a cash sale whose
-  total is off a Rp100 boundary is refused when the cashier presses "Uang pas" (422 "Uang dibayar kurang dari
-  total"; the body now carries `rounding` and `amountDue`), and the change shown before payment is too high by
-  the rounding. The screen, the success dialog and the receipt must show `amountDue` and the "Pembulatan" line.
+- **UI (UMK-1993):** done in pos-web (cashier screen, receipt, sale detail, history
+  summary, reports). The cashier screen applies the same formula as pos-api, so "Uang pas" pays `amountDue`.
 - **Consumer pricing rules:** rounding up always favours the store; one check before real users (M4, noted on
   the issue).
 - **Accounting treatment:** `rounding` is reported apart and is in no profit figure. Whether it is booked as
@@ -105,4 +106,4 @@ the new fields.
 
 ## Not in scope
 
-UI, rounding of non-cash or kasbon amounts, a per-store switch or another rounding step, payment-api.
+rounding of non-cash or kasbon amounts, a per-store switch or another rounding step, payment-api.

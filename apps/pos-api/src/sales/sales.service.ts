@@ -245,7 +245,7 @@ export class SalesService {
     } else if (method.isCash) {
       if (input.paid < amountDue)
         throw fail(
-          'Uang dibayar kurang dari total',
+          'Uang dibayar kurang dari jumlah yang harus dibayar',
           { total, rounding, amountDue },
           'paid',
         );

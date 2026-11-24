@@ -56,3 +56,6 @@ export const cashDifference = (counted: number, expected: number) => {
 export function cashRounding(total: number): number {
   return (100 - (total % 100)) % 100
 }
+
+/** Whether a sale or total carries cash rounding worth a "Pembulatan" line (older responses may lack the field). */
+export const hasRounding = (x: { rounding?: number }) => (x.rounding ?? 0) > 0

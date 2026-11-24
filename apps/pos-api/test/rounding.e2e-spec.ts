@@ -150,7 +150,9 @@ describe('cash rounding to the next Rp100 (UMK-1993)', () => {
         // One rupiah short of the amount due is refused; the amount due itself leaves no change.
         const short = await s.sell({ paid: due - 1 }).expect(422);
         expect(short.body).toMatchObject({
-          errors: { paid: 'Uang dibayar kurang dari total' },
+          errors: {
+            paid: 'Uang dibayar kurang dari jumlah yang harus dibayar',
+          },
           total: price,
           rounding,
           amountDue: due,
@@ -232,7 +234,7 @@ describe('cash rounding to the next Rp100 (UMK-1993)', () => {
       // The unrounded total no longer settles a cash sale.
       const short = await s.sell({ paid: TOTAL }).expect(422);
       expect(short.body).toMatchObject({
-        errors: { paid: 'Uang dibayar kurang dari total' },
+        errors: { paid: 'Uang dibayar kurang dari jumlah yang harus dibayar' },
         total: TOTAL,
         rounding: ROUNDING,
         amountDue: DUE,

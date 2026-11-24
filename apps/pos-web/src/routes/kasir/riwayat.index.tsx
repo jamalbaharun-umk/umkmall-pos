@@ -15,6 +15,7 @@ import {
 import { useState } from 'react'
 import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { loadHistory } from './-api'
+import { hasRounding } from './-money'
 
 const PER_PAGE = 20
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -66,6 +67,11 @@ function HistoryPage() {
         <Stat label={`Jumlah penjualan (${period})`} value={String(summary.count)} />
         <Stat label={`Diskon & voucher (${period})`} value={rupiah(summary.discount + summary.voucherDiscount)} />
       </div>
+      {hasRounding(summary) && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Stat label={`Pembulatan (${period})`} value={rupiah(summary.rounding)} />
+        </div>
+      )}
       <Card padding="none" variant="outlined">
         <form
           className="flex flex-wrap items-end gap-3 p-4"
@@ -135,6 +141,7 @@ function HistoryPage() {
                   <TableHead className="text-right">Diskon</TableHead>
                   <TableHead className="text-right">Voucher</TableHead>
                   <TableHead className="text-right">Pajak</TableHead>
+                  <TableHead className="text-right">Pembulatan</TableHead>
                   {showCost && <TableHead className="text-right">Total modal</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -166,6 +173,7 @@ function HistoryPage() {
                     <TableCell className="text-right">{rupiah(s.discount)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.voucherDiscount)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.tax)}</TableCell>
+                    <TableCell className="text-right">{rupiah(s.rounding)}</TableCell>
                     {showCost && <TableCell className="text-right">{rupiah(s.costTotal ?? 0)}</TableCell>}
                   </TableRow>
                 ))}
