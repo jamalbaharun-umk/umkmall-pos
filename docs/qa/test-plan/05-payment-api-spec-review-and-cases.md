@@ -10,7 +10,7 @@ different amount, refuse refund, not-found-then-found, cancel-unsupported, net-a
 
 ## A. Findings, most serious first
 
-Status: all 16 findings were adopted in spec rev 15. Differences from the proposed fixes: M14, M5 and M7 follow the D11 pattern (failed/expired/cancelled never become paid; late money becomes an unmatched receipt that is auto-refunded). "Supervisor" = any actor with `sales.void`. Owner decisions 24 Nov: late payment auto-refund; shift close refused while a sale awaits payment; QR validity 15 minutes. Still open for the owner: D13 (switch to cash, later QR auto-refund) and M19 (failed refund older than 30 days stops blocking erasure).
+Status: all 16 findings were adopted in spec rev 15. Differences from the proposed fixes: M14, M5 and M7 follow the D11 pattern (failed/expired/cancelled never become paid; late money becomes an unmatched receipt that is auto-refunded). "Supervisor" = any actor with `sales.void`. Owner decisions 24 Nov: late payment auto-refund; shift close refused while a sale awaits payment; QR validity 15 minutes. D13 and M19 were approved by the owner as proposed; the spec is final.
 
 | # | Sev | Code | Finding | Proposed fix |
 |---|---|---|---|---|
@@ -76,7 +76,7 @@ Type auto-api unless noted. Each asserts at the end the **balance check**: sum(p
 |---|---|---|
 | D11 | P0 | Order has active payment A; fake PG reports a second paid payment B and a late paid on expired C: both stored as unmatched-receipt rows (outside the unique index), no unique violation, `settle` returns success, refunds issued once each; statuses of A and C unchanged |
 | D12 | P0 | QR validity 15 minutes (owner decision). Cancel the old QR at any minute (PG can close it, or `canCancel=false` per D13): a new attempt is allowed immediately with a new attempt number, PG reference and QR; the old key still returns the old payment; no wait for the 10-minute grace (grace applies only to the automatic cancel). Also: automatic path with nobody pressing: sale cancelled after expiry + grace. Money arriving on the old QR becomes an unmatched receipt and is auto-refunded once |
-| D13 | P1 | Adapter `canCancel=false`: cancel answers "QR berlaku sampai HH:MM"; switch to cash behaves per owner decision; late QR payment after cash is refunded once and never counted twice |
+| D13 | P1 | Adapter `canCancel=false` (owner approved): screen says the QR stays valid until HH:MM; cashier may switch to cash immediately, old payment becomes `cancelled`; a later payment on the old QR becomes an unmatched receipt, auto-refunded exactly once, never counted twice in revenue or drawer |
 | M14 | P0 | Create times out, lookups say not found: `failed` is only set after two lookups at least 1 minute apart. PG later reports money: payment status STAYS `failed` (no failed -> paid), an unmatched-receipt row appears and is auto-refunded once |
 | M15 | P0 | CASHAC paid + completion failure: sale completes via job, drawer row once, cashier alert if never confirmed; no automatic void |
 | M16 | P0 | Outbox order `expired` then `paid` and reverse, plus pos-api down in between: sale never completes after cancel; no oversell of the last unit (STK-009 style) |
@@ -84,7 +84,7 @@ Type auto-api unless noted. Each asserts at the end the **balance check**: sum(p
 | M18 | P1 | Fake PG reports gross 10.000 with fee 700 and net 9.300: treated as matched; gross differs by Rp1: mismatch |
 | V8 | P1 | Refund accepted then refused: report shows customer-owed liability Rp X; marking manual refund clears it; revenue/profit not double reversed |
 | V9 | P0 | System auto-refund has actor `system`, no PIN prompt, audited; a human refund without PIN is refused; the PIN approver must be any actor holding `sales.void` (checked by pos-api) |
-| M19 | P1 | Payment pending 40 days (fake clock) and refund_failed: purge flow documented outcome, eventually succeeds; 409 message names what blocks |
+| M19 | P1 | Failed refund older than 30 days (fake clock) no longer blocks store erasure (owner approved); younger than 30 days: purge answers 409 naming what blocks; pending payments always end via expiry so they never block forever |
 | M20 | P1 | Poison event: parked after N attempts with alert; later events for the payment still processed; reconcile settles |
 | M21 | P1 | Payment paid at 23:59:30 store time settled by PG at 00:01: no false mismatch within tolerance; paid here but absent at PG: high-severity alert, no auto-refund |
 | M22 | P1 | Kasbon sale creates a receivable, no paid payment; instalment by static QRIS has payment with order ref = receivable id; void of the sale handles both |
