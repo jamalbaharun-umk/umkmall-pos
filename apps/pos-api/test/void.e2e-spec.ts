@@ -202,7 +202,7 @@ describe('void a full sale (UMK-1962)', () => {
       // The cash did come in and went out again: both stay visible.
       expect(await current(s.auth)).toMatchObject({
         cashSales: 15_000,
-        salesCount: 0,
+        salesCount: 1,
         cashOut: 15_000,
         voidRefunds: 15_000,
         expectedCash: 100_000,
@@ -228,7 +228,7 @@ describe('void a full sale (UMK-1962)', () => {
       const closed = await close(s.auth, 100_000);
       expect(closed.body).toMatchObject({
         cashSales: 15_000,
-        salesCount: 0,
+        salesCount: 1,
         cashOut: 15_000,
         voidRefunds: 15_000,
         expectedCash: 100_000,
@@ -1096,7 +1096,7 @@ describe('void a full sale (UMK-1962)', () => {
   });
 
   describe('reports', () => {
-    it('dashboard, sales, product and shift reports and the history summary leave the voided sale out', async () => {
+    it('a same-day void nets to zero in the dashboard, sales, product and shift reports', async () => {
       const s = await shop();
       const shift = await open(s.auth);
       const kept = await sell(s.auth, {
@@ -1138,9 +1138,22 @@ describe('void a full sale (UMK-1962)', () => {
       };
       expect(after.dash).toMatchObject(one);
       expect(after.sales.totals).toMatchObject({ ...one, qty: 2 });
+      // The voided receipt stays as rung up; its reversal follows with the same figures, negative.
       expect(
-        (after.sales.rows as { number: number }[]).map((r) => r.number),
-      ).toEqual([kept.body.number]);
+        (
+          after.sales.rows as {
+            number: number;
+            kind: string;
+            qty: number;
+            lineTotal: number;
+            cost: number;
+          }[]
+        ).map((r) => [r.number, r.kind, r.qty, r.lineTotal, r.cost]),
+      ).toEqual([
+        [kept.body.number, 'sale', 2, 10_000, 4000],
+        [gone.body.number, 'sale', 3, 15_000, 6000],
+        [gone.body.number, 'void', -3, -15_000, -6000],
+      ]);
       expect(after.products.totals).toMatchObject({ ...one, qty: 2 });
       expect(after.products.rows).toEqual([
         expect.objectContaining({ qty: 2, sales: 10_000, cost: 4000 }),
@@ -1151,9 +1164,11 @@ describe('void a full sale (UMK-1962)', () => {
           ...one,
           cashOut: 15_000,
           voidRefunds: 15_000,
+          voidCount: 1,
         }),
       ]);
       expect(after.shifts.totals).toMatchObject(one);
+      expect(after.dash.voidCount).toBe(1);
 
       // History still lists both receipts, with their status; the money summary counts one.
       expect(after.history.total).toBe(2);
@@ -1174,6 +1189,172 @@ describe('void a full sale (UMK-1962)', () => {
         voucherDiscount: 0,
         voidedCount: 1,
       });
+    });
+
+    it("a void of yesterday's receipt is a reversal in today's reports; yesterday's never change", async () => {
+      const s = await shop();
+      await put(s.auth, '/sales/settings', { taxBps: 1000 }).expect(200);
+      const oldShift = await open(s.auth);
+      // Yesterday: 3 × Rp5.000 + 10% tax = Rp16.500, cost Rp6.000, in a shift that was closed.
+      const old = await sell(s.auth, {
+        lines: [{ productId: s.productId, qty: 3 }],
+        paid: 16_500,
+      });
+      await close(s.auth, 116_500);
+      await admin`update pos.sales set created_at = created_at - interval '1 day' where id = ${old.body.id}`;
+      await admin`update pos.shifts set opened_at = opened_at - interval '1 day',
+        closed_at = closed_at - interval '1 day' where id = ${oldShift.body.id}`;
+
+      const day = (from: string, to = from) => `from=${from}&to=${to}`;
+      const read = async (range: string) => {
+        const [sales, products, shifts] = await Promise.all(
+          ['sales', 'products', 'shifts'].map((r) =>
+            get(s.auth, `/reports/${r}?${range}`).expect(200),
+          ),
+        );
+        return {
+          sales: sales.body as {
+            totals: object;
+            rows: Record<string, unknown>[];
+          },
+          products: products.body as { totals: object; rows: object[] },
+          shifts: shifts.body as { totals: object; rows: object[] },
+        };
+      };
+      const yesterday = day(jakartaDay(-1));
+      const before = await read(yesterday);
+      expect(before.sales.totals).toMatchObject({
+        salesCount: 1,
+        qty: 3,
+        grossSales: 15_000,
+        tax: 1500,
+        revenue: 16_500,
+        cost: 6000,
+        grossProfit: 9000,
+        voidCount: 0,
+      });
+
+      // Today: one sale of 1 × Rp5.000 + tax = Rp5.500 (cost Rp2.000), then the void of yesterday's receipt.
+      const shift = await open(s.auth);
+      const kept = await sell(s.auth, {
+        lines: [{ productId: s.productId, qty: 1 }],
+        paid: 5500,
+      });
+      await voidSale(s.auth, old.body.id, s.approval).expect(201);
+
+      // Yesterday is exactly as it was: totals, rows, the closed shift's row.
+      expect(await read(yesterday)).toEqual(before);
+
+      // Today carries the reversal: 5.500 − 16.500, and so on for every figure.
+      const net = {
+        salesCount: 0,
+        grossSales: -10_000,
+        discount: 0,
+        voucher: 0,
+        tax: -1000,
+        revenue: -11_000,
+        cost: -4000,
+        grossProfit: -6000,
+      };
+      const now = await read(day(today()));
+      expect(now.sales.totals).toMatchObject({ ...net, qty: -2, voidCount: 1 });
+      expect(
+        now.sales.rows.map((r) => [
+          r.number,
+          r.kind,
+          r.qty,
+          r.lineTotal,
+          r.cost,
+          r.grossProfit,
+        ]),
+      ).toEqual([
+        [kept.body.number, 'sale', 1, 5000, 2000, 3000],
+        [old.body.number, 'void', -3, -15_000, -6000, -9000],
+      ]);
+      expect(now.products.totals).toMatchObject({ ...net, qty: -2 });
+      expect(now.products.rows).toEqual([
+        expect.objectContaining({
+          qty: -2,
+          sales: -10_000,
+          cost: -4000,
+          grossProfit: -6000,
+        }),
+      ]);
+      expect(now.shifts.rows).toEqual([
+        expect.objectContaining({
+          shiftId: shift.body.id,
+          ...net,
+          voidCount: 1,
+          voidRefunds: 16_500,
+          cashOut: 16_500,
+        }),
+      ]);
+      expect(now.shifts.totals).toMatchObject(net);
+      const dash = await get(s.auth, '/reports/dashboard?period=today');
+      expect(dash.body.current).toMatchObject({ ...net, voidCount: 1 });
+
+      // Both days together: only today's sale is left.
+      const both = await read(day(jakartaDay(-1), today()));
+      const left = {
+        salesCount: 1,
+        grossSales: 5000,
+        tax: 500,
+        revenue: 5500,
+        cost: 2000,
+        grossProfit: 3000,
+      };
+      expect(both.sales.totals).toMatchObject({ ...left, qty: 1 });
+      expect(both.products.totals).toMatchObject({ ...left, qty: 1 });
+      expect(both.products.rows).toEqual([
+        expect.objectContaining({ qty: 1, sales: 5000, cost: 2000 }),
+      ]);
+      expect(both.shifts.totals).toMatchObject(left);
+      expect(both.shifts.rows).toHaveLength(2);
+    });
+
+    it('a void without drawer cash is a reversal in the shift open at the void, or in no shift', async () => {
+      const s = await shop();
+      const first = await open(s.auth);
+      const sale = (qty: number) =>
+        sell(s.auth, {
+          lines: [{ productId: s.productId, qty }],
+          paymentMethodId: s.debitId,
+          paid: qty * 5000,
+        });
+      const a = await sale(1);
+      const b = await sale(2);
+      await close(s.auth, 100_000);
+      // No open shift: the day's figures carry the reversal, no shift row does.
+      const noShift = await voidSale(s.auth, a.body.id, s.approval).expect(201);
+      expect(noShift.body.shiftId).toBeNull();
+      const second = await open(s.auth);
+      const inShift = await voidSale(s.auth, b.body.id, s.approval).expect(201);
+      expect(inShift.body.shiftId).toBe(second.body.id);
+
+      const range = `from=${today()}&to=${today()}`;
+      const shifts = await get(s.auth, `/reports/shifts?${range}`).expect(200);
+      expect(
+        (shifts.body.rows as Record<string, unknown>[]).map((r) => [
+          r.shiftId,
+          r.salesCount,
+          r.revenue,
+          r.voidCount,
+          r.cashOut,
+        ]),
+      ).toEqual([
+        [first.body.id, 2, 15_000, 0, 0],
+        [second.body.id, -1, -10_000, 1, 0],
+      ]);
+      const sales = await get(s.auth, `/reports/sales?${range}`).expect(200);
+      expect(sales.body.totals).toMatchObject({
+        salesCount: 0,
+        revenue: 0,
+        cost: 0,
+        qty: 0,
+        voidCount: 2,
+      });
+      const products = await get(s.auth, `/reports/products?${range}`);
+      expect(products.body.rows).toEqual([]);
     });
   });
 

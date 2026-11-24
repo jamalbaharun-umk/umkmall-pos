@@ -69,7 +69,8 @@ export const voidPins = pos
 
 /**
  * One row per voided sale: the audit record (who started, who approved, why, when) and the reversal
- * (the sale's figures at the void, all positive: reports subtract or exclude them).
+ * (the sale's figures, all positive). Reports subtract them on the day and in the shift of the void
+ * (`created_at`, `shift_id`); the sale stays in the figures of its own day and shift.
  */
 export const saleVoids = pos
   .table(
@@ -88,7 +89,8 @@ export const saleVoids = pos
       actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
       approvedBy: uuid('approved_by').notNull(),
       approvedByKind: text('approved_by_kind', { enum: ACTOR_KINDS }).notNull(),
-      // The open shift whose drawer paid the cash back; null when no cash left a drawer.
+      // The actor's open shift when the void was done: its drawer paid the cash back, and the shift report
+      // shows the reversal there. Null only when no cash left a drawer and the actor had no open shift.
       shiftId: uuid('shift_id'),
       // Money given back: from the drawer, and by transfer (never touches a drawer).
       cashReturned: rupiah('cash_returned').notNull().default(0),

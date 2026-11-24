@@ -19,7 +19,7 @@ import {
   staff,
 } from '../db/schema';
 import { cancelReceivable } from '../receivables/receivables.controller';
-import { recordShiftCash } from '../shifts/cash-ledger';
+import { lockOpenShift, recordShiftCash } from '../shifts/cash-ledger';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import { StockService, type Tx } from '../stock/stock.service';
@@ -269,7 +269,9 @@ export class VoidService {
     const transferReturned = sum(false);
 
     // Cash leaves the drawer of the shift that is open NOW (the actor's); the sale's own shift, open or
-    // closed, is not touched. Money returned by transfer never reaches a drawer and needs no shift.
+    // closed, is not touched. Money returned by transfer never reaches a drawer and needs no shift; the
+    // actor's open shift, when there is one, is still recorded, so the shift report shows the reversal
+    // in the shift where the void was done.
     const id = randomUUID();
     const shiftId =
       cashReturned > 0
@@ -284,7 +286,7 @@ export class VoidService {
             },
             NO_SHIFT,
           )
-        : null;
+        : ((await lockOpenShift(tx, s))?.id ?? null);
 
     if (sale.voucherId) await restoreVoucher(tx, s.tenantId, sale.voucherId);
     await this.stock.restoreSale(tx, {

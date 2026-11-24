@@ -22,8 +22,6 @@ const TRUNC: Record<Period, string> = {
 };
 
 type Row = Record<string, unknown>;
-/** A voided sale (UMK-1962) is in no report: its row stays in pos.sales, so every query on it adds this. */
-const NOT_VOID = sql.raw(`status <> 'void'`);
 const n = (v: unknown) => Number(v ?? 0);
 /** Who rang it up: the owner, or the cashier's name (Lakasir's cashier report shows the seller of each sale). */
 const cashierName = (r: Row) =>
@@ -99,16 +97,28 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Sales rung up in `[start, end)` minus the voids DONE in `[start, end)` (UMK-1962, owner ruling on
+   * G-09): a sale stays in the figures of its own day for ever, and its void is a reversal in the figures
+   * of the day the void was done. A same-day void nets to zero; a void of an older receipt makes that
+   * day's figures lower (even negative) and never changes an earlier day. The reversal uses the figures
+   * stored on pos.sale_voids (the sale's own, cost as stored at the sale).
+   */
   private async salesMetrics(tenantId: string, start: SQL, end: SQL) {
+    const sums = (table: SQL) => sql`
+      (select count(*) as n, coalesce(sum(subtotal), 0) as gross_sales,
+              coalesce(sum(discount), 0) as discount,
+              coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
+              coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost
+         from ${table}
+        where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end})`;
     const [r] = await this.rows(sql`
-      select count(*) as sales_count, coalesce(sum(subtotal), 0) as gross_sales,
-             coalesce(sum(discount), 0) as discount,
-             coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
-             coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost
-        from pos.sales
-       where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end}
-         and ${NOT_VOID}`);
-    return metrics(r);
+      select s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
+             s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
+             s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
+             v.n as void_count
+        from ${sums(sql`pos.sales`)} s, ${sums(sql`pos.sale_voids`)} v`);
+    return { ...metrics(r), voidCount: n(r.void_count) };
   }
 
   /**
@@ -146,27 +156,43 @@ export class ReportsService {
     };
   }
 
+  /**
+   * The lines behind `salesMetrics`: every line of a sale rung up in the range, plus, for every void done
+   * in the range, the voided sale's lines again with negative quantity, amount and cost, dated at the void
+   * and attributed to whoever started it.
+   */
+  private lineRows(tenantId: string, start: SQL, end: SQL) {
+    return sql`(
+      select 'sale' as kind, s.created_at as at, s.number, s.actor_kind, s.actor_id,
+             l.id as line_id, l.product_id, l.name, l.qty, l.unit_price, l.line_total, l.cost_total
+        from pos.sale_lines l
+        join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
+       where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
+      union all
+      select 'void', v.created_at, s.number, v.actor_kind, v.actor_id,
+             l.id, l.product_id, l.name, -l.qty, l.unit_price, -l.line_total, -l.cost_total
+        from pos.sale_voids v
+        join pos.sales s on s.tenant_id = v.tenant_id and s.id = v.sale_id
+        join pos.sale_lines l on l.tenant_id = v.tenant_id and l.sale_id = v.sale_id
+       where v.tenant_id = ${tenantId} and v.created_at >= ${start} and v.created_at < ${end})`;
+  }
+
   async sales(tenantId: string, range: DateRange) {
     const tz = await this.timezone(tenantId);
     const { start, end } = this.bounds(range, tz);
+    const lineRows = this.lineRows(tenantId, start, end);
     const [lines, totals, [q]] = await Promise.all([
       this.rows(sql`
-        select s.number, to_char(s.created_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as time,
-               s.actor_kind, st.name as staff_name,
-               p.sku, l.name, l.qty, l.unit_price, l.line_total, l.cost_total
-          from pos.sale_lines l
-          join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
-          join pos.products p on p.tenant_id = l.tenant_id and p.id = l.product_id
-          left join pos.staff st on st.tenant_id = s.tenant_id and st.id = s.actor_id
-         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end} and s.${NOT_VOID}
-         order by s.created_at, s.number, l.id
+        select x.number, x.kind, to_char(x.at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as time,
+               x.actor_kind, st.name as staff_name,
+               p.sku, x.name, x.qty, x.unit_price, x.line_total, x.cost_total
+          from ${lineRows} x
+          join pos.products p on p.tenant_id = ${tenantId} and p.id = x.product_id
+          left join pos.staff st on st.tenant_id = ${tenantId} and st.id = x.actor_id
+         order by x.at, x.number, x.kind, x.line_id
          limit ${ROW_CAP + 1}`),
       this.salesMetrics(tenantId, start, end),
-      this.rows(sql`
-        select coalesce(sum(l.qty), 0) as qty
-          from pos.sale_lines l
-          join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
-         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end} and s.${NOT_VOID}`),
+      this.rows(sql`select coalesce(sum(x.qty), 0) as qty from ${lineRows} x`),
     ]);
     return {
       ...range,
@@ -174,6 +200,8 @@ export class ReportsService {
       truncated: lines.length > ROW_CAP,
       rows: lines.slice(0, ROW_CAP).map((r) => ({
         number: n(r.number),
+        // `void`: the reversal of a voided receipt, at the time of the void, with negative figures.
+        kind: r.kind as 'sale' | 'void',
         time: r.time as string,
         cashier: cashierName(r),
         sku: r.sku as string,
@@ -193,14 +221,14 @@ export class ReportsService {
     const tz = await this.timezone(tenantId);
     const { start, end } = this.bounds(range, tz);
     const [rows, totals] = await Promise.all([
+      // A product sold and voided inside the range nets to nothing and is left out.
       this.rows(sql`
-        select p.id, p.sku, p.name, sum(l.qty) as qty, sum(l.line_total) as sales,
-               sum(l.cost_total) as cost
-          from pos.sale_lines l
-          join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
-          join pos.products p on p.tenant_id = l.tenant_id and p.id = l.product_id
-         where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end} and s.${NOT_VOID}
+        select p.id, p.sku, p.name, sum(x.qty) as qty, sum(x.line_total) as sales,
+               sum(x.cost_total) as cost
+          from ${this.lineRows(tenantId, start, end)} x
+          join pos.products p on p.tenant_id = ${tenantId} and p.id = x.product_id
          group by p.id
+        having sum(x.qty) <> 0 or sum(x.line_total) <> 0 or sum(x.cost_total) <> 0
          order by sales desc, p.name`),
       this.salesMetrics(tenantId, start, end),
     ]);
@@ -225,20 +253,30 @@ export class ReportsService {
   async shifts(tenantId: string, range: DateRange) {
     const tz = await this.timezone(tenantId);
     const { start, end } = this.bounds(range, tz);
+    const sums = (table: SQL) => sql`
+      select count(*) as n, coalesce(sum(x.subtotal), 0) as gross_sales,
+             coalesce(sum(x.discount), 0) as discount,
+             coalesce(sum(x.voucher_discount), 0) as voucher, coalesce(sum(x.tax), 0) as tax,
+             coalesce(sum(x.total), 0) as revenue, coalesce(sum(x.cost_total), 0) as cost
+        from ${table} x
+       where x.tenant_id = sh.tenant_id and x.shift_id = sh.id`;
+    // A shift's row = the sales rung up in it minus the voids done in it (UMK-1962). The shift a voided
+    // sale was rung up in keeps that sale, so a closed shift's row never changes. Each part is
+    // aggregated apart (lateral), so none multiplies another's rows.
     const rows = await this.rows(sql`
       select sh.id, sh.actor_kind, st.name as staff_name,
              to_char(sh.opened_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as opened_at,
              to_char(sh.closed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as closed_at,
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
              c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds,
-             count(s.id) as sales_count, coalesce(sum(s.subtotal), 0) as gross_sales,
-             coalesce(sum(s.discount), 0) as discount,
-             coalesce(sum(s.voucher_discount), 0) as voucher, coalesce(sum(s.tax), 0) as tax,
-             coalesce(sum(s.total), 0) as revenue, coalesce(sum(s.cost_total), 0) as cost
+             s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
+             s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
+             s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
+             v.n as void_count
         from pos.shifts sh
         left join pos.staff st on st.tenant_id = sh.tenant_id and st.id = sh.actor_id
-        left join pos.sales s on s.tenant_id = sh.tenant_id and s.shift_id = sh.id and s.${NOT_VOID}
-        -- The shift's cash ledger (UMK-1963), aggregated apart so it does not multiply the sales rows.
+        cross join lateral (${sums(sql`pos.sales`)}) s
+        cross join lateral (${sums(sql`pos.sale_voids`)}) v
         cross join lateral (
           select coalesce(sum(e.amount) filter (where e.direction = 'in'), 0) as cash_in,
                  coalesce(sum(e.amount) filter (where e.direction = 'out'), 0) as cash_out,
@@ -249,7 +287,6 @@ export class ReportsService {
             from pos.shift_cash_entries e
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
-       group by sh.id, st.name, c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds
        order by sh.opened_at`);
     const items = rows.map((r) => {
       const counted = r.counted_cash == null ? null : n(r.counted_cash);
@@ -262,6 +299,7 @@ export class ReportsService {
         openingCash: n(r.opening_cash),
         receivablePayments: n(r.receivable_payments),
         voidRefunds: n(r.void_refunds),
+        voidCount: n(r.void_count),
         cashIn: n(r.cash_in),
         cashOut: n(r.cash_out),
         expectedCash: expected,
@@ -280,7 +318,8 @@ export class ReportsService {
         | 'tax'
         | 'revenue'
         | 'cost'
-        | 'grossProfit',
+        | 'grossProfit'
+        | 'voidCount',
     ) => items.reduce((a, r) => a + r[k], 0);
     return {
       ...range,
@@ -296,6 +335,7 @@ export class ReportsService {
         revenue: sum('revenue'),
         cost: sum('cost'),
         grossProfit: sum('grossProfit'),
+        voidCount: sum('voidCount'),
       },
     };
   }
