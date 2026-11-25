@@ -138,6 +138,31 @@ test per resource, idempotent money changes), with these differences:
   `PORT` (default 3001), and the optional `PAYMENT_*` flow settings (`src/config.ts`, names in `.env.example`).
   Commit scope: `payment-api`.
 
+### pos-api's side (`apps/pos-api/src/payments-client/`)
+
+Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md).
+
+- **Switch:** `PAYMENT_API_URL` unset → payment-api is off and pos-api works as before (one-step sale, nothing sent);
+  this is how local dev and every test but `test/payments-integration.e2e-spec.ts` run. Set → `PAYMENT_SERVICE_KEY`
+  is required. Also `PAYMENT_API_TIMEOUT_MS` (5000), `POS_PAYMENT_RECONCILE_INTERVAL_SECONDS` (60, 0 = no timer),
+  `POS_PAYMENT_RECONCILE_AFTER_SECONDS` (120).
+- **Only `payments.client.ts` reads the service key and writes `X-Payment-Service-Key` and `X-Tenant-Id`** (guard
+  test). Every client method takes the tenant id first: `session.tenantId`, or the tenant of the pos row the job or
+  the purge is working on. Never log the key, a header or a body.
+- **A sale is two steps** (cash → `cash`, debit → `edc_debit`, wallet → `static_qris`): written as
+  `awaiting_payment` with stock and voucher taken, then charged with key `<saleId>:1` for the amount due (cash:
+  `total + rounding`) and completed on `paid`. No clear answer → 503 and the sale stays `awaiting_payment`; a payment
+  closed unpaid → `cancelled`, stock and voucher back. A cancelled sale is never completed. All of this is
+  `PaymentSync.settleSale`, under the sale's row lock.
+- **`awaiting_payment` and `cancelled` sales are not receipts:** every list, report and shift total filters
+  `FINAL_SALE_STATUSES` (`db/schema/sales.ts`). A new query on `pos.sales` must too. A shift does not close while one
+  of its sales awaits payment.
+- **Kasbon payments and voids are recorded after the pos commit** (`receivable_payments.seq`/`payment_id`, order
+  reference `<receivableId>:<seq>`; `sale_voids.payment_sync_pending`), and the job (`PaymentSync.tick`) repeats what
+  failed. A void sends the void's reason, actor and PIN-verified approver.
+- **The purge calls payment-api's purge** inside its transaction, before any delete; a failure answers 503.
+- The integration test starts the real payment-api app in-process on database `<PAYTEST_DB or payment_test>_pos`.
+
 ## Commands
 
 ```bash

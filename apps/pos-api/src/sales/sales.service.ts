@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import {
+  ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
@@ -21,6 +23,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  FINAL_SALE_STATUSES,
   members,
   paymentMethods,
   receivables,
@@ -32,6 +35,8 @@ import {
   shifts,
   staff,
 } from '../db/schema';
+import { PaymentSync } from '../payments-client/payment-sync.service';
+import { PaymentApiError } from '../payments-client/payments.client';
 import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -100,6 +105,7 @@ export class SalesService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly stock: StockService,
+    private readonly payments: PaymentSync,
   ) {}
 
   private async byKey(tenantId: string, key: string) {
@@ -116,16 +122,45 @@ export class SalesService {
     if (!prior) return null;
     if (prior.requestHash !== null && prior.requestHash !== hash)
       throw fail('Permintaan berbeda dengan transaksi sebelumnya');
-    return this.get(s, prior.id, true);
+    return this.finish(s, prior.id);
+  }
+
+  /**
+   * Step 2 (UMK-1991): charge through payment-api and complete the sale. For a sale that is already final
+   * (a replay, a kasbon, payment-api off) it only reads the status. A sale still awaiting payment answers
+   * 503: the cashier repeats the request with the same Idempotency-Key, or the job finishes it.
+   */
+  private async finish(s: PosSession, id: string) {
+    const status = await this.payments
+      .settleSale(s.tenantId, id, 'charge')
+      .catch((e: unknown) => {
+        if (e instanceof PaymentApiError) return 'awaiting_payment' as const;
+        throw e;
+      });
+    if (status === 'awaiting_payment')
+      throw new ServiceUnavailableException({
+        message:
+          'Layanan pembayaran tidak bisa dihubungi. Penjualan menunggu pembayaran, coba lagi.',
+        saleId: id,
+        status,
+      });
+    if (status === 'cancelled')
+      throw new ConflictException({
+        message:
+          'Pembayaran gagal dan penjualan ini dibatalkan. Buat transaksi baru.',
+        saleId: id,
+        status,
+      });
+    return this.get(s, id, true);
   }
 
   async create(s: PosSession, key: string, input: SaleInput) {
     const hash = requestHash(input);
     const prior = await this.replay(s, key, hash);
     if (prior) return prior;
-    let id: string;
+    let created: { id: string; downPaymentId: string | null };
     try {
-      id = await this.db.transaction((tx) =>
+      created = await this.db.transaction((tx) =>
         this.insert(tx, s, key, input, hash),
       );
     } catch (e) {
@@ -136,7 +171,13 @@ export class SalesService {
       }
       throw e;
     }
-    return this.get(s, id, true);
+    // A kasbon's down payment is a payment of its own (order reference `<receivableId>:1`).
+    const { downPaymentId } = created;
+    if (downPaymentId)
+      await this.payments.afterCommit('kasbon down payment', () =>
+        this.payments.recordReceivablePayment(s.tenantId, downPaymentId),
+      );
+    return this.finish(s, created.id);
   }
 
   private async insert(
@@ -145,7 +186,7 @@ export class SalesService {
     key: string,
     input: SaleInput,
     hash: string,
-  ): Promise<string> {
+  ): Promise<{ id: string; downPaymentId: string | null }> {
     // The shift row lock serializes this actor's sales with closing the shift.
     const [shift] = await tx
       .select({ id: shifts.id })
@@ -286,6 +327,12 @@ export class SalesService {
         costTotal: 0,
         overrideBy,
         note: input.note || null,
+        // UMK-1991: with payment-api on, a sale that takes a payment waits for it (step 2 completes it).
+        // A kasbon sale takes none (its down payment is recorded apart) and completes here.
+        status:
+          this.payments.enabled && !method.isCredit
+            ? 'awaiting_payment'
+            : 'completed',
       })
       .returning({ id: sales.id });
 
@@ -323,15 +370,17 @@ export class SalesService {
       });
     }
     await tx.update(sales).set({ costTotal }).where(eq(sales.id, sale.id));
-    if (method.isCredit)
-      await createReceivable(tx, s, {
-        id: sale.id,
-        memberId: memberId!,
-        total,
-        paid: input.paid,
-        cashMethodId: await this.cashMethod(tx, s.tenantId),
-      });
-    return sale.id;
+    const downPaymentId = method.isCredit
+      ? await createReceivable(tx, s, {
+          id: sale.id,
+          memberId: memberId!,
+          total,
+          paid: input.paid,
+          cashMethodId: await this.cashMethod(tx, s.tenantId),
+          recordInPaymentApi: this.payments.enabled,
+        })
+      : null;
+    return { id: sale.id, downPaymentId };
   }
 
   /** A live member of this store, else 422. */
@@ -400,6 +449,10 @@ export class SalesService {
   async list(s: PosSession, q: SalesQuery) {
     const where = and(
       this.scope(s),
+      // Receipts only, unless the waiting (or cancelled) ones are asked for (UMK-1991).
+      q.status
+        ? eq(sales.status, q.status)
+        : inArray(sales.status, [...FINAL_SALE_STATUSES]),
       q.shiftId ? eq(sales.shiftId, q.shiftId) : undefined,
       q.from ? gte(sales.createdAt, new Date(q.from)) : undefined,
       q.to ? lt(sales.createdAt, new Date(q.to)) : undefined,

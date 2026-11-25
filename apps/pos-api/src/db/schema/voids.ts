@@ -106,10 +106,18 @@ export const saleVoids = pos
       // UMK-1993: the sale's cash rounding, given back with the total (outside `total`).
       rounding: rupiah('rounding').notNull().default(0),
       costTotal: rupiah('cost_total').notNull(),
+      // UMK-1991: the sale's payments in payment-api are still to be voided (set with payment-api on; the
+      // request clears it after the commit, else the job does).
+      paymentSyncPending: boolean('payment_sync_pending')
+        .notNull()
+        .default(false),
       createdAt: createdAt(),
     },
     (t) => [
       unique().on(t.tenantId, t.id),
+      index('sale_voids_payment_sync_idx')
+        .on(t.createdAt)
+        .where(sql`${t.paymentSyncPending}`),
       // A sale is voided at most once.
       uniqueIndex('sale_voids_sale_uq').on(t.tenantId, t.saleId),
       uniqueIndex('sale_voids_tenant_key_uq').on(t.tenantId, t.idempotencyKey),

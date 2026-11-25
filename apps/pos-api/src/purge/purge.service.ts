@@ -6,6 +6,7 @@ import { OBJECT_STORAGE } from '../catalog/storage';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
+import { PaymentsClient } from '../payments-client/payments.client';
 
 /** Answer when UMKMall's account is not (or no longer) marked for deletion: a reactivated account keeps its store. */
 export const NOT_BEING_DELETED = 'Akun UMKMall tidak sedang dihapus';
@@ -46,6 +47,7 @@ export class PurgeService {
   constructor(
     @InjectDb() private readonly db: Db,
     @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+    private readonly payments: PaymentsClient,
   ) {}
 
   /** Erases the store of UMKMall user `userId`. False when the user has no store. */
@@ -66,6 +68,10 @@ export class PurgeService {
       // First, so UMKMall's function takes the row lock (FOR SHARE) and holds it to our commit: a
       // reactivation waits for the purge, or the purge sees it and rolls back.
       await this.assertBeingDeleted(tx, userId);
+      // UMK-1991: the store's rows in payment-api, under that lock and before any pos row goes. The tenant
+      // id is our own row's. A failure (unreachable, or 409 payments_in_flight) throws: this transaction
+      // rolls back, UMKMall gets 503 and its retry finds the store again. payment-api's purge is idempotent.
+      if (this.payments.enabled) await this.payments.purge(tenant.id);
       const tables = (
         await tx.execute<{ name: string }>(sql`
           select c.relname as name from pg_class c

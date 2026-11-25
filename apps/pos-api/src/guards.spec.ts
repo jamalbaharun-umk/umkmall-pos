@@ -112,4 +112,26 @@ describe('repo guards', () => {
       .map(([name]) => name);
     expect(offenders).toEqual([]);
   });
+
+  it('reads the payment-api service key and writes its key and tenant headers only in payments-client/payments.client.ts', () => {
+    const allowed = [
+      path.join('payments-client', 'payments.client.ts'),
+      'config.ts', // the env schema names the variable; it never sends it
+    ];
+    const offenders = files
+      .filter(({ f }) => !allowed.includes(f))
+      .filter(({ text }) =>
+        /PAYMENT_SERVICE_KEY|x-payment-service-key|x-tenant-id/i.test(text),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    // And the client never logs them: its only log lines are the route pattern and a status or error class.
+    const client = files.find(({ f }) => f === allowed[0])!.text;
+    expect(client).toContain("'X-Tenant-Id': tenantId");
+    expect(
+      [...client.matchAll(/this\.logger\.\w+\(([^;]*)\);/g)].filter((m) =>
+        /serviceKey|headers|tenantId|path\b|body/.test(m[1]),
+      ),
+    ).toEqual([]);
+  });
 });

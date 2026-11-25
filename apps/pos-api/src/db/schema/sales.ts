@@ -108,8 +108,20 @@ export const salesSettings = pos
   )
   .enableRLS();
 
-/** `void`: cancelled in full by a pos.sale_voids row (UMK-1962); the sale's own figures stay as rung up. */
-export const SALE_STATUSES = ['completed', 'void'] as const;
+/**
+ * `void`: cancelled in full by a pos.sale_voids row (UMK-1962); the sale's own figures stay as rung up.
+ * UMK-1991, only with payment-api on: `awaiting_payment` = created (stock and voucher taken), its payment not
+ * yet confirmed; `cancelled` = that payment closed unpaid, stock and voucher given back. Neither was ever a
+ * receipt: both are outside every list, report and shift total (FINAL_SALE_STATUSES).
+ */
+export const SALE_STATUSES = [
+  'completed',
+  'void',
+  'awaiting_payment',
+  'cancelled',
+] as const;
+/** A sale that was rung up: what lists, reports and shift totals count. */
+export const FINAL_SALE_STATUSES = ['completed', 'void'] as const;
 
 export const sales = pos
   .table(
@@ -148,14 +160,24 @@ export const sales = pos
         .notNull()
         .default('completed'),
       voidedAt: ts('voided_at'),
+      // UMK-1991: the payment in payment-api (another database, so no FK). Null for a kasbon sale (its
+      // payments are on pos.receivable_payments) and for a sale made while payment-api was off.
+      paymentId: uuid('payment_id'),
+      cancelledAt: ts('cancelled_at'),
       createdAt: createdAt(),
     },
     (t) => [
       unique().on(t.tenantId, t.id),
       check(
         'sales_status_ck',
-        sql`${t.status} in ('completed', 'void') and (${t.status} = 'void') = (${t.voidedAt} is not null)`,
+        sql`${t.status} in ('completed', 'void', 'awaiting_payment', 'cancelled')
+          and (${t.status} = 'void') = (${t.voidedAt} is not null)
+          and (${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`,
       ),
+      // The job's sweep of sales still waiting for their payment.
+      index('sales_awaiting_idx')
+        .on(t.createdAt)
+        .where(sql`${t.status} = 'awaiting_payment'`),
       uniqueIndex('sales_tenant_idempotency_uq').on(
         t.tenantId,
         t.idempotencyKey,

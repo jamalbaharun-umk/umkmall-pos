@@ -57,6 +57,9 @@ function metrics(r: Row) {
  * Read-only reports and dashboard metrics (Lakasir DashboardController + *ReportService). Every query filters
  * tenant_id = session tenant; day boundaries are computed by Postgres in the store's timezone, half-open.
  */
+/** Receipts only: a sale awaiting payment or cancelled for want of one is in no report (UMK-1991). */
+const FINAL = sql`and status in ('completed', 'void')`;
+
 @Injectable()
 export class ReportsService {
   constructor(@InjectDb() private readonly db: Db) {}
@@ -108,20 +111,20 @@ export class ReportsService {
    * stored on pos.sale_voids (the sale's own, cost as stored at the sale).
    */
   private async salesMetrics(tenantId: string, start: SQL, end: SQL) {
-    const sums = (table: SQL) => sql`
+    const sums = (table: SQL, only: SQL = sql``) => sql`
       (select count(*) as n, coalesce(sum(subtotal), 0) as gross_sales,
               coalesce(sum(discount), 0) as discount,
               coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
               coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost,
               coalesce(sum(rounding), 0) as rounding
          from ${table}
-        where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end})`;
+        where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end} ${only})`;
     const [r] = await this.rows(sql`
       select s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
              s.rounding - v.rounding as rounding, v.n as void_count
-        from ${sums(sql`pos.sales`)} s, ${sums(sql`pos.sale_voids`)} v`);
+        from ${sums(sql`pos.sales`, FINAL)} s, ${sums(sql`pos.sale_voids`)} v`);
     return { ...metrics(r), voidCount: n(r.void_count) };
   }
 
@@ -172,6 +175,7 @@ export class ReportsService {
         from pos.sale_lines l
         join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
        where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
+         and s.status in ('completed', 'void')
       union all
       select 'void', v.created_at, s.number, v.actor_kind, v.actor_id,
              l.id, l.product_id, l.name, -l.qty, l.unit_price, -l.line_total, -l.cost_total
@@ -257,14 +261,14 @@ export class ReportsService {
   async shifts(tenantId: string, range: DateRange) {
     const tz = await this.timezone(tenantId);
     const { start, end } = this.bounds(range, tz);
-    const sums = (table: SQL) => sql`
+    const sums = (table: SQL, only: SQL = sql``) => sql`
       select count(*) as n, coalesce(sum(x.subtotal), 0) as gross_sales,
              coalesce(sum(x.discount), 0) as discount,
              coalesce(sum(x.voucher_discount), 0) as voucher, coalesce(sum(x.tax), 0) as tax,
              coalesce(sum(x.total), 0) as revenue, coalesce(sum(x.cost_total), 0) as cost,
              coalesce(sum(x.rounding), 0) as rounding
         from ${table} x
-       where x.tenant_id = sh.tenant_id and x.shift_id = sh.id`;
+       where x.tenant_id = sh.tenant_id and x.shift_id = sh.id ${only}`;
     // A shift's row = the sales rung up in it minus the voids done in it (UMK-1962). The shift a voided
     // sale was rung up in keeps that sale, so a closed shift's row never changes. Each part is
     // aggregated apart (lateral), so none multiplies another's rows.
@@ -280,7 +284,7 @@ export class ReportsService {
              s.rounding - v.rounding as rounding, v.n as void_count
         from pos.shifts sh
         left join pos.staff st on st.tenant_id = sh.tenant_id and st.id = sh.actor_id
-        cross join lateral (${sums(sql`pos.sales`)}) s
+        cross join lateral (${sums(sql`pos.sales`, FINAL)}) s
         cross join lateral (${sums(sql`pos.sale_voids`)}) v
         cross join lateral (
           select coalesce(sum(e.amount) filter (where e.direction = 'in'), 0) as cash_in,
