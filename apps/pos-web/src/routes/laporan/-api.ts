@@ -76,4 +76,33 @@ export const loadReport = createServerFn()
 
 export const loadSettings = createServerFn().handler(() => load<{ timezone: string }>('/reports/settings'))
 
+export type ProfitLossFigures = {
+  from: string
+  to: string
+  revenue: number
+  tax: number
+  cost: number
+  grossProfit: number
+  expenses: number
+  netProfit: number
+  rounding: number
+  supplierPayments: number
+}
+export type ProfitLoss = {
+  period: 'today' | 'week' | 'month' | null
+  from: string
+  to: string
+  taxIncluded: boolean
+  labels: Record<'revenue' | 'cost' | 'grossProfit' | 'expenses' | 'netProfit' | 'tax' | 'rounding' | 'supplierPayments', string>
+  current: ProfitLossFigures
+  previous: ProfitLossFigures
+  netProfitChange: number
+  topExpenses: { category: string; label: string; total: number; count: number }[]
+}
+
+/** The simple profit and loss report (needs reports.view). */
+export const loadProfitLoss = createServerFn()
+  .validator((p: 'today' | 'week' | 'month') => p)
+  .handler(({ data }) => load<ProfitLoss>(`/reports/profit-loss?period=${encodeURIComponent(data)}`))
+
 export { rupiah } from '@/components/page'

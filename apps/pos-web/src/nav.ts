@@ -12,6 +12,7 @@ import {
   ListOrdered,
   MonitorSmartphone,
   PackagePlus,
+  Receipt,
   Settings,
   TicketPercent,
   Users,
@@ -37,6 +38,7 @@ export const NAV: NavGroup[] = [
       { to: '/pelanggan', label: 'Pelanggan', icon: UsersRound, permission: 'members.manage' },
       { to: '/metode-pembayaran', label: 'Metode pembayaran', icon: CreditCard, permission: 'catalog.manage' },
       { to: '/piutang', label: 'Piutang', icon: CalendarDays, permission: 'receivables.manage' },
+      { to: '/pengeluaran', label: 'Pengeluaran', icon: Receipt, permission: 'expenses.manage' },
     ],
   },
   {
