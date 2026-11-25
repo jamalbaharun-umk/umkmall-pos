@@ -152,3 +152,18 @@ then the next customer's identical order replayed sale 1 as a success (two custo
 Not exercised: still no browser run; `usePending` (`useSyncExternalStore`) and `pay()`'s wiring are typechecked and
 read only. Left open: a cashier who leaves the register mid-request and is back on it before a PAID answer arrives
 sees the paid order's items still on screen (the stored bill is cleared, the mounted screen is not told).
+
+### Fifth review round: held cash and late answers
+
+- **A held cash/EDC sale and a cart edited by hand** (the minus button, not Hapus semua) now sets `recorded` like
+  Hapus semua does: the job completes that sale, so the next order under its key would be answered with it.
+- **No answer but the end of the key's sale clears `recorded`.** A 503 with a sale id, a bill, "no answer" or a clean
+  refusal that arrives after the order was cleared, edited or reopened no longer reopens sending under the key.
+- "Sudah saya cek" waits while a request of this page load is still out (`out`, never stored, kept when the register
+  is left and opened again; `canAck`). A real reload forgets it: the request went with the page.
+- The store says when a write to the tab's storage failed (`durable`), and the pay dialog warns that a reload then
+  forgets a sale in progress. The "no payment for the sale on screen" effect reads the store and the payments when it
+  runs. Guard: `pay()` calls `pend.send` before its one `createSale`, sends that key, and sends nothing when blocked.
+
+Not exercised: no browser run. A request that never answers at all (no timeout on the server function) keeps "Sudah
+saya cek" disabled until a reload.
