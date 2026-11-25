@@ -67,6 +67,20 @@ function view(p: PaymentRow, adapter: PaymentAdapter | undefined) {
   };
 }
 
+/** The fingerprint of a charge request: the same key with another request is refused, not replayed. */
+const hashOf = (input: ChargeInput) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([
+        input.orderRef,
+        input.attempt,
+        input.method,
+        input.amount,
+        input.actorRef,
+      ]),
+    )
+    .digest('hex');
+
 /**
  * The API a calling service uses. Every query filters `tenantId`, which only ever comes from the service
  * guard; another tenant's payment id answers 404, exactly like an id that does not exist.
@@ -97,17 +111,7 @@ export class PaymentsService {
           ? 'Kasbon is a receivable at the caller, not a payment method'
           : 'Unknown payment method',
       );
-    const requestHash = createHash('sha256')
-      .update(
-        JSON.stringify([
-          input.orderRef,
-          input.attempt,
-          input.method,
-          input.amount,
-          input.actorRef,
-        ]),
-      )
-      .digest('hex');
+    const requestHash = hashOf(input);
 
     const now = this.clock.now();
     const claimed = await this.db.transaction(async (tx) => {
@@ -161,6 +165,59 @@ export class PaymentsService {
         ? claimed
         : await this.settlement.startCharge(claimed);
     return { created: true, payment: await this.detail(settled) };
+  }
+
+  /**
+   * Closes a charge key that has no payment: the caller gave up on a charge whose answer it never got, and
+   * must be sure that charge can never be paid later. Takes the charge's own key and body. When no payment
+   * has the key, a `cancelled` one is written under it, in one transaction, claiming the key and the attempt
+   * exactly as a charge would; a charge that arrives later with the same key answers that cancelled payment
+   * and never pays. When a payment already has the key (the charge did arrive), it is answered unchanged,
+   * whatever its status: a `paid` one stays paid, and the caller completes its order.
+   *
+   * The unique index on (tenant, key) decides between a close and a charge that race: one of them inserts,
+   * the other waits for it and answers its row.
+   */
+  async close(tenantId: string, key: string, input: ChargeInput) {
+    if (!this.adapters.get(input.method))
+      throw fieldError('method', 'Unknown payment method');
+    const requestHash = hashOf(input);
+    const now = this.clock.now();
+    const closed = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(payments)
+        .values({
+          tenantId,
+          orderRef: input.orderRef,
+          attempt: input.attempt,
+          method: input.method,
+          amount: input.amount,
+          status: 'created',
+          idempotencyKey: key,
+          requestHash,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (!row) return null;
+      await tx.insert(paymentEvents).values({
+        tenantId,
+        paymentId: row.id,
+        toStatus: 'created',
+        source: 'close',
+        actorRef: input.actorRef,
+        createdAt: now,
+      });
+      // Never charged: no adapter is called. Closed in the transaction that created it.
+      return this.settlement.move(tx, row, 'cancelled', {
+        source: 'close',
+        actorRef: input.actorRef,
+        note: 'closed by the caller: no charge had arrived under this key',
+      });
+    });
+    if (!closed) return this.replay(tenantId, key, requestHash, input);
+    return { created: true, payment: await this.detail(closed) };
   }
 
   private async replay(

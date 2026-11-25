@@ -20,6 +20,7 @@ describe('service auth and tenant isolation', () => {
   const id = randomUUID();
   const ROUTES: ['get' | 'post', string][] = [
     ['post', '/payments'],
+    ['post', '/payments/close'],
     ['get', '/payments'],
     ['get', `/payments/${id}`],
     ['post', `/payments/${id}/sync`],

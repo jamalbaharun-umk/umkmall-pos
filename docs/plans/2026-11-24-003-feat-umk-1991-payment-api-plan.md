@@ -196,6 +196,11 @@ for the caller). **The outbox dispatcher is not built** (it needs pos-api's endp
   (`cancelled`, `expired`, `failed`) until the bill's expiry plus `PAYMENT_LATE_SWEEP_SECONDS` (default one hour),
   so late money whose webhook was lost is found and refunded. Longest unasked first.
 
+- `POST /payments/close` + `Idempotency-Key` (added with the pos-api integration, plan 007): the charge's own key and
+  body. No payment under the key → a `cancelled` one is written under it (201), claiming the key and the attempt, so
+  a charge that arrives later answers it and never pays. A payment under the key → answered unchanged (200), also a
+  `paid` one. For a caller that gives up on a charge whose answer it never got.
+
 ### Configurable
 
 Env names and defaults are in `src/config.ts` and `.env.example`. Owner decisions: late money is refunded
