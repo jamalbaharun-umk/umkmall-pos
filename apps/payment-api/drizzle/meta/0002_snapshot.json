@@ -1,5 +1,5 @@
 {
-  "id": "1831dd1d-5a79-4bb4-a507-6af1196ed941",
+  "id": "64e878a1-06d7-4d77-8b58-28f7892a56d0",
   "prevId": "e6450ccd-981b-4bdf-8ae1-25b1d23ab9a7",
   "version": "7",
   "dialect": "postgresql",
@@ -985,6 +985,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "draft_undelivered": {
+          "name": "draft_undelivered",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "enabled_methods": {
           "name": "enabled_methods",
           "type": "text[]",
@@ -1000,6 +1007,12 @@
         },
         "last_synced_at": {
           "name": "last_synced_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_observed_at": {
+          "name": "status_observed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -1062,8 +1075,8 @@
           "method": "btree",
           "with": {}
         },
-        "merchant_accounts_waiting": {
-          "name": "merchant_accounts_waiting",
+        "merchant_accounts_status_synced": {
+          "name": "merchant_accounts_status_synced",
           "columns": [
             {
               "expression": "status",
@@ -1072,14 +1085,13 @@
               "nulls": "last"
             },
             {
-              "expression": "updated_at",
+              "expression": "last_synced_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "where": "\"payment\".\"merchant_accounts\".\"status\" in ('submitted', 'needs_fix')",
           "concurrently": false,
           "method": "btree",
           "with": {}

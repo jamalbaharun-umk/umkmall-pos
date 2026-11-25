@@ -3,9 +3,12 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import postgres from 'postgres';
 import request from 'supertest';
+import { AdapterRegistry } from '../src/adapters/adapters.module';
 import { LocalFakeGateway } from '../src/adapters/fake/local-fake-gateway';
 import { AppModule } from '../src/app.module';
 import { Clock, PaymentSettings } from '../src/config';
+import { MerchantsService } from '../src/merchants/merchants.service';
+import { SLOW_RECONCILE_INTERVAL_MS } from '../src/merchants/transitions';
 import { ReconciliationService } from '../src/payments/reconciliation.service';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore, FakeClock, MINUTE, Store } from './support/fixtures';
@@ -115,8 +118,10 @@ describe('merchant onboarding', () => {
           enabled_methods: string[];
           status_reason: string | null;
           credentials_encrypted: string | null;
+          draft_undelivered: boolean;
         }[]
-      >`select id, status, provider_account_id, enabled_methods, status_reason, credentials_encrypted
+      >`select id, status, provider_account_id, enabled_methods, status_reason, credentials_encrypted,
+               draft_undelivered
         from payment.merchant_accounts where tenant_id = ${s.tenantId}`
     )[0];
   const moves = async (s: { tenantId: string }) =>
@@ -272,6 +277,75 @@ describe('merchant onboarding', () => {
       await reconcile.tick();
       expect((await row(s)).provider_account_id).toMatch(/^FAKE-ACCT-/);
       await s.get(`${GW}/account`).expect(200);
+    });
+
+    it('a corrected draft submitted while the gateway is down is delivered once it is back, by the repeat or by the reconciliation', async () => {
+      const gatewayAccount = async (s: S) =>
+        (await s.get(`${GW}/account`).expect(200)).body;
+      for (const recover of ['resubmit', 'reconciliation'] as const) {
+        const s = await submitted();
+        expect((await row(s)).draft_undelivered).toBe(false);
+        await review(s, 'needs-fix', { reason: 'Nama usaha salah' }).expect(
+          200,
+        );
+        await s.put(FAKE, { businessName: 'Warung Sari Baru' }).expect(200);
+        await s.post(`${GW}/accounts/outage`, { down: true }).expect(200);
+        await s.post(`${FAKE}/submit`, SUBMIT).expect(503);
+        expect(await row(s)).toMatchObject({
+          status: 'submitted',
+          draft_undelivered: true,
+        });
+        // The gateway is back and still holds the OLD draft, with its old verdict.
+        await s.post(`${GW}/accounts/outage`, { down: false }).expect(200);
+        expect(await gatewayAccount(s)).toMatchObject({
+          status: 'needs_fix',
+          profile: { businessName: DRAFT.businessName },
+        });
+        if (recover === 'resubmit') {
+          const again = await s.post(`${FAKE}/submit`, SUBMIT).expect(200);
+          expect(again.body.status).toBe('submitted');
+        } else {
+          clock.advance(3 * MINUTE);
+          await reconcile.tick();
+        }
+        // The corrected draft arrived, the gateway reviews again, and the old verdict was never applied.
+        expect(await gatewayAccount(s)).toMatchObject({
+          status: 'pending',
+          profile: { businessName: 'Warung Sari Baru' },
+        });
+        expect(await row(s)).toMatchObject({
+          status: 'submitted',
+          status_reason: null,
+          draft_undelivered: false,
+        });
+        expect(await moves(s)).toEqual([
+          'submitted/submit',
+          'needs_fix/webhook',
+          'submitted/submit',
+        ]);
+      }
+    });
+
+    it('a partial draft save changes only the fields it sends; null clears one', async () => {
+      const s = newStore();
+      await s.put(FAKE, DRAFT).expect(200);
+      const part = await s.put(FAKE, { businessName: 'Toko Baru' }).expect(200);
+      expect(part.body.profile).toEqual({
+        ...DRAFT,
+        businessName: 'Toko Baru',
+      });
+      const none = await s.put(FAKE, {}).expect(200);
+      expect(none.body.profile).toEqual({
+        ...DRAFT,
+        businessName: 'Toko Baru',
+      });
+      const cleared = await s.put(FAKE, { phone: null, email: '' }).expect(200);
+      expect(cleared.body.profile).toEqual({
+        ...DRAFT,
+        businessName: 'Toko Baru',
+        phone: null,
+        email: null,
+      });
     });
 
     it('needs_fix carries the reason, reopens the draft, and a new submit is reviewed again', async () => {
@@ -557,6 +631,90 @@ describe('merchant onboarding', () => {
       clock.advance(MINUTE);
       const synced = await t.post(`${FAKE}/sync`).expect(200);
       expect(synced.body.status).toBe('verified');
+    });
+
+    it('an answer the gateway gave before a newer one was applied is discarded under the lock', async () => {
+      const s = await active();
+      const { id } = await row(s);
+      // A status check reads "verified" from the gateway and is held on its way back…
+      const adapter = app.get(AdapterRegistry).onboarding('fake')!;
+      const ask = adapter.getAccountStatus.bind(adapter);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let asked!: () => void;
+      const reading = new Promise<void>((resolve) => (asked = resolve));
+      const spy = jest
+        .spyOn(adapter, 'getAccountStatus')
+        .mockImplementationOnce(async (merchant) => {
+          const answer = await ask(merchant);
+          asked();
+          await held;
+          return answer;
+        });
+      try {
+        const slow = app.get(MerchantsService).settle(id, 'sync');
+        await reading;
+        // …meanwhile the gateway suspends the account and its webhook is applied.
+        clock.advance(MINUTE);
+        await review(s, 'suspend', { reason: 'Dibekukan' }).expect(200);
+        expect((await row(s)).status).toBe('suspended');
+        // The old answer lands now: it must not reactivate the account.
+        release();
+        expect((await slow)?.status).toBe('suspended');
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await row(s)).toMatchObject({
+        status: 'suspended',
+        status_reason: 'Dibekukan',
+      });
+      expect((await qris(s).expect(409)).body.code).toBe('merchant_not_active');
+      expect((await moves(s)).slice(-2)).toEqual([
+        'active/toggle',
+        'suspended/webhook',
+      ]);
+      // A later answer is still followed: reinstated at the gateway, active again.
+      clock.advance(MINUTE);
+      await review(s, 'approve').expect(200);
+      expect((await row(s)).status).toBe('active');
+    });
+
+    it('the reconciliation revisits verified, active, suspended and needs_fix accounts, slowly', async () => {
+      // An active account is suspended and the webhook is lost.
+      const s = await active();
+      await review(s, 'suspend', {
+        reason: 'Dibekukan',
+        webhook: 'drop',
+      }).expect(200);
+      // A needs_fix account is fixed on the gateway's page and approved; that webhook is lost too.
+      const t = await submitted();
+      await review(t, 'needs-fix', { reason: 'Kurang lengkap' }).expect(200);
+      await review(t, 'approve', { webhook: 'drop' }).expect(200);
+
+      // Accounts other tests left behind are not this test's: they would fill the job's batch.
+      await sql`update payment.merchant_accounts set last_synced_at = now() + interval '10 years'
+                where tenant_id not in (${s.tenantId}, ${t.tenantId})`;
+
+      // The usual threshold does not ask about them: nothing is expected from the gateway.
+      clock.advance(3 * MINUTE);
+      await reconcile.tick();
+      expect((await row(s)).status).toBe('active');
+      expect((await row(t)).status).toBe('needs_fix');
+
+      clock.advance(SLOW_RECONCILE_INTERVAL_MS);
+      await reconcile.tick();
+      expect(await row(s)).toMatchObject({
+        status: 'suspended',
+        status_reason: 'Dibekukan',
+      });
+      expect((await row(t)).status).toBe('verified');
+      expect((await moves(s)).at(-1)).toBe('suspended/reconciliation');
+
+      // And a suspended account that is reinstated without a webhook is found the same way.
+      await review(s, 'approve', { webhook: 'drop' }).expect(200);
+      clock.advance(SLOW_RECONCILE_INTERVAL_MS + MINUTE);
+      await reconcile.tick();
+      expect((await row(s)).status).toBe('active');
     });
 
     it('a webhook that cannot be processed stays in the inbox and is retried', async () => {

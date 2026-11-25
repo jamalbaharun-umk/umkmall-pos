@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -54,6 +55,10 @@ export const merchantAccounts = payment
       email: text('email'),
       phone: text('phone'),
       termsAcceptedAt: timestamp('terms_accepted_at', { withTimezone: true }),
+      // The submitted draft has not reached the gateway yet: set by every submit, cleared when the gateway
+      // took it (created the sub-account, or took the corrected draft of an existing one). While it is set
+      // the gateway's status is about an OLDER draft and is never applied.
+      draftUndelivered: boolean('draft_undelivered').notNull().default(false),
       // The methods the owner switched on. A charge needs status `active` and the method in this list.
       enabledMethods: text('enabled_methods')
         .array()
@@ -62,6 +67,12 @@ export const merchantAccounts = payment
       submittedAt: timestamp('submitted_at', { withTimezone: true }),
       // Last time the gateway was asked about this account.
       lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+      // How new the gateway's word is that `status` was last set or confirmed from: the gateway's own time
+      // of the account's last change (or, for a gateway that gives none, the time we asked). An answer
+      // older than this is discarded under the row lock.
+      statusObservedAt: timestamp('status_observed_at', {
+        withTimezone: true,
+      }),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
     },
@@ -74,10 +85,8 @@ export const merchantAccounts = payment
         t.provider,
         t.providerAccountId,
       ),
-      // The reconciliation reads accounts waiting on the gateway across tenants.
-      index('merchant_accounts_waiting')
-        .on(t.status, t.updatedAt)
-        .where(sql`${t.status} in ('submitted', 'needs_fix')`),
+      // The reconciliation reads accounts by status and age across tenants.
+      index('merchant_accounts_status_synced').on(t.status, t.lastSyncedAt),
       check(
         'merchant_accounts_status',
         sql`${t.status} in (${inList(MERCHANT_STATUSES)})`,

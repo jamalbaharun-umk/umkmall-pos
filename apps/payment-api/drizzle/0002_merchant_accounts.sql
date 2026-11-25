@@ -25,9 +25,11 @@ CREATE TABLE "payment"."merchant_accounts" (
 	"email" text,
 	"phone" text,
 	"terms_accepted_at" timestamp with time zone,
+	"draft_undelivered" boolean DEFAULT false NOT NULL,
 	"enabled_methods" text[] DEFAULT '{}'::text[] NOT NULL,
 	"submitted_at" timestamp with time zone,
 	"last_synced_at" timestamp with time zone,
+	"status_observed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "merchant_accounts_status" CHECK ("payment"."merchant_accounts"."status" in ('not_submitted', 'submitted', 'needs_fix', 'rejected', 'verified', 'active', 'suspended')),
@@ -54,6 +56,6 @@ ALTER TABLE "payment"."merchant_webhook_events" ADD CONSTRAINT "merchant_webhook
 CREATE INDEX "merchant_account_events_tenant_account" ON "payment"."merchant_account_events" USING btree ("tenant_id","merchant_account_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "merchant_accounts_tenant_provider" ON "payment"."merchant_accounts" USING btree ("tenant_id","provider");--> statement-breakpoint
 CREATE UNIQUE INDEX "merchant_accounts_provider_account" ON "payment"."merchant_accounts" USING btree ("provider","provider_account_id");--> statement-breakpoint
-CREATE INDEX "merchant_accounts_waiting" ON "payment"."merchant_accounts" USING btree ("status","updated_at") WHERE "payment"."merchant_accounts"."status" in ('submitted', 'needs_fix');--> statement-breakpoint
+CREATE INDEX "merchant_accounts_status_synced" ON "payment"."merchant_accounts" USING btree ("status","last_synced_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "merchant_webhook_events_provider_event" ON "payment"."merchant_webhook_events" USING btree ("provider","event_id");--> statement-breakpoint
 CREATE INDEX "merchant_webhook_events_state" ON "payment"."merchant_webhook_events" USING btree ("state","created_at");

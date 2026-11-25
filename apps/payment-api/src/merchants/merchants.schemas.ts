@@ -7,27 +7,25 @@ const optionalText = (max: number) =>
     .trim()
     .max(max)
     .transform((v) => (v === '' ? null : v))
-    .nullish()
-    .transform((v) => v ?? null);
+    .nullable()
+    .optional();
 
 /**
- * The draft: every field may be empty until the owner submits. Nothing else is accepted (`strict`), so an
- * identity number, a document or a bank account sent by mistake is refused and never stored.
+ * The draft: every field may be empty until the owner submits. A field that is not sent keeps what is
+ * stored; `null` or an empty text clears it. Nothing else is accepted (`strict`), so an identity number, a
+ * document or a bank account sent by mistake is refused and never stored.
  */
 export const DraftBody = z
   .object({
-    businessType: z
-      .enum(['individual', 'company'])
-      .nullish()
-      .transform((v) => v ?? null),
+    businessType: z.enum(['individual', 'company']).nullable().optional(),
     businessName: optionalText(120),
     email: optionalText(254).refine(
-      (v) => v === null || z.string().email().safeParse(v).success,
+      (v) => v == null || z.string().email().safeParse(v).success,
       'Must be an email address',
     ),
     // Digits with an optional leading +, as the gateway will be given it.
     phone: optionalText(20).refine(
-      (v) => v === null || /^\+?[0-9]{8,15}$/.test(v),
+      (v) => v == null || /^\+?[0-9]{8,15}$/.test(v),
       'Must be a phone number',
     ),
   })

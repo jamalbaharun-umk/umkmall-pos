@@ -318,7 +318,7 @@ export class LocalFakeGateway {
     if (this.accountsDown) throw new GatewayUnreachableError();
   }
 
-  /** Creates the sub-account once per merchant id; again after `needs_fix`, it takes the new draft and reviews again. */
+  /** Creates the sub-account once per merchant id; a repeat answers the same sub-account, unchanged. */
   createAccount(merchant: MerchantRef, profile: MerchantProfile) {
     this.reachable();
     const now = this.clock.now();
@@ -335,15 +335,21 @@ export class LocalFakeGateway {
         updatedAt: now,
       };
       this.accounts.set(merchant.id, account);
-    } else {
-      account.profile = profile;
-      if (account.status === 'needs_fix') {
-        account.status = 'pending';
-        account.reason = null;
-      }
-      account.updatedAt = now;
     }
     return { providerAccountId: account.accountId };
+  }
+
+  /** Takes the corrected draft of a sub-account that exists; after `needs_fix` it is reviewed again. */
+  updateAccount(merchant: MerchantRef, profile: MerchantProfile) {
+    this.reachable();
+    const account = this.accounts.get(merchant.id);
+    if (!account) throw new Error('fake gateway: no such account');
+    account.profile = profile;
+    if (account.status === 'needs_fix') {
+      account.status = 'pending';
+      account.reason = null;
+    }
+    account.updatedAt = this.clock.now();
   }
 
   /** The page where the owner would verify. Nothing answers at this address: the controls stand in for it. */
@@ -361,7 +367,11 @@ export class LocalFakeGateway {
     this.reachable();
     const account = this.accounts.get(merchant.id);
     if (!account) return { status: 'not_found' };
-    return { status: account.status, reason: account.reason ?? undefined };
+    return {
+      status: account.status,
+      reason: account.reason ?? undefined,
+      updatedAt: account.updatedAt,
+    };
   }
 
   /** The same signature as a payment notification; the signed body says it is about an account. */
@@ -510,6 +520,10 @@ class FakeOnboarding implements OnboardingAdapter {
   // Wrapped so that a throw is a rejected promise, as from a real PG client.
   async createAccount(merchant: MerchantRef, profile: MerchantProfile) {
     return Promise.resolve(this.gateway.createAccount(merchant, profile));
+  }
+
+  async updateAccount(merchant: MerchantRef, profile: MerchantProfile) {
+    return Promise.resolve(this.gateway.updateAccount(merchant, profile));
   }
 
   async verificationLink(merchant: MerchantRef) {

@@ -6,7 +6,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { PaymentAdapter } from '../adapters/adapter';
 import { AdapterRegistry } from '../adapters/adapters.module';
 import type {
@@ -23,7 +23,16 @@ import {
   MerchantStatus,
 } from '../db/schema';
 import type { DraftInput, SubmitInput, ToggleInput } from './merchants.schemas';
-import { canMove, EDITABLE, statusFor, VERIFIED, WAITING } from './transitions';
+import {
+  canMove,
+  EDITABLE,
+  RECONCILE_SLOWLY,
+  RECONCILE_SOON,
+  SLOW_RECONCILE_INTERVAL_MS,
+  statusFor,
+  VERIFIED,
+  WAITING,
+} from './transitions';
 
 export type MerchantRow = typeof merchantAccounts.$inferSelect;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -118,7 +127,10 @@ export class MerchantsService {
     };
   }
 
-  /** Saves the draft. Only before the first submit and while the gateway asks for a fix. */
+  /**
+   * Saves the draft. Only before the first submit and while the gateway asks for a fix. Only the fields that
+   * were sent change: a partial save keeps the rest.
+   */
   async saveDraft(tenantId: string, provider: string, input: DraftInput) {
     const adapter = this.adapterFor(provider);
     const now = this.clock.now();
@@ -147,9 +159,9 @@ export class MerchantsService {
   }
 
   /**
-   * Submits the draft: the account becomes `submitted` and its sub-account is created at the gateway.
-   * Idempotent: a repeat answers the submitted account, and creates the sub-account when the first call's
-   * answer from the gateway was lost (the gateway creates one per account id).
+   * Submits the draft: the account becomes `submitted` and the draft is delivered to the gateway (a new
+   * sub-account, or the corrected draft of the one that exists). Idempotent: a repeat answers the submitted
+   * account, and delivers the draft when an earlier call could not (`draft_undelivered`).
    */
   async submit(tenantId: string, provider: string, input: SubmitInput) {
     const adapter = this.adapterFor(provider);
@@ -168,7 +180,7 @@ export class MerchantsService {
           missing,
         });
       if (current.status === 'submitted')
-        return { row: current, send: !current.providerAccountId };
+        return { row: current, send: current.draftUndelivered };
       if (!EDITABLE.includes(current.status)) throw this.locked(current);
       const moved = await this.move(tx, current, 'submitted', 'owner', {
         source: 'submit',
@@ -181,31 +193,13 @@ export class MerchantsService {
           statusReason: null,
           termsAcceptedAt: now,
           submittedAt: now,
+          draftUndelivered: true,
         },
       });
       return { row: moved, send: true };
     });
     if (!send) return this.view(adapter, row);
-    const profile = profileOf(row)!;
-    const created = await this.gateway(() =>
-      adapter.createAccount(
-        {
-          id: row.id,
-          tenantId: row.tenantId,
-          providerAccountId: row.providerAccountId,
-        },
-        profile,
-      ),
-    );
-    await this.db
-      .update(merchantAccounts)
-      .set({ providerAccountId: created.providerAccountId })
-      .where(
-        and(
-          eq(merchantAccounts.id, row.id),
-          isNull(merchantAccounts.providerAccountId),
-        ),
-      );
+    await this.gateway(() => this.deliver(adapter, row));
     // The gateway's own word closes the submit (a `platform` gateway may have verified at once).
     const settled = await this.settle(row.id, 'sync').catch(() => undefined);
     return this.view(adapter, settled ?? row);
@@ -334,8 +328,12 @@ export class MerchantsService {
 
   /**
    * Asks the gateway where the account stands and applies the answer. Webhook, manual sync and reconciliation
-   * all end here. Creates the sub-account first when an earlier submit never got the gateway's answer.
+   * all end here. Delivers the draft first when an earlier submit could not.
    * Throws when the gateway cannot be asked; the caller decides whether that is an error.
+   *
+   * The gateway is asked BEFORE the row is locked (never a call under a lock), so two answers can cross.
+   * Under the lock an answer is therefore discarded when it is older than the one the status already stands
+   * on (`status_observed_at`), or when the owner has since submitted a draft the gateway has not seen.
    */
   async settle(
     id: string,
@@ -353,22 +351,11 @@ export class MerchantsService {
       tenantId: row.tenantId,
       providerAccountId: row.providerAccountId,
     };
-    if (!ref.providerAccountId) {
-      const profile = profileOf(row);
-      if (!profile) return row;
-      const created = await adapter.createAccount(ref, profile);
-      ref.providerAccountId = created.providerAccountId;
-      await this.db
-        .update(merchantAccounts)
-        .set({ providerAccountId: created.providerAccountId })
-        .where(
-          and(
-            eq(merchantAccounts.id, id),
-            isNull(merchantAccounts.providerAccountId),
-          ),
-        );
-    }
+    if (row.draftUndelivered)
+      ref.providerAccountId = await this.deliver(adapter, row);
+    const askedAt = this.clock.now();
     const answer = await adapter.getAccountStatus(ref);
+    const observedAt = answer.updatedAt ?? askedAt;
     const now = this.clock.now();
     return this.db.transaction(async (tx) => {
       const [locked] = await tx
@@ -377,6 +364,13 @@ export class MerchantsService {
         .where(eq(merchantAccounts.id, id))
         .for('update');
       if (!locked) return undefined;
+      // A stale answer changes nothing, not even `last_synced_at`: the account is asked about again.
+      if (
+        locked.draftUndelivered ||
+        (locked.statusObservedAt &&
+          observedAt.getTime() < locked.statusObservedAt.getTime())
+      )
+        return locked;
       if (answer.status === 'not_found') {
         this.logger.warn(`merchant account ${id}: unknown at the gateway`);
         const [seen] = await tx
@@ -400,6 +394,7 @@ export class MerchantsService {
           .update(merchantAccounts)
           .set({
             lastSyncedAt: now,
+            statusObservedAt: observedAt,
             ...(target === locked.status ? { statusReason } : {}),
           })
           .where(eq(merchantAccounts.id, id))
@@ -409,23 +404,37 @@ export class MerchantsService {
       return this.move(tx, locked, target, 'gateway', {
         source,
         actorRef: SYSTEM_ACTOR,
-        set: { statusReason, lastSyncedAt: now },
+        set: { statusReason, lastSyncedAt: now, statusObservedAt: observedAt },
       });
     });
   }
 
-  /** Asks the gateway about accounts that have waited on it longer than the reconciliation threshold. */
+  /**
+   * Asks the gateway about accounts it has not been asked about for a while: those waiting on its review (or
+   * whose draft it has not received) after the reconciliation threshold, and every other account it knows
+   * slowly (`SLOW_RECONCILE_INTERVAL_MS`), so a lost webhook cannot leave a suspended account `active`.
+   */
   async reconcile(limit = 100): Promise<{ accounts: number; failed: number }> {
-    const cutoff = new Date(
-      this.clock.now().getTime() - this.settings.reconcileAfterMs,
-    ).toISOString();
+    const before = (ms: number) => {
+      const cutoff = new Date(this.clock.now().getTime() - ms).toISOString();
+      return sql`coalesce(${merchantAccounts.lastSyncedAt}, ${merchantAccounts.updatedAt}) <= ${cutoff}::timestamptz`;
+    };
     const due = await this.db
       .select({ id: merchantAccounts.id })
       .from(merchantAccounts)
       .where(
-        and(
-          inArray(merchantAccounts.status, [...WAITING]),
-          sql`coalesce(${merchantAccounts.lastSyncedAt}, ${merchantAccounts.updatedAt}) <= ${cutoff}::timestamptz`,
+        or(
+          and(
+            or(
+              inArray(merchantAccounts.status, [...RECONCILE_SOON]),
+              eq(merchantAccounts.draftUndelivered, true),
+            ),
+            before(this.settings.reconcileAfterMs),
+          ),
+          and(
+            inArray(merchantAccounts.status, [...RECONCILE_SLOWLY]),
+            before(SLOW_RECONCILE_INTERVAL_MS),
+          ),
         ),
       )
       .orderBy(
@@ -484,6 +493,44 @@ export class MerchantsService {
     if (changes)
       this.logger.log(`merchant account ${row.id}: ${row.status} → ${to}`);
     return moved;
+  }
+
+  /**
+   * Hands the submitted draft to the gateway and clears `draft_undelivered`: a new sub-account when the
+   * gateway has none for this account, the corrected draft of the existing one otherwise. Answers the
+   * gateway's account reference. Throws when the gateway gave no clear answer; the marker then stays and
+   * the next submit, sync or reconciliation delivers again (both calls are safe to repeat).
+   */
+  private async deliver(
+    adapter: OnboardingAdapter,
+    row: MerchantRow,
+  ): Promise<string | null> {
+    const profile = profileOf(row);
+    if (!profile) return row.providerAccountId;
+    const ref = {
+      id: row.id,
+      tenantId: row.tenantId,
+      providerAccountId: row.providerAccountId,
+    };
+    let providerAccountId = row.providerAccountId;
+    if (providerAccountId) await adapter.updateAccount(ref, profile);
+    else
+      providerAccountId = (await adapter.createAccount(ref, profile))
+        .providerAccountId;
+    // Only the submit that was delivered is cleared: a newer one (after another fix) keeps its marker.
+    await this.db
+      .update(merchantAccounts)
+      .set({ providerAccountId, draftUndelivered: false })
+      .where(
+        and(
+          eq(merchantAccounts.id, row.id),
+          eq(merchantAccounts.draftUndelivered, true),
+          row.submittedAt
+            ? eq(merchantAccounts.submittedAt, row.submittedAt)
+            : isNull(merchantAccounts.submittedAt),
+        ),
+      );
+    return providerAccountId;
   }
 
   private async find(tenantId: string, provider: string) {

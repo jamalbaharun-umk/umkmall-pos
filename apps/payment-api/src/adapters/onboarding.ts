@@ -46,6 +46,13 @@ export interface AccountStatusResult {
   status: ProviderAccountStatus | 'not_found';
   /** Why, for needs_fix, rejected and suspended: shown to the owner. */
   reason?: string;
+  /**
+   * When the account last changed at the gateway, by the gateway's own clock. payment-api never applies an
+   * answer older than one it already applied, so two answers that cross on the way cannot put an old status
+   * over a new one. An adapter whose gateway gives no such time leaves it out; the time payment-api asked
+   * is used instead.
+   */
+  updatedAt?: Date;
 }
 
 /**
@@ -71,14 +78,19 @@ export interface OnboardingAdapter {
   readonly methods: readonly string[];
 
   /**
-   * Creates the sub-account, once per `merchant.id`. Called again with the corrected draft after the gateway
-   * asked for a fix: the gateway keeps the same sub-account and reviews it again.
+   * Creates the sub-account, once per `merchant.id`: a repeat answers the same sub-account.
    * Throws when the outcome is unknown; payment-api repeats the call.
    */
   createAccount(
     merchant: MerchantRef,
     profile: MerchantProfile,
   ): Promise<{ providerAccountId: string }>;
+  /**
+   * Hands the corrected draft to the sub-account that exists (`merchant.providerAccountId` is set), after
+   * the gateway asked for a fix: the gateway keeps the sub-account and reviews it again. Safe to repeat.
+   * Throws when the outcome is unknown; payment-api repeats the call until it is delivered.
+   */
+  updateAccount(merchant: MerchantRef, profile: MerchantProfile): Promise<void>;
   /** `hosted` only: where the owner verifies. A fresh link per call; payment-api never stores it. */
   verificationLink?(
     merchant: MerchantRef,

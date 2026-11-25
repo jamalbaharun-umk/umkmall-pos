@@ -64,5 +64,22 @@ export const EDITABLE: readonly MerchantStatus[] = [
 /** The gateway verified the account: methods may be switched. */
 export const VERIFIED: readonly MerchantStatus[] = ['verified', 'active'];
 
-/** Waiting on the gateway: the reconciliation asks about these. */
+/** The gateway's review is open: its verification page may be asked for. */
 export const WAITING: readonly MerchantStatus[] = ['submitted', 'needs_fix'];
+
+/** Waiting on the gateway's review: the reconciliation asks about these after the usual threshold. */
+export const RECONCILE_SOON: readonly MerchantStatus[] = ['submitted'];
+
+/**
+ * Nothing is expected from the gateway, but it may still change its mind (suspend, reinstate, verify after
+ * the owner's fix on its page) and its webhook may be lost: the reconciliation asks about these too, slowly.
+ */
+export const RECONCILE_SLOWLY: readonly MerchantStatus[] = [
+  'needs_fix',
+  'verified',
+  'active',
+  'suspended',
+];
+
+/** How often the reconciliation asks about an account of `RECONCILE_SLOWLY`. THE one place. */
+export const SLOW_RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000;
