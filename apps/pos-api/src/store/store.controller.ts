@@ -35,6 +35,8 @@ import { Inject } from '@nestjs/common';
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const LOGO_ERROR = 'Logo harus JPG, PNG atau WebP, maksimal 2 MB';
+const MAX_QRIS_BYTES = 2 * 1024 * 1024;
+const QRIS_ERROR = 'Kode QRIS harus JPG, PNG atau WebP, maksimal 2 MB';
 
 const text = (field: string, max: number) =>
   z
@@ -90,6 +92,8 @@ export class StoreController {
       otherBusinessType: row?.otherBusinessType ?? null,
       address: row?.address ?? null,
       hasLogo: Boolean(row?.logoKey),
+      // UMK-1992: the cashier's wallet step needs to know whether a QRIS image exists.
+      qrisConfigured: Boolean(row?.qrisKey),
       updatedAt: row?.updatedAt ?? null,
     };
   }
@@ -187,6 +191,77 @@ export class StoreController {
       .set({ logoKey: null, logoContentType: null, updatedAt: new Date() })
       .where(eq(storeProfiles.tenantId, s.tenantId));
     await this.storage.delete(row.logoKey);
+  }
+
+  // UMK-1992: the store's static QRIS. Same rules as the logo: catalog.manage writes, any session reads (the
+  // cashier shows it to the customer in the wallet payment step).
+  @Post('qris')
+  @RequirePermission('catalog.manage')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_QRIS_BYTES + 1, files: 1 },
+    }),
+  )
+  async uploadQris(
+    @CurrentSession() s: PosSession,
+    @UploadedFile() file: { buffer: Buffer } | undefined,
+  ) {
+    const current = await this.row(s.tenantId);
+    if (!current)
+      throw fieldError(
+        'file',
+        'Simpan profil toko dulu sebelum mengunggah kode QRIS',
+        409,
+      );
+    const kind =
+      file && file.buffer.length <= MAX_QRIS_BYTES
+        ? detectImage(file.buffer)
+        : null;
+    if (!kind) throw fieldError('file', QRIS_ERROR);
+    const key = `tenants/${s.tenantId}/store/qris-${randomUUID()}.${kind.ext}`;
+    await this.storage.put(key, file!.buffer);
+    try {
+      await this.db
+        .update(storeProfiles)
+        .set({
+          qrisKey: key,
+          qrisContentType: kind.contentType,
+          updatedAt: new Date(),
+        })
+        .where(eq(storeProfiles.tenantId, s.tenantId));
+    } catch (e) {
+      await this.storage.delete(key);
+      throw e;
+    }
+    if (current.qrisKey) await this.storage.delete(current.qrisKey);
+    return this.present(await this.row(s.tenantId));
+  }
+
+  @Get('qris')
+  async qris(@CurrentSession() s: PosSession, @Res() res: Response) {
+    const row = await this.row(s.tenantId);
+    const body = row?.qrisKey ? await this.storage.get(row.qrisKey) : null;
+    if (!body || !row?.qrisContentType) throw new NotFoundException();
+    res
+      .set({
+        'Content-Type': row.qrisContentType,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, max-age=300',
+      })
+      .send(body);
+  }
+
+  @Delete('qris')
+  @RequirePermission('catalog.manage')
+  @HttpCode(204)
+  async deleteQris(@CurrentSession() s: PosSession) {
+    const row = await this.row(s.tenantId);
+    if (!row?.qrisKey) throw new NotFoundException();
+    await this.db
+      .update(storeProfiles)
+      .set({ qrisKey: null, qrisContentType: null, updatedAt: new Date() })
+      .where(eq(storeProfiles.tenantId, s.tenantId));
+    await this.storage.delete(row.qrisKey);
   }
 }
 

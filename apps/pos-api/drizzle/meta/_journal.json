@@ -204,6 +204,13 @@
       "when": 1795597557064,
       "tag": "0028_store_cash_deposits",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795607851769,
+      "tag": "0029_store_qris",
+      "breakpoints": true
     }
   ]
 }

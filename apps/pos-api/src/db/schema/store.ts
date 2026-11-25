@@ -28,6 +28,9 @@ export const storeProfiles = pos
       // Stored under tenants/<id>/ so the U8 purge's prefix delete removes it.
       logoKey: text('logo_key'),
       logoContentType: text('logo_content_type'),
+      // UMK-1992: the store's static QRIS image, same storage rules as the logo.
+      qrisKey: text('qris_key'),
+      qrisContentType: text('qris_content_type'),
       updatedAt: updatedAt(),
     },
     (t) => [
