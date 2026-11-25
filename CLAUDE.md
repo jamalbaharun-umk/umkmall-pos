@@ -65,6 +65,10 @@ silent, follow the monorepo's principles.
   `staff.manage` (`POST /staff/devices/pair`), which binds the device to that session's store. Only hashes are
   stored; 10 minutes (`PAIRING_CODE_TTL_SECONDS`), single use, wrong codes lock the store like PIN sign-in
   (`lockSeconds`). `device_pairings.tenant_id` is null until the claim. Never log a code or a pairing token.
+  Asking for a code needs no session, so open codes are capped in all (`MAX_LIVE_PAIRINGS`) and per network
+  address (`MAX_LIVE_PAIRINGS_PER_ADDRESS`), counted and inserted under one advisory lock; status polls are limited
+  per address in memory. The address is `req.ip`: set `POS_TRUSTED_PROXIES` to the proxies in front of pos-api, and
+  a relay (pos-web) must pass the device's address on in `X-Forwarded-For`, or every device shares one cap.
 - **Gate actions with `@RequirePermission('<key>')`** (`src/staff/require-permission.ts`; keys in
   `src/staff/permissions.ts`, add new ones there). Owners hold every permission; a cashier holds their roles'
   permissions, loaded per request by the session guard (`session.permissions`). Inline checks use
@@ -140,6 +144,13 @@ test per resource, idempotent money changes), with these differences:
   `live_disabled`, `merchant_mode_mismatch`) unless the account is `active`, in the environment's mode, with the
   method on**; a replay of a charge key still answers its payment; CASHAC is never gated. A test about payments
   seeds an active account (`test/support/merchants.ts`; `createStore` does it), never a bypass in `src/`.
+- **The gateway's word about an account is applied only when it is news.** `settle` asks the gateway before it
+  locks the row, so under the lock it discards an answer older than `status_observed_at` (the gateway's
+  `updatedAt` of the account) and any answer while `draft_undelivered` is set. That marker is set by every submit
+  and cleared when the gateway took the draft (`createAccount`, or `updateAccount` for an account it already has);
+  never infer delivery from `provider_account_id`. The reconciliation asks about `submitted` accounts after the
+  usual threshold and about `needs_fix`, `verified`, `active` and `suspended` ones every
+  `SLOW_RECONCILE_INTERVAL_MS` (`transitions.ts`).
 - **Onboarding has its own adapter contract** (`src/adapters/onboarding.ts`, `ONBOARDING_ADAPTERS`): each adapter
   declares `verification` (`hosted`, `platform`, `own_keys`), `modes` and `methods`. Only `hosted` is served: the
   owner verifies on the PG's own page, and **no identity document, identity number or bank account ever reaches
