@@ -70,7 +70,7 @@ export const approverOptions = (list: Approver[], now = Date.now()) =>
     }
   })
 
-export type MethodKind = 'cash' | 'debit' | 'credit' | 'wallet'
+export type MethodKind = 'cash' | 'debit' | 'credit' | 'wallet' | 'online'
 
 /**
  * What the store does with the customer's money, from the payment method of the sale (the design's "uang kembali"
@@ -89,6 +89,11 @@ export function refundGuidance(kind: MethodKind | null, total: number, rupiah: (
       return {
         needsShift: false,
         text: `Struk transfer, QRIS atau EDC dikembalikan lewat transfer balik sebesar ${rupiah(total)}. Laci tidak berubah dan tidak perlu shift buka. Lakukan transfer baliknya sendiri.`,
+      }
+    case 'online':
+      return {
+        needsShift: false,
+        text: `Refund ${rupiah(total)} ke pelanggan lewat gateway. Pembayaran non-tunai tidak mengeluarkan uang dari laci; kas shift tidak berubah.`,
       }
     case 'credit':
       return {
@@ -186,4 +191,42 @@ export const lockText = (lockedUntil: string | null, now = Date.now()) => {
   if (!lockedUntil) return null
   const ms = new Date(lockedUntil).getTime() - now
   return ms > 0 ? `Terkunci ${Math.max(1, Math.ceil(ms / 60000))} menit lagi` : null
+}
+
+// ---- UMK-1991: the refund of a paid QRIS or VA sale (same record as a void, `refundStatus` says where the money is) ----
+
+export type RefundState = 'pending' | 'succeeded' | 'failed'
+
+export function refundStateText(
+  status: RefundState | null | undefined,
+  amountText = 'dana',
+): { label: string; color: 'warning' | 'success' | 'danger'; body: string } | null {
+  switch (status) {
+    case 'pending':
+      return {
+        label: 'Refund diproses',
+        color: 'warning',
+        body: 'Refund sedang diproses: permintaannya dikirim ke gateway setelah penjualan dibatalkan, jadi dana belum kembali ke pelanggan. Penjualan sudah dibatalkan dan stok sudah kembali. Status diperbarui otomatis saat gateway memastikan. Menekan Refund lagi hanya menampilkan refund yang sama.',
+      }
+    case 'succeeded':
+      return { label: 'Refund selesai', color: 'success', body: `Gateway memastikan ${amountText} kembali ke pelanggan.` }
+    case 'failed':
+      return {
+        label: 'Refund gagal',
+        color: 'danger',
+        body: 'Gateway menolak refund. Uang pelanggan belum kembali. Pemilik bisa mencoba lagi, atau menandainya dikembalikan manual bila uang sudah dikembalikan di luar gateway.',
+      }
+    default:
+      return null
+  }
+}
+
+export const MANUAL_NOTE_MAX = 200
+
+/** The owner's "dikembalikan manual" note: how the money went back (required, at most 200 characters). */
+export function manualNoteError(note: string): string | undefined {
+  const t = note.trim()
+  if (!t) return 'Tulis cara uang dikembalikan, misalnya transfer ke rekening pelanggan'
+  if (t.length > MANUAL_NOTE_MAX) return `Catatan maksimal ${MANUAL_NOTE_MAX} karakter`
+  return undefined
 }

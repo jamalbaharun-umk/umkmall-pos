@@ -45,6 +45,109 @@ export function isSafeText(text: unknown): text is string {
   return !/\d{6,}|\d(?:[ -]?\d){7,}/.test(t)
 }
 
+/**
+ * The payment-gateway flow's stable lower-case codes (UMK-1991: 409 and 503 bodies of /sales/:id/payment/*, refunds and
+ * a sale refused at the PG). Each says what happened and what to do in the cashier's words; the server's own long text
+ * is never used for these. `primary` is the dialog's main button.
+ */
+export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary: PrimaryAction; helpCode?: string }> = {
+  payment_unavailable: {
+    what: 'Layanan pembayaran tidak menjawab, jadi tidak ada yang berubah.',
+    todo: 'Coba lagi sebentar. Jika berulang, hubungi pemilik.',
+    primary: 'retry',
+  },
+  // a cancel, a refund retry or a manual mark got no answer: the request may have reached payment-api
+  payment_unclear: {
+    what: 'Layanan pembayaran tidak menjawab. Permintaan Anda mungkin sudah sampai, jadi belum pasti apa yang berubah.',
+    todo: 'Periksa statusnya dulu (Cek status atau muat ulang halaman), baru ulangi bila perlu.',
+    primary: 'none',
+  },
+  // the switch to cash got no answer: the bill may already be closed
+  cash_switch_unanswered: {
+    what: 'Layanan pembayaran tidak menjawab, jadi penjualan belum menjadi tunai.',
+    todo: 'Tekan Cek status dulu sebelum menerima uang. Jika tagihan sudah tertutup, penjualan ini dibatalkan dan harus dibuat ulang.',
+    primary: 'none',
+  },
+  // the sale IS a cash sale; only the record of its cash is missing
+  cash_payment_pending: {
+    what: 'Penjualan ini sudah menjadi tunai, tetapi catatan uangnya belum tersimpan.',
+    todo: 'Tekan Simpan tunai lagi sampai berhasil. Jangan membuat penjualan baru.',
+    primary: 'retry',
+  },
+  // the sale was written but the charge got no answer: the same key repeats it, never a second sale
+  sale_waiting: {
+    what: 'Sistem pembayaran online tidak menjawab. Stok ditahan untuk penjualan ini dan belum pasti ada tagihan.',
+    todo: 'Coba lagi dengan cara bayar yang sama; tagihan tidak akan ganda. Bila Anda memilih cara bayar lain, penjualan ini tetap tercatat di Menunggu sampai sistem menutupnya atau Anda membatalkannya di sana.',
+    primary: 'retry',
+    helpCode: 'PAYMENT_UNAVAILABLE',
+  },
+  already_paid: {
+    what: 'Pelanggan sudah membayar. Gateway memastikan tagihan ini sudah lunas, jadi permintaan ditolak. Penjualan selesai dengan pembayaran online.',
+    todo: 'Jika Anda sudah menerima uang tunai, kembalikan ke pelanggan.',
+    primary: 'reload',
+  },
+  not_awaiting: {
+    what: 'Penjualan ini tidak lagi menunggu pembayaran.',
+    todo: 'Muat ulang untuk melihat keadaan terbarunya.',
+    primary: 'reload',
+  },
+  not_online: {
+    what: 'Penjualan ini tidak dibayar lewat QRIS atau VA.',
+    todo: 'Tidak ada pembayaran online yang perlu diganti.',
+    primary: 'none',
+  },
+  not_own_sale: {
+    what: 'Hanya kasir yang membuat penjualan ini yang bisa menerima tunainya.',
+    todo: 'Minta kasir tersebut, atau batalkan penjualannya.',
+    primary: 'none',
+  },
+  cancel_refused: {
+    what: 'Tagihan belum bisa ditutup, jadi penjualan masih menunggu pembayaran.',
+    todo: 'Tekan Cek status, lalu coba lagi.',
+    primary: 'none',
+  },
+  payment_refused: {
+    what: 'Layanan pembayaran menolak permintaan ini.',
+    todo: 'Coba lagi atau hubungi pemilik.',
+    primary: 'none',
+  },
+  use_void: {
+    what: 'Pembayaran tunai tidak bisa direfund.',
+    todo: 'Gunakan Void (Batalkan transaksi).',
+    primary: 'reload',
+  },
+  use_refund: {
+    what: 'Pembayaran online tidak bisa di-void.',
+    todo: 'Gunakan Refund struk.',
+    primary: 'reload',
+  },
+  not_refund_failed: {
+    what: 'Hanya refund yang ditolak gateway yang bisa ditandai dikembalikan manual.',
+    todo: 'Muat ulang untuk melihat status refund terbaru.',
+    primary: 'reload',
+  },
+  merchant_not_active: {
+    what: 'Pembayaran online belum aktif untuk toko ini. Penjualan dibatalkan dan stok kembali.',
+    todo: 'Pilih cara bayar lain. Pemilik bisa mengaktifkannya di Pembayaran Online.',
+    primary: 'none',
+  },
+  method_disabled: {
+    what: 'Metode ini sedang dimatikan di Pembayaran Online. Penjualan dibatalkan dan stok kembali.',
+    todo: 'Pilih cara bayar lain, atau minta pemilik menyalakannya.',
+    primary: 'none',
+  },
+  live_disabled: {
+    what: 'Pembayaran online uang nyata belum diizinkan. Penjualan dibatalkan dan stok kembali.',
+    todo: 'Pilih cara bayar lain.',
+    primary: 'none',
+  },
+  merchant_mode_mismatch: {
+    what: 'Akun pembayaran online toko ini tidak cocok dengan lingkungan ini. Penjualan dibatalkan dan stok kembali.',
+    todo: 'Pilih cara bayar lain, lalu hubungi pemilik.',
+    primary: 'none',
+  },
+}
+
 const browserOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false
 
 /** A thrown value that means "no connection" (the browser's fetch error, or the server function's own text). */
@@ -96,6 +199,12 @@ export function describeError(error: unknown, fallback: string): ErrorDescriptio
       code: 'OFFLINE',
       primary: 'retry',
     }
+  }
+  const paymentCode = typeof f.code === 'string' ? PAYMENT_CODES[f.code] : undefined
+  // A bad permission or a missing sale keeps its own, stricter text below; every other status takes the payment code's.
+  if (paymentCode && status !== 401 && status !== 403 && status !== 404 && status !== 422 && status !== 429) {
+    const { helpCode, ...text } = paymentCode
+    return { ...text, code: helpCode ?? f.code!.toUpperCase() }
   }
   if (f.code === 'PIN_INVALID') {
     return {

@@ -265,6 +265,11 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   a failure rolls the pos deletes back and answers 503.
 - The integration tests start the real payment-api app in-process on database `<PAYTEST_DB or payment_test>_pos`;
   `test/pg-cashier-flow.e2e-spec.ts` starts it with the fake gateway and moves payment-api's clock.
+- **pos-web's side** (plan [2026-11-25-007](docs/plans/2026-11-25-007-feat-umk-1991-pg-cashier-web-plan.md)): the waiting
+  screen is `apps/pos-web/src/routes/kasir/-online-pay.tsx` (pure logic in `-online.ts`), the QR is drawn by
+  `-qr.ts` (`qrcode-generator`, the one added dependency), the refund is the void dialog's `online` mode plus
+  `-refund-panel.tsx`. Gateway error codes map to words in `lib/describe-error.ts` (`PAYMENT_CODES`); a new code
+  from pos-api is added there. Sale dates show `paidAt`.
 - **"Pembayaran Online" (UMK-2019)** is `online-payments.controller.ts`: a thin pass to payment-api's
   `/merchant-accounts`, every route behind `payments.manage` (the cashier's `GET /online-payments/methods` behind
   `sales.create`). pos-api stores nothing of it; the client copies only the known fields of an account. A test

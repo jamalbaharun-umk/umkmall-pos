@@ -8,6 +8,8 @@ import {
   pinDigits,
   pinSetErrors,
   refundGuidance,
+  refundStateText,
+  manualNoteError,
   voidBody,
   voidFailure,
   voidFormErrors,
@@ -150,5 +152,31 @@ describe('lock text', () => {
     expect(lockText('2026-11-25T10:02:30Z', now)).toBe('Terkunci 3 menit lagi')
     expect(lockText('2026-11-25T09:00:00Z', now)).toBeNull()
     expect(lockText(null, now)).toBeNull()
+  })
+})
+
+describe('refund of an online sale, UMK-1991', () => {
+  it('refund guidance for a gateway payment needs no shift and no transfer by the cashier', () => {
+    const g = refundGuidance('online', 5123, (n) => `Rp${n}`)
+    expect(g.needsShift).toBe(false)
+    expect(g.text).toMatch(/gateway/)
+    expect(g.text).toMatch(/Rp5123/)
+  })
+  it('each refund state has its label and next step', () => {
+    expect(refundStateText('pending')?.label).toBe('Refund diproses')
+    expect(refundStateText('pending')?.body).toMatch(/hanya menampilkan refund yang sama/)
+    expect(refundStateText('succeeded')?.color).toBe('success')
+    expect(refundStateText('succeeded', 'Rp130.536')?.body).toBe('Gateway memastikan Rp130.536 kembali ke pelanggan.')
+    const failed = refundStateText('failed')
+    expect(failed?.color).toBe('danger')
+    expect(failed?.body).toMatch(/dikembalikan manual/)
+    expect(refundStateText(null)).toBeNull()
+    expect(refundStateText(undefined)).toBeNull()
+  })
+  it('the manual note is required and at most 200 characters', () => {
+    expect(manualNoteError('  ')).toMatch(/Tulis/)
+    expect(manualNoteError('transfer ke rekening pelanggan')).toBeUndefined()
+    expect(manualNoteError('x'.repeat(201))).toMatch(/200/)
+    expect(manualNoteError('x'.repeat(200))).toBeUndefined()
   })
 })

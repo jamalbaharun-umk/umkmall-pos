@@ -17,7 +17,7 @@ import {
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, type Crumb } from '@/components/page'
-import { checkFields, toBody, type Errors, type Field, type Values } from './-form'
+import { checkFields, toBody, visibleFields, type Errors, type Field, type Values } from './-form'
 import { removeResource, saveResource, type Resource, type Result } from './-api'
 
 // Page pieces for the U7 screens (pelanggan, voucher, metode pembayaran, piutang): Filament's page header,
@@ -235,7 +235,7 @@ export function ResourcePage<T extends { id: string }>(props: {
       >
         <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">
           <div className="grid max-h-[60vh] gap-4 overflow-y-auto p-1 sm:grid-cols-2">
-            {props.fields.map((f) =>
+            {visibleFields(props.fields, form?.values ?? {}).map((f) =>
               f.options ? (
                 <Select
                   portal

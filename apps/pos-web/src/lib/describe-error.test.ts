@@ -109,3 +109,24 @@ describe('isSafeText', () => {
     expect(isSafeText('Uang di laci Rp1.390.000, tetapi Anda mengambil Rp2.000.000.')).toBe(true)
   })
 })
+
+describe('payment gateway codes (UMK-1991)', () => {
+  it('a known lower-case code gets its sentence and an upper-case help code', () => {
+    const d = describeError({ status: 409, code: 'already_paid', error: 'server text' }, FALLBACK)
+    expect(d.what).toMatch(/sudah membayar/)
+    expect(d.code).toBe('ALREADY_PAID')
+  })
+  it('works on a 503 too, which otherwise is a generic outage text', () => {
+    expect(describeError({ status: 503, code: 'payment_unavailable' }, FALLBACK).what).toMatch(/tidak ada yang berubah/)
+    expect(describeError({ status: 503 }, FALLBACK).what).toMatch(/gangguan/)
+  })
+  it('never overrides the strict wording of 401, 403, 404, 422 and 429', () => {
+    for (const status of [401, 403, 404, 429]) {
+      expect(describeError({ status, code: 'payment_refused' }, FALLBACK).what).not.toMatch(/menolak permintaan/)
+    }
+    expect(describeError({ status: 422, code: 'payment_refused', error: 'Isi catatan.' }, FALLBACK).what).toBe('Isi catatan.')
+  })
+  it('an unknown code is ignored', () => {
+    expect(describeError({ status: 409, code: 'whatever' }, FALLBACK).what).toMatch(/bentrok/)
+  })
+})

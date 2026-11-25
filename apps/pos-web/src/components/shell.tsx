@@ -34,6 +34,12 @@ export function useCan(permission: string): boolean {
   return me?.actor.permissions.includes(permission) ?? false
 }
 
+/** Whether the signed-in actor is the store owner (UMK-1991: only the owner marks a refund "dikembalikan manual"). */
+export function useIsOwner(): boolean {
+  const me = root.useLoaderData() as Me | null
+  return me?.actor.kind === 'owner'
+}
+
 // SidebarMenuItem renders `linkComponent` with `href`; TanStack's Link wants `to`.
 const RouterLink = forwardRef<HTMLAnchorElement, { href: string }>(({ href, ...props }, ref) => (
   <Link ref={ref} to={href} {...props} />

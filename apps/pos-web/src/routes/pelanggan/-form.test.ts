@@ -91,3 +91,25 @@ describe('U7 dates are the same in every timezone', () => {
     }
   })
 })
+
+describe('a field that exists only for some values (UMK-1991: the gateway method of an online payment method)', () => {
+  const method: Field[] = [
+    { name: 'name', label: 'Nama' },
+    { name: 'kind', label: 'Jenis', options: [{ label: 'Tunai', value: 'cash' }, { label: 'Online', value: 'online' }] },
+    { name: 'gatewayMethod', label: 'Metode gateway', options: [{ label: 'QRIS', value: 'fake_qris' }], showWhen: (v) => v.kind === 'online' },
+  ]
+  it('is sent with an online method', () => {
+    expect(toBody(method, { name: 'QRIS', kind: 'online', gatewayMethod: 'fake_qris' })).toEqual({
+      name: 'QRIS',
+      kind: 'online',
+      gatewayMethod: 'fake_qris',
+    })
+  })
+  it('is neither checked nor sent with another kind, even when a value is left over from an earlier choice', () => {
+    expect(toBody(method, { name: 'Debit', kind: 'cash', gatewayMethod: 'fake_qris' })).toEqual({ name: 'Debit', kind: 'cash' })
+    expect(checkFields(method, { name: 'Debit', kind: 'cash', gatewayMethod: '' })).toEqual({})
+  })
+  it('is required with an online method', () => {
+    expect(checkFields(method, { name: 'QRIS', kind: 'online', gatewayMethod: '' })).toEqual({ gatewayMethod: 'Wajib diisi' })
+  })
+})

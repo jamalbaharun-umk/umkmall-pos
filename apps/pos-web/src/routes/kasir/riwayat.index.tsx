@@ -135,7 +135,7 @@ function HistoryPage() {
                 <TableRow>
                   <TableHead>Kode</TableHead>
                   <TableHead>Kasir</TableHead>
-                  <TableHead>Tanggal</TableHead>
+                  <TableHead>Tanggal bayar</TableHead>
                   <TableHead className="text-right">Total akhir</TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
                   <TableHead className="text-right">Diskon</TableHead>
@@ -167,7 +167,7 @@ function HistoryPage() {
                   >
                     <TableCell className="font-medium">#{s.number}</TableCell>
                     <TableCell>{s.cashier}</TableCell>
-                    <TableCell>{formatDate(s.createdAt)}</TableCell>
+                    <TableCell>{formatDate(s.paidAt ?? s.createdAt)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.total)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.subtotal)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.discount)}</TableCell>
