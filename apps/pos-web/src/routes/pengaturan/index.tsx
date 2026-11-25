@@ -1,7 +1,7 @@
 import { Alert, Button, Select, TextField, Upload, toast } from '@umkmall/ui/primitives'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
 import { useCan } from '@/components/shell'
@@ -10,10 +10,12 @@ import { IMAGE_ERROR, splitImages, storeProfileErrors, taxToBps, type Errors } f
 import {
   BUSINESS_TYPES,
   deleteLogo,
+  deleteQris,
   loadSettings,
   saveAppSettings,
   saveProfile,
   uploadLogo,
+  uploadQris,
   type Profile,
 } from './-api'
 
@@ -42,11 +44,15 @@ function SettingsPage() {
         <Tabs defaultValue="profil">
           <TabsList label="Pengaturan">
             <TabsTrigger value="profil">Profil toko</TabsTrigger>
+            <TabsTrigger value="pembayaran">Pembayaran</TabsTrigger>
             <TabsTrigger value="aplikasi">Aplikasi</TabsTrigger>
             <TabsTrigger value="tentang">Tentang</TabsTrigger>
           </TabsList>
           <TabsContent value="profil">
             <ProfileForm profile={profile} />
+          </TabsContent>
+          <TabsContent value="pembayaran">
+            <QrisForm profile={profile} />
           </TabsContent>
           <TabsContent value="aplikasi">
             <AppForm taxBps={taxBps} timezone={timezone} />
@@ -223,6 +229,137 @@ function ProfileForm({ profile }: { profile: Profile }) {
           Simpan
         </Button>
       </div>
+      {confirm.dialog}
+    </form>
+  )
+}
+
+/** UMK-1992: the store's static QRIS, shown to the customer in the cashier's wallet payment step. */
+function QrisForm({ profile }: { profile: Profile }) {
+  const router = useRouter()
+  const confirm = useConfirm()
+  const [file, setFile] = useState<File | null>(null)
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const [broken, setBroken] = useState(false)
+  const preview = useMemo(() => (file ? URL.createObjectURL(file) : undefined), [file])
+  useEffect(() => () => (preview ? URL.revokeObjectURL(preview) : undefined), [preview])
+  const saved = profile.qrisConfigured
+  const hasProfile = profile.name !== null
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (busy || !file) return
+    setError(undefined)
+    setBusy(true)
+    try {
+      const body = new FormData()
+      body.set('file', file)
+      const up = await uploadQris({ data: body })
+      if (up.error) {
+        setError(up.errors?.file ?? up.error)
+        return toast(up.errors?.file ?? up.error, { variant: 'danger' })
+      }
+      setFile(null)
+      setBroken(false)
+      toast(saved ? 'Kode QRIS diganti' : 'Kode QRIS disimpan', { variant: 'success' })
+      await router.invalidate()
+    } catch {
+      setError(GENERIC_ERROR)
+      toast(GENERIC_ERROR, { variant: 'danger' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form noValidate onSubmit={(e) => void submit(e)} className="mt-4 flex flex-col gap-6">
+      <Panel className="flex flex-col gap-4 p-6">
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold text-default-primary">QRIS toko</p>
+          <p className="text-sm text-default-secondary">
+            Kode QRIS statis milik toko. Kasir menampilkannya ke pelanggan saat metode bayar dompet digital dipilih.
+          </p>
+        </div>
+        {!hasProfile && <Alert variant="warning">Simpan profil toko dulu sebelum mengunggah kode QRIS.</Alert>}
+        {saved && !file && (
+          <div className="flex items-start gap-4">
+            {broken ? (
+              <p className="text-sm text-default-error">Kode QRIS tersimpan tetapi gagal dimuat. Coba muat ulang.</p>
+            ) : (
+              <img
+                src={`/pengaturan/qris?v=${encodeURIComponent(profile.updatedAt ?? '')}`}
+                alt="Kode QRIS toko"
+                onError={() => setBroken(true)}
+                className="size-40 rounded-lg border border-border-light bg-white object-contain"
+              />
+            )}
+            <Button
+              type="text"
+              color="danger"
+              size="small"
+              width="auto"
+              onClick={() =>
+                confirm.ask(
+                  'Hapus kode QRIS toko? Kasir tidak bisa menampilkan QRIS sampai kamu mengunggah lagi.',
+                  async () => {
+                    const r = await deleteQris()
+                    if (r.error) return r.error
+                    toast('Kode QRIS dihapus', { variant: 'success' })
+                    await router.invalidate()
+                  },
+                )
+              }
+            >
+              Hapus QRIS
+            </Button>
+          </div>
+        )}
+        {!saved && !file && hasProfile && (
+          <p className="text-sm text-default-secondary">Belum ada kode QRIS. Kasir akan melihat "QRIS belum diatur".</p>
+        )}
+        {hasProfile && (
+          <>
+            <Upload
+              label={saved ? 'Ganti kode QRIS' : 'Kode QRIS'}
+              accept="image/jpeg,image/png,image/webp"
+              filled={Boolean(file)}
+              onFilesChange={(picked) => {
+                const { accepted, refused } = splitImages(picked.slice(0, 1))
+                setFile(accepted[0] ?? null)
+                setError(refused.length ? 'Kode QRIS harus JPG, PNG atau WebP, maksimal 2 MB' : undefined)
+              }}
+              helperText="JPG, PNG atau WebP, paling besar 2 MB. Pakai gambar QRIS statis dari penyedia pembayaranmu."
+              browseLabel="Pilih"
+              error={error}
+            >
+              {file ? file.name : 'Tarik gambar QRIS ke sini atau pilih dari perangkat'}
+            </Upload>
+            {preview && (
+              <img
+                src={preview}
+                alt="Pratinjau kode QRIS"
+                className="size-40 rounded-lg border border-border-light bg-white object-contain"
+              />
+            )}
+          </>
+        )}
+      </Panel>
+      {hasProfile && (
+        <div>
+          <Button
+            htmlType="submit"
+            type="primary"
+            color="primary"
+            size="small"
+            width="auto"
+            isLoading={busy}
+            disabled={!file}
+          >
+            {saved ? 'Ganti QRIS' : 'Simpan QRIS'}
+          </Button>
+        </div>
+      )}
       {confirm.dialog}
     </form>
   )

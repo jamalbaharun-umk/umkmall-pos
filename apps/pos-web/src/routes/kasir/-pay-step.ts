@@ -25,3 +25,8 @@ export const qrisScanHint = (amountText: string) =>
 export const QRIS_NO_BANK_CHECK = 'Tombol ini tidak memeriksa ke bank. Tekan hanya setelah uang benar-benar masuk.'
 
 export const confirmButtonLabel = (kind: PayMethodKind | undefined) => (isStaticQris(kind) ? 'Sudah diterima' : 'Bayar')
+
+/** UMK-1992: the store's uploaded QRIS image; the version changes after a replace so the cache is not reused. */
+export const qrisSrc = (version: string | number) => `/pengaturan/qris?v=${encodeURIComponent(String(version))}`
+
+export const QRIS_LOAD_ERROR = 'Kode QRIS tidak bisa dimuat. Coba lagi atau pilih cara bayar lain.'

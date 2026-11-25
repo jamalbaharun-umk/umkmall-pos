@@ -128,14 +128,23 @@ async function send<T>(path: string, body: unknown, headers: Record<string, stri
 
 export const loadCashier = createServerFn().handler(async () => {
   const { shift } = await load<{ shift: (Shift & { expectedCash: number }) | null }>('/shifts/current')
-  if (!shift) return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[] }
+  const noQris = { configured: false, version: '' }
+  if (!shift) return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
-  const [page, settings, methods] = await Promise.all([
+  const [page, settings, methods, profile] = await Promise.all([
     load<{ data: Product[] }>('/catalog/products?perPage=100'),
     load<{ taxBps: number }>('/sales/settings'),
     load<{ data: PaymentMethod[] }>('/payment-methods'),
+    // UMK-1992: any session reads the profile; only the QRIS flag and a cache-busting stamp are used here.
+    load<{ qrisConfigured: boolean; updatedAt: string | null }>('/store/profile'),
   ])
-  return { shift, products: page.data.filter((p) => p.isActive), taxBps: settings.taxBps, methods: methods.data }
+  return {
+    shift,
+    products: page.data.filter((p) => p.isActive),
+    taxBps: settings.taxBps,
+    methods: methods.data,
+    qris: { configured: profile.qrisConfigured, version: profile.updatedAt ?? '' },
+  }
 })
 
 export const openShift = createServerFn({ method: 'POST' })

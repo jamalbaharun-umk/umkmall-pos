@@ -31,6 +31,7 @@ import { Route as PembelianBaruRouteImport } from './routes/pembelian/baru'
 import { Route as PengaturanIndexRouteImport } from './routes/pengaturan/index'
 import { Route as PengaturanKeamananRouteImport } from './routes/pengaturan/keamanan'
 import { Route as PengaturanLogoRouteImport } from './routes/pengaturan/logo'
+import { Route as PengaturanQrisRouteImport } from './routes/pengaturan/qris'
 import { Route as PengeluaranIndexRouteImport } from './routes/pengeluaran/index'
 import { Route as PengeluaranIdRouteImport } from './routes/pengeluaran/$id'
 import { Route as PengeluaranBaruRouteImport } from './routes/pengeluaran/baru'
@@ -168,6 +169,11 @@ const PengaturanKeamananRoute = PengaturanKeamananRouteImport.update({
 const PengaturanLogoRoute = PengaturanLogoRouteImport.update({
   id: '/pengaturan/logo',
   path: '/pengaturan/logo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PengaturanQrisRoute = PengaturanQrisRouteImport.update({
+  id: '/pengaturan/qris',
+  path: '/pengaturan/qris',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PengeluaranIndexRoute = PengeluaranIndexRouteImport.update({
@@ -325,6 +331,7 @@ export interface FileRoutesByFullPath {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
+  '/pengaturan/qris': typeof PengaturanQrisRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
@@ -377,6 +384,7 @@ export interface FileRoutesByTo {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
+  '/pengaturan/qris': typeof PengaturanQrisRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
@@ -430,6 +438,7 @@ export interface FileRoutesById {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
+  '/pengaturan/qris': typeof PengaturanQrisRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
@@ -484,6 +493,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
     | '/pengaturan/logo'
+    | '/pengaturan/qris'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
     | '/piutang/$id'
@@ -536,6 +546,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
     | '/pengaturan/logo'
+    | '/pengaturan/qris'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
     | '/piutang/$id'
@@ -588,6 +599,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
     | '/pengaturan/logo'
+    | '/pengaturan/qris'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
     | '/piutang/$id'
@@ -641,6 +653,7 @@ export interface RootRouteChildren {
   PembelianBaruRoute: typeof PembelianBaruRoute
   PengaturanKeamananRoute: typeof PengaturanKeamananRoute
   PengaturanLogoRoute: typeof PengaturanLogoRoute
+  PengaturanQrisRoute: typeof PengaturanQrisRoute
   PengeluaranIdRoute: typeof PengeluaranIdRoute
   PengeluaranBaruRoute: typeof PengeluaranBaruRoute
   PiutangIdRoute: typeof PiutangIdRoute
@@ -835,6 +848,13 @@ declare module '@tanstack/react-router' {
       path: '/pengaturan/logo'
       fullPath: '/pengaturan/logo'
       preLoaderRoute: typeof PengaturanLogoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pengaturan/qris': {
+      id: '/pengaturan/qris'
+      path: '/pengaturan/qris'
+      fullPath: '/pengaturan/qris'
+      preLoaderRoute: typeof PengaturanQrisRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pengeluaran/': {
@@ -1049,6 +1069,7 @@ const rootRouteChildren: RootRouteChildren = {
   PembelianBaruRoute: PembelianBaruRoute,
   PengaturanKeamananRoute: PengaturanKeamananRoute,
   PengaturanLogoRoute: PengaturanLogoRoute,
+  PengaturanQrisRoute: PengaturanQrisRoute,
   PengeluaranIdRoute: PengeluaranIdRoute,
   PengeluaranBaruRoute: PengeluaranBaruRoute,
   PiutangIdRoute: PiutangIdRoute,
