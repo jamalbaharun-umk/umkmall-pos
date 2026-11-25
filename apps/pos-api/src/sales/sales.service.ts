@@ -37,7 +37,10 @@ import {
 } from '../db/schema';
 import { priceLines, type ProductPricing } from '../catalog/pricing';
 import { loadPricing } from '../catalog/pricing-store';
-import { PaymentSync } from '../payments-client/payment-sync.service';
+import {
+  PaymentSync,
+  type SaleSettlement,
+} from '../payments-client/payment-sync.service';
 import {
   isInFlight,
   isOnlineMethod,
@@ -141,12 +144,16 @@ export class SalesService {
    */
   private async finish(s: PosSession, id: string) {
     let refused = false;
-    const { outcome: status, payment } = await this.payments
+    const {
+      outcome: status,
+      payment,
+      refusedCode,
+    } = await this.payments
       .settle(s.tenantId, id, 'charge')
-      .catch((e: unknown) => {
+      .catch((e: unknown): SaleSettlement => {
         if (!(e instanceof PaymentApiError)) throw e;
         refused = e.kind === 'rejected';
-        return { outcome: 'awaiting_payment' as const, payment: null };
+        return { outcome: 'awaiting_payment', payment: null };
       });
     if (
       status === 'awaiting_payment' &&
@@ -168,10 +175,12 @@ export class SalesService {
       });
     if (status === 'cancelled')
       throw new ConflictException({
-        message:
-          'Pembayaran gagal dan penjualan ini dibatalkan. Buat transaksi baru.',
+        message: refusedCode
+          ? 'Pembayaran online belum aktif untuk toko ini. Penjualan dibatalkan, pilih metode pembayaran lain.'
+          : 'Pembayaran gagal dan penjualan ini dibatalkan. Buat transaksi baru.',
         saleId: id,
         status,
+        ...(refusedCode ? { code: refusedCode } : {}),
       });
     return this.get(s, id, true);
   }

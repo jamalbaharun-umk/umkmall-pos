@@ -73,7 +73,23 @@ export type SaleOutcome =
 export type SettleMode = 'charge' | 'reconcile' | 'read' | 'sync' | 'cancel';
 
 /** The sale's status afterwards, and the payment of its current attempt when payment-api was asked. */
-export type SaleSettlement = { outcome: SaleOutcome; payment: Payment | null };
+export type SaleSettlement = {
+  outcome: SaleOutcome;
+  payment: Payment | null;
+  /** payment-api's code when it refused to bill the store at the PG at all (see GATE_REFUSALS). */
+  refusedCode?: string;
+};
+
+/**
+ * payment-api's refusals of a PG charge that say the STORE may not charge there (UMK-2019): its gateway
+ * account is not active, the method is off, or the mode does not fit. No bill exists after one of these.
+ */
+const GATE_REFUSALS = new Set([
+  'merchant_not_active',
+  'method_disabled',
+  'live_disabled',
+  'merchant_mode_mismatch',
+]);
 
 /** A refund's state at payment-api as pos-api keeps it on the void record. */
 const refundStatusOf = (payment: Payment): RefundStatus | null =>
@@ -222,10 +238,25 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         actorRef: actor,
       };
       let payment: Payment | null;
+      let refusedCode: string | undefined;
       // A sale past its first attempt was switched to cash: the cashier said the cash was received, so
       // every worker charges it (as it finishes a switch), and none gives it up for want of a payment.
       if (!closing && (mode === 'charge' || sale.attempt > 1)) {
-        payment = await this.client.charge(tenantId, charge);
+        payment = await this.client
+          .charge(tenantId, charge)
+          .catch((error: unknown) => {
+            // The store may not charge at this PG, so no bill was made. The charge key is closed and the
+            // sale cancelled now, with its stock back, instead of waiting for the job to give it up.
+            if (
+              !(error instanceof PaymentApiError) ||
+              error.kind !== 'rejected' ||
+              !GATE_REFUSALS.has(error.code ?? '') ||
+              !isOnlineMethod(charge.method)
+            )
+              throw error;
+            refusedCode = error.code ?? undefined;
+            return this.client.close(tenantId, charge);
+          });
       } else {
         payment = await this.client.findByKey(
           tenantId,
@@ -281,6 +312,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             payment.id,
           ),
           payment,
+          refusedCode,
         };
       // The PG attempt is closed unpaid and the cashier took cash: charge the cash attempt next.
       await this.turnToCash(tenantId, saleId, sale.attempt);

@@ -6,6 +6,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PaymentSync } from '../src/payments-client/payment-sync.service';
 import { PAYMENT_FETCH } from '../src/payments-client/payments.client';
+import { seedMerchant } from '../../payment-api/test/support/merchants';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
 import { PaymentApi, startPaymentApi } from './support/payment-api';
@@ -181,6 +182,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   async function shop(price = PRICE) {
     const s = await createStore();
     tenants.push(s.tenantId);
+    // A PG charge needs the store's gateway account to be active (UMK-2019).
+    await seedMerchant(pay.sql, { tenantId: s.tenantId });
     const cat = await post(s.auth, '/catalog/categories', {
       name: 'Minuman',
     }).expect(201);
@@ -497,6 +500,31 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         status: 'failed',
         checkout: null,
       });
+    });
+
+    it('a store whose gateway account is not active gets no bill: 409, the sale is cancelled and stock is back', async () => {
+      const s = await shop();
+      await seedMerchant(pay.sql, {
+        tenantId: s.tenantId,
+        status: 'suspended',
+      });
+      const key = randomUUID();
+      const res = await sell(s, {}, key).expect(409);
+      expect(res.body).toMatchObject({
+        status: 'cancelled',
+        code: 'merchant_not_active',
+      });
+      expect((await saleRow(res.body.saleId)).status).toBe('cancelled');
+      expect(await onHand(s)).toBe(20);
+      // A retry of the same request answers the same cancelled sale.
+      const again = await sell(s, {}, key).expect(409);
+      expect(again.body.saleId).toBe(res.body.saleId);
+      expect(await onHand(s)).toBe(20);
+      expect(await bills(s.tenantId)).toEqual([]);
+      // The charge key is closed: nothing can be paid under it later.
+      expect((await paymentsOf(res.body.saleId)).map((p) => p.status)).toEqual([
+        'cancelled',
+      ]);
     });
 
     it('a PG sale must be paid in the exact total', async () => {

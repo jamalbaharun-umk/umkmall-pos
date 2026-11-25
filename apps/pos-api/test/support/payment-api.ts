@@ -108,8 +108,8 @@ export async function startPaymentApi(
     // The local fake gateway (methods fake_qris and fake_va, controls under /dev/fake-gateway). payment-api
     // decides whether to mount it when its AppModule is first loaded, so that happens only here, after the
     // variable is set. Jest gives each test file its own module registry.
+    // A test file that imported `payment-fake-env.ts` first has set it already.
     if (options.fakeGateway) process.env.PAYMENT_ADAPTERS = 'fake';
-    else delete process.env.PAYMENT_ADAPTERS;
     const { AppModule: PaymentAppModule } =
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       require('../../../payment-api/src/app.module') as typeof import('../../../payment-api/src/app.module');
@@ -131,6 +131,8 @@ export async function startPaymentApi(
     max: 1,
     onnotice: () => {},
   });
+  // Connects now: the driver learns the array types on connect, and `seedMerchant` sends a text[] first.
+  await sql`select 1`;
   return {
     url: `http://127.0.0.1:${port}`,
     serviceKey,
