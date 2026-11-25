@@ -55,6 +55,29 @@ export class PaymentsController {
     return payment;
   }
 
+  /**
+   * Closes a charge key that has no payment (same key and body as the charge). 201 with the new `cancelled`
+   * payment, or 200 with the payment that already has the key, unchanged.
+   */
+  @Post('close')
+  async close(
+    @TenantId() tenantId: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const parsedKey = IdempotencyKey.safeParse(key);
+    if (!parsedKey.success)
+      throw fieldError('Idempotency-Key', parsedKey.error.issues[0].message);
+    const { created, payment } = await this.payments.close(
+      tenantId,
+      parsedKey.data,
+      validate(ChargeBody, body),
+    );
+    res.status(created ? 201 : 200);
+    return payment;
+  }
+
   @Get()
   list(@TenantId() tenantId: string, @Query() query: unknown) {
     return this.payments.list(tenantId, validate(ListQuery, query));

@@ -43,6 +43,8 @@ export const SaleInput = z
 
 export const SalesQuery = z.object({
   shiftId: Uuid.optional(),
+  // UMK-1991: sales that are not receipts are listed only when asked for.
+  status: z.enum(['awaiting_payment', 'cancelled']).optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
   page: z.coerce.number().int().min(1).default(1),

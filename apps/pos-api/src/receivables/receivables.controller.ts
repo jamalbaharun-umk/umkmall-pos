@@ -48,6 +48,8 @@ import {
 } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
+import { PaymentSync } from '../payments-client/payment-sync.service';
+import { paymentMethodCode } from '../payments-client/payments.client';
 import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
 import { recordStoreCash } from '../store-cash/store-cash-ledger';
@@ -122,8 +124,10 @@ export async function createReceivable(
     total: number;
     paid: number;
     cashMethodId: string;
+    /** UMK-1991: payment-api is on, so the down payment gets its number (`seq` 1) and is recorded there. */
+    recordInPaymentApi: boolean;
   },
-) {
+): Promise<string | null> {
   const [r] = await tx
     .insert(receivables)
     .values({
@@ -137,8 +141,10 @@ export async function createReceivable(
       lastPaymentAt: sale.paid > 0 ? new Date() : null,
     })
     .returning({ id: receivables.id });
-  if (sale.paid > 0)
-    await tx.insert(receivablePayments).values({
+  if (sale.paid === 0) return null;
+  const [down] = await tx
+    .insert(receivablePayments)
+    .values({
       tenantId: s.tenantId,
       receivableId: r.id,
       amount: sale.paid,
@@ -146,7 +152,12 @@ export async function createReceivable(
       restBefore: sale.total,
       actorId: s.actorId,
       actorKind: s.kind,
-    });
+      seq: sale.recordInPaymentApi ? 1 : null,
+      // The down payment is taken as cash (the store's Tunai).
+      paymentMethodCode: sale.recordInPaymentApi ? 'cash' : null,
+    })
+    .returning({ id: receivablePayments.id });
+  return sale.recordInPaymentApi ? down.id : null;
 }
 
 /**
@@ -200,7 +211,10 @@ export async function cancelReceivable(
 /** Receivables (Lakasir ReceivableResource + ReceivablePaymentService), append-only payments. */
 @Injectable()
 export class ReceivablesService {
-  constructor(@InjectDb() private readonly db: Db) {}
+  constructor(
+    @InjectDb() private readonly db: Db,
+    private readonly payments: PaymentSync,
+  ) {}
 
   private base() {
     return this.db
@@ -347,8 +361,8 @@ export class ReceivablesService {
 
   async pay(s: PosSession, id: string, key: string, input: PaymentInput) {
     const hash = requestHash(id, input);
-    await this.db
-      .transaction(async (tx) => {
+    const recorded = await this.db
+      .transaction(async (tx): Promise<string | null> => {
         // Row lock: two payments on one receivable apply one after the other.
         const [r] = await tx
           .select({
@@ -377,7 +391,7 @@ export class ReceivablesService {
               'idempotencyKey',
               'Kunci ini sudah dipakai untuk pembayaran lain',
             );
-          return;
+          return null;
         }
         if (r.cancelledAt)
           throw fieldError(
@@ -399,6 +413,21 @@ export class ReceivablesService {
         // lock: a cash payment is in a shift's ledger or in the store's, never both, never neither.
         // Debit and wallet money is in none.
         const paymentId = randomUUID();
+        // UMK-1991: this payment's number on the receivable, under the receivable's row lock. Its payment
+        // in payment-api has the order reference `<receivableId>:<seq>`.
+        const [{ next }] = await tx
+          .select({
+            next: sql<number>`coalesce(max(${receivablePayments.seq}), 0) + 1`.mapWith(
+              Number,
+            ),
+          })
+          .from(receivablePayments)
+          .where(
+            and(
+              eq(receivablePayments.tenantId, s.tenantId),
+              eq(receivablePayments.receivableId, id),
+            ),
+          );
         const cashIn = {
           direction: 'in',
           kind: 'receivable_payment',
@@ -429,11 +458,16 @@ export class ReceivablesService {
           idempotencyKey: key,
           requestHash: hash,
           collectedOutsideShift: outsideShift,
+          seq: this.payments.enabled ? next : null,
+          paymentMethodCode: this.payments.enabled
+            ? paymentMethodCode(method)
+            : null,
         });
         await tx
           .update(receivables)
           .set({ rest: r.rest - input.amount, lastPaymentAt: new Date() })
           .where(eq(receivables.id, id));
+        return this.payments.enabled ? paymentId : null;
       })
       .catch((e: unknown) => {
         // The same key on another receivable (no shared row lock): the unique index refuses it.
@@ -444,6 +478,11 @@ export class ReceivablesService {
           );
         throw e;
       });
+    // The money is taken and committed; its record in payment-api follows (the job repeats a failure).
+    if (recorded)
+      await this.payments.afterCommit('receivable_payment', recorded, () =>
+        this.payments.recordReceivablePayment(s.tenantId, recorded),
+      );
     return this.get(s.tenantId, id);
   }
 
@@ -458,6 +497,8 @@ export class ReceivablesService {
       .select({
         id: paymentMethods.id,
         isCash: paymentMethods.isCash,
+        isDebit: paymentMethods.isDebit,
+        isWallet: paymentMethods.isWallet,
         isCredit: paymentMethods.isCredit,
       })
       .from(paymentMethods)
@@ -475,7 +516,12 @@ export class ReceivablesService {
         'paymentMethodId',
         'Piutang tidak dapat dibayar dengan kasbon',
       );
-    return { id: m.id, isCash: m.isCash };
+    return {
+      id: m.id,
+      isCash: m.isCash,
+      isDebit: m.isDebit,
+      isWallet: m.isWallet,
+    };
   }
 }
 

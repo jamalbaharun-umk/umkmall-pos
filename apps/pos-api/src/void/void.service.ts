@@ -19,6 +19,7 @@ import {
   staff,
 } from '../db/schema';
 import { cancelReceivable } from '../receivables/receivables.controller';
+import { PaymentSync } from '../payments-client/payment-sync.service';
 import { lockOpenShift, recordShiftCash } from '../shifts/cash-ledger';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -31,6 +32,9 @@ import type { VoidInput } from './void.schemas';
 const NO_SHIFT = 'Buka shift dulu untuk membatalkan struk tunai';
 const ALREADY_VOID = 'Struk ini sudah dibatalkan';
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk pembatalan lain';
+// UMK-1991: only a receipt is voided. A sale awaiting payment is finished or cancelled by its payment.
+const AWAITING = 'Penjualan ini masih menunggu pembayaran';
+const NOT_A_RECEIPT = 'Penjualan ini dibatalkan sebelum dibayar';
 
 /** The request's fingerprint for a replay. The PIN is not part of it and is stored nowhere. */
 const requestHash = (saleId: string, input: VoidInput) =>
@@ -73,6 +77,7 @@ export class VoidService {
     @InjectDb() private readonly db: Db,
     private readonly stock: StockService,
     private readonly pins: VoidPins,
+    private readonly payments: PaymentSync,
   ) {}
 
   async void(s: PosSession, saleId: string, key: string, input: VoidInput) {
@@ -100,6 +105,11 @@ export class VoidService {
       }
       throw e;
     }
+    // UMK-1991: the sale is voided here; now its payments in payment-api (the job repeats a failure).
+    const voidId = id;
+    await this.payments.afterCommit('void', voidId, () =>
+      this.payments.syncVoid(s.tenantId, voidId),
+    );
     return this.view(s, id);
   }
 
@@ -153,6 +163,9 @@ export class VoidService {
       .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, saleId)));
     if (!sale) throw new NotFoundException();
     if (sale.status === 'void') throw new ConflictException(ALREADY_VOID);
+    if (sale.status === 'awaiting_payment')
+      throw new ConflictException(AWAITING);
+    if (sale.status === 'cancelled') throw new ConflictException(NOT_A_RECEIPT);
 
     let cashDue = sale.isCash ? sale.total + sale.rounding : 0;
     if (sale.isCredit) {
@@ -227,6 +240,9 @@ export class VoidService {
       if (done && done.key === key && done.hash === hash) return done.id;
       throw new ConflictException(ALREADY_VOID);
     }
+    if (sale.status === 'awaiting_payment')
+      throw new ConflictException(AWAITING);
+    if (sale.status === 'cancelled') throw new ConflictException(NOT_A_RECEIPT);
 
     const [method] = await tx
       .select({
@@ -323,6 +339,7 @@ export class VoidService {
       total: sale.total,
       rounding: sale.rounding,
       costTotal: sale.costTotal,
+      paymentSyncPending: this.payments.enabled,
     });
     if (returns.length)
       await tx

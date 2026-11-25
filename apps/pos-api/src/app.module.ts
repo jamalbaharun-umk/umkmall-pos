@@ -20,6 +20,7 @@ import { StoreCashModule } from './store-cash/store-cash.controller';
 import { PurgeModule } from './purge/purge.controller';
 import { StoreModule } from './store/store.controller';
 import { VoidModule } from './void/void.controller';
+import { PaymentsModule } from './payments-client/payments.module';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -44,6 +45,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     PurgeModule,
     StoreModule,
     VoidModule,
+    PaymentsModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [

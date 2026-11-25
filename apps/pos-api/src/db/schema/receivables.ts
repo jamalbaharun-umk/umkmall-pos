@@ -5,6 +5,7 @@ import {
   date,
   foreignKey,
   index,
+  integer,
   text,
   timestamp,
   unique,
@@ -91,11 +92,24 @@ export const receivablePayments = pos
       collectedOutsideShift: boolean('collected_outside_shift')
         .notNull()
         .default(false),
+      // UMK-1991: this payment's number on its receivable (1, 2, …); its payment in payment-api has the order
+      // reference `<receivable id>:<seq>`. Null = taken while payment-api was off, never sent.
+      seq: integer('seq'),
+      // The payment in payment-api; null with a `seq` = not recorded there yet (the job repeats it).
+      paymentId: uuid('payment_id'),
+      // payment-api's method, fixed when the payment was taken (set with `seq`).
+      paymentMethodCode: text('payment_method_code'),
       createdAt: createdAt(),
     },
     (t) => [
       unique().on(t.tenantId, t.id),
       index('receivable_payments_receivable_idx').on(t.receivableId),
+      uniqueIndex('receivable_payments_seq_uq')
+        .on(t.tenantId, t.receivableId, t.seq)
+        .where(sql`${t.seq} is not null`),
+      index('receivable_payments_unrecorded_idx')
+        .on(t.createdAt)
+        .where(sql`${t.seq} is not null and ${t.paymentId} is null`),
       uniqueIndex('receivable_payments_tenant_key_uq')
         .on(t.tenantId, t.idempotencyKey)
         .where(sql`${t.idempotencyKey} is not null`),

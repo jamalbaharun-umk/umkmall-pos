@@ -129,6 +129,10 @@ test per resource, idempotent money changes), with these differences:
   amount becomes an `unmatched_receipts` row (`needs_review`), refunded automatically when
   `PAYMENT_LATE_AUTO_REFUND` is on. A closed payment never becomes `paid`. The reconciliation keeps asking about
   closed bills until expiry plus `PAYMENT_LATE_SWEEP_SECONDS`, so a lost webhook does not hide late money.
+- **`POST /payments/close` closes a charge key for good** (same key and body as the charge): no payment under the
+  key → a `cancelled` one is written under it, so a charge that arrives later answers it and never pays; a payment
+  under the key is answered unchanged, also a `paid` one. A caller cancels its order for want of a payment only on
+  this answer.
 - **A refund's key at the PG is `payments.refund_key`,** set when the payment moves to `refund_pending`. Never derive
   an idempotency key from the audit trail: notes are written there too.
 - **Purge:** `POST /internal/tenants/purge` deletes every `payment` table row with the header's `tenant_id`, discovered
@@ -137,6 +141,43 @@ test per resource, idempotent money changes), with these differences:
 - Env: `DATABASE_URL` (the `payment_app` role), `PAYMENT_SERVICE_KEY` (≥ 16 chars, the same value in every caller),
   `PORT` (default 3001), and the optional `PAYMENT_*` flow settings (`src/config.ts`, names in `.env.example`).
   Commit scope: `payment-api`.
+
+### pos-api's side (`apps/pos-api/src/payments-client/`)
+
+Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md).
+
+- **Switch:** `PAYMENT_API_URL` unset (or empty) → payment-api is off and pos-api works as before (one-step sale,
+  nothing sent); this is how local dev and every test but `test/payments-integration.e2e-spec.ts` run. Set →
+  `PAYMENT_SERVICE_KEY` is required, and in production the URL must be https (`PAYMENT_API_ALLOW_HTTP=true` only for
+  a private network). Also `PAYMENT_API_TIMEOUT_MS` (5000), `POS_PAYMENT_RECONCILE_INTERVAL_SECONDS` (60, 0 = no
+  timer), `POS_PAYMENT_RECONCILE_AFTER_SECONDS` (120, at least twice the timeout), `POS_PAYMENT_SYNC_MAX_ATTEMPTS`
+  (10). pos-api refuses to start with payment-api off while a sale is `awaiting_payment`.
+- **Only `payments.client.ts` reads the service key and writes `X-Payment-Service-Key` and `X-Tenant-Id`** (guard
+  test). Every client method takes the tenant id first: `session.tenantId`, or the tenant of the pos row the job or
+  the purge is working on. Never log the key, a header or a body.
+- **A sale is two steps** (cash → `cash`, debit → `edc_debit`, wallet → `static_qris`): written as
+  `awaiting_payment` with stock and voucher taken, then charged with key `<saleId>:1` for the amount due (cash:
+  `total + rounding`) and completed on `paid`. No clear answer → 503 and the sale stays `awaiting_payment`; a payment
+  closed unpaid → `cancelled`, stock and voucher back. A cancelled sale is never completed. All of this is
+  `PaymentSync.settleSale`.
+- **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
+  exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
+  answer only while it still awaits payment.
+- **A sale is cancelled only on a payment that payment-api says is closed.** "No payment found" is not an answer to
+  cancel on: the job first closes the charge key (`POST /payments/close`, which writes a `cancelled` payment under
+  it), so a charge still on its way can never be paid later.
+- **`awaiting_payment` and `cancelled` sales are not receipts:** every list, report and shift total filters
+  `FINAL_SALE_STATUSES` (`db/schema/sales.ts`). A new query on `pos.sales` must too. A shift does not close while one
+  of its sales awaits payment.
+- **Kasbon payments and voids are recorded after the pos commit** (`receivable_payments.seq`/`payment_id`, order
+  reference `<receivableId>:<seq>`; `sale_voids.payment_sync_pending`), and the job (`PaymentSync.tick`) repeats what
+  failed. A void sends the void's reason, actor and PIN-verified approver.
+- **The job never rejects, stops at the first unanswered call, and parks a row payment-api keeps refusing**
+  (`pos.payment_sync_issues`; `GET /payment-sync/issues`, `POST /payment-sync/issues/:id/retry`). Log row ids,
+  codes and counts only.
+- **The purge calls payment-api's purge** inside its transaction, after every pos delete and just before the commit;
+  a failure rolls the pos deletes back and answers 503.
+- The integration test starts the real payment-api app in-process on database `<PAYTEST_DB or payment_test>_pos`.
 
 ## Commands
 

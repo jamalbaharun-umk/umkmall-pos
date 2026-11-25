@@ -33,6 +33,7 @@ export type Source =
   | 'sync'
   | 'reconciliation'
   | 'cancel'
+  | 'close'
   | 'void'
   | 'refund'
   | 'manual_refund'

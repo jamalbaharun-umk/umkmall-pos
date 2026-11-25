@@ -3,10 +3,26 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { paymentMethods, sales, shiftCashEntries, shifts } from '../db/schema';
+import {
+  FINAL_SALE_STATUSES,
+  paymentMethods,
+  sales,
+  shiftCashEntries,
+  shifts,
+} from '../db/schema';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
@@ -68,7 +84,13 @@ export class ShiftsService {
       })
       .from(sales)
       .innerJoin(paymentMethods, eq(paymentMethods.id, sales.paymentMethodId))
-      .where(eq(sales.shiftId, shiftId));
+      // A sale awaiting its payment, or cancelled for want of one, was never a receipt (UMK-1991).
+      .where(
+        and(
+          eq(sales.shiftId, shiftId),
+          inArray(sales.status, [...FINAL_SALE_STATUSES]),
+        ),
+      );
     return { cashSales: Number(t.cashSales), salesCount: t.salesCount };
   }
 
@@ -125,6 +147,26 @@ export class ShiftsService {
     return this.db.transaction(async (tx) => {
       const shift = await lockOpenShift(tx, s);
       if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
+      // Owner decision (UMK-1991): a shift does not close while a sale of it awaits payment. Under the
+      // shift's row lock, which a new sale also takes, so none appears after this check.
+      const waiting = await tx
+        .select({ number: sales.number })
+        .from(sales)
+        .where(
+          and(
+            eq(sales.tenantId, s.tenantId),
+            eq(sales.shiftId, shift.id),
+            eq(sales.status, 'awaiting_payment'),
+          ),
+        )
+        .orderBy(asc(sales.number));
+      if (waiting.length)
+        throw new ConflictException({
+          message: `Masih ada penjualan yang menunggu pembayaran: ${waiting
+            .map((w) => `#${w.number}`)
+            .join(', ')}`,
+          saleNumbers: waiting.map((w) => w.number),
+        });
       const t = await this.totals(tx, shift.id);
       const cash = await this.cashOf(tx, s.tenantId, shift.id);
       const [row] = await tx
