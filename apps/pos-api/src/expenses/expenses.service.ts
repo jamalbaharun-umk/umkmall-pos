@@ -28,9 +28,11 @@ import {
   expenseEdits,
   expenses,
   staff,
+  storeCashEntries,
   SUPPLIER_PAYMENT_CATEGORY,
 } from '../db/schema';
 import { ROW_CAP } from '../reports/reports.service';
+import { recordStoreCash } from '../store-cash/store-cash-ledger';
 import { recordShiftCash, recordShiftCashInShift } from '../shifts/cash-ledger';
 import { ShiftsService } from '../shifts/shifts.service';
 import { isUniqueViolation } from '../staff/http';
@@ -157,6 +159,16 @@ const columns = {
     when ${expenses.voidedByKind} = 'owner' then 'Pemilik' else coalesce(${voider.name}, 'Staf') end`,
   voidReason: expenses.voidReason,
   drawerReversed: expenses.drawerReversed,
+  // Where the cash of a voided drawer expense went: back into its shift's drawer (still open), or
+  // into the store cash (shift closed). Read from the ledgers; null when nothing was returned.
+  cashReturnedTo: sql<'drawer' | 'store_cash' | null>`case
+    when ${expenses.voidedAt} is null or ${expenses.source} <> 'drawer' then null
+    when ${expenses.drawerReversed} then 'drawer'
+    when exists (select 1 from ${storeCashEntries}
+                  where ${storeCashEntries.tenantId} = ${expenses.tenantId}
+                    and ${storeCashEntries.kind} = 'expense_void'
+                    and ${storeCashEntries.refId} = ${expenses.id}) then 'store_cash'
+    end`,
 };
 
 type Selected = {
@@ -408,8 +420,9 @@ export class ExpensesService {
 
   /**
    * The soft delete. A drawer expense whose shift is still open gets one cash-in entry in that shift
-   * (its expected cash is back where it was); a closed shift was counted with the expense in it and
-   * never changes, so nothing is written for it. Repeating the void changes nothing.
+   * (its expected cash is back where it was). A closed shift was counted with the expense in it and
+   * never changes: the cash given back goes into the store cash ("kas toko"), one `expense_void`
+   * entry by whoever voids (owner ruling 2026-11-25). Repeating the void changes nothing.
    */
   async voidExpense(s: PosSession, id: string, reason?: string) {
     await this.db.transaction(async (tx) => {
@@ -435,6 +448,16 @@ export class ExpensesService {
               refId: id,
             })
           : null;
+      // Shift closed: the money is back in the store, outside every drawer. One entry per expense
+      // (this row's lock, and the ledger's unique index on its source).
+      if (drawerReversed === false)
+        await recordStoreCash(tx, s, {
+          direction: 'in',
+          kind: 'expense_void',
+          amount: row.amount,
+          refId: id,
+          note: reason || undefined,
+        });
       await tx
         .update(expenses)
         .set({

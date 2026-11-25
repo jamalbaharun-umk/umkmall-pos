@@ -26,6 +26,8 @@ export type ExpenseDetail = ExpenseRow & {
   voidedByName: string | null
   voidReason: string | null
   drawerReversed: boolean
+  /** Where a voided drawer expense's cash went; null when none was returned. */
+  cashReturnedTo: 'drawer' | 'store_cash' | null
   edits: ExpenseEdit[]
 }
 export type ExpenseSummary = {

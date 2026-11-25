@@ -133,6 +133,7 @@ describe('paymentPlace', () => {
 describe('store cash', () => {
   it('labels the kinds', () => {
     expect(storeKindLabel('receivable_payment')).toContain('di luar shift')
+    expect(storeKindLabel('expense_void')).toBe('Pengeluaran laci dibatalkan setelah shift ditutup')
     expect(storeKindLabel('x')).toBe('Kas toko lain')
   })
 })

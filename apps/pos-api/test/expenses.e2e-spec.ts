@@ -91,6 +91,19 @@ describe('expense log and profit and loss (UMK-1984)', () => {
     >`
       select direction, kind, amount, ref_id from pos.shift_cash_entries
       where tenant_id = ${tenantId} order by created_at, id`;
+  const storeCash = (tenantId: string) =>
+    admin<
+      {
+        direction: string;
+        kind: string;
+        amount: string;
+        ref_id: string;
+        actor_id: string;
+        note: string | null;
+      }[]
+    >`
+      select direction, kind, amount, ref_id, actor_id, note from pos.store_cash_entries
+      where tenant_id = ${tenantId} order by created_at, id`;
   const rowCount = async (tenantId: string) =>
     (
       await admin<{ n: number }[]>`
@@ -613,6 +626,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         voidedByName: 'Pemilik',
         voidReason: 'Salah catat',
         drawerReversed: true,
+        cashReturnedTo: 'drawer',
       });
       expect(voided.body.voidedAt).toEqual(expect.any(String));
       expect(await current(rina.auth)).toMatchObject({
@@ -640,15 +654,36 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           ref_id: e.id,
         },
       ]);
+      // The drawer got it back, so the store cash did not.
+      expect(await storeCash(s.tenantId)).toEqual([]);
       expect((await get(s.auth, '/expenses').expect(200)).body).toMatchObject({
         total: 0,
         summary: { count: 0, expenses: 0, fromDrawer: 0 },
       });
       await post(s.auth, `/expenses/${e.id}/void`, { foo: 1 }).expect(422);
+      // An expense paid outside the drawer returns no cash anywhere.
+      const out = await spend(s.auth, {
+        amount: 700,
+        category: 'lainnya',
+        source: 'outside',
+      }).expect(201);
+      const gone = await post(s.auth, `/expenses/${out.body.id}/void`).expect(
+        200,
+      );
+      expect(gone.body).toMatchObject({
+        drawerReversed: null,
+        cashReturnedTo: null,
+      });
+      expect(await storeCash(s.tenantId)).toEqual([]);
     });
 
-    it('void of a drawer expense of a closed shift changes no drawer: the closed shift stays as counted', async () => {
+    it('void of a drawer expense of a closed shift: the cash goes into the store cash, by whoever voids, once; no drawer changes', async () => {
       const s = await createStore();
+      const other = await createStore();
+      const keeper = await createCashier(app, s, [
+        'expenses.manage',
+        'reports.view',
+      ]);
       const first = (await open(s.auth, 100_000)).body;
       const e = (
         await spend(s.auth, {
@@ -662,11 +697,53 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         select * from pos.shifts where id = ${first.id}`;
       await open(s.auth, 70_000);
 
-      const voided = await post(s.auth, `/expenses/${e.id}/void`).expect(200);
+      // Another store cannot void it and gets no cash for it.
+      await post(other.auth, `/expenses/${e.id}/void`).expect(404);
+      expect(await storeCash(s.tenantId)).toEqual([]);
+      const voided = await post(keeper.auth, `/expenses/${e.id}/void`, {
+        reason: 'Salah catat',
+      }).expect(200);
       expect(voided.body).toMatchObject({
         drawerReversed: false,
-        voidReason: null,
+        cashReturnedTo: 'store_cash',
+        voidReason: 'Salah catat',
+        voidedById: keeper.staffId,
+        voidedByName: 'Sari',
       });
+      // One cash-in of the store, for the expense, by the cashier who voided.
+      const entry = {
+        direction: 'in',
+        kind: 'expense_void',
+        amount: '30000',
+        ref_id: e.id,
+        actor_id: keeper.staffId,
+        note: 'Salah catat',
+      };
+      expect(await storeCash(s.tenantId)).toEqual([entry]);
+      // Again, by anyone: the same answer, nothing more written.
+      const again = await post(s.auth, `/expenses/${e.id}/void`).expect(200);
+      expect(again.body).toEqual(voided.body);
+      expect(await storeCash(s.tenantId)).toEqual([entry]);
+      const kas = await get(s.auth, '/store-cash').expect(200);
+      expect(kas.body).toMatchObject({
+        total: 1,
+        summary: { cashIn: 30_000, cashOut: 0, balance: 30_000 },
+        data: [
+          {
+            direction: 'in',
+            kind: 'expense_void',
+            amount: 30_000,
+            refId: e.id,
+            actorId: keeper.staffId,
+            actorName: 'Sari',
+          },
+        ],
+      });
+      // The other store's cash holds nothing of it.
+      expect(await storeCash(other.tenantId)).toEqual([]);
+      expect(
+        (await get(other.auth, '/store-cash').expect(200)).body,
+      ).toMatchObject({ total: 0, summary: { balance: 0 } });
       expect(
         await admin`select * from pos.shifts where id = ${first.id}`,
       ).toEqual(before);
@@ -968,8 +1045,20 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         expectedCash: 70_000,
         difference: 0,
       });
-      expect(voided.body.drawerReversed).toBe(false);
+      expect(voided.body).toMatchObject({
+        drawerReversed: false,
+        cashReturnedTo: 'store_cash',
+      });
       expect(await ledger(s.tenantId)).toHaveLength(1);
+      // The shift was counted without it, so the cash is the store's.
+      expect(await storeCash(s.tenantId)).toMatchObject([
+        {
+          direction: 'in',
+          kind: 'expense_void',
+          amount: '30000',
+          ref_id: e.id,
+        },
+      ]);
       const after = await get(s.auth, `/shifts/${e.shiftId}`).expect(200);
       expect(after.body).toMatchObject({
         expectedCash: 70_000,
