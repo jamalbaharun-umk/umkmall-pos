@@ -169,6 +169,20 @@
       "when": 1795590854833,
       "tag": "0023_low_stock_threshold",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795591359525,
+      "tag": "0024_expenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795592378214,
+      "tag": "0025_expense_edits",
+      "breakpoints": true
     }
   ]
 }

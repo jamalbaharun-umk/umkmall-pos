@@ -264,5 +264,9 @@ export class ReportsController {
   }
 }
 
-@Module({ controllers: [ReportsController], providers: [ReportsService] })
+@Module({
+  controllers: [ReportsController],
+  providers: [ReportsService],
+  exports: [ReportsService],
+})
 export class ReportsModule {}

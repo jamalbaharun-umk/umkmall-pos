@@ -70,6 +70,27 @@ describe('repo guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('writes pos.expenses and the expense kinds of the shift ledger only in expenses/expenses.service.ts', () => {
+    const offenders = files
+      .filter(({ f }) => f !== path.join('expenses', 'expenses.service.ts'))
+      .filter(({ text }) =>
+        /\.(insert|update|delete)\(\s*(expenses|expenseEdits)\b|(insert\s+into|update|delete\s+from)\s+pos\.expense(s|_edits)\b|kind:\s*['"`]expense(_reversal)?['"`]/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    // And the service itself goes through the ledger's functions, under the shift's row lock.
+    const service = files.find(
+      ({ f }) => f === path.join('expenses', 'expenses.service.ts'),
+    )!.text;
+    expect(service).toMatch(/recordShiftCash\(/);
+    expect(service).toMatch(/recordShiftCashInShift\(/);
+    // The edit history is append-only: inserted, never changed.
+    expect(service).toMatch(/\.insert\(expenseEdits\)/);
+    expect(service).not.toMatch(/\.(update|delete)\(\s*expenseEdits\b/);
+  });
+
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {
     const offenders = files
       .filter(

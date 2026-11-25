@@ -15,8 +15,10 @@ import type { PosSession } from '../tenancy/session';
  * Expected cash = opening cash + cash sales + cash in − cash out.
  *
  * This file is the only place that inserts ledger rows (guard in src/guards.spec.ts). Each row is
- * written under the row lock of the actor's OPEN shift, the lock a sale and the close also take, so a
- * movement lands before the count or is refused, and a closed shift never changes.
+ * written under the row lock of an OPEN shift, the lock a sale and the close also take, so a movement
+ * lands before the count or is refused, and a closed shift never changes. The shift is the actor's own
+ * (`recordShiftCash`, `recordShiftCashIfOpen`) or, for a correction of one of its entries, the shift
+ * that entry is in (`recordShiftCashInShift`, UMK-1984).
  */
 
 export type CashEntry = {
@@ -36,6 +38,10 @@ export type CashTotals = {
   receivablePayments: number;
   /** Cash given back for voided sales in the shift (part of cashOut). */
   voidRefunds: number;
+  /** Expenses and supplier payments paid from the drawer (part of cashOut, UMK-1984). */
+  expenses: number;
+  /** Voided drawer expenses put back while the shift was open (part of cashIn). */
+  expenseReversals: number;
 };
 
 export const NO_CASH: CashTotals = {
@@ -43,6 +49,8 @@ export const NO_CASH: CashTotals = {
   cashOut: 0,
   receivablePayments: 0,
   voidRefunds: 0,
+  expenses: 0,
+  expenseReversals: 0,
 };
 
 /** The actor's open shift, row-locked until the transaction ends; null when none is open. */
@@ -61,6 +69,25 @@ export async function lockOpenShift(tx: Tx, s: PosSession) {
   return shift ?? null;
 }
 
+async function insertEntry(
+  tx: Tx,
+  s: PosSession,
+  shiftId: string,
+  entry: CashEntry,
+) {
+  await tx.insert(shiftCashEntries).values({
+    tenantId: s.tenantId,
+    shiftId,
+    direction: entry.direction,
+    kind: entry.kind,
+    amount: entry.amount,
+    refId: entry.refId ?? null,
+    note: entry.note ?? null,
+    actorId: s.actorId,
+    actorKind: s.kind,
+  });
+}
+
 /**
  * Adds one cash movement to the actor's open shift, inside the caller's transaction, and returns the
  * shift's id; returns null and writes nothing when the actor has no open shift.
@@ -76,17 +103,7 @@ export async function recordShiftCashIfOpen(
 ): Promise<string | null> {
   const shift = await lockOpenShift(tx, s);
   if (!shift) return null;
-  await tx.insert(shiftCashEntries).values({
-    tenantId: s.tenantId,
-    shiftId: shift.id,
-    direction: entry.direction,
-    kind: entry.kind,
-    amount: entry.amount,
-    refId: entry.refId ?? null,
-    note: entry.note ?? null,
-    actorId: s.actorId,
-    actorKind: s.kind,
-  });
+  await insertEntry(tx, s, shift.id, entry);
   return shift.id;
 }
 
@@ -100,6 +117,34 @@ export async function recordShiftCash(
   const shiftId = await recordShiftCashIfOpen(tx, s, entry);
   if (!shiftId) throw fieldError('_', noShiftMessage);
   return shiftId;
+}
+
+/**
+ * Adds one cash movement to the shift `shiftId` when it is still open, whoever the actor is, and
+ * returns true; returns false and writes nothing when that shift is closed (a closed shift never
+ * changes) or is not this store's. For a correction of an earlier entry of that shift (a voided
+ * drawer expense, UMK-1984). The caller locks its own row first, as with `recordShiftCashIfOpen`.
+ */
+export async function recordShiftCashInShift(
+  tx: Tx,
+  s: PosSession,
+  shiftId: string,
+  entry: CashEntry,
+): Promise<boolean> {
+  const [shift] = await tx
+    .select({ id: shifts.id })
+    .from(shifts)
+    .where(
+      and(
+        eq(shifts.tenantId, s.tenantId),
+        eq(shifts.id, shiftId),
+        isNull(shifts.closedAt),
+      ),
+    )
+    .for('update');
+  if (!shift) return false;
+  await insertEntry(tx, s, shift.id, entry);
+  return true;
 }
 
 /** Ledger totals per shift, one grouped query; a shift without entries is absent (use NO_CASH). */
@@ -123,6 +168,10 @@ export async function cashTotals(
       voidRefunds: sum(
         sql`${e.direction} = 'out' and ${e.kind} = 'void_refund'`,
       ),
+      expenses: sum(sql`${e.direction} = 'out' and ${e.kind} = 'expense'`),
+      expenseReversals: sum(
+        sql`${e.direction} = 'in' and ${e.kind} = 'expense_reversal'`,
+      ),
     })
     .from(e)
     .where(and(eq(e.tenantId, tenantId), inArray(e.shiftId, shiftIds)))
@@ -135,6 +184,8 @@ export async function cashTotals(
         cashOut: Number(r.cashOut),
         receivablePayments: Number(r.receivablePayments),
         voidRefunds: Number(r.voidRefunds),
+        expenses: Number(r.expenses),
+        expenseReversals: Number(r.expenseReversals),
       },
     ]),
   );
