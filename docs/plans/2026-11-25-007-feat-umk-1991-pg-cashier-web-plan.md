@@ -56,7 +56,7 @@ refund's status, a retry and the owner's manual mark. The owner can create an on
 - [qa] Sale page: refund of a paid online sale, pending / succeeded / refused, retry, manual mark as the owner and as a
   `sales.void` holder (button absent), the void of a CASHAC sale unchanged.
 - [qa] Metode pembayaran: create an online method (QRIS and VA), the gateway field shows only for that kind.
-- [manual] Owner review of the waiting and refund screens (no approved design for them).
+- [manual] Owner review of the built screens against the approved designs 26 and 27 (approved 2026-11-26); server gaps are listed in the PR.
 
 ## Files
 
