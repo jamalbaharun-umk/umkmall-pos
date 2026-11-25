@@ -106,7 +106,7 @@ export class SaleVoidController {
     return this.voids.retryRefund(s, parseId(id));
   }
 
-  /** The store returned the money of a refused refund by hand; the note says how. */
+  /** The store returned the money of a refused refund by hand; the note says how. The owner only. */
   @Post(':id/refund/manual')
   @HttpCode(200)
   @RequirePermission('sales.void')

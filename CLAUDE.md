@@ -227,7 +227,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
   `already_paid`). A request without a usable answer takes the intent back (`abandonCashSwitch`) and says so; a
   poll, a check or a repeat of the sale never switches and never cancels a sale that has an intent; the job
-  finishes a switch only when the bill is `cancelled` (closed for it). Late money on the closed bill is
+  closes nothing for a switch: it finishes one only when the bill is already `cancelled` (closed for it), and takes
+  back an intent whose bill ended by itself or never existed, then cancels the sale. Late money on the closed bill is
   payment-api's (unmatched receipt, auto-refund); pos-api only shows it. Cancelling an awaiting sale needs no PIN
   and writes no void.
 - **An answer is applied only to the sale that was read:** `applyToSale` takes the attempt the payment belongs to
@@ -238,7 +239,7 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **A paid PG sale is refunded, never voided** (`POST /sales/:id/refund`; a void answers 409 `use_refund`, a refund
   of a CASHAC sale 409 `use_void`, both before the PIN is checked). The refund is the void record with
   `sale_voids.refund_status` (`pending`, `succeeded`, `failed`): same reasons, same PIN approver, the sale reversed at
-  once, the refund asked after the commit and followed by the job. Retry and "dikembalikan manual" need `sales.void`.
+  once, the refund asked after the commit and followed by the job. Retry needs `sales.void`; "dikembalikan manual" is the owner's alone.
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
   exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
   answer only while it still awaits payment. Every transaction of `payments-client/` is in `payment-sync.service.ts`.
@@ -249,8 +250,11 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   `FINAL_SALE_STATUSES` (`db/schema/sales.ts`). A new query on `pos.sales` must too. A shift does not close while one
   of its sales awaits payment.
 - **A sale is dated by `sales.paid_at`, not `created_at`,** in every day-based figure and in the sales list (owner
-  ruling 2026-11-25): the time it was rung up, or for a sale that waited for a PG the time it was paid (or switched
-  to cash). A new report or list of sales by day filters `paid_at`.
+  ruling 2026-11-25): the time it was rung up when paid at once; for a sale that waited for a PG, payment-api's paid
+  time (validated by `isoTime`, kept between creation and now, else the time it is applied); the switch to cash;
+  and for any sale completed later (also cash/EDC by the job) the time it completes. A day can still grow after
+  it is over (a payment learned late is dated when the customer paid). A new report or list of sales by day
+  filters `paid_at`.
 - **Kasbon payments and voids are recorded after the pos commit** (`receivable_payments.seq`/`payment_id`, order
   reference `<receivableId>:<seq>`; `sale_voids.payment_sync_pending`), and the job (`PaymentSync.tick`) repeats what
   failed. A void sends the void's reason, actor and PIN-verified approver.

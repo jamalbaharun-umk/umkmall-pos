@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -422,6 +423,8 @@ export class VoidService {
 
   /** `POST /sales/:id/refund/manual`: the store returned the money of a refused refund by hand (V4). */
   async markRefundManual(s: PosSession, saleId: string, note: string) {
+    // The owner only (the approved spec): it says the store's money went back outside the gateway.
+    if (s.kind !== 'owner') throw new ForbiddenException();
     await this.refundView(s, saleId);
     // What is stored may be old (the gateway refused the refund and nothing has asked since): ask first.
     await this.payments

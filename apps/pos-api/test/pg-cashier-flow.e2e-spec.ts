@@ -64,6 +64,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     gate: Promise<void>;
   };
   let holds: Hold[] = [];
+  /** Rewrites every payment payment-api answers (a field it sends wrong, or not at all). */
+  let mangle: ((payment: Record<string, unknown>) => void) | null = null;
   /** The answer of the first matching call is lost: payment-api did it, pos-api never hears. */
   let loseAnswerOf: ((c: Call) => boolean) | null = null;
   function hold(match: Hold['match'], when: Hold['when'] = 'before') {
@@ -105,7 +107,18 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
             h.reached();
             await h.gate;
           }
-          const res = await fetch(url, init);
+          let res = await fetch(url, init);
+          if (mangle && res.ok) {
+            const body = (await res.json()) as Record<string, unknown>;
+            const items = Array.isArray(body.items)
+              ? (body.items as Record<string, unknown>[])
+              : [body];
+            for (const p of items) if ('orderRef' in p) mangle(p);
+            res = new Response(JSON.stringify(body), {
+              status: res.status,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
           if (loseAnswerOf?.(call)) {
             loseAnswerOf = null;
             throw new TypeError('fetch failed');
@@ -175,6 +188,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     link = 'ok';
     holds = [];
     loseAnswerOf = null;
+    mangle = null;
     await gatewaySettings('pending');
   });
 
@@ -1057,6 +1071,9 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         paid: 5200,
       }).expect(503);
       expect(res.body.code).toBe('payment_unavailable');
+      // It does not say "try again": the bill may be closed, so the cashier is told to look first.
+      expect(res.body.message).toMatch(/Cek status pembayaran dulu/);
+      expect(res.body.message).toMatch(/dibatalkan dan harus dibuat ulang/);
       expect(await saleRow(saleId)).toMatchObject({
         status: 'awaiting_payment',
         payment_attempt: 1,
@@ -1138,6 +1155,53 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         switch_cash_paid: null,
       });
       expect(await onHand(s)).toBe(19);
+    });
+
+    it('a stranded switch does not keep a sale waiting for ever: when its bill ends by itself, or never existed, the job takes the switch back and cancels the sale', async () => {
+      const s = await shop();
+      // The request wrote the switch and died; later the bill fails at the gateway.
+      const failed = (await sell(s).expect(201)).body.id as string;
+      await admin`update pos.sales set switch_cash_paid = 5200 where id = ${failed}`;
+      await onBill(s, failed, 'fail');
+      // The sale's charge never reached payment-api (no bill at all), and a switch was written on it.
+      link = 'no_charge';
+      const none = (await sell(s).expect(503)).body.saleId as string;
+      link = 'ok';
+      await admin`update pos.sales set switch_cash_paid = 5200 where id = ${none}`;
+      expect(await paymentsOf(none)).toEqual([]);
+
+      // A poll and a check are not the ones to end it.
+      for (const id of [failed, none]) {
+        await get(s.auth, `/sales/${id}/payment`).expect(200);
+        await post(s.auth, `/sales/${id}/payment/check`).expect(200);
+        expect(await saleRow(id)).toMatchObject({
+          status: 'awaiting_payment',
+          switch_cash_paid: '5200',
+        });
+      }
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 0,
+        cancelled: 2,
+        failed: 0,
+      });
+      for (const id of [failed, none])
+        expect(await saleRow(id)).toMatchObject({
+          status: 'cancelled',
+          payment_attempt: 1,
+          switch_cash_paid: null,
+        });
+      // Neither became a cash sale: no cash payment, nothing in the drawer, the stock is back.
+      expect((await paymentsOf(failed)).map((p) => p.status)).toEqual([
+        'failed',
+      ]);
+      expect((await paymentsOf(none)).map((p) => p.status)).toEqual([
+        'cancelled',
+      ]);
+      expect(await shift(s.auth)).toMatchObject({
+        cashSales: 0,
+        salesCount: 0,
+      });
+      expect(await onHand(s)).toBe(20);
     });
 
     it('the bill was closed but the cash charge got no answer: the sale is a cash sale that still waits, and the job charges it, never cancels it', async () => {
@@ -1722,10 +1786,19 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await onHand(s)).toBe(20);
     });
 
-    it('V4 a refused refund is marked returned by hand, with a note; a refund that was not refused is not', async () => {
+    it('V4 a refused refund is marked returned by hand by the owner only, with a note; a refund that was not refused is not', async () => {
       const s = await shop();
       const pending = await paidSale(s);
       await refund(s, pending).expect(201);
+      // `sales.void` retries a refund; saying the money went back by hand is the owner's alone.
+      const supervisor = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+      ]);
+      await post(supervisor.auth, `/sales/${pending}/refund/retry`).expect(200);
+      await post(supervisor.auth, `/sales/${pending}/refund/manual`, {
+        note: 'tunai',
+      }).expect(403);
       const not = await post(s.auth, `/sales/${pending}/refund/manual`, {
         note: 'tunai',
       }).expect(409);
@@ -1745,6 +1818,10 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(noNote.body.errors).toEqual({
         note: 'Tulis cara uang dikembalikan',
       });
+      await post(supervisor.auth, `/sales/${saleId}/refund/manual`, {
+        note: 'Dikembalikan tunai ke pelanggan',
+      }).expect(403);
+      expect((await paymentsOf(saleId))[0].status).toBe('refund_failed');
       const res = await post(s.auth, `/sales/${saleId}/refund/manual`, {
         note: 'Dikembalikan tunai ke pelanggan',
       }).expect(200);
@@ -1830,8 +1907,14 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     const times = async (saleId: string) =>
       (
         await admin<
-          { at_creation: boolean; today: boolean; future: boolean }[]
+          {
+            at_creation: boolean;
+            today: boolean;
+            future: boolean;
+            seconds: number;
+          }[]
         >`select paid_at = created_at as at_creation, paid_at > now() as future,
+            extract(epoch from paid_at - created_at)::float8 as seconds,
             (paid_at at time zone 'Asia/Jakarta')::date = ${jakartaDay()}::date as today
           from pos.sales where id = ${saleId}`
       )[0];
@@ -1847,7 +1930,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await onBill(s, saleId, 'pay');
       await get(s.auth, `/sales/${saleId}/payment`).expect(200);
       // payment-api's clock runs ahead in this file: the paid time is never taken into the future.
-      expect(await times(saleId)).toEqual({
+      expect(await times(saleId)).toMatchObject({
         at_creation: false,
         today: true,
         future: false,
@@ -1890,11 +1973,69 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         paymentMethodId: undefined,
         paid: 10_000,
       }).expect(201);
-      expect((await times(cash.body.id as string)).at_creation).toBe(true);
+      // Paid in the request that rang it up: the same moment, to the second.
+      const at = await times(cash.body.id as string);
+      expect(at.seconds).toBeGreaterThanOrEqual(0);
+      expect(at.seconds).toBeLessThan(5);
       // A cancelled sale is in no day's figures.
       const gone = (await sell(s).expect(201)).body.id as string;
       await post(s.auth, `/sales/${gone}/payment/cancel`).expect(200);
       expect(await revenue(s, jakartaDay())).toBe(2 * PRICE);
+    });
+
+    it.each([
+      ['no paid time', null],
+      ['a paid time that is no time', 'kemarin sore'],
+      ['a paid time that is no ISO time', '25/11/2026 10:03'],
+    ])(
+      'a paid PG sale is completed and counts from now when payment-api answers %s',
+      async (_name, paidAt) => {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        await rungUpYesterday(saleId);
+        await onBill(s, saleId, 'pay');
+        mangle = (p) => {
+          p.paidAt = paidAt;
+        };
+        // Never a 500, never a sale left waiting on a bad value: the poll completes it.
+        const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+        expect(view.body).toMatchObject({
+          saleStatus: 'completed',
+          status: 'paid',
+        });
+        expect(await times(saleId)).toMatchObject({
+          at_creation: false,
+          today: true,
+          future: false,
+        });
+        expect(await revenue(s, jakartaDay(-1))).toBe(0);
+        expect(await revenue(s, jakartaDay())).toBe(PRICE);
+      },
+    );
+
+    it('a cash sale whose payment the job records the next day counts from that day', async () => {
+      const s = await shop();
+      // payment-api recorded the cash, but its answer never arrived: the sale waits.
+      loseAnswerOf = isCharge;
+      const res = await sell(s, {
+        paymentMethodId: undefined,
+        paid: 10_000,
+      }).expect(503);
+      const saleId = res.body.saleId as string;
+      await rungUpYesterday(saleId);
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 1,
+        cancelled: 0,
+        failed: 0,
+      });
+      expect((await saleRow(saleId)).status).toBe('completed');
+      expect(await times(saleId)).toMatchObject({
+        at_creation: false,
+        today: true,
+      });
+      expect(await revenue(s, jakartaDay(-1))).toBe(0);
+      // Rp5.123 total; the Rp77 rounding is not revenue.
+      expect(await revenue(s, jakartaDay())).toBe(PRICE);
     });
 
     it('the migration dates every earlier sale at the time it was rung up', async () => {

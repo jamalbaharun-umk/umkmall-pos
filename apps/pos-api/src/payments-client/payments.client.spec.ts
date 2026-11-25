@@ -219,6 +219,31 @@ describe('payment-api client (UMK-1991)', () => {
     expect(online(null)).toBeNull();
   });
 
+  it('answers a paid time only when it is a time: anything else is null, never a value the database would choke on', async () => {
+    const paidAt = async (value: unknown) =>
+      (
+        await clientWith(
+          () => json(200, { ...PAYMENT, paidAt: value }),
+          ON,
+        ).get(TENANT, 'p1')
+      ).paidAt;
+    expect(await paidAt('2026-11-25T17:03:00+07:00')).toBe(
+      '2026-11-25T10:03:00.000Z',
+    );
+    for (const bad of [
+      null,
+      undefined,
+      '',
+      'kemarin',
+      '25/11/2026',
+      '2026-13-45T99:00:00Z',
+      "2026-11-25T10:03:00Z'; drop table pos.sales; --",
+      1764064980000,
+      {},
+    ])
+      expect(await paidAt(bad)).toBeNull();
+  });
+
   it('reads what a PG payment adds: checkout, expiry, last check, paid time, whether the bill can be closed, late money', async () => {
     const pg = {
       ...PAYMENT,
