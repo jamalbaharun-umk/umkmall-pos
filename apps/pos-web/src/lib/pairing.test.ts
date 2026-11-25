@@ -46,6 +46,11 @@ describe('buildForwardedFor: the device address pos-web passes on', () => {
     expect(buildForwardedFor(undefined, undefined)).toBeUndefined()
     expect(buildForwardedFor('', null)).toBeUndefined()
   })
+  it('never forwards a client-supplied chain when the socket address is unknown', () => {
+    expect(buildForwardedFor('198.51.100.7, 10.0.0.2', undefined)).toBeUndefined()
+    expect(buildForwardedFor('198.51.100.7', null)).toBeUndefined()
+    expect(buildForwardedFor('198.51.100.7', '  ')).toBeUndefined()
+  })
 })
 
 describe('the pairing cookie', () => {

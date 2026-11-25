@@ -71,3 +71,22 @@ Out of scope: pos-api and payment-api changes, the cashier's payment screen, "Pe
   API, no contact address in the repo): the Ditolak state shows the gateway's reason and the instruction only.
 - The cashier device is not asked for a device name (the start route takes none); the owner names it on entering the code.
 - No auto-open of Dialog as a bottom sheet is built here: `Dialog` from `@umkmall/ui` is already a sheet below `md`.
+
+## Manual QA checklist (UMK-2020, UMK-2022)
+
+Run against pos-api + payment-api with `PAYMENT_ADAPTERS=fake`, own `PGTEST_DB`/ports, and for pairing with
+`POS_TRUSTED_PROXIES` set to the real hop count (pos-web plus every edge proxy; `0` shares one cap behind a relay).
+
+- [ ] Phone width (about 375 px) and desktop width (1280 px) for: Pembayaran Online in each of the seven statuses,
+  loading, error, empty and "Hanya pemilik"; `/kasir/masuk` showing a code, expired, failed and paired; Perangkat with the
+  pairing dialog. No horizontal scroll; the dialog is a bottom sheet below `md` and a centred card from `md`; main button
+  first on a phone, rightmost on a desktop; tap targets at least 44 px.
+- [ ] Popup flow: "Lanjutkan verifikasi" and "Perbaiki di gateway" open the gateway page in a new tab on the first click
+  in Chrome, Safari (iOS) and Firefox with default pop-up blocking; when the tab is blocked or the link call fails, the
+  blank tab closes and the error dialog appears, with "Coba lagi" working; the POS tab keeps its state.
+- [ ] Keyboard only: Tab order through the draft form, Enter submits ("Ajukan"), Space toggles the terms and the method
+  switches; the confirm dialog traps focus, Esc closes it and focus returns to the switch; the OTP field takes six digits
+  by typing and paste and Enter in it submits; on `/kasir/masuk` the buttons "Kode baru" and "Cek sekarang" are reachable
+  and the countdown does not steal focus.
+- [ ] Two devices behind the relay: two tablets on different networks each get their own code and are counted per address
+  (open codes are not shared); with `POS_TRUSTED_PROXIES` unset they share one cap (expected, documented).
