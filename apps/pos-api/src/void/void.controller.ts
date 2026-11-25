@@ -22,7 +22,7 @@ import { StockModule } from '../stock/stock.module';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { VoidPins } from './void-pin';
-import { SetPinInput, VoidInput } from './void.schemas';
+import { ManualRefundInput, SetPinInput, VoidInput } from './void.schemas';
 import { VoidService } from './void.service';
 
 /** A locked approver answers 429 with `retryAfter` in the body; mirror it in the Retry-After header. */
@@ -69,6 +69,55 @@ export class SaleVoidController {
   @Get(':id/void')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return this.voids.ofSale(s, parseId(id));
+  }
+
+  /**
+   * UMK-1991: the void of a sale paid through a payment gateway. The same body, starter and PIN approver
+   * as a void; the gateway returns the money, so the answer carries `refundStatus`.
+   */
+  @Post(':id/refund')
+  @RequirePermission('sales.create')
+  refund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const saleId = parseId(id);
+    const { idempotencyKey } = validate(
+      z.object({ idempotencyKey: IdempotencyKey }),
+      { idempotencyKey: key },
+    );
+    const input = validate(VoidInput, body);
+    return withRetryAfter(res, () =>
+      this.voids.void(s, saleId, idempotencyKey, input, 'refund'),
+    );
+  }
+
+  /** Asks a refund the gateway refused again. By someone who could have approved it. */
+  @Post(':id/refund/retry')
+  @HttpCode(200)
+  @RequirePermission('sales.void')
+  retryRefund(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    return this.voids.retryRefund(s, parseId(id));
+  }
+
+  /** The store returned the money of a refused refund by hand; the note says how. */
+  @Post(':id/refund/manual')
+  @HttpCode(200)
+  @RequirePermission('sales.void')
+  manualRefund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    const saleId = parseId(id);
+    return this.voids.markRefundManual(
+      s,
+      saleId,
+      validate(ManualRefundInput, body).note,
+    );
   }
 }
 
