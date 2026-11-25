@@ -3,6 +3,7 @@ import {
   Button,
   Menu,
   Pagination,
+  SegmentedControl,
   Select,
   Table,
   TableBody,
@@ -21,12 +22,14 @@ import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components/page'
 import { deleteProduct, listCategories, listProducts, type ProductSearch } from '../-api'
 import { TYPE_LABEL } from './-form'
+import { filterLabel, stockState } from '../../kasir/-stock'
 
 export const Route = createFileRoute('/catalog/products/')({
   validateSearch: (s: Record<string, unknown>): ProductSearch => ({
     // The router JSON-parses search values, so a barcode like ?q=899123 arrives as a number.
     q: s.q == null || s.q === '' ? undefined : String(s.q),
     categoryId: typeof s.categoryId === 'string' && s.categoryId ? s.categoryId : undefined,
+    stock: s.stock === 'low' || s.stock === 'out' ? s.stock : undefined,
     page: Number(s.page) >= 1 ? Math.floor(Number(s.page)) : undefined,
   }),
   loaderDeps: ({ search }) => search,
@@ -49,7 +52,7 @@ function ProductsPage() {
   const canEdit = useCan('catalog.manage')
   const [q, setQ] = useState(search.q ?? '')
   const pages = Math.max(1, Math.ceil(page.total / page.perPage))
-  const filtered = Boolean(search.q || search.categoryId)
+  const filtered = Boolean(search.q || search.categoryId || search.stock)
   const first = (page.page - 1) * page.perPage + 1
   // pos-api omits cost for actors who may not see margins; their table has no cost or profit columns.
   const showCost = page.data.some((p) => p.costPrice !== undefined)
@@ -81,6 +84,19 @@ function ProductsPage() {
     >
       <Panel>
         <div className="flex flex-col gap-3 border-b border-border-light p-4 md:flex-row md:items-center md:justify-end">
+          <SegmentedControl
+            aria-label="Filter stok"
+            className="md:mr-auto"
+            options={[
+              { value: 'all', label: 'Semua' },
+              { value: 'low', label: filterLabel('Menipis', page.stockCounts.low) },
+              { value: 'out', label: filterLabel('Habis', page.stockCounts.out) },
+            ]}
+            value={search.stock ?? 'all'}
+            onChange={(v) =>
+              void navigate({ search: (s) => ({ ...s, stock: v === 'all' ? undefined : v, page: undefined }) })
+            }
+          />
           <div className="md:w-56 md:shrink-0">
             <Select
               aria-label="Filter kategori"
@@ -157,7 +173,9 @@ function ProductsPage() {
                     </Link>
                   </TableCell>
                   <TableCell>{p.sku}</TableCell>
-                  <TableCell className="text-right tabular-nums">{page.stock[p.id] ?? '–'}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <StockCell stock={p.stock} threshold={p.lowStockThreshold} />
+                  </TableCell>
                   <TableCell>{p.unit}</TableCell>
                   {showCost && <TableCell className="text-right tabular-nums">{rupiah(p.costPrice ?? 0)}</TableCell>}
                   <TableCell className="text-right tabular-nums">{rupiah(p.sellingPrice)}</TableCell>
@@ -234,3 +252,19 @@ function ProductsPage() {
   )
 }
 
+function StockCell({ stock, threshold }: { stock: number | null | undefined; threshold: number }) {
+  const state = stockState(stock, threshold)
+  if (state === 'out')
+    return (
+      <Badge color="danger" size="small">
+        Habis
+      </Badge>
+    )
+  if (state === 'low')
+    return (
+      <Badge color="warning" size="small">
+        {stock}
+      </Badge>
+    )
+  return <>{state === 'enough' ? stock : '–'}</>
+}

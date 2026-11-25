@@ -17,12 +17,21 @@ export type Product = {
   sellingPrice: number
   type: ProductType
   isActive: boolean
+  lowStockThreshold: number
+  /** List responses only: on-hand for a tracked product, null for service and non-stock. */
+  stock?: number | null
   categoryId: string
   category: Category
   barcodes: string[]
   images?: { id: string }[]
 }
-export type ProductPage = { data: Product[]; page: number; perPage: number; total: number }
+export type ProductPage = {
+  data: Product[]
+  page: number
+  perPage: number
+  total: number
+  stockCounts: { low: number; out: number }
+}
 export type Movement = { id: string; delta: number; reason: string; createdAt: string }
 export type Batch = { id: string; qtyInitial: number; qtyRemaining: number; unitCost: number; source: string; receivedAt: string }
 export type ProductStock = { tracked: boolean; onHand: number | null; batches: Batch[] }
@@ -35,6 +44,7 @@ export type ProductInput = {
   sellingPrice: number
   type: ProductType
   isActive: boolean
+  lowStockThreshold: number
   barcodes: string[]
 }
 type Result = { error?: string; errors?: Record<string, string>; id?: string }
@@ -72,23 +82,21 @@ export const deleteCategory = createServerFn({ method: 'POST' })
   .validator((id: string) => id)
   .handler(({ data }) => write(`/catalog/categories/${encodeURIComponent(data)}`, 'DELETE'))
 
-export type ProductSearch = { q?: string; categoryId?: string; page?: number }
+export type ProductSearch = { q?: string; categoryId?: string; stock?: 'low' | 'out'; page?: number }
 
 export const PER_PAGE = 10
 
-/** A product page plus on-hand per tracked product (Lakasir's "stocks" column). */
+/** A product page; each row carries its on-hand (Lakasir's "stocks" column), the page the Menipis/Habis counts. */
 export const listProducts = createServerFn({ method: 'GET' })
   .validator((d: ProductSearch) => d)
   .handler(async ({ data }) => {
     const qs = new URLSearchParams()
     if (data.q) qs.set('q', data.q)
     if (data.categoryId) qs.set('categoryId', data.categoryId)
+    if (data.stock) qs.set('stock', data.stock)
     qs.set('page', String(data.page ?? 1))
     qs.set('perPage', String(PER_PAGE))
-    const page = await read<ProductPage>(`/catalog/products?${qs}`)
-    const ids = page.data.map((p) => p.id).join(',')
-    const stock = ids ? await read<Record<string, number>>(`/stock/on-hand?ids=${ids}`) : {}
-    return { ...page, stock }
+    return read<ProductPage>(`/catalog/products?${qs}`)
   })
 
 export const getProductDetail = createServerFn({ method: 'GET' })

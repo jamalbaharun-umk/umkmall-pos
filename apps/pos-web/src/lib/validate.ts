@@ -36,6 +36,7 @@ export type ProductFields = {
   sellingPrice: string
   barcodes: string[]
   stock: string
+  lowStockThreshold: string
 }
 
 /**
@@ -63,6 +64,11 @@ export function productErrors(f: ProductFields, editing: boolean): Errors {
     e[`barcodes.${i}`] = code(v, 'Barcode') ?? (seen.has(v) ? 'Barcode tidak boleh ganda' : undefined)
     seen.add(v)
   })
+  if (f.lowStockThreshold.trim() !== '')
+    e.lowStockThreshold = check.wholeNumber(plainNumber(f.lowStockThreshold), {
+      label: 'Batas stok menipis',
+      max: 1_000_000,
+    })
   if (f.stock.trim() !== '') e.stock = check.wholeNumber(plainNumber(f.stock), { label: 'Stok awal' })
   return compact(e)
 }
