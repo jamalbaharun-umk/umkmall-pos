@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
 import { formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { loadReceipt } from './-api'
+import { soldWholesaleNote } from './-helpers'
 import { hasRounding } from './-money'
 
 // Lakasir's "View selling": selling details, product table, totals, and the print-receipt action.
@@ -70,7 +71,7 @@ function SalePage() {
           <TableHeader>
             <TableRow>
               <TableHead>Produk</TableHead>
-              <TableHead className="text-right">Harga satuan</TableHead>
+              <TableHead className="text-right">Harga per satuan</TableHead>
               <TableHead className="text-right">Jumlah</TableHead>
               <TableHead className="text-right">Total harga</TableHead>
             </TableRow>
@@ -78,9 +79,16 @@ function SalePage() {
           <TableBody>
             {r.lines.map((l, i) => (
               <TableRow key={i}>
-                <TableCell>{l.name}</TableCell>
+                <TableCell>
+                  {l.name}
+                  {soldWholesaleNote(l) && (
+                    <span className="block text-xs text-default-secondary">{soldWholesaleNote(l)}</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-right">{rupiah(l.unitPrice)}</TableCell>
-                <TableCell className="text-right">{l.qty}</TableCell>
+                <TableCell className="text-right">
+                  {l.qty} {l.unit}
+                </TableCell>
                 <TableCell className="text-right">{rupiah(l.lineTotal)}</TableCell>
               </TableRow>
             ))}

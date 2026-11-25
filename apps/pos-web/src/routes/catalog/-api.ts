@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { refusalOf } from '@/lib/refusal'
+import type { SaveWarning, TierInput, UnitInput } from './products/-helpers'
 
 // Server functions for the catalog screens: every call goes server-side through the session client,
 // so the browser never holds the POS token. Mutations return { error } instead of throwing, for forms.
@@ -24,6 +25,9 @@ export type Product = {
   category: Category
   barcodes: string[]
   images?: { id: string }[]
+  // UMK-1985: other units (smallest pack first) and wholesale tiers per base unit (lowest quantity first).
+  units: (UnitInput & { id: string })[]
+  priceTiers: TierInput[]
 }
 export type ProductPage = {
   data: Product[]
@@ -46,8 +50,11 @@ export type ProductInput = {
   isActive: boolean
   lowStockThreshold: number
   barcodes: string[]
+  // Each list replaces the stored one.
+  units: UnitInput[]
+  priceTiers: TierInput[]
 }
-type Result = { error?: string; errors?: Record<string, string>; id?: string }
+type Result = { error?: string; errors?: Record<string, string>; id?: string; warnings?: SaveWarning[] }
 
 async function errorOf(res: Response): Promise<string> {
   return (await refusalOf(res)).error
@@ -62,8 +69,8 @@ async function read<T>(path: string): Promise<T> {
 async function write(path: string, method: string, body?: unknown): Promise<Result> {
   const res = await api(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })
   if (!res.ok) return refusalOf(res)
-  const json = (await res.json().catch(() => null)) as { id?: string } | null
-  return { id: json?.id }
+  const json = (await res.json().catch(() => null)) as { id?: string; warnings?: SaveWarning[] } | null
+  return { id: json?.id, warnings: Array.isArray(json?.warnings) ? json.warnings : undefined }
 }
 
 export const listCategories = createServerFn({ method: 'GET' }).handler(async () =>

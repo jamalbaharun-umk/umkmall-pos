@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
+import type { Quote, SaleUnit } from './-helpers'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
 
@@ -18,7 +19,11 @@ export type Product = {
   id: string
   name: string
   sku: string
+  /** Base unit name (pcs). */
+  unit: string
   sellingPrice: number
+  /** UMK-1985: other units, smallest pack first. */
+  units: SaleUnit[]
   type: string
   isActive: boolean
   /** On-hand for a tracked product (0 included); null for service and non-stock products. */
@@ -44,12 +49,25 @@ export type SaleRow = {
   createdAt: string
 }
 export type SalesSummary = { count: number; revenue: number; discount: number; voucherDiscount: number; rounding: number }
+/** UMK-1985: `qty` is in the line's `unit`; `appliedTier` is set when the wholesale price was charged. */
+export type ReceiptLine = {
+  name: string
+  qty: number
+  unit: string
+  unitQty: number
+  baseQty: number
+  unitPrice: number
+  lineTotal: number
+  normalUnitPrice: number
+  appliedTier: { minQty: number; price: number } | null
+  savings: number
+}
 export type Receipt = {
   number: number
   createdAt: string
   cashier: string
   paymentMethod: string
-  lines: { name: string; qty: number; unitPrice: number; lineTotal: number }[]
+  lines: ReceiptLine[]
   subtotal: number
   discount: number
   taxBps: number
@@ -124,7 +142,7 @@ export const closeShift = createServerFn({ method: 'POST' })
 
 type SaleInput = {
   key: string
-  lines: { productId: string; qty: number }[]
+  lines: { productId: string; qty: number; unit?: string }[]
   paid: number
   // Order discount in rupiah; pos-api honours it only with sales.price_override.
   discount?: number
@@ -139,6 +157,11 @@ export const createSale = createServerFn({ method: 'POST' })
   .handler(({ data: { key, ...body } }) =>
     send<{ id: string; change: number; receivableRest?: number | null }>('/sales', body, { 'idempotency-key': key }),
   )
+
+/** The server's price of the cart (unit and wholesale tier), nothing written. Only pos-api prices a sale. */
+export const quoteCart = createServerFn({ method: 'POST' })
+  .validator((lines: { productId: string; qty: number; unit?: string }[]) => lines)
+  .handler(({ data }) => send<Quote>('/sales/quote', { lines: data }))
 
 export const loadReceipt = createServerFn()
   .validator((id: string) => id)

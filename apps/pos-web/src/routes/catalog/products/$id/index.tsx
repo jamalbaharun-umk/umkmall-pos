@@ -114,6 +114,16 @@ function ViewProduct() {
         <Detail label="Barcode">{product.barcodes.join(', ') || '–'}</Detail>
         <Detail label="Jenis">{TYPE_LABEL[product.type]}</Detail>
         <Detail label="Satuan">{product.unit}</Detail>
+        <Detail label="Satuan lain">
+          {product.units.length
+            ? product.units.map((u) => `${u.name}: isi ${u.unitQty}, ${rupiah(u.price)}`).join('; ')
+            : '–'}
+        </Detail>
+        <Detail label="Harga grosir">
+          {product.priceTiers.length
+            ? product.priceTiers.map((t) => `mulai ${t.minQty} ${product.unit}: ${rupiah(t.price)}`).join('; ')
+            : '–'}
+        </Detail>
       </Panel>
 
       <Tabs defaultValue="riwayat">

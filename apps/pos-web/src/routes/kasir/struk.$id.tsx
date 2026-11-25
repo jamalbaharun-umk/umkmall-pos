@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button } from '@umkmall/ui'
 import { LoadError, Pending, rupiah } from '@/components/pos-page'
 import { loadReceipt } from './-api'
+import { soldQtyText, soldWholesaleNote } from './-helpers'
 import { hasRounding } from './-money'
 
 // Printable receipt (Lakasir's browser printer): the browser's print dialog, sized for 58/80 mm paper.
@@ -36,11 +37,10 @@ function ReceiptPage() {
               <li key={i}>
                 <p>{l.name}</p>
                 <p className="flex justify-between">
-                  <span>
-                    {l.qty} × {rupiah(l.unitPrice)}
-                  </span>
+                  <span>{soldQtyText(l)}</span>
                   <span>{rupiah(l.lineTotal)}</span>
                 </p>
+                {soldWholesaleNote(l) && <p className="text-xs">{soldWholesaleNote(l)}</p>}
               </li>
             ))}
           </ul>
