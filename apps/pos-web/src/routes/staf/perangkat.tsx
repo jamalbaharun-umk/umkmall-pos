@@ -9,10 +9,10 @@ import {
   TableHeader,
   TableRow,
   TextField,
-  toast,
 } from '@umkmall/ui/primitives'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { Empty, Page, PageError, PageLoading, Panel, dateTime } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
@@ -45,29 +45,29 @@ function DevicesPage() {
     setNameError(missing)
     if (missing) return
     setBusy(true)
-    const res = await bindThisDevice({ data: name.trim() }).catch((): Result => ({ ok: false, error: GENERIC_ERROR }))
+    const res = await bindThisDevice({ data: name.trim() }).catch((): Result => ({ ok: false, error: GENERIC_ERROR, status: 0 }))
     setBusy(false)
     if (!res.ok) {
       const placed = placeErrors(res, ['name'])
       setNameError(placed.byField.name)
       setError(placed.formError)
-      return toast(res.error, { variant: 'danger' })
+      return showError(res, 'menghubungkan perangkat')
     }
     setName('')
-    toast('Perangkat terhubung', { variant: 'success' })
+    notifySuccess('Perangkat terhubung')
     await router.invalidate()
   }
 
-  const ask = (title: string, body: string, label: string, run: () => Promise<Result>, done: string) =>
+  const ask = (title: string, body: string, label: string, run: () => Promise<Result>, done: string, failing: string) =>
     confirm.ask(
       title,
       async () => {
         const r = await run()
-        if (!r.ok) return r.error
-        toast(done, { variant: 'success' })
+        if (!r.ok) return r
+        notifySuccess(done)
         await router.invalidate()
       },
-      { body, label },
+      { body, label, action: failing },
     )
 
   return (
@@ -155,6 +155,7 @@ function DevicesPage() {
                             'Cabut',
                             () => revokeDevice({ data: d.id }),
                             'Perangkat dicabut',
+                            'mencabut perangkat',
                           )
                         }
                       >
@@ -206,6 +207,7 @@ function DevicesPage() {
                           'Keluarkan',
                           () => revokeSession({ data: s.id }),
                           'Sesi kasir diakhiri',
+                          'mengakhiri sesi kasir',
                         )
                       }
                     >

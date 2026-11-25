@@ -19,7 +19,7 @@ export const Route = createFileRoute('/laporan/csv/$jenis')({
         // Failures answer JSON `{ message }` in Indonesian (pos-api's 422 message, or a generic one): never a status code or stack.
         if (!res.ok) {
           const body = res.status === 422 ? ((await res.json().catch(() => null)) as { message?: string; errors?: Record<string, string> } | null) : null
-          if (res.status === 403) return Response.json({ message: 'Kamu tidak punya izin melihat laporan.' }, { status: 403 })
+          if (res.status === 403) return Response.json({ message: 'Anda tidak punya izin melihat laporan.' }, { status: 403 })
           const message = body?.message || 'Laporan belum bisa diunduh, coba lagi.'
           return Response.json({ message, errors: body?.errors }, { status: res.status === 422 ? 422 : 502 })
         }

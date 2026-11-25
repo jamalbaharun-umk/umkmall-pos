@@ -1,5 +1,6 @@
-import { Button, Dialog, TextField, toast } from '@umkmall/ui'
+import { Button, Dialog, TextField } from '@umkmall/ui'
 import { useEffect, useRef, useState } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { ErrorText, rupiah } from '@/components/pos-page'
 import { checkVoucher, pickMembers, type MemberOption } from './-api'
 
@@ -109,7 +110,7 @@ export function VoucherRow({
         if (res.data.discount !== voucher.discount) onChange({ code: voucher.code, discount: res.data.discount })
       } else {
         onChange(null)
-        toast(`Voucher ${voucher.code} dilepas: ${res.error}`, { variant: 'warning' })
+        showError({ ...res, status: 409, error: `Voucher ${voucher.code} dilepas: ${res.error}` }, 'memeriksa voucher')
       }
     })
     return () => {
@@ -130,17 +131,18 @@ export function VoucherRow({
     const res = await checkVoucher({ data: { code: c, amount } }).catch(() => ({
       ok: false as const,
       error: 'Tidak bisa terhubung. Coba lagi.',
+      status: 0,
     }))
     inFlight.current = false
     setBusy(false)
     if (!res.ok) {
       setError(res.error)
-      toast(res.error, { variant: 'danger' })
+      showError(res, 'memakai voucher')
       return
     }
     onChange({ code: c, discount: res.data.discount })
     setOpen(false)
-    toast(`Voucher ${c} dipakai: potongan ${rupiah(res.data.discount)}`, { variant: 'success' })
+    notifySuccess(`Voucher ${c} dipakai: potongan ${rupiah(res.data.discount)}`)
   }
 
   return (
@@ -166,7 +168,7 @@ export function VoucherRow({
             className="text-default-secondary"
             onClick={() => {
               onChange(null)
-              toast(`Voucher ${voucher.code} dilepas`, { variant: 'info' })
+              notifySuccess(`Voucher ${voucher.code} dilepas`)
             }}
           >
             ×

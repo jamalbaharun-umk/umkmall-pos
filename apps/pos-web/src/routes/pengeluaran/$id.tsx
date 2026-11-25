@@ -1,7 +1,8 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
-import { Alert, Badge, Button, Chip, Dialog, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Badge, Button, Chip, Dialog, TextField } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { useRef, useState, type FormEvent } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { dateTime, Page, PageError, PageLoading } from '@/components/page'
 import { placeErrors } from '@/lib/refusal'
 import { loadExpense, updateExpense, voidExpense, type Category, type ExpenseDetail } from './-api'
@@ -111,13 +112,14 @@ function EditForm({ expense: e, categories, today }: { expense: ExpenseDetail; c
         const placed = placeErrors(res, ['amount', 'category', 'note', 'date'])
         setErrors(placed.byField)
         setFormError(placed.formError)
-        toast(res.error, { variant: 'danger' })
+        showError(res, 'menyimpan perubahan pengeluaran')
         return
       }
       await router.invalidate()
-      toast('Perubahan tersimpan.', { variant: 'success' })
-    } catch {
+      notifySuccess('Perubahan pengeluaran tersimpan')
+    } catch (err) {
       setFormError('Perubahan belum tersimpan. Cek sinyal lalu coba lagi.')
+      showError(err, 'menyimpan perubahan pengeluaran')
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -183,14 +185,15 @@ function VoidAction({ expense: e }: { expense: ExpenseDetail }) {
       const res = await voidExpense({ data: { id: e.id, reason: reason.trim() || undefined } })
       if (!res.ok) {
         setError(res.error)
-        toast(res.error, { variant: 'danger' })
+        showError(res, 'membatalkan pengeluaran')
         return
       }
       setOpen(false)
       await router.invalidate()
-      toast('Pengeluaran dibatalkan.', { variant: 'success' })
-    } catch {
+      notifySuccess(`Pengeluaran ${rupiah(e.amount)} dibatalkan`)
+    } catch (err) {
       setError('Pengeluaran belum dibatalkan. Cek sinyal lalu coba lagi.')
+      showError(err, 'membatalkan pengeluaran')
     } finally {
       inFlight.current = false
       setBusy(false)

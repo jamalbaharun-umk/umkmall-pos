@@ -18,7 +18,7 @@ export type CashierSession = {
 }
 export type Result =
   | { ok: true }
-  | { ok: false; error: string; errors?: Record<string, string>; retryAfter?: number }
+  | { ok: false; error: string; errors?: Record<string, string>; retryAfter?: number; status?: number; code?: string }
 
 export const PERMISSION_LABELS: Record<string, string> = {
   'sales.create': 'Membuat penjualan',
@@ -149,7 +149,7 @@ export const pinSignIn = createServerFn({ method: 'POST' })
       headers: { 'content-type': 'application/json', 'x-pos-device': token },
       body: JSON.stringify(data),
     }).catch(() => null)
-    if (!res) return { ok: false, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
+    if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
     if (res.ok) {
       const { sessionToken, expiresIn } = (await res.json()) as { sessionToken: string; expiresIn: number }
       setSessionToken(sessionToken, expiresIn)
@@ -157,8 +157,8 @@ export const pinSignIn = createServerFn({ method: 'POST' })
     }
     if (res.status === 429) {
       const retryAfter = Number(res.headers.get('retry-after')) || 30
-      return { ok: false, error: `Terlalu banyak PIN salah. Coba lagi dalam ${retryAfter} detik.`, retryAfter }
+      return { ok: false, status: 429, error: `Terlalu banyak PIN salah. Coba lagi dalam ${retryAfter} detik.`, retryAfter }
     }
-    if (res.status === 401) return { ok: false, error: 'PIN salah.' }
-    return { ok: false, error: 'Gagal masuk, coba lagi.' }
+    if (res.status === 401) return { ok: false, code: 'PIN_INVALID', error: 'PIN salah.' }
+    return { ok: false, status: res.status, error: 'Gagal masuk, coba lagi.' }
   })

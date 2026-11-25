@@ -1,8 +1,9 @@
-import { Alert, Button, Spinner, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, Spinner } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { ArrowLeft, Delete, UserRound } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { loadPicker, pinSignIn } from '../staf/-api'
 
 // Cashier sign-in on a bound device (U4, POS-only): pick your name, enter your PIN. Full-screen, no shell.
@@ -105,15 +106,18 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
       ok: false as const,
       error: 'Gagal masuk, coba lagi.',
       retryAfter: undefined,
+      status: 0,
+      code: undefined,
     }))
     setBusy(false)
     setPin('')
     if (res.ok) {
-      toast(`Selamat bertugas, ${staff.name}`, { variant: 'success' })
+      notifySuccess(`Selamat bertugas, ${staff.name}`)
       await router.invalidate() // the shell's "who is signed in" is cached at the root
       return navigate({ to: '/kasir' })
     }
     setError(res.error)
+    showError(res, 'masuk')
     if (res.retryAfter) setLockedFor(res.retryAfter)
   }
 
@@ -145,7 +149,7 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
       </Button>
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-default-primary">Halo, {staff.name}</h1>
-        <p className="text-sm text-default-secondary">Masukkan PIN kamu</p>
+        <p className="text-sm text-default-secondary">Masukkan PIN Anda</p>
       </div>
       <div className="flex h-4 gap-2" role="status" aria-label={`${pin.length} angka dimasukkan`}>
         {Array.from({ length: Math.max(pin.length, 4) }, (_, i) => (

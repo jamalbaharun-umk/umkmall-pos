@@ -51,7 +51,7 @@ export type Result<T = undefined> = { ok: true; data: T } | ({ ok: false } & Ref
 
 const OFFLINE = 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.'
 const LOAD_ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk ini',
+  403: 'Anda tidak punya izin untuk ini',
   404: 'Pengeluaran tidak ditemukan, mungkin sudah dihapus.',
 }
 const enc = encodeURIComponent
@@ -67,10 +67,10 @@ async function send<T>(path: string, method: string, body: unknown, headers: Rec
     if (isRedirect(e)) throw e // session ended: go to sign-in
     return null
   })
-  if (!res) return { ok: false, error: OFFLINE }
+  if (!res) return { ok: false, status: 0, error: OFFLINE }
   if (res.ok) return { ok: true, data: (await res.json().catch(() => undefined)) as T }
-  if (res.status === 403) return { ok: false, error: 'Kamu tidak punya izin untuk ini.' }
-  if (res.status === 404) return { ok: false, error: LOAD_ERRORS[404] }
+  if (res.status === 403) return { ok: false, status: 403, error: 'Anda tidak punya izin untuk ini.' }
+  if (res.status === 404) return { ok: false, status: 404, error: LOAD_ERRORS[404] }
   return { ok: false, ...(await refusalOf(res)) }
 }
 

@@ -58,7 +58,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const exists = (to: string) => Boolean((router.routesByPath as unknown as Record<string, unknown>)[to])
   const groups = visibleNav(NAV, exists, me.actor.permissions)
   const active = activeNav(groups, pathname)
-  const store = me.tenant.name || 'Toko kamu'
+  const store = me.tenant.name || 'Toko Anda'
   const actor = me.actor.kind === 'owner' ? 'Pemilik' : (me.actor.name ?? 'Kasir')
 
   const storeName = (

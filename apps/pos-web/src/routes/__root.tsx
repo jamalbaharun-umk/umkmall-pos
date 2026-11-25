@@ -2,6 +2,7 @@ import { HeadContent, Outlet, Scripts, createRootRoute, useMatches } from '@tans
 import { createServerFn } from '@tanstack/react-start'
 import { Toaster } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
+import { FeedbackHost } from '@/components/feedback-host'
 import { Empty, Page } from '@/components/page'
 import { Shell, type Me } from '@/components/shell'
 import { API_DOWN, UMKMALL_DOWN, api } from '@/lib/api.server'
@@ -67,7 +68,8 @@ function RootDocument({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
-        <Toaster position="top-right" />
+        <Toaster position="top-center" />
+        <FeedbackHost />
         <Scripts />
       </body>
     </html>

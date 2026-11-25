@@ -90,26 +90,27 @@ export type Receipt = {
   voidedAt: string | null
 }
 export type Result<T = undefined> =
-  { ok: true; data: T } | { ok: false; error: string; errors?: Record<string, string>; total?: number }
+  { ok: true; data: T } | { ok: false; error: string; errors?: Record<string, string>; total?: number; status?: number }
 
 const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk berjualan.',
+  403: 'Anda tidak punya izin untuk berjualan.',
   404: 'Data tidak ditemukan.',
 }
 
-type Refusal = { error: string; errors?: Record<string, string>; total?: number }
+type Refusal = { error: string; errors?: Record<string, string>; total?: number; status?: number }
 
 /** pos-api's 409/422 bodies are Indonesian and internals-free (`{ message, errors, total? }`): pass them on. */
 async function refusalOf(res: Response): Promise<Refusal> {
   if (res.status === 409 || res.status === 422) {
     const body = (await res.json().catch(() => null)) as { message?: unknown; errors?: unknown; total?: unknown } | null
     return {
-      error: typeof body?.message === 'string' ? body.message : 'Data belum benar. Periksa isian kamu.',
+      status: res.status,
+      error: typeof body?.message === 'string' ? body.message : 'Data belum benar. Periksa isian Anda.',
       errors: body?.errors && typeof body.errors === 'object' ? (body.errors as Record<string, string>) : undefined,
       total: typeof body?.total === 'number' ? body.total : undefined,
     }
   }
-  return { error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }
+  return { status: res.status, error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }
 }
 const errorOf = async (res: Response) => (await refusalOf(res)).error
 
@@ -121,7 +122,7 @@ async function load<T>(path: string): Promise<T> {
 
 async function send<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Result<T>> {
   const res = await api(path, { method: 'POST', body: JSON.stringify(body), headers }).catch(() => null)
-  if (!res) return { ok: false, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
+  if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
   if (!res.ok) return { ok: false, ...(await refusalOf(res)) }
   return { ok: true, data: (await res.json()) as T }
 }

@@ -49,7 +49,7 @@ export type Receivable = ReceivableSummary & {
 }
 /** A list row as JSON; each screen narrows it to its own type. */
 type Row = Record<string, string | number | null>
-export type Result = { ok: true } | { ok: false; error: string; errors?: Record<string, string> }
+export type Result = { ok: true } | { ok: false; error: string; errors?: Record<string, string>; status?: number }
 
 /** The only collections these relays reach (never a client-chosen path). */
 export type Resource = 'members' | 'vouchers' | 'payment-methods'
@@ -60,9 +60,9 @@ const resource = (r: Resource) => {
 }
 
 const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk ini.',
+  403: 'Anda tidak punya izin untuk ini.',
   404: 'Data tidak ditemukan, mungkin sudah dihapus.',
-  422: 'Data belum benar. Periksa isian kamu.',
+  422: 'Data belum benar. Periksa isian Anda.',
 }
 
 async function load<T>(path: string): Promise<T> {
@@ -79,15 +79,15 @@ async function mutate(path: string, method: string, body?: unknown, headers?: Re
     },
   )
   // pos-api unreachable: nothing was saved; a payment retry reuses its Idempotency-Key.
-  if (!res) return { ok: false, error: 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.' }
+  if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.' }
   if (res.ok) return { ok: true }
   const err = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown }
   // 409 and 422 carry a safe Indonesian message and a field map from pos-api (common/validation.ts).
   if ((res.status === 409 || res.status === 422) && typeof err.message === 'string') {
     const errors = err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined
-    return { ok: false, error: err.message, errors }
+    return { ok: false, status: res.status, error: err.message, errors }
   }
-  return { ok: false, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
+  return { ok: false, status: res.status, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
 }
 
 const enc = encodeURIComponent

@@ -12,11 +12,11 @@ import {
   TableHeader,
   TableRow,
   TextField,
-  toast,
-} from '@umkmall/ui/primitives'
+  } from '@umkmall/ui/primitives'
 import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { EllipsisVertical, Eye, Pencil, Search, Trash2 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
+import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components/page'
@@ -65,10 +65,10 @@ function ProductsPage() {
   const remove = (id: string, name: string) =>
     confirm.ask(`Hapus ${name}?`, async () => {
       const r = await deleteProduct({ data: id })
-      if (r.error) return r.error
-      toast('Produk dihapus', { variant: 'success' })
+      if (r.error) return r
+      notifySuccess(`${name} dihapus`)
       await router.invalidate()
-    }, { body: 'Produk tidak tampil lagi di kasir. Riwayat penjualannya tetap tersimpan.' })
+    }, { body: 'Produk tidak tampil lagi di kasir. Riwayat penjualannya tetap tersimpan.', action: 'menghapus produk' })
 
   return (
     <Page
@@ -134,7 +134,7 @@ function ProductsPage() {
                 </Button>
               }
             >
-              Tambahkan produk pertamamu, misalnya “Es Teh Manis”.
+              Tambahkan produk pertama Anda, misalnya “Es Teh Manis”.
             </Empty>
           )
         ) : (

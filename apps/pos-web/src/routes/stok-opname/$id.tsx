@@ -29,8 +29,9 @@ function OpnamePage() {
         const r = await act(
           () => opnameAction({ data: { id: opname.id, action } }),
           action === 'approve' ? 'Opname disetujui, stok disesuaikan' : 'Draf opname dihapus',
+          action === 'approve' ? 'menyetujui opname' : 'menghapus draf opname',
         )
-        if (!r.ok) return r.error
+        if (!r.ok) return
         if (action === 'delete') await navigate({ to: '/stok-opname' })
         else await router.invalidate()
       },

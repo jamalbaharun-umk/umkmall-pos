@@ -1,15 +1,17 @@
 /** What a refused save tells a form: a toast-safe message and, when the API named them, per-field messages. */
-export type Refusal = { error: string; errors?: Record<string, string> }
+export type Refusal = { error: string; errors?: Record<string, string>; status?: number; retryAfter?: number }
 
 export const GENERIC_ERROR = 'Terjadi kesalahan. Coba lagi sebentar lagi.'
 
-/** Reads pos-api's `{ message, errors }` refusal body; a 5xx or unreadable body becomes a generic message. */
+/** Reads pos-api's `{ message, errors }` refusal body, keeping the HTTP status for the error dialog; a 5xx or unreadable body becomes a generic message. */
 export async function refusalOf(res: Response): Promise<Refusal> {
   const body = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown }
-  if (res.status >= 500 || typeof body.message !== 'string') return { error: GENERIC_ERROR }
+  const status = res.status
+  if (status >= 500 || typeof body.message !== 'string') return { error: GENERIC_ERROR, status }
   const errors =
     body.errors && typeof body.errors === 'object' ? (body.errors as Record<string, string>) : undefined
-  return errors ? { error: body.message, errors } : { error: body.message }
+  const retryAfter = typeof (body as { retryAfter?: unknown }).retryAfter === 'number' ? (body as { retryAfter: number }).retryAfter : undefined
+  return { error: body.message, status, ...(errors ? { errors } : {}), ...(retryAfter ? { retryAfter } : {}) }
 }
 
 /**

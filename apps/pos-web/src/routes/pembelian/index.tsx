@@ -86,7 +86,7 @@ function OrdersPage() {
             title={orders.length === 0 ? 'Belum ada pembelian' : 'Tidak ada pembelian yang cocok'}
             hint={
               orders.length === 0
-                ? 'Catat barang yang kamu beli dari pemasok. Stok bertambah saat pembelian disetujui.'
+                ? 'Catat barang yang Anda beli dari pemasok. Stok bertambah saat pembelian disetujui.'
                 : 'Ubah filter.'
             }
           />

@@ -2,6 +2,7 @@ import { Alert, Button, CheckBox, Select, TextField, Upload, toast } from '@umkm
 import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { Plus, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
+import { notifySuccess, showError, type FailureLike } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { Panel, RequiredLabel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
@@ -89,9 +90,11 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     setForm((f) => ({ ...f, [k]: v }))
     setErrors(({ [k]: _gone, ...rest }) => rest)
   }
-  const fail = (message: string) => {
-    setError(message)
-    toast(message, { variant: 'danger' })
+  const verb = product ? 'menyimpan produk' : 'membuat produk'
+  const fail = (failure: FailureLike | string) => {
+    const f = typeof failure === 'string' ? { error: failure } : failure
+    setError(f.error)
+    showError(f, verb)
   }
 
   async function submit(e: FormEvent, again = false) {
@@ -104,7 +107,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       ...tierErrors(form.priceTiers, form.sellingPrice),
     }
     setErrors(found)
-    if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
+    if (Object.keys(found).length) return showError({ status: 422, error: 'Beberapa isian belum benar. Periksa yang ditandai merah.' }, verb)
     const costPrice = Number(plainNumber(form.costPrice) || '0')
     const sellingPrice = Number(plainNumber(form.sellingPrice))
     const input: ProductInput = {
@@ -128,11 +131,11 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
         const placed = placeErrors({ error: saved.error, errors: saved.errors }, FIELDS)
         setErrors(placed.byField)
         if (placed.formError) setError(placed.formError)
-        toast(saved.error, { variant: 'danger' })
+        showError(saved, verb)
         return
       }
       const id = product?.id ?? saved.id
-      if (!id) return fail(GENERIC_ERROR)
+      if (!id) return fail({ error: GENERIC_ERROR, status: 500 })
       const problems: string[] = []
       const qty = Number(plainNumber(form.stock) || '0')
       if (!product && form.type === 'product' && qty > 0) {
@@ -146,8 +149,12 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
         const r = await uploadImage({ data: body })
         if (r.error) problems.push(`${file.name}: ${r.error}`)
       }
-      toast(product ? 'Produk disimpan' : 'Produk dibuat', { variant: 'success' })
-      if (problems.length) toast(problems.join(' '), { variant: 'warning' })
+      notifySuccess(product ? `Produk ${input.name} disimpan` : `Produk ${input.name} dibuat`)
+      if (problems.length)
+        showError(
+          { error: problems.join(' ') },
+          { action: 'mencatat stok awal atau gambar', fallback: 'Produk tersimpan, tetapi stok awal atau gambar belum tercatat.' },
+        )
       // Saved, but a unit costs more than buying loose at the best price: the server says so, the owner decides.
       for (const w of saved.warnings ?? []) toast(w.message, { variant: 'warning' })
       if (again) {
@@ -155,7 +162,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
         setFiles([])
       } else await navigate({ to: '/catalog/products/$id', params: { id } })
     } catch {
-      fail(GENERIC_ERROR)
+      fail({ error: GENERIC_ERROR, status: 0 })
     } finally {
       setBusy(false)
     }
@@ -191,9 +198,10 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
                   onRemove={() =>
                     confirm.ask('Hapus gambar ini?', async () => {
                       const r = await deleteImage({ data: { productId: product.id, imageId: img.id } })
-                      if (r.error) return r.error
+                      if (r.error) return r
+                      notifySuccess('Gambar dihapus')
                       await router.invalidate()
-                    })
+                    }, { action: 'menghapus gambar' })
                   }
                 />
               ))}

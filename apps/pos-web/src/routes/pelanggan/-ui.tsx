@@ -13,9 +13,9 @@ import {
   TableHeader,
   TableRow,
   TextField,
-  toast,
 } from '@umkmall/ui'
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, type Crumb } from '@/components/page'
 import { checkFields, toBody, type Errors, type Field, type Values } from './-form'
 import { removeResource, saveResource, type Resource, type Result } from './-api'
@@ -100,8 +100,8 @@ export function ResourcePage<T extends { id: string }>(props: {
   const names = new Set(props.fields.map((f) => f.name))
   const Singular = props.singular[0].toUpperCase() + props.singular.slice(1)
 
-  /** Runs one save/delete: no double submit, server field errors onto fields, a toast either way. */
-  async function run(action: () => Promise<Result>, success: string, done: () => void) {
+  /** Runs one save/delete: no double submit, server field errors onto fields, a toast on success, the error dialog on failure. */
+  async function run(action: () => Promise<Result>, success: string, failing: string, done: () => void) {
     if (inFlight.current) return
     inFlight.current = true
     setBusy(true)
@@ -114,16 +114,16 @@ export function ResourcePage<T extends { id: string }>(props: {
         // What no field shows goes to the form-level alert.
         const rest = Object.entries(res.errors ?? {}).filter(([k]) => !names.has(k))
         setError(Object.keys(onFields).length && !rest.length ? undefined : (rest[0]?.[1] ?? res.error))
-        toast(res.error, { variant: 'danger' })
+        showError(res, failing)
         return
       }
       // Fresh list first, then close and toast together: no moment showing the old rows.
       await router.invalidate()
       done()
-      toast(success, { variant: 'success' })
-    } catch {
+      notifySuccess(success)
+    } catch (e) {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
-      toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })
+      showError(e, failing)
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -159,6 +159,7 @@ export function ResourcePage<T extends { id: string }>(props: {
           },
         }),
       form.id ? `${Singular} tersimpan` : `${Singular} ditambahkan`,
+      `menyimpan ${props.singular}`,
       () => setForm(undefined),
     )
   }
@@ -306,6 +307,7 @@ export function ResourcePage<T extends { id: string }>(props: {
                       data: { resource: props.resource, id: deleting.id },
                     }),
                   `${Singular} dihapus`,
+                  `menghapus ${props.singular}`,
                   () => setDeleting(undefined),
                 )
               }

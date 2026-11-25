@@ -1,11 +1,13 @@
-import { Alert, Button, Dialog, Select, Spinner, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, Dialog, Select, Spinner, TextField } from '@umkmall/ui/primitives'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { rupiah } from '@/components/page'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { loadApprovers, voidSale, type SaleVoid } from './-void-api'
 import {
   NOTE_MAX,
   VOID_REASONS,
   approverOptions,
+  failureOf,
   isWrongPin,
   pinDigits,
   refundGuidance,
@@ -13,7 +15,6 @@ import {
   voidFormErrors,
   type Approver,
   type MethodKind,
-  type VoidFailure,
   type VoidFormErrors,
 } from './-void-helpers'
 
@@ -41,7 +42,6 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
   const [approverId, setApproverId] = useState('')
   const [pin, setPin] = useState('')
   const [errors, setErrors] = useState<VoidFormErrors>({})
-  const [failure, setFailure] = useState<VoidFailure>()
   const [busy, setBusy] = useState(false)
   const lock = useRef(false) // a double submit arrives before `busy` re-renders
   // One key per attempt (per opening): a retry after a lost answer replays the first result, never voids twice.
@@ -63,7 +63,6 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
     setApproverId('')
     setPin('')
     setErrors({})
-    setFailure(undefined)
     fetchApprovers()
   }, [open])
 
@@ -75,7 +74,6 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
     const form = { reasonCode, note, approverId, pin }
     const bad = voidFormErrors(form)
     setErrors(bad)
-    setFailure(undefined)
     if (Object.keys(bad).length > 0) return
     lock.current = true
     setBusy(true)
@@ -86,11 +84,11 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
     lock.current = false
     setBusy(false)
     if (!answer) {
-      setFailure({ kind: 'offline', error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.', errors: {} })
+      showError({ status: 0 }, 'membatalkan struk')
       return
     }
     if (answer.ok) {
-      toast(`Struk #${sale.number} dibatalkan`, { variant: 'success' })
+      notifySuccess(`Struk #${sale.number} dibatalkan`)
       onChanged(answer.saleVoid)
       onClose()
       return
@@ -103,9 +101,9 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
       if (f.errors.reasonCode) field.reasonCode = f.errors.reasonCode
       if (f.errors.approverId) field.approverId = f.errors.approverId
       setErrors(field)
-      // Everything not shown on a field is shown on top, so no refusal is silent.
-      if (f.kind !== 'invalid' || Object.keys(field).length === 0 || f.errors._) setFailure(f)
     }
+    // Every refusal is also explained in the error dialog, so none is silent (the field message stays as well).
+    showError(failureOf(f), 'membatalkan struk')
     // A lock or a PIN count changed: show who can still approve.
     if (f.kind === 'locked' || isWrongPin(f)) fetchApprovers()
     if (f.kind === 'done') onChanged(null)
@@ -214,15 +212,6 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
           Minta admin mengetik PIN di perangkat ini. PIN tidak ditampilkan dan tidak disimpan. Salah 5 kali mengunci
           admin itu 5 menit.
         </p>
-
-        {failure && (
-          <Alert variant={failure.kind === 'done' ? 'warning' : 'danger'} size="small" role="alert">
-            {failure.error}
-            {failure.kind === 'locked' && failure.retryAfter
-              ? ` Coba lagi sekitar ${Math.ceil(failure.retryAfter / 60)} menit lagi.`
-              : ''}
-          </Alert>
-        )}
 
         <div className="flex justify-end gap-2">
           <Button

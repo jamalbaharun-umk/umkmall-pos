@@ -13,7 +13,7 @@ export function sessionKind(token: string): 'owner' | 'cashier' | undefined {
 /** Why the last sign-in failed, from the status `/masuk*` put in `?gagal=`. */
 export function failureText(status: number): string {
   if (status === 0 || status >= 500) return 'UMKMall sedang tidak bisa dihubungi. Coba lagi sebentar lagi.'
-  if (status === 401) return 'Sesi UMKMall kamu sudah berakhir atau akun belum terdaftar. Masuk lagi ke UMKMall.'
+  if (status === 401) return 'Sesi UMKMall Anda sudah berakhir atau akun belum terdaftar. Masuk lagi ke UMKMall.'
   if (status === 422) return 'Data masuk tidak lengkap. Coba lagi.'
   return 'Gagal masuk. Coba lagi sebentar lagi.'
 }
