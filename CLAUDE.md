@@ -295,4 +295,9 @@ sign in again after 15 minutes. Screens call pos-api through `api()` in `apps/po
 docker compose exec postgres psql -U pos -d pos -tAc "insert into public.users default values returning id"
 POS_API_URL=http://localhost:3000 POS_DEV_USER_ID=<that id> npm run dev -w pos-web
 ```
+**Testing pairing behind a relay** (UMK-2022): `POS_TRUSTED_PROXIES` is a hop count and must include pos-web and every
+edge proxy or CDN in front of it (pos-web alone: `1`; Cloudflare then pos-web: `2`). Unset or `0` means pos-api sees
+only pos-web's address, so every device shares one open-code cap and one poll limit. pos-web sends no
+`X-Forwarded-For` at all when it cannot read the device's socket address, and pos-api then counts pos-web.
+
 The `pos_app` role and `pos` schema are created once per environment by a UMKMall DB owner: `ops/pos-role.sql`.

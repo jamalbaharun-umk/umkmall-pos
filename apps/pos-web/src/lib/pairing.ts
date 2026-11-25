@@ -22,17 +22,19 @@ export function formatCountdown(seconds: number): string {
 /**
  * The `X-Forwarded-For` value a relay sends to pos-api: what the relay itself received (its own proxies' chain),
  * then the address it saw the device connect from. pos-api, with `POS_TRUSTED_PROXIES` set, walks that chain from
- * the right to find the device. Without a socket address nothing can be said: undefined (pos-api then counts the
- * relay's own address, which is the failure the pairing caps warn about, so the caller reports it).
+ * the right to find the device. Without a socket address nothing is sent at all (undefined): a chain with no
+ * address of ours at its end is client-supplied, and forwarding it would let a caller pick its own per-address key.
+ * pos-api then counts the relay's own address, which is the shared cap `POS_TRUSTED_PROXIES` warns about.
  */
 export function buildForwardedFor(incoming: string | null | undefined, socketAddress: string | null | undefined): string | undefined {
   const own = socketAddress?.trim()
+  if (!own) return undefined
   const chain = (incoming ?? '')
     .split(',')
     .map((p) => p.trim())
     .filter(Boolean)
-  if (own) chain.push(own)
-  return chain.length ? chain.join(', ') : undefined
+  chain.push(own)
+  return chain.join(', ')
 }
 
 export type PairingCookie = { token: string; code: string; expiresAt: number }
