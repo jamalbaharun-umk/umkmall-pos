@@ -10,9 +10,19 @@ const product = {
   sellingPrice: '5000',
   barcodes: [] as string[],
   stock: '',
+  lowStockThreshold: '5',
 }
 
 describe('client validation mirrors the API', () => {
+  it('checks the low-stock threshold like the API (whole number, not negative)', () => {
+    expect(productErrors({ ...product, lowStockThreshold: '0' }, false)).toEqual({})
+    expect(productErrors({ ...product, lowStockThreshold: '-1' }, false).lowStockThreshold).toBe(
+      'Batas stok menipis tidak boleh negatif',
+    )
+    expect(productErrors({ ...product, lowStockThreshold: '2,5' }, false).lowStockThreshold).toBe(
+      'Batas stok menipis harus bilangan bulat',
+    )
+  })
   it('accepts a valid product and names each bad field', () => {
     expect(productErrors(product, false)).toEqual({})
     expect(productErrors({ ...product, name: ' ', categoryId: '', unit: '', sellingPrice: '' }, false)).toEqual({

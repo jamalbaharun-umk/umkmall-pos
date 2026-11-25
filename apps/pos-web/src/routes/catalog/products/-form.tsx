@@ -20,7 +20,7 @@ import {
 export const TYPE_LABEL: Record<ProductType, string> = { product: 'Barang', service: 'Jasa', non_stock: 'Tanpa stok' }
 const TYPES = (Object.keys(TYPE_LABEL) as ProductType[]).map((value) => ({ value, label: TYPE_LABEL[value] }))
 
-const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'file'] as const
+const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'lowStockThreshold', 'file'] as const
 
 /**
  * Lakasir's product form: images, name, barcodes (repeater), SKU (blank = generated), category, stock (create only),
@@ -41,6 +41,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     isActive: true,
     barcodes: [] as string[],
     stock: '',
+    lowStockThreshold: '5',
   }
   const [form, setForm] = useState(
     product
@@ -55,6 +56,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           type: product.type,
           isActive: product.isActive,
           barcodes: product.barcodes,
+          lowStockThreshold: String(product.lowStockThreshold),
         }
       : blank,
   )
@@ -90,6 +92,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       sellingPrice,
       type: form.type,
       isActive: form.isActive,
+      lowStockThreshold: Number(plainNumber(form.lowStockThreshold) || '5'),
       barcodes: form.barcodes.map((b) => b.trim()).filter(Boolean),
     }
     setBusy(true)
@@ -267,6 +270,15 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             error={errors.stock}
           />
         )}
+        <TextField
+          label="Batas stok menipis"
+          inputMode="numeric"
+          value={form.lowStockThreshold}
+          onChange={(e) => set('lowStockThreshold', e.target.value)}
+          disabled={form.type !== 'product'}
+          placeholder="5"
+          error={errors.lowStockThreshold}
+        />
         <TextField
           label="Satuan"
           value={form.unit}

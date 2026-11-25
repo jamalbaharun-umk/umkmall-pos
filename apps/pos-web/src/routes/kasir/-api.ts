@@ -21,6 +21,9 @@ export type Product = {
   sellingPrice: number
   type: string
   isActive: boolean
+  /** On-hand for a tracked product (0 included); null for service and non-stock products. */
+  stock: number | null
+  lowStockThreshold: number
   category: { id: string; name: string }
 }
 export type SaleRow = {

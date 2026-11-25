@@ -61,6 +61,8 @@ export const products = pos
       // Only 'product' tracks stock (U3/U6); 'service' and 'non_stock' never do.
       type: text('type', { enum: PRODUCT_TYPES }).notNull().default('product'),
       isActive: boolean('is_active').notNull().default(true),
+      // On-hand at or below this counts as "menipis" on the cashier grid and in the catalog (UMK-1966).
+      lowStockThreshold: integer('low_stock_threshold').notNull().default(5),
       deletedAt: timestamp('deleted_at', { withTimezone: true }),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
@@ -80,6 +82,7 @@ export const products = pos
         sql`${t.type} in ('product', 'service', 'non_stock')`,
       ),
       check('products_sku_ck', sql`${t.sku} !~ '\\s'`),
+      check('products_low_stock_ck', sql`${t.lowStockThreshold} >= 0`),
     ],
   )
   .enableRLS();

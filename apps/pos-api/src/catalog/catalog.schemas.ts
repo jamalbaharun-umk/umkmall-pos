@@ -56,6 +56,12 @@ const productFields = {
     .max(1_000_000_000_000, 'Harga jual terlalu besar'),
   type: z.enum(PRODUCT_TYPES).optional(),
   isActive: z.boolean().optional(),
+  lowStockThreshold: z
+    .number({ invalid_type_error: 'Batas stok menipis harus berupa angka' })
+    .int('Batas stok menipis harus bilangan bulat')
+    .min(0, 'Batas stok menipis tidak boleh negatif')
+    .max(1_000_000, 'Batas stok menipis terlalu besar')
+    .optional(),
   barcodes: barcodes.optional(),
 };
 
@@ -84,6 +90,8 @@ export const ProductUpdate = z
 export const ProductQuery = z.object({
   q: z.string().trim().max(100).optional(),
   categoryId: Uuid.optional(),
+  // UMK-1966: only tracked products that are running low (0 < on-hand <= threshold) or out (on-hand 0).
+  stock: z.enum(['low', 'out']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
 });

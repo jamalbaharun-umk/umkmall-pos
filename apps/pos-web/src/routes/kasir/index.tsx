@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -19,6 +20,7 @@ import { useCan } from '@/components/shell'
 import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
 import { readCart, restoreCart, writeCart } from './-cart'
+import { overStock, stockOverMessage, stockState } from './-stock'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -99,6 +101,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const [note, setNote] = useState('')
   const [editingNote, setEditingNote] = useState(false)
   const [paying, setPaying] = useState(false)
+  const [soldOut, setSoldOut] = useState<string>()
   const [paid, setPaid] = useState<PaidSale>()
   // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
   const canDiscount = useCan('sales.price_override')
@@ -147,7 +150,22 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const total = subtotal - discount - voucherDiscount + tax
   const qtyOf = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0
 
-  const add = (product: Product) =>
+  // Stock is only a hint here (pos-api refuses an oversold sale); an empty product says why nothing was added.
+  const over = overStock(cart.map((l) => ({ name: l.product.name, stock: l.product.stock, qty: l.qty })))
+  useEffect(() => {
+    if (!soldOut) return
+    const t = setTimeout(() => setSoldOut(undefined), 4000)
+    return () => clearTimeout(t)
+  }, [soldOut])
+  const add = (product: Product) => {
+    if (stockState(product.stock, product.lowStockThreshold) === 'out') {
+      setSoldOut(`${product.name} habis. Perbarui stok di Pembelian atau Stok opname.`)
+      return
+    }
+    setSoldOut(undefined)
+    addToCart(product)
+  }
+  const addToCart = (product: Product) =>
     setCart((c) =>
       c.some((l) => l.product.id === product.id)
         ? c.map((l) => (l.product.id === product.id ? { ...l, qty: l.qty + 1 } : l))
@@ -193,6 +211,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             </Tabs>
           </div>
         )}
+        {soldOut && <ErrorText>{soldOut}</ErrorText>}
         {products.length === 0 ? (
           <Card>
             <Empty
@@ -211,17 +230,34 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
           </Card>
         ) : (
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {shown.map((p) => (
+            {shown.map((p) => {
+              const state = stockState(p.stock, p.lowStockThreshold)
+              return (
               <li key={p.id}>
                 <button
                   type="button"
                   onClick={() => add(p)}
                   aria-label={`Tambah ${p.name}`}
-                  className="flex h-full min-h-32 w-full flex-col gap-1 rounded-2xl border border-default-primary bg-default-primary p-3 text-left transition active:scale-[0.98] hover:border-default-brand"
+                  className={`flex h-full min-h-32 w-full flex-col gap-1 rounded-2xl border border-default-primary bg-default-primary p-3 text-left transition active:scale-[0.98] hover:border-default-brand${state === 'out' ? ' opacity-55' : ''}`}
                 >
                   <span className="text-sm text-default-brand">{rupiah(p.sellingPrice)}</span>
                   <span className="line-clamp-2 font-semibold text-default-primary">{p.name}</span>
                   <span className="text-xs text-default-secondary">{p.category.name}</span>
+                  <span className="text-xs text-default-secondary">
+                    {state === 'out' ? (
+                      <Badge color="danger" size="small">
+                        Habis
+                      </Badge>
+                    ) : state === 'low' ? (
+                      <Badge color="warning" size="small">
+                        Sisa {p.stock}
+                      </Badge>
+                    ) : state === 'enough' ? (
+                      `Stok ${p.stock}`
+                    ) : (
+                      'Tanpa stok'
+                    )}
+                  </span>
                   <span className="mt-auto flex items-center justify-between pt-2">
                     <span className="inline-flex size-8 items-center justify-center rounded-lg bg-default-brand text-default-invert">
                       <Icon name="plus" size="sm" />
@@ -230,7 +266,8 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
                   </span>
                 </button>
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </section>
@@ -287,6 +324,11 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
                     <span className="min-w-0 truncate font-medium">{l.product.name}</span>
                     <span className="shrink-0 text-default-brand">{rupiah(l.product.sellingPrice * l.qty)}</span>
                   </p>
+                  {overStock([{ name: l.product.name, stock: l.product.stock, qty: l.qty }]).length > 0 && (
+                    <Alert variant="warning" size="small" role="alert" className="mt-2">
+                      {stockOverMessage(l.product.stock ?? 0)}
+                    </Alert>
+                  )}
                   <div className="mt-2 flex items-center gap-2">
                     <Button
                       iconOnly
@@ -372,10 +414,15 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             <dd className="text-default-brand">{rupiah(total)}</dd>
           </div>
         </dl>
+        {over.length > 0 && (
+          <Alert variant="warning" size="small" role="alert">
+            {stockOverMessage(over[0].stock ?? 0)}
+          </Alert>
+        )}
         <Button
           size="large"
           width="full"
-          disabled={cart.length === 0}
+          disabled={cart.length === 0 || over.length > 0}
           onClick={() => (discountBad ? toast(`Diskon: ${discountBad}`, { variant: 'danger' }) : setPaying(true))}
         >
           Lanjut ke pembayaran
