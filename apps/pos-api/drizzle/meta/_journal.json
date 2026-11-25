@@ -225,6 +225,13 @@
       "when": 1795628565665,
       "tag": "0031_device_pairings",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795629457870,
+      "tag": "0032_deposit_shift",
+      "breakpoints": true
     }
   ]
 }

@@ -540,6 +540,11 @@ describe('void a full sale (UMK-1962)', () => {
         paymentMethodId: s.debitId,
       }).expect(201);
       expect((await current(s.auth)).expectedCash).toBe(103_500);
+      const shiftId = (await current(s.auth)).id as string;
+      const before = await get(s.auth, `/shifts/${shiftId}`).expect(200);
+      expect(before.body.cashEntries).toMatchObject([
+        { kind: 'receivable_payment', reversed: false, reversalOf: null },
+      ]);
 
       const res = await voidSale(s.auth, sale.body.id, s.approval).expect(201);
       expect(res.body).toMatchObject({
@@ -571,6 +576,28 @@ describe('void a full sale (UMK-1962)', () => {
       const r = await get(s.auth, `/receivables/${rid}`).expect(200);
       expect(r.body).toMatchObject({ rest: 0, cancelledAmount: 6000 });
       expect(r.body.payments).toHaveLength(3); // the payment history is kept
+      // The drawer list marks both sides (design fitur 20: "Dibatalkan" and "Pembalik"): the instalment
+      // whose kasbon was cancelled, and the cash-out that undoes the sale.
+      const after = await get(s.auth, `/shifts/${shiftId}`).expect(200);
+      expect(after.body.cashEntries).toMatchObject([
+        {
+          kind: 'receivable_payment',
+          amount: 2500,
+          reversed: true,
+          reversalOf: null,
+          actorKind: 'owner',
+          actorName: 'Pemilik',
+        },
+        {
+          kind: 'void_refund',
+          amount: 3500,
+          refId: res.body.id,
+          reversed: false,
+          reversalOf: { type: 'sale', id: sale.body.id, entryId: null },
+          actorKind: 'owner',
+          actorName: 'Pemilik',
+        },
+      ]);
 
       // One instant for the whole void: sale, receivable, void record and ledger entry.
       const [t] = await admin`

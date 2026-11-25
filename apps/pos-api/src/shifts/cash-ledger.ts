@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { fieldError } from '../common/validation';
+import { codedError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import {
   type CASH_DIRECTIONS,
@@ -22,7 +22,12 @@ import type { PosSession } from '../tenancy/session';
  * that entry is in (`recordShiftCashInShift`, UMK-1984).
  *
  * Cash leaves a drawer only for a session kind on `DRAWER_CASH_OUT_ACTOR_KINDS` (owner ruling: an agent
- * never takes cash out of a drawer). Every writer below checks it before its first query.
+ * never takes cash out of a drawer). Every writer below checks it before its first query. Cash recorded
+ * by hand (a manual entry in either direction, a collector's deposit) is for the same kinds only: its
+ * services call `assertPersonAtTill` first (design fitur 20 and 21).
+ *
+ * Refusals carry a stable `code` next to their message: `SHIFT_REQUIRED`, `SHIFT_NOT_YOURS`,
+ * `AGENT_FORBIDDEN`.
  */
 
 /**
@@ -41,8 +46,28 @@ export function assertMayMoveDrawerCash(
   direction: (typeof CASH_DIRECTIONS)[number],
 ): void {
   if (direction === 'out' && !DRAWER_CASH_OUT_ACTOR_KINDS.includes(kind))
-    throw new ForbiddenException(
+    throw notAtTill(
       'Uang keluar dari laci hanya bisa dicatat dari POS oleh kasir atau pemilik',
+    );
+}
+
+/** The usual 403 body plus the code a screen (or an agent) can act on. */
+const notAtTill = (message: string) =>
+  new ForbiddenException({
+    message,
+    error: 'Forbidden',
+    statusCode: 403,
+    code: 'AGENT_FORBIDDEN',
+  });
+
+/**
+ * 403 unless `kind` is a person at the till. For cash recorded by hand in EITHER direction (a manual
+ * cash entry, a collector's deposit): an agent records none of them. Called before any query.
+ */
+export function assertPersonAtTill(kind: string): void {
+  if (!DRAWER_CASH_OUT_ACTOR_KINDS.includes(kind))
+    throw notAtTill(
+      'Uang laci hanya bisa dicatat dari POS oleh kasir atau pemilik',
     );
 }
 
@@ -71,6 +96,8 @@ export type CashTotals = {
   manualIn: number;
   /** Cash taken out of the drawer by hand (part of cashOut). */
   manualOut: number;
+  /** Collectors' outside-shift cash received into the drawer, "Setoran penagih" (part of cashIn). */
+  collectorDeposits: number;
 };
 
 export const NO_CASH: CashTotals = {
@@ -82,6 +109,7 @@ export const NO_CASH: CashTotals = {
   expenseReversals: 0,
   manualIn: 0,
   manualOut: 0,
+  collectorDeposits: 0,
 };
 
 /** The actor's open shift, row-locked until the transaction ends; null when none is open. */
@@ -98,6 +126,49 @@ export async function lockOpenShift(tx: Tx, s: PosSession) {
     )
     .for('update');
   return shift ?? null;
+}
+
+/**
+ * The drawer a hand-recorded movement goes into, row-locked: the actor's own open shift, or the open
+ * shift `shiftId` of this store when an OWNER names one (design fitur 20: "bila dua shift buka, pengguna
+ * memilih shift"). A cashier's cash only ever goes into their own shift. Null when the actor has no
+ * open shift and names none; 422 `SHIFT_NOT_YOURS` for a shift the actor may not use, a closed one, or
+ * one of another store (the lookup filters the session's tenant).
+ */
+export async function lockShiftForCash(
+  tx: Tx,
+  s: PosSession,
+  shiftId?: string,
+) {
+  if (!shiftId) return lockOpenShift(tx, s);
+  if (s.kind !== 'owner') {
+    const own = await lockOpenShift(tx, s);
+    if (own?.id !== shiftId)
+      throw codedError(
+        'SHIFT_NOT_YOURS',
+        'shiftId',
+        'Uang hanya bisa dicatat di shift Anda sendiri',
+      );
+    return own;
+  }
+  const [shift] = await tx
+    .select({ id: shifts.id, openingCash: shifts.openingCash })
+    .from(shifts)
+    .where(
+      and(
+        eq(shifts.tenantId, s.tenantId),
+        eq(shifts.id, shiftId),
+        isNull(shifts.closedAt),
+      ),
+    )
+    .for('update');
+  if (!shift)
+    throw codedError(
+      'SHIFT_NOT_YOURS',
+      'shiftId',
+      'Shift ini sudah ditutup atau tidak ditemukan',
+    );
+  return shift;
 }
 
 async function insertEntry(
@@ -147,8 +218,27 @@ export async function recordShiftCash(
   noShiftMessage: string,
 ): Promise<string> {
   const shiftId = await recordShiftCashIfOpen(tx, s, entry);
-  if (!shiftId) throw fieldError('_', noShiftMessage);
+  if (!shiftId) throw codedError('SHIFT_REQUIRED', '_', noShiftMessage);
   return shiftId;
+}
+
+/**
+ * `recordShiftCash` for cash recorded by hand: into the drawer `lockShiftForCash` picks (the actor's
+ * own open shift, or the open shift an owner names). 422 `SHIFT_REQUIRED` with `noShiftMessage` when
+ * there is none.
+ */
+export async function recordShiftCashAt(
+  tx: Tx,
+  s: PosSession,
+  shiftId: string | undefined,
+  entry: CashEntry,
+  noShiftMessage: string,
+): Promise<string> {
+  assertMayMoveDrawerCash(s.kind, entry.direction);
+  const shift = await lockShiftForCash(tx, s, shiftId);
+  if (!shift) throw codedError('SHIFT_REQUIRED', '_', noShiftMessage);
+  await insertEntry(tx, s, shift.id, entry);
+  return shift.id;
 }
 
 /**
@@ -207,6 +297,9 @@ export async function cashTotals(
       ),
       manualIn: sum(sql`${e.direction} = 'in' and ${e.kind} = 'manual_in'`),
       manualOut: sum(sql`${e.direction} = 'out' and ${e.kind} = 'manual_out'`),
+      collectorDeposits: sum(
+        sql`${e.direction} = 'in' and ${e.kind} = 'collector_deposit'`,
+      ),
     })
     .from(e)
     .where(and(eq(e.tenantId, tenantId), inArray(e.shiftId, shiftIds)))
@@ -223,6 +316,7 @@ export async function cashTotals(
         expenseReversals: Number(r.expenseReversals),
         manualIn: Number(r.manualIn),
         manualOut: Number(r.manualOut),
+        collectorDeposits: Number(r.collectorDeposits),
       },
     ]),
   );

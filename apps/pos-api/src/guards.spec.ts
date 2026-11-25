@@ -105,7 +105,8 @@ describe('repo guards', () => {
     // The service goes through the ledger (the shift's row lock, the agent allow-list), and its rows are
     // append-only.
     const service = files.find(({ f }) => f === own)!.text;
-    expect(service).toMatch(/recordShiftCash\(/);
+    expect(service).toMatch(/recordShiftCashAt\(/);
+    expect(service).toMatch(/assertPersonAtTill\(s\.kind\)/);
     expect(service).toMatch(/\.insert\(manualCashEntries\)/);
     expect(service).not.toMatch(/\.(update|delete)\(\s*manualCashEntries\b/);
   });
@@ -123,7 +124,7 @@ describe('repo guards', () => {
     // Every function that reaches the insert checks the session kind first.
     const writers = ledger.split(/\nexport async function /).slice(1);
     const inserting = writers.filter((w) => /await insertEntry\(/.test(w));
-    expect(inserting.length).toBe(2);
+    expect(inserting.length).toBe(3);
     for (const w of inserting)
       expect(
         w.indexOf('assertMayMoveDrawerCash(s.kind, entry.direction)'),
@@ -134,7 +135,7 @@ describe('repo guards', () => {
       );
   });
 
-  it('writes pos.store_cash_deposits and the store ledger kind collector_deposit only in store-cash/store-cash-deposits.service.ts', () => {
+  it('writes pos.store_cash_deposits and the kind collector_deposit (store and shift ledger) only in store-cash/store-cash-deposits.service.ts', () => {
     const own = path.join('store-cash', 'store-cash-deposits.service.ts');
     const offenders = files
       .filter(({ f }) => f !== own)
@@ -146,8 +147,12 @@ describe('repo guards', () => {
       .map(({ f }) => f);
     expect(offenders).toEqual([]);
     const service = files.find(({ f }) => f === own)!.text;
-    // Through the ledger's one writer, under the collector's row lock, append-only.
+    // Through each ledger's one writer, under the collector's row lock, append-only. The cash enters a
+    // drawer (shift ledger) and leaves the store's cash (an `out`, never a `transfer`): counted once.
     expect(service).toMatch(/recordStoreCash\(/);
+    expect(service).toMatch(/recordShiftCashAt\(/);
+    expect(service).toMatch(/assertPersonAtTill\(s\.kind\)/);
+    expect(service).not.toMatch(/direction:\s*['"`]transfer['"`]/);
     expect(service).toMatch(/\.for\('update'\)/);
     expect(service).toMatch(/\.insert\(storeCashDeposits\)/);
     expect(service).not.toMatch(/\.(update|delete)\(\s*storeCashDeposits\b/);

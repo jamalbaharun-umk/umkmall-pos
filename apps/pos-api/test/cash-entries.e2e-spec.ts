@@ -158,7 +158,19 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
     });
 
     const detail = await get(s.auth, `/shifts/${shiftId}`).expect(200);
-    expect(detail.body).toMatchObject({ manualIn: 50_000, manualOut: 30_000 });
+    expect(detail.body).toMatchObject({
+      manualIn: 50_000,
+      manualOut: 30_000,
+      collectorDeposits: 0,
+      // "Shift Pemilik · #1": whose drawer, and the store's first shift.
+      number: 1,
+      actorName: 'Pemilik',
+    });
+    expect(shift.body).toMatchObject({ number: 1, actorName: 'Pemilik' });
+    expect(await current(s.auth)).toMatchObject({
+      number: 1,
+      actorName: 'Pemilik',
+    });
     expect(detail.body.cashEntries).toEqual([
       {
         id: expect.any(String),
@@ -169,6 +181,13 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
         note: null,
         reason: 'tambah_modal',
         reasonLabel: 'Tambah modal laci',
+        actorId: s.userId,
+        actorKind: 'owner',
+        actorName: 'Pemilik',
+        collectorId: null,
+        collectorName: null,
+        reversed: false,
+        reversalOf: null,
         createdAt: expect.any(String),
       },
       {
@@ -180,6 +199,13 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
         note: 'BCA siang',
         reason: 'setor_bank',
         reasonLabel: 'Setor ke bank',
+        actorId: s.userId,
+        actorKind: 'owner',
+        actorName: 'Pemilik',
+        collectorId: null,
+        collectorName: null,
+        reversed: false,
+        reversalOf: null,
         createdAt: expect.any(String),
       },
     ]);
@@ -219,9 +245,11 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
     const s = await createStore();
     const key = randomUUID();
     const refused = await entry(s.auth, cashIn(10_000), key).expect(422);
-    expect(refused.body.message).toBe(
-      'Buka shift dulu untuk mencatat kas masuk atau keluar',
-    );
+    expect(refused.body).toEqual({
+      message: 'Buka shift dulu untuk mencatat kas masuk atau keluar',
+      errors: { _: 'Buka shift dulu untuk mencatat kas masuk atau keluar' },
+      code: 'SHIFT_REQUIRED',
+    });
     await entry(s.auth, cashOut(1), randomUUID()).expect(422);
     expect(await written(s.tenantId)).toEqual({ manual: 0, ledger: 0 });
 
@@ -253,8 +281,12 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
     await entry(s.auth, cashIn(500)).expect(201); // drawer: Rp100.500
 
     const over = await entry(s.auth, cashOut(100_501)).expect(422);
-    expect(over.body.errors).toEqual({
-      amount: 'Jumlah lebih besar dari uang di laci (Rp100.500)',
+    // The code and the drawer's cash now, so the form can show the new limit.
+    expect(over.body).toEqual({
+      message: 'Jumlah lebih besar dari uang di laci (Rp100.500)',
+      errors: { amount: 'Jumlah lebih besar dari uang di laci (Rp100.500)' },
+      code: 'DRAWER_INSUFFICIENT',
+      drawerCash: 100_500,
     });
     expect(await written(s.tenantId)).toEqual({ manual: 1, ledger: 1 });
     expect(await current(s.auth)).toMatchObject({
@@ -271,7 +303,11 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
       drawerCashAfter: 0,
     });
     // An empty drawer gives nothing.
-    await entry(s.auth, cashOut(1)).expect(422);
+    const empty = await entry(s.auth, cashOut(1)).expect(422);
+    expect(empty.body).toMatchObject({
+      code: 'DRAWER_INSUFFICIENT',
+      drawerCash: 0,
+    });
     expect(await current(s.auth)).toMatchObject({
       expectedCash: 0,
       manualOut: 100_500,
@@ -375,6 +411,7 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
       expect(res.body.errors).toEqual({
         idempotencyKey: 'Kunci ini sudah dipakai untuk catatan kas lain',
       });
+      expect(res.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
     }
     expect(await written(s.tenantId)).toEqual({ manual: 1, ledger: 1 });
 
@@ -470,5 +507,116 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
     expect(seen.body.cashEntries).toMatchObject([
       { kind: 'manual_in', amount: 1000, refId: theirOwn.body.id },
     ]);
+  });
+
+  it('an owner may name the open shift the cash is for; a cashier only ever uses their own', async () => {
+    const a = await createStore();
+    const b = await createStore();
+    const cashier = await createCashier(app, a, ['sales.create']);
+    const other = await createCashier(app, a, ['sales.create']);
+    const cShift = await open(cashier.auth, 20_000);
+    const oShift = await open(other.auth, 9000);
+    const bShift = await open(b.auth, 50_000);
+    const cId = cShift.body.id as string;
+    // Shifts are numbered per store, by opening time.
+    expect([cShift.body.number, oShift.body.number]).toEqual([1, 2]);
+    expect(bShift.body.number).toBe(1);
+
+    // The owner has no shift of their own: without a named shift there is no drawer.
+    const none = await entry(a.auth, cashIn(1000)).expect(422);
+    expect(none.body.code).toBe('SHIFT_REQUIRED');
+    // Naming the cashier's open shift puts the cash in that drawer, recorded by the owner.
+    const put = await entry(a.auth, cashIn(1000, { shiftId: cId })).expect(201);
+    expect(put.body).toMatchObject({
+      shiftId: cId,
+      actorId: a.userId,
+      actorKind: 'owner',
+      actorName: 'Pemilik',
+      drawerCashBefore: 20_000,
+      drawerCashAfter: 21_000,
+    });
+    // An upper-case id is the same shift.
+    await entry(a.auth, cashOut(6000, { shiftId: cId.toUpperCase() })).expect(
+      201,
+    );
+    expect(await current(cashier.auth)).toMatchObject({
+      expectedCash: 15_000,
+      manualIn: 1000,
+      manualOut: 6000,
+    });
+    // The drawer's limit is that shift's, under its lock.
+    const over = await entry(a.auth, cashOut(15_001, { shiftId: cId })).expect(
+      422,
+    );
+    expect(over.body).toMatchObject({
+      code: 'DRAWER_INSUFFICIENT',
+      drawerCash: 15_000,
+    });
+    // The cashier sees who recorded each line of their own shift.
+    const seen = await get(cashier.auth, `/shifts/${cId}`).expect(200);
+    expect(seen.body).toMatchObject({ number: 1, actorName: 'Sari' });
+    expect(seen.body.cashEntries).toMatchObject([
+      { kind: 'manual_in', actorKind: 'owner', actorName: 'Pemilik' },
+      { kind: 'manual_out', actorKind: 'owner', actorName: 'Pemilik' },
+    ]);
+
+    const before = await written(a.tenantId);
+    const notYours = {
+      code: 'SHIFT_NOT_YOURS',
+      errors: { shiftId: expect.any(String) },
+    };
+    // A cashier names a colleague's open shift, or (having none of their own) any shift: refused.
+    const colleague = await entry(
+      cashier.auth,
+      cashIn(500, { shiftId: oShift.body.id }),
+    ).expect(422);
+    expect(colleague.body).toMatchObject(notYours);
+    // Their own shift by id is their own shift.
+    await entry(cashier.auth, cashIn(500, { shiftId: cId })).expect(201);
+    // Another store's open shift, an unknown one, and a closed one are not drawers for the owner.
+    for (const shiftId of [bShift.body.id as string, randomUUID()]) {
+      const res = await entry(a.auth, cashIn(500, { shiftId })).expect(422);
+      expect(res.body).toMatchObject(notYours);
+    }
+    await close(other.auth, 9000).expect(200);
+    const closed = await entry(
+      a.auth,
+      cashIn(500, { shiftId: oShift.body.id }),
+    ).expect(422);
+    expect(closed.body).toMatchObject(notYours);
+    await entry(a.auth, cashIn(500, { shiftId: 'laci' })).expect(422);
+    expect(await written(a.tenantId)).toEqual({
+      manual: before.manual + 1,
+      ledger: before.ledger + 1,
+    });
+    // Store B's drawer never moved.
+    expect(await current(b.auth)).toMatchObject({ expectedCash: 50_000 });
+    expect(await current(cashier.auth)).toMatchObject({
+      expectedCash: 15_500,
+    });
+
+    // A key answers only the actor who sent it: the cashier replaying the owner's key and body gets a
+    // refusal, never the owner's entry, and nothing is written.
+    const key = randomUUID();
+    const named = cashIn(700, { shiftId: cId });
+    const first = await entry(a.auth, named, key).expect(201);
+    const borrowed = await entry(cashier.auth, named, key).expect(422);
+    expect(borrowed.body).toMatchObject({
+      code: 'IDEMPOTENCY_KEY_REUSED',
+      errors: { idempotencyKey: expect.any(String) },
+    });
+    // The named shift closes; the owner's retry still answers the first entry (not SHIFT_NOT_YOURS:
+    // a retry is not judged against the shift's state now), and the closed shift is unchanged.
+    const closedShift = await close(cashier.auth, 16_200).expect(200);
+    expect(closedShift.body).toMatchObject({ expectedCash: 16_200 });
+    const counts = await written(a.tenantId);
+    const late = await entry(a.auth, named, key).expect(201);
+    expect(late.body).toEqual(first.body);
+    expect(await written(a.tenantId)).toEqual(counts);
+    // A new request for that closed shift is still refused.
+    const fresh = await entry(a.auth, named).expect(422);
+    expect(fresh.body.code).toBe('SHIFT_NOT_YOURS');
+    const kept = await get(a.auth, `/shifts/${cId}`).expect(200);
+    expect(kept.body).toMatchObject({ expectedCash: 16_200 });
   });
 });

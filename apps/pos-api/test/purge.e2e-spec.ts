@@ -217,7 +217,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .set('Idempotency-Key', randomUUID())
       .send({ amount: 500 })
       .expect(201);
-    // That cash handed over to the store safe (UMK-1924 U3): store_cash_deposits.
+    // That cash received into the open drawer (UMK-1924 U3): store_cash_deposits.
     await post(
       '/store-cash/deposits',
       { collectorId: collector.staffId, amount: 500 },

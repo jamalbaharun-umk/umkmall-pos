@@ -1,8 +1,12 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
+import { CashEntriesService } from './cash-entries.service';
+import type { ShiftsService } from './shifts.service';
 import {
   assertMayMoveDrawerCash,
+  assertPersonAtTill,
+  recordShiftCashAt,
   type CashEntry,
   DRAWER_CASH_OUT_ACTOR_KINDS,
   recordShiftCash,
@@ -75,6 +79,9 @@ describe('shift cash ledger: who may take cash out of a drawer', () => {
         entry('out'),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      recordShiftCashAt(untouchable, agent, undefined, entry('out'), 'Buka'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
     // The same kinds of entry (a drawer expense, a void return) are refused too.
     await expect(
       recordShiftCashIfOpen(untouchable, agent, {
@@ -92,6 +99,66 @@ describe('shift cash ledger: who may take cash out of a drawer', () => {
     ).rejects.toThrow(/the database was reached/);
     await expect(
       recordShiftCashIfOpen(untouchable, session('agent'), entry('in')),
+    ).rejects.toThrow(/the database was reached/);
+  });
+
+  // Design fitur 20: an agent records neither cash out nor cash IN by hand, and corrects nothing.
+  it('cash recorded by hand is for people at the till, in both directions', () => {
+    for (const kind of ['owner', 'cashier'])
+      expect(() => assertPersonAtTill(kind)).not.toThrow();
+    for (const kind of ['agent', 'service', '', 'OWNER']) {
+      let refusal: unknown;
+      try {
+        assertPersonAtTill(kind);
+      } catch (e) {
+        refusal = e;
+      }
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      // The usual 403 body plus the stable code.
+      expect((refusal as ForbiddenException).getResponse()).toEqual({
+        message:
+          'Uang laci hanya bisa dicatat dari POS oleh kasir atau pemilik',
+        error: 'Forbidden',
+        statusCode: 403,
+        code: 'AGENT_FORBIDDEN',
+      });
+    }
+    // The ledger's own refusal of a cash-out carries the same code.
+    try {
+      assertMayMoveDrawerCash('agent', 'out');
+      throw new Error('not refused');
+    } catch (e) {
+      expect((e as ForbiddenException).getResponse()).toMatchObject({
+        statusCode: 403,
+        code: 'AGENT_FORBIDDEN',
+      });
+    }
+  });
+
+  it('the manual cash service refuses an agent cash-in and cash-out before it reaches the database', async () => {
+    const service = new CashEntriesService(
+      untouchable,
+      untouchable as unknown as ShiftsService,
+    );
+    for (const direction of ['in', 'out'] as const)
+      await expect(
+        service.create(session('agent'), 'key-12345678', {
+          direction,
+          amount: 1000,
+          reason: 'lainnya',
+          note: 'uji',
+        }),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'AGENT_FORBIDDEN' },
+      });
+    // A cashier is not refused by the rule: the next thing the service does is ask the database.
+    await expect(
+      service.create(session('cashier'), 'key-12345678', {
+        direction: 'in',
+        amount: 1000,
+        reason: 'tambah_modal',
+      }),
     ).rejects.toThrow(/the database was reached/);
   });
 });
