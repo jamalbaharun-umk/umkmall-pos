@@ -61,7 +61,8 @@ import {
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
 import { AwaitingList, OnlineWait, ResumeGate, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
-import { finishPlan, forgetPending, parsePayment, rememberPending, saleFailure, saleKey, type SalePayment } from './-online'
+import { finishPlan, forgetPending, mustRenewKey, parsePayment, saleFailure, trackOwn, type OwnEvent, type SalePayment } from './-online'
+import { useLost } from './-use-lost'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -193,7 +194,18 @@ function Register({
     if (restored) writeCart({ lines: savedLines(cart), note })
   }, [restored, cart, note])
   const [key, setKey] = useState(() => crypto.randomUUID())
-  useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher, discountText])
+  // The method of an ONLINE sale written under this key that pos-api could not charge (503 with a sale id): only then
+  // does another method need another key (`mustRenewKey`).
+  const [held, setHeld] = useState<string | null>(null)
+  const freshKey = () => {
+    const k = crypto.randomUUID()
+    setKey(k)
+    setHeld(null)
+    return k
+  }
+  useEffect(() => void freshKey(), [cart, note, member, voucher, discountText])
+  // The record of this cart's own sale is set and cleared only here.
+  const track = (ev: OwnEvent) => setOwnSale(trackOwn(ev))
   const clearOrder = () => {
     setCart([])
     setNote('')
@@ -207,8 +219,8 @@ function Register({
     const c = resume.completed
     if (!c) return
     if (c.own) clearOrder()
-    setOwnSale(null)
-    setKey(crypto.randomUUID())
+    track({ type: 'ended' })
+    freshKey()
     void router.invalidate()
     setPaid({ id: c.saleId, change: null, receivableRest: null })
     resume.ack()
@@ -216,10 +228,14 @@ function Register({
   useEffect(() => {
     const e = resume.ended
     if (!e) return
-    setOwnSale(null)
-    setKey(crypto.randomUUID())
+    track({ type: 'ended' })
+    freshKey()
     void router.invalidate()
-    notifySuccess(`Penjualan #${e.saleNumber} sudah ditutup tanpa pembayaran. Stok kembali.`)
+    notifySuccess(
+      e.reversed
+        ? `Penjualan #${e.saleNumber} sudah dibatalkan dan dananya dikembalikan selagi kasir ini terputus. Lihat di Riwayat.`
+        : `Penjualan #${e.saleNumber} sudah ditutup tanpa pembayaran. Stok kembali.`,
+    )
     resume.ack()
   }, [resume.ended])
 
@@ -437,6 +453,7 @@ function Register({
                 setDiscountText('')
                 setVoucher(null)
                 setMember(null)
+                track({ type: 'ended' })
               }}
             >
               Hapus semua
@@ -624,16 +641,22 @@ function Register({
           note={note}
           idempotencyKey={key}
           methods={methods}
-          chargeable={chargeable}
+          chargeable={resume.unresolved ? [] : chargeable}
+          onlineBlocked={resume.unresolved}
           qris={qris}
           member={member}
           onMemberChange={setMember}
           voucher={voucher}
           onClose={() => setPaying(false)}
-          renewKey={() => setKey(crypto.randomUUID())}
+          held={held}
+          onHold={(methodId, saleId) => {
+            setHeld(methodId)
+            track({ type: 'created', saleId })
+          }}
+          renewKey={freshKey}
           onAwaiting={(payment) => {
             setPaying(false)
-            setOwnSale(payment.saleId)
+            track({ type: 'created', saleId: payment.saleId })
             setWaiting({ payment, own: true })
           }}
           onPaid={(sale) => {
@@ -645,7 +668,8 @@ function Register({
             setMember(null)
             setVoucher(null)
             setDiscountText('')
-            setKey(crypto.randomUUID())
+            track({ type: 'ended' })
+            freshKey()
           }}
         />
       )}
@@ -662,15 +686,17 @@ function Register({
           initial={online.payment}
           own={online.own}
           onFinish={(r: OnlineFinish) => {
-            forgetPending()
             setWaiting(null)
             resume.clear()
             void router.invalidate() // stock is back (or sold): fresh products for the next order
             // What the end means for the cart depends on whose sale it was (a picked sale never touches this cart).
             const plan = finishPlan(r.kind === 'paid' ? { kind: 'paid' } : { kind: 'closed', again: r.again }, online.own)
-            if (online.own) setOwnSale(null)
+            // The cart's own sale ended: forget it. A picked sale ended: the record goes back to the cart's own sale, if any.
+            if (online.own) track({ type: 'ended' })
+            else if (ownSale) track({ type: 'created', saleId: ownSale })
+            else forgetPending()
             // A new key: the same key would answer the finished sale again.
-            if (plan.renewKey) setKey(crypto.randomUUID())
+            if (plan.renewKey) freshKey()
             if (plan.clearCart) clearOrder()
             // Expired or failed: straight to choosing another way to pay, the cart is still there.
             if (plan.openPay) setPaying(true)
@@ -857,6 +883,9 @@ function PayDialog({
   onPaid,
   onAwaiting,
   renewKey,
+  held,
+  onHold,
+  onlineBlocked,
 }: {
   subtotal: number
   discount: number
@@ -876,9 +905,16 @@ function PayDialog({
   onPaid: (sale: PaidSale) => void
   /** UMK-1991: the sale was written and now waits for its QRIS or VA payment. */
   onAwaiting: (payment: SalePayment) => void
-  /** The sale this key made is cancelled: the next attempt must not replay it. */
-  renewKey: () => void
+  /** The sale this key made is cancelled: the next attempt must not replay it. Answers the new key. */
+  renewKey: () => string
+  /** The method of an online sale written under this key that got no charge answer (503): see `mustRenewKey`. */
+  held: string | null
+  /** An online sale was written under this key but not charged: remember its method and sale. */
+  onHold: (methodId: string, saleId: string) => void
+  /** A sale remembered before a reload is still unchecked: online methods wait (cash is never blocked). */
+  onlineBlocked: boolean
 }) {
+  const lost = useLost()
   const router = useRouter()
   const { offered: methods, hidden: hiddenOnline } = useMemo(
     () => offeredMethods(allMethods, chargeable),
@@ -917,12 +953,14 @@ function PayDialog({
     } else if (!paidText.trim()) return setError('Wajib diisi: masukkan uang diterima')
     else if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 50.000')
     else if (amount < payable) return setError('Uang dibayar kurang dari jumlah yang harus dibayar')
+    // The order's key; only another method after an online 503 that wrote a sale gets a new one.
+    const sendKey = mustRenewKey(held, methodId) ? renewKey() : idempotencyKey
     lock.current = true
     setBusy(true)
     setError(undefined)
     const res = await createSale({
       data: {
-        key: saleKey(idempotencyKey, methodId, amount),
+        key: sendKey,
         lines: requestLines(cart),
         paid: amount,
         discount: discount > 0 ? discount : undefined,
@@ -931,7 +969,9 @@ function PayDialog({
         voucherCode: voucher?.code,
         paymentMethodId: methodId || undefined,
       },
-    }).catch(() => ({
+    }).catch((e: unknown) => {
+      lost(e) // a sign-in redirect is followed; any other failure is "no answer"
+      return {
       ok: false as const,
       error: 'Tidak bisa terhubung. Coba lagi: penjualan tidak akan tercatat dua kali.',
       total: undefined,
@@ -939,14 +979,15 @@ function PayDialog({
       status: 0,
       code: undefined,
       saleId: undefined,
-    }))
+      }
+    })
     lock.current = false
     setBusy(false)
     if (!res.ok) {
       // UMK-1991: a PG sale the gateway refused is cancelled for good: this key would only answer it again.
       if (res.status === 409 && res.saleId) renewKey()
       // The sale was written but not charged: remember it, so a reload or the Menunggu list still finds it.
-      if (res.status === 503 && res.saleId && step === 'online') rememberPending(res.saleId, true)
+      if (res.status === 503 && res.saleId && step === 'online') onHold(methodId, res.saleId)
       showError(
         res.status === 503 || (res.status === 409 && res.code)
           ? { ...saleFailure(res.status, res.code, res.saleId, step === 'online'), error: res.error }
@@ -1079,7 +1120,12 @@ function PayDialog({
               dibayar atau dibatalkan.
             </Alert>
           )}
-          {hiddenOnline > 0 && (
+          {onlineBlocked && (
+            <p className="text-xs text-default-secondary" role="status">
+              Pembayaran online ditahan sampai penjualan online sebelumnya selesai diperiksa. Tunai tetap bisa dipakai.
+            </p>
+          )}
+          {!onlineBlocked && hiddenOnline > 0 && (
             <p className="text-xs text-default-secondary">
               {hiddenOnline} metode online tidak tampil karena belum aktif di Pembayaran Online toko ini.
             </p>

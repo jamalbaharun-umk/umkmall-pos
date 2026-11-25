@@ -25,7 +25,7 @@ import {
   waitingFor,
   cancelBody,
   cashDue,
-  cashSwitchError,
+  cashPaidToSend,
   clockText,
   closedText,
   countdown,
@@ -247,10 +247,11 @@ export function OnlineWait({
 
   async function saveCash() {
     if (lock.current) return
-    const error = cashSwitchError(cashText, payment.amount)
-    setCashError(error)
-    if (error) return
-    const paid = parseRupiah(cashText)
+    // Once the intent exists nothing typed is required: the request is only repeated (the field is gone after a reload).
+    const checked = cashPaidToSend(cashPending, cashText, payment.amount)
+    setCashError('error' in checked ? checked.error : undefined)
+    if ('error' in checked) return
+    const paid = checked.paid
     lock.current = true
     setBusy('cash')
     const r = await paySaleInCash({ data: { id, paid } }).catch(lost)
@@ -476,7 +477,7 @@ export function OnlineWait({
               {left && (
                 <Alert variant={left.over ? 'danger' : 'warning'} size="small" role="timer">
                   <span className="block text-center">
-                    {left.over ? 'Waktu kode habis' : <>Berlaku <b>{left.text}</b> lagi</>}
+                    {left.over ? 'Menurut jam layar ini, batas waktu kode sudah lewat' : <>Berlaku <b>{left.text}</b> lagi</>}
                   </span>
                 </Alert>
               )}
@@ -545,6 +546,7 @@ export function OnlineWait({
                   </div>
                 )}
               </dl>
+              {!cashPending && (
               <TextField
                 label="Uang diterima"
                 prefix="Rp"
@@ -556,11 +558,15 @@ export function OnlineWait({
                 }}
                 error={cashError}
                 placeholder="0"
-                // once the intent exists the server keeps the first amount: the field is no longer an input
-                disabled={cashPending}
                 autoFocus
               />
-              <div className="flex flex-wrap gap-2" aria-label="Nominal cepat">
+              )}
+              {cashPending && (
+                <p className="text-sm text-default-secondary">
+                  Jumlah uang yang Anda terima sudah dicatat sebagai bagian dari penjualan ini; tidak perlu mengisinya lagi.
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2" aria-label="Nominal cepat" hidden={cashPending}>
                 {quickAmounts(cashDue(payment.amount)).map((n) => (
                   <Button
                     key={n}
@@ -629,7 +635,7 @@ export function OnlineWait({
                 <Button width="auto" className="w-full sm:w-auto" isLoading={busy === 'cash'} disabled={busy !== null} onClick={() => void saveCash()}>
                   {cashPending ? 'Simpan tunai lagi' : 'Simpan tunai'}
                 </Button>
-                {!cashPending && (
+                {!cashPending ? (
                   <Button
                     width="auto"
                     className="w-full sm:w-auto"
@@ -642,6 +648,17 @@ export function OnlineWait({
                     }}
                   >
                     Kembali ke QR
+                  </Button>
+                ) : (
+                  <Button
+                    width="auto"
+                    className="w-full sm:w-auto"
+                    type="text"
+                    color="danger"
+                    disabled={busy !== null}
+                    onClick={askCancel}
+                  >
+                    Batalkan penjualan
                   </Button>
                 )}
               </>
@@ -683,10 +700,15 @@ export type Resume = {
   /** Whether the resumed sale was made from the order in the cart. */
   own: boolean
   state: 'idle' | 'checking' | 'failed'
+  /** A remembered sale is still unchecked: online methods wait, cash never does. */
+  unresolved: boolean
+  /** The cashier chose to go on with cash only while the check keeps retrying. */
+  aside: boolean
+  setAside: () => void
   /** Set once when the remembered sale turned out completed (own tells whether the cart is its order). */
   completed: { saleId: string; saleNumber: number; own: boolean } | null
   /** Set once when it ended unpaid: nothing to show but a note. */
-  ended: { saleNumber: number } | null
+  ended: { saleNumber: number; reversed: boolean } | null
   retry: () => void
   clear: () => void
   ack: () => void
@@ -702,6 +724,7 @@ export function useResumeOnlineSale(): Resume {
   const [completed, setCompleted] = useState<Resume['completed']>(null)
   const [ended, setEnded] = useState<Resume['ended']>(null)
   const [attempt, setAttempt] = useState(0)
+  const [aside, setAside] = useState(false)
   useEffect(() => {
     const mem = pendingSale()
     if (!mem) return setState('idle')
@@ -725,7 +748,7 @@ export function useResumeOnlineSale(): Resume {
         }
         forgetPending()
         if (d.do === 'completed') setCompleted({ saleId: d.saleId, saleNumber: d.saleNumber, own: mem.own })
-        if (d.do === 'ended') setEnded({ saleNumber: d.saleNumber })
+        if (d.do === 'ended') setEnded({ saleNumber: d.saleNumber, reversed: d.reversed })
       })
     return () => {
       gone = true
@@ -736,6 +759,9 @@ export function useResumeOnlineSale(): Resume {
     resumed,
     own,
     state,
+    unresolved: state !== 'idle',
+    aside,
+    setAside: () => setAside(true),
     completed,
     ended,
     retry: () => setAttempt((n) => n + 1),
@@ -749,7 +775,7 @@ export function useResumeOnlineSale(): Resume {
 
 /** Blocks the register while the sale remembered before a reload is unresolved: no new online sale can start until it is. */
 export function ResumeGate({ resume }: { resume: Resume }) {
-  if (resume.state === 'idle') return null
+  if (resume.state === 'idle' || resume.aside) return null
   return (
     <Dialog open onOpenChange={() => undefined} dismissible={false} size="small" label="Memeriksa pembayaran sebelumnya">
       <div className="flex flex-col gap-3 p-6" role="status">
@@ -766,9 +792,18 @@ export function ResumeGate({ resume }: { resume: Resume }) {
               Penjualan sebelumnya belum bisa diperiksa (sambungan terputus). Kode bayarnya mungkin masih bisa dibayar,
               jadi penjualan baru belum dibuka. Layar mencoba lagi sendiri.
             </Alert>
-            <Button width="auto" onClick={resume.retry}>
-              Coba lagi sekarang
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row-reverse">
+              <Button width="auto" className="w-full sm:w-auto" onClick={resume.retry}>
+                Coba lagi sekarang
+              </Button>
+              <Button width="auto" className="w-full sm:w-auto" type="outline" color="light" onClick={resume.setAside}>
+                Lanjut tunai saja
+              </Button>
+            </div>
+            <p className="text-xs text-default-secondary">
+              Lanjut tunai saja: penjualan online ditahan, penjualan sebelumnya tetap ada di Menunggu, dan layar ini terus
+              memeriksanya.
+            </p>
           </>
         )}
       </div>

@@ -6,7 +6,9 @@ import {
   paidFigures,
   resumeDecision,
   saleFailure,
-  saleKey,
+  mustRenewKey,
+  cashPaidToSend,
+  trackOwn,
   cashDue,
   cashSwitchError,
   clockText,
@@ -219,6 +221,13 @@ describe('resume memory', () => {
     forgetPending(s)
     expect(pendingSale(s)).toBeNull()
   })
+  it('accepts only a real UUID', () => {
+    const s = store()
+    s.setItem('pos.online-sale', '-'.repeat(36))
+    expect(pendingSale(s)).toBeNull()
+    s.setItem('pos.online-sale', JSON.stringify({ id: 'a'.repeat(36), own: true }))
+    expect(pendingSale(s)).toBeNull()
+  })
   it('ignores a stored value that is no id, and never throws when storage does', () => {
     const s = store()
     s.setItem('pos.online-sale', '../../x')
@@ -338,21 +347,45 @@ describe('design 26 details', () => {
   })
 })
 
-describe('saleKey: one key per method and amount', () => {
-  const KEY = /^[A-Za-z0-9_-]{8,100}$/
-  const order = '6f1c2f0e-6d5c-4c58-9d0e-0c3c6b1a2b3c'
+describe('mustRenewKey: the key changes only for another method after an online 503 that wrote a sale', () => {
   const online = '1b9d2a3e-aaaa-4bbb-8ccc-0123456789ab'
   const cash = '2c9d2a3e-aaaa-4bbb-8ccc-0123456789cd'
-  it('is the same for a retry and different for another method or amount', () => {
-    expect(saleKey(order, online, 5000)).toBe(saleKey(order, online, 5000))
-    expect(saleKey(order, cash, 5000)).not.toBe(saleKey(order, online, 5000)) // online 503, then Tunai: not a replay
-    expect(saleKey(order, cash, 6000)).not.toBe(saleKey(order, cash, 5000))
-    expect(saleKey('other-order-key-0001', cash, 5000)).not.toBe(saleKey(order, cash, 5000))
+  it('keeps the key when no online sale is held, whatever the method or amount: a lost answer is replayed, never doubled', () => {
+    expect(mustRenewKey(null, cash)).toBe(false)
+    expect(mustRenewKey(null, online)).toBe(false)
   })
-  it('is always a key pos-api accepts', () => {
-    expect(saleKey(order, online, 5000)).toMatch(KEY)
-    expect(saleKey(order, '', Number.NaN)).toMatch(KEY)
-    expect(saleKey(order, 'a b/c', 12)).toMatch(KEY)
+  it('keeps the key for a retry of the same online method', () => {
+    expect(mustRenewKey(online, online)).toBe(false)
+  })
+  it('renews the key for another method after an online 503 that returned a sale', () => {
+    expect(mustRenewKey(online, cash)).toBe(true)
+  })
+})
+
+describe('trackOwn: the record of the cart\'s own sale is set and cleared in one place', () => {
+  const store = () => {
+    const m = new Map<string, string>()
+    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }
+  }
+  it('a created sale is remembered as own and an ended order forgets it, so a reload never resumes it against a new order', () => {
+    const s = store()
+    expect(trackOwn({ type: 'created', saleId: ID }, s)).toBe(ID)
+    expect(pendingSale(s)).toEqual({ id: ID, own: true })
+    expect(trackOwn({ type: 'ended' }, s)).toBeNull()
+    expect(pendingSale(s)).toBeNull()
+  })
+})
+
+describe('cashPaidToSend', () => {
+  it('checks what was typed before the intent exists', () => {
+    expect(cashPaidToSend(false, '', 5123)).toEqual({ error: expect.stringMatching(/Wajib diisi/) })
+    expect(cashPaidToSend(false, '5000', 5123)).toEqual({ error: expect.stringMatching(/kurang/) })
+    expect(cashPaidToSend(false, '10.000', 5123)).toEqual({ paid: 10000 })
+  })
+  it('after the intent nothing is required: an empty field (after a reload) repeats the request with the amount due', () => {
+    expect(cashPaidToSend(true, '', 5123)).toEqual({ paid: cashDue(5123) })
+    expect(cashPaidToSend(true, 'x', 5123)).toEqual({ paid: cashDue(5123) })
+    expect(cashPaidToSend(true, '10000', 5123)).toEqual({ paid: 10000 })
   })
 })
 
@@ -400,7 +433,17 @@ describe('resumeDecision: what a reload does with the remembered sale', () => {
     })
   })
   it('a cancelled sale is only "ended"', () => {
-    expect(resumeDecision(ok({ saleStatus: 'cancelled', status: 'expired' })).do).toBe('ended')
+    expect(resumeDecision(ok({ saleStatus: 'cancelled', status: 'expired' }))).toEqual({ do: 'ended', saleNumber: 12, reversed: false })
+  })
+  it('a sale voided or refunded while the till was away is "ended" and says it was reversed', () => {
+    expect(resumeDecision(ok({ saleStatus: 'void', status: 'refunded' }))).toEqual({ do: 'ended', saleNumber: 12, reversed: true })
+  })
+  it('a deleted sale (404) and another store or cashier\'s sale (403), as the payment route really answers, are forgotten', () => {
+    const gone = paymentFailure('poll', 404, { message: 'x' })
+    const foreign = paymentFailure('poll', 403, { code: 'not_own_sale' })
+    expect(resumeDecision({ ok: false, failure: gone }).do).toBe('forget')
+    expect(resumeDecision({ ok: false, failure: foreign }).do).toBe('forget')
+    expect(resumeDecision({ ok: false, failure: paymentFailure('poll', 503, null) }).do).toBe('retry')
   })
   it('404 and 403 forget the sale; every other failure and no answer retry (never silently drop it)', () => {
     expect(resumeDecision({ ok: false, failure: { status: 404 } }).do).toBe('forget')

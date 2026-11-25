@@ -1,3 +1,4 @@
+import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import type { Quote, SaleUnit } from './-helpers'
@@ -155,7 +156,10 @@ async function load<T>(path: string): Promise<T> {
 }
 
 async function send<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Result<T>> {
-  const res = await api(path, { method: 'POST', body: JSON.stringify(body), headers }).catch(() => null)
+  const res = await api(path, { method: 'POST', body: JSON.stringify(body), headers }).catch((e: unknown) => {
+    if (isRedirect(e)) throw e // the session ended: the screen follows the sign-in redirect
+    return null
+  })
   if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
   if (!res.ok) return { ok: false, ...(await refusalOf(res)) }
   return { ok: true, data: (await res.json()) as T }

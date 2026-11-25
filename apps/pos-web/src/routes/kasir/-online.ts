@@ -317,13 +317,14 @@ export function paidFigures(raw: unknown): { paid: number; change: number } | nu
 // ---- The key of a sale request ----
 
 /**
- * The Idempotency-Key of one sale request: the order's key joined with the payment method and the amount handed over.
- * pos-api answers a known key with another body 422, so a different method (an online sale that got 503, then Tunai)
- * or a different amount must be a different key; the same method and amount (a double tap, a retry) the same one.
+ * Whether the next sale request needs a new Idempotency-Key. The order's key is kept for everything else, the amount
+ * handed over included: a cash sale that committed whose answer was lost must be replayed by a corrected amount or
+ * method, never written twice. The one exception: an ONLINE sale was written but pos-api got no clear answer from
+ * payment-api (503 with a saleId, `held` = its method) and the cashier now picks another method; replaying the key
+ * would only answer 422 (another body). `held` is null when no such sale exists for this key.
  */
-export function saleKey(orderKey: string, methodId: string, paid: number): string {
-  const part = (v: string) => v.replace(/[^A-Za-z0-9_-]/g, '')
-  return `${part(orderKey)}-${part(methodId) || 'm'}-${Number.isFinite(paid) ? Math.max(0, Math.trunc(paid)) : 0}`
+export function mustRenewKey(held: string | null, methodId: string): boolean {
+  return held !== null && held !== methodId
 }
 
 /** A refused sale request: what the error dialog is told. Only an ONLINE sale that was written but not charged is "sale_waiting". */
@@ -362,7 +363,7 @@ export type ResumeDecision =
   /** Completed while the till was away: forget it and show its receipt; the order is rung up, so an own cart is cleared. */
   | { do: 'completed'; saleId: string; saleNumber: number }
   /** Ended unpaid (cancelled, expired, failed): forget it; the cart, if it is the sale's own, stays for another way to pay. */
-  | { do: 'ended'; saleNumber: number }
+  | { do: 'ended'; saleNumber: number; reversed: boolean }
   /** pos-api says the sale is not ours or does not exist: forget it. */
   | { do: 'forget' }
   /** No usable answer (offline, 503, ...): keep the memory, block new online sales and ask again. */
@@ -376,7 +377,7 @@ export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
   if (keepPolling(p)) return { do: 'wait', payment: p }
   return p.saleStatus === 'completed'
     ? { do: 'completed', saleId: p.saleId, saleNumber: p.saleNumber }
-    : { do: 'ended', saleNumber: p.saleNumber }
+    : { do: 'ended', saleNumber: p.saleNumber, reversed: p.saleStatus === 'void' || p.status === 'refunded' || p.status === 'refund_pending' || p.status === 'voided' }
 }
 
 // ---- Remembering the sale across a reload ----
@@ -384,7 +385,7 @@ export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
 const PENDING_KEY = 'pos.online-sale'
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-const UUID = /^[0-9a-f-]{36}$/i
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
  * Remember (per tab, like the open bill) a sale that waits for its payment, so a reload shows the waiting screen again.
@@ -414,6 +415,36 @@ export function forgetPending(storage?: StorageLike): void {
   } catch {
     // nothing to forget
   }
+}
+
+/** Events that change which sale belongs to the order in the register's cart. */
+export type OwnEvent = { type: 'created'; saleId: string } | { type: 'ended' }
+
+/**
+ * The one place the "this cart's sale" record is set and cleared: a sale written from the cart (also one that got 503
+ * before its charge) is remembered as the cart's own; a paid, closed or cleared order forgets it. Returns the id the
+ * register now treats as its own (null: none). A stale record would resume an old sale against a new order.
+ */
+export function trackOwn(ev: OwnEvent, storage?: StorageLike): string | null {
+  if (ev.type === 'created') {
+    rememberPending(ev.saleId, true, storage)
+    return ev.saleId
+  }
+  forgetPending(storage)
+  return null
+}
+
+/**
+ * The cash to send for the switch to cash. Once the intent exists (`pending`) pos-api keeps the first amount and only
+ * wants the request repeated, so nothing typed is checked or required then (the field is gone after a reload).
+ */
+export function cashPaidToSend(pending: boolean, text: string, amount: number): { paid: number } | { error: string } {
+  if (pending) {
+    const typed = parseRupiah(text)
+    return { paid: text.trim() && !Number.isNaN(typed) && typed >= cashDue(amount) ? typed : cashDue(amount) }
+  }
+  const error = cashSwitchError(text, amount)
+  return error ? { error } : { paid: parseRupiah(text) }
 }
 
 // ---- Errors ----
