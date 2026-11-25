@@ -32,6 +32,75 @@ export type Payment = {
   method: string;
 };
 
+/** A store's account at a payment gateway, as payment-api answers it (UMK-2019). No secret is in it. */
+export type MerchantAccount = {
+  provider: string;
+  mode: string;
+  status: string;
+  statusReason: string | null;
+  verification: string;
+  profile: {
+    businessType: string | null;
+    businessName: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+  termsAcceptedAt: string | null;
+  submittedAt: string | null;
+  methods: { method: string; enabled: boolean; chargeable: boolean }[];
+  lastSyncedAt: string | null;
+  updatedAt: string | null;
+};
+
+export type MerchantDraft = {
+  businessType: string | null;
+  businessName: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
+const text = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/**
+ * Copies the known fields of an account and nothing else: whatever payment-api may answer one day, only
+ * these reach a browser.
+ */
+const toMerchantAccount = (v: unknown): MerchantAccount | null => {
+  const a = v as Record<string, unknown> | null;
+  if (
+    !a ||
+    typeof a.provider !== 'string' ||
+    typeof a.status !== 'string' ||
+    !Array.isArray(a.methods)
+  )
+    return null;
+  const profile = (a.profile ?? {}) as Record<string, unknown>;
+  return {
+    provider: a.provider,
+    mode: text(a.mode) ?? '',
+    status: a.status,
+    statusReason: text(a.statusReason),
+    verification: text(a.verification) ?? '',
+    profile: {
+      businessType: text(profile.businessType),
+      businessName: text(profile.businessName),
+      email: text(profile.email),
+      phone: text(profile.phone),
+    },
+    termsAcceptedAt: text(a.termsAcceptedAt),
+    submittedAt: text(a.submittedAt),
+    methods: (a.methods as Record<string, unknown>[])
+      .filter((m) => m && typeof m.method === 'string')
+      .map((m) => ({
+        method: m.method as string,
+        enabled: m.enabled === true,
+        chargeable: m.chargeable === true,
+      })),
+    lastSyncedAt: text(a.lastSyncedAt),
+    updatedAt: text(a.updatedAt),
+  };
+};
+
 /**
  * payment-api gave no usable answer.
  * - `unavailable`: no clear yes or no (network, timeout, 5xx, and 401/400, which are our own configuration).
@@ -195,6 +264,111 @@ export class PaymentsClient {
     );
   }
 
+  // ---- the store's account at a payment gateway (UMK-2019) -------------------------------------------------
+
+  async merchantAccounts(
+    tenantId: string,
+  ): Promise<{ mode: string; accounts: MerchantAccount[] }> {
+    const body = (await this.call(
+      tenantId,
+      'GET',
+      '/merchant-accounts',
+      'GET /merchant-accounts',
+    )) as { mode?: unknown; items?: unknown[] } | null;
+    if (!body || !Array.isArray(body.items))
+      throw new PaymentApiError('unavailable', null, 'bad_answer');
+    return {
+      mode: text(body.mode) ?? '',
+      accounts: body.items.map((item) => this.merchant(item)),
+    };
+  }
+
+  async saveMerchantDraft(
+    tenantId: string,
+    provider: string,
+    draft: MerchantDraft,
+  ): Promise<MerchantAccount> {
+    return this.merchant(
+      await this.call(
+        tenantId,
+        'PUT',
+        `/merchant-accounts/${encodeURIComponent(provider)}`,
+        'PUT /merchant-accounts/:provider',
+        { body: draft },
+      ),
+    );
+  }
+
+  /** `actorRef` is who agreed to the terms and submitted. A repeat answers the submitted account. */
+  async submitMerchant(
+    tenantId: string,
+    provider: string,
+    input: { actorRef: string },
+  ): Promise<MerchantAccount> {
+    return this.merchant(
+      await this.call(
+        tenantId,
+        'POST',
+        `/merchant-accounts/${encodeURIComponent(provider)}/submit`,
+        'POST /merchant-accounts/:provider/submit',
+        { body: { termsAccepted: true, actorRef: input.actorRef } },
+      ),
+    );
+  }
+
+  /** The gateway's page where the owner verifies. Handed to the owner's browser; never stored or logged. */
+  async merchantVerificationLink(
+    tenantId: string,
+    provider: string,
+  ): Promise<{ url: string; expiresAt: string | null }> {
+    const body = (await this.call(
+      tenantId,
+      'POST',
+      `/merchant-accounts/${encodeURIComponent(provider)}/verification-link`,
+      'POST /merchant-accounts/:provider/verification-link',
+    )) as { url?: unknown; expiresAt?: unknown } | null;
+    if (!body || typeof body.url !== 'string')
+      throw new PaymentApiError('unavailable', null, 'bad_answer');
+    return { url: body.url, expiresAt: text(body.expiresAt) };
+  }
+
+  async syncMerchant(
+    tenantId: string,
+    provider: string,
+  ): Promise<MerchantAccount> {
+    return this.merchant(
+      await this.call(
+        tenantId,
+        'POST',
+        `/merchant-accounts/${encodeURIComponent(provider)}/sync`,
+        'POST /merchant-accounts/:provider/sync',
+      ),
+    );
+  }
+
+  async setMerchantMethod(
+    tenantId: string,
+    provider: string,
+    method: string,
+    input: { enabled: boolean; actorRef: string },
+  ): Promise<MerchantAccount> {
+    return this.merchant(
+      await this.call(
+        tenantId,
+        'PUT',
+        `/merchant-accounts/${encodeURIComponent(provider)}/methods/${encodeURIComponent(method)}`,
+        'PUT /merchant-accounts/:provider/methods/:method',
+        { body: input },
+      ),
+    );
+  }
+
+  private merchant(body: unknown): MerchantAccount {
+    const account = toMerchantAccount(body);
+    if (!account) throw new PaymentApiError('unavailable', null, 'bad_answer');
+    return account;
+  }
+
   private payment(body: unknown): Payment {
     if (!isPayment(body))
       throw new PaymentApiError('unavailable', null, 'bad_answer');
@@ -209,7 +383,7 @@ export class PaymentsClient {
 
   private async call(
     tenantId: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     route: string,
     opts: { body?: object; idempotencyKey?: string } = {},
