@@ -5,6 +5,7 @@ import { ArrowLeft, Delete, UserRound } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { loadPicker, pinSignIn } from '../staf/-api'
+import { PairingScreen } from './-pairing-screen'
 
 // Cashier sign-in on a bound device (U4, POS-only): pick your name, enter your PIN. Full-screen, no shell.
 export const Route = createFileRoute('/kasir/masuk')({
@@ -42,12 +43,11 @@ function CashierSignIn() {
   const picker = Route.useLoaderData()
   const [staffId, setStaffId] = useState<string>()
 
+  // A device with no store shows a pairing code (UMK-2022); the owner enters it on their own signed-in device.
   if (!picker.bound)
     return (
-      <Screen title="Perangkat belum terhubung">
-        <p className="text-sm text-default-secondary">
-          Minta pemilik toko membuka Pengguna → Perangkat di perangkat ini dan menekan Hubungkan.
-        </p>
+      <Screen>
+        <PairingScreen />
       </Screen>
     )
   if (picker.staff.length === 0)

@@ -74,3 +74,15 @@ describe('Keamanan entry (UMK-1962)', () => {
     expect(activeNav(NAV, '/pengaturan')).toBe('/pengaturan')
   })
 })
+
+describe('Pembayaran Online entry (UMK-2020)', () => {
+  const shown = (perms: string[]) =>
+    visibleNav(NAV, () => true, perms).flatMap((g) => g.items.map((i) => i.to)).includes('/pengaturan/pembayaran-online')
+  it('shows only with payments.manage, which only the owner holds by default', () => {
+    expect(shown(['catalog.manage', 'staff.manage', 'sales.create'])).toBe(false)
+    expect(shown(['payments.manage'])).toBe(true)
+  })
+  it('highlights itself, not Pengaturan', () => {
+    expect(activeNav(NAV, '/pengaturan/pembayaran-online')).toBe('/pengaturan/pembayaran-online')
+  })
+})

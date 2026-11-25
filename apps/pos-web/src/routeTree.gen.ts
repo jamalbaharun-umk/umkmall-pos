@@ -33,6 +33,7 @@ import { Route as PembelianBaruRouteImport } from './routes/pembelian/baru'
 import { Route as PengaturanIndexRouteImport } from './routes/pengaturan/index'
 import { Route as PengaturanKeamananRouteImport } from './routes/pengaturan/keamanan'
 import { Route as PengaturanLogoRouteImport } from './routes/pengaturan/logo'
+import { Route as PengaturanPembayaranOnlineRouteImport } from './routes/pengaturan/pembayaran-online'
 import { Route as PengaturanQrisRouteImport } from './routes/pengaturan/qris'
 import { Route as PengeluaranIndexRouteImport } from './routes/pengeluaran/index'
 import { Route as PengeluaranIdRouteImport } from './routes/pengeluaran/$id'
@@ -183,6 +184,12 @@ const PengaturanLogoRoute = PengaturanLogoRouteImport.update({
   path: '/pengaturan/logo',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PengaturanPembayaranOnlineRoute =
+  PengaturanPembayaranOnlineRouteImport.update({
+    id: '/pengaturan/pembayaran-online',
+    path: '/pengaturan/pembayaran-online',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const PengaturanQrisRoute = PengaturanQrisRouteImport.update({
   id: '/pengaturan/qris',
   path: '/pengaturan/qris',
@@ -345,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
+  '/pengaturan/pembayaran-online': typeof PengaturanPembayaranOnlineRoute
   '/pengaturan/qris': typeof PengaturanQrisRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
@@ -400,6 +408,7 @@ export interface FileRoutesByTo {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
+  '/pengaturan/pembayaran-online': typeof PengaturanPembayaranOnlineRoute
   '/pengaturan/qris': typeof PengaturanQrisRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
@@ -456,6 +465,7 @@ export interface FileRoutesById {
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
+  '/pengaturan/pembayaran-online': typeof PengaturanPembayaranOnlineRoute
   '/pengaturan/qris': typeof PengaturanQrisRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
@@ -513,6 +523,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
     | '/pengaturan/logo'
+    | '/pengaturan/pembayaran-online'
     | '/pengaturan/qris'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
@@ -568,6 +579,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
     | '/pengaturan/logo'
+    | '/pengaturan/pembayaran-online'
     | '/pengaturan/qris'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
@@ -623,6 +635,7 @@ export interface FileRouteTypes {
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
     | '/pengaturan/logo'
+    | '/pengaturan/pembayaran-online'
     | '/pengaturan/qris'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
@@ -679,6 +692,7 @@ export interface RootRouteChildren {
   PembelianBaruRoute: typeof PembelianBaruRoute
   PengaturanKeamananRoute: typeof PengaturanKeamananRoute
   PengaturanLogoRoute: typeof PengaturanLogoRoute
+  PengaturanPembayaranOnlineRoute: typeof PengaturanPembayaranOnlineRoute
   PengaturanQrisRoute: typeof PengaturanQrisRoute
   PengeluaranIdRoute: typeof PengeluaranIdRoute
   PengeluaranBaruRoute: typeof PengeluaranBaruRoute
@@ -888,6 +902,13 @@ declare module '@tanstack/react-router' {
       path: '/pengaturan/logo'
       fullPath: '/pengaturan/logo'
       preLoaderRoute: typeof PengaturanLogoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pengaturan/pembayaran-online': {
+      id: '/pengaturan/pembayaran-online'
+      path: '/pengaturan/pembayaran-online'
+      fullPath: '/pengaturan/pembayaran-online'
+      preLoaderRoute: typeof PengaturanPembayaranOnlineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pengaturan/qris': {
@@ -1111,6 +1132,7 @@ const rootRouteChildren: RootRouteChildren = {
   PembelianBaruRoute: PembelianBaruRoute,
   PengaturanKeamananRoute: PengaturanKeamananRoute,
   PengaturanLogoRoute: PengaturanLogoRoute,
+  PengaturanPembayaranOnlineRoute: PengaturanPembayaranOnlineRoute,
   PengaturanQrisRoute: PengaturanQrisRoute,
   PengeluaranIdRoute: PengeluaranIdRoute,
   PengeluaranBaruRoute: PengeluaranBaruRoute,
