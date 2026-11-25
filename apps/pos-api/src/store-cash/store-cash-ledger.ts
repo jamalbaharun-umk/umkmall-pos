@@ -8,8 +8,8 @@ import type { PosSession } from '../tenancy/session';
 
 /**
  * The store's cash ledger, "kas toko" (UMK-1963): cash the store holds outside every shift drawer.
- * Balance = Σ in − Σ out; a `transfer` (a collector's deposit into the safe) changes who holds the
- * cash and leaves the balance as it was.
+ * Balance = Σ in − Σ out. A collector's deposit into a shift drawer is an `out` here (and an `in` in
+ * that shift's ledger); a `transfer` is a legacy handover to a safe and leaves the balance as it was.
  *
  * This file is the only place that inserts ledger rows (guard in src/guards.spec.ts), and nothing
  * updates or deletes them. An entry is written inside the transaction of the movement it records (a

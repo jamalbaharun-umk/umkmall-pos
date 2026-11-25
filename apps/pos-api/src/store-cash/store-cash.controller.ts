@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   Injectable,
@@ -14,7 +15,7 @@ import { Paging, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { staff, storeCashEntries } from '../db/schema';
 import { IdempotencyKey } from '../sales/sales.schemas';
-import { RequirePermission } from '../staff/require-permission';
+import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
@@ -76,12 +77,13 @@ export class StoreCashService {
       total: totals.total,
       page: q.page,
       perPage: q.perPage,
-      // A `transfer` (a collector's deposit into the safe) is neither in nor out: the balance stays.
+      // The balance is the cash outside every shift drawer: a collector's deposit into a drawer is an
+      // `out` here and an `in` in that shift. A legacy `transfer` (a handover to a safe) moved nothing.
       summary: {
         cashIn,
         cashOut,
         balance: cashIn - cashOut,
-        // Of the balance: still with the collectors, and already handed over to the safe.
+        // Still with the collectors (part of the balance), and what they have handed over so far.
         outstanding: collectors.reduce((a, c) => a + c.outstanding, 0),
         handedOver: collectors.reduce((a, c) => a + c.handedOver, 0),
       },
@@ -113,14 +115,30 @@ export class StoreCashController {
     return { data: await this.deposits.collectors(s.tenantId) };
   }
 
-  /** The handover audit: who handed over, who received, how much. */
+  /**
+   * The handover audit: who handed over, who received, how much, into which shift. For the receiver
+   * (`store_cash.manage`: the design's "Riwayat untuk pemilik dan kasir") and for a report reader.
+   */
   @Get('deposits')
-  @RequirePermission('reports.view')
   listDeposits(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    if (
+      !hasPermission(s, 'store_cash.manage') &&
+      !hasPermission(s, 'reports.view')
+    )
+      throw new ForbiddenException();
     return this.deposits.list(s.tenantId, validate(DepositListQuery, query));
   }
 
-  /** The actor receives a collector's outside-shift cash into the store safe (UMK-1924 U3). */
+  /**
+   * "Setoran saya": the actor's own outside-shift cash and the deposits in their name, read only. No
+   * permission beyond a session: the rows are the actor's own.
+   */
+  @Get('mine')
+  mine(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    return this.deposits.mine(s, validate(DepositListQuery, query));
+  }
+
+  /** The actor receives a collector's outside-shift cash into an open shift drawer (UMK-1924 U3). */
   @Post('deposits')
   @RequirePermission('store_cash.manage')
   deposit(

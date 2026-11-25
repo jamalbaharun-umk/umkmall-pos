@@ -128,7 +128,7 @@ newest first, each `{ id, amount, note, receivedByKind, receivedByName, shiftId,
   deposit cannot be reversed yet (see Not built), so theirs are `false` / `null`.
   A cashier still sees only their own shifts here (404 otherwise); names are the only staff data added.
 
-## Schema (one generated migration, `0030_deposit_shift`)
+## Schema (one generated migration, `0032_deposit_shift`)
 - `pos.store_cash_deposits.shift_id uuid` nullable (null = a legacy handover to the safe), FK
   `(tenant_id, shift_id)` → `pos.shifts`, `ON DELETE restrict`. The purge orders by foreign key, so it
   deletes deposits before shifts.
@@ -230,7 +230,7 @@ newest first, each `{ id, amount, note, receivedByKind, receivedByName, shiftId,
 
 ## Files
 - `apps/pos-api/src/db/schema/shift-cash.ts` (kind), `db/schema/store-cash.ts` (`shift_id`, comments),
-  `drizzle/0030_deposit_shift.sql` (generated).
+  `drizzle/0032_deposit_shift.sql` (generated).
 - `apps/pos-api/src/common/validation.ts` (`codedError`: a `fieldError` with a `code`).
 - `apps/pos-api/src/shifts/cash-ledger.ts` (till allow-list for hand-recorded cash, the chosen-shift
   writer, `collectorDeposits`, codes), `shifts/shift-read.ts` (new: `number` and `actorName` of a shift),

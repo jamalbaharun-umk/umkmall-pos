@@ -8,13 +8,14 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { createdAt, id, pos, rupiah } from './_base';
-import { ACTOR_KINDS } from './sales';
+import { ACTOR_KINDS, shifts } from './sales';
 import { staff } from './staff';
 import { tenants } from './tenants';
 
 // UMK-1963 the store's cash ledger ("kas toko"): cash the store holds outside every shift drawer.
-// Balance = Σ in − Σ out; a `transfer` changes who holds the cash and not the balance. Append-only: rows are inserted by src/store-cash/store-cash-ledger.ts only
-// and never updated or deleted.
+// Balance = Σ in − Σ out. A `transfer` (legacy: a handover to a safe, before deposits went into a drawer)
+// changes who holds the cash and not the balance; nothing writes it any more. Append-only: rows are
+// inserted by src/store-cash/store-cash-ledger.ts only and never updated or deleted.
 
 export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
 
@@ -24,8 +25,10 @@ export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
  * - receivable_payment (in): ref_id = pos.receivable_payments.id, a cash kasbon instalment taken by an
  *   actor who cannot open a shift (`collected_outside_shift`). The cash is with that collector until
  *   a deposit hands it over.
- * - collector_deposit (transfer): ref_id = pos.store_cash_deposits.id, a collector's cash handed over
- *   to the store safe (UMK-1924 U3). Written only by src/store-cash/store-cash-deposits.service.ts.
+ * - collector_deposit (out): ref_id = pos.store_cash_deposits.id, a collector's cash received into a
+ *   shift drawer (UMK-1924 U3): it leaves the cash outside every drawer and enters that shift's ledger
+ *   (kind `collector_deposit`, in), so it is counted once. Written only by
+ *   src/store-cash/store-cash-deposits.service.ts. (`transfer` on rows from before the drawer rule.)
  * - expense_void (in): ref_id = pos.expenses.id, a voided drawer expense whose shift was already closed:
  *   the cash given back goes to the store, the closed shift never changes (owner ruling 2026-11-25).
  */
@@ -67,9 +70,9 @@ export const storeCashEntries = pos
   )
   .enableRLS();
 
-// UMK-1924 U3 the handover of a collector's outside-shift cash to the store safe: who handed over
-// (the collector), who received (the actor who recorded it), how much. Its ledger line is the
-// `collector_deposit` transfer whose ref_id is this row. Append-only.
+// UMK-1924 U3 the handover of a collector's outside-shift cash: who handed over (the collector), who
+// received (the actor who recorded it), how much, and the shift drawer it went into. Its ledger lines are
+// the `collector_deposit` entries (store ledger out, shift ledger in) whose ref_id is this row. Append-only.
 // A collector's outstanding = Σ their `receivable_payment` entries − Σ their deposits.
 export const storeCashDeposits = pos
   .table(
@@ -87,6 +90,8 @@ export const storeCashDeposits = pos
       outstandingBefore: rupiah('outstanding_before').notNull(),
       receivedById: uuid('received_by_id').notNull(),
       receivedByKind: text('received_by_kind', { enum: ACTOR_KINDS }).notNull(),
+      // The open shift whose drawer took the cash; null on a handover from before the drawer rule.
+      shiftId: uuid('shift_id'),
       idempotencyKey: text('idempotency_key').notNull(),
       requestHash: text('request_hash').notNull(),
       createdAt: createdAt(),
@@ -100,6 +105,10 @@ export const storeCashDeposits = pos
       foreignKey({
         columns: [t.tenantId, t.collectorId],
         foreignColumns: [staff.tenantId, staff.id],
+      }).onDelete('restrict'),
+      foreignKey({
+        columns: [t.tenantId, t.shiftId],
+        foreignColumns: [shifts.tenantId, shifts.id],
       }).onDelete('restrict'),
       check(
         'store_cash_deposits_ck',

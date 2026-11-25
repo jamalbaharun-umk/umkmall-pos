@@ -1,0 +1,2 @@
+ALTER TABLE "pos"."store_cash_deposits" ADD COLUMN "shift_id" uuid;--> statement-breakpoint
+ALTER TABLE "pos"."store_cash_deposits" ADD CONSTRAINT "store_cash_deposits_tenant_id_shift_id_shifts_tenant_id_id_fk" FOREIGN KEY ("tenant_id","shift_id") REFERENCES "pos"."shifts"("tenant_id","id") ON DELETE restrict ON UPDATE no action;
