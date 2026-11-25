@@ -52,6 +52,13 @@ function ReceivablesPage() {
           <p className="text-sm text-default-secondary">Belum lunas</p>
           <p className="text-2xl font-bold text-default-primary">{list.summary.openCount}</p>
         </div>
+        {list.summary.outsideShiftCollected > 0 && (
+          <div>
+            <p className="text-sm text-default-secondary">Tunai dikumpulkan di luar shift</p>
+            <p className="text-2xl font-bold text-default-primary">{rupiah(list.summary.outsideShiftCollected)}</p>
+            <p className="text-xs text-default-secondary">Masuk kas toko, bukan laci shift mana pun.</p>
+          </div>
+        )}
       </Card>
       <Card variant="outlined" padding="none" className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-default-primary p-4 md:flex-row md:items-center md:justify-between">
@@ -124,7 +131,14 @@ function ReceivablesPage() {
                   <TableCell className="text-right">{rupiah(r.total)}</TableCell>
                   <TableCell className="text-right">{rupiah(r.rest)}</TableCell>
                   <TableCell>{formatDay(r.dueDate)}</TableCell>
-                  <TableCell>{r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}</TableCell>
+                  <TableCell>
+                    {r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}
+                    {r.outsideShiftCollected > 0 && (
+                      <div className="text-xs text-default-secondary">
+                        {rupiah(r.outsideShiftCollected)} dikumpulkan di luar shift
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
                   </TableCell>
