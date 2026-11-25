@@ -7,10 +7,14 @@ describe('LocalFakeGateway', () => {
     process.env.NODE_ENV = nodeEnv;
   });
 
-  it('refuses to exist in production, whatever the configuration check said', () => {
+  it('refuses to exist in production or with NODE_ENV unset, whatever the configuration check said', () => {
     process.env.NODE_ENV = 'production';
     expect(() => new LocalFakeGateway(new Clock())).toThrow(
-      'The fake payment gateway never loads in production',
+      'loads only when NODE_ENV is development or test',
+    );
+    delete process.env.NODE_ENV;
+    expect(() => new LocalFakeGateway(new Clock())).toThrow(
+      'loads only when NODE_ENV is development or test',
     );
   });
 

@@ -21,7 +21,7 @@ here is a real PG adapter (that stays behind the legal gate, UMK-1977) and none 
   neither exists (the routes answer 404).
 - **Never in production, two locks.** `loadEnv` refuses `PAYMENT_ADAPTERS=fake` with `NODE_ENV=production`
   (`Invalid environment: PAYMENT_ADAPTERS`, before the app is created), and `LocalFakeGateway`'s constructor
-  throws on its own when `NODE_ENV` is `production`. The Dockerfile sets `NODE_ENV=production`.
+  throws on its own unless `NODE_ENV` is `development` or `test` (fails closed: production and unset are refused). The Dockerfile sets `NODE_ENV=production`.
 - **No outbound call; state in memory.** The guard "nothing under `src/` calls out" stays as it is. The
   gateway keeps its bills in a `Map` in the process, not in a table: a table would put a fake's schema in
   the production database, and would need RLS, a tenant column and purge cover for data that is never real.
@@ -132,7 +132,7 @@ Refusals: 404 `not_found`, 409 `bill_closed` (pay, fail or expire on a closed bi
 Environment of payment-api, on top of `DATABASE_URL` and `PAYMENT_SERVICE_KEY`:
 
 ```bash
-PAYMENT_ADAPTERS=fake              # mounts fake_qris, fake_va and /dev/fake-gateway; refused with NODE_ENV=production
+PAYMENT_ADAPTERS=fake              # mounts fake_qris, fake_va and /dev/fake-gateway; needs NODE_ENV=development or test (production and unset are refused)
 # optional, to see expiry without waiting 25 minutes (defaults: 900 and 600):
 PAYMENT_QR_TTL_SECONDS=60
 PAYMENT_EXPIRY_GRACE_SECONDS=0

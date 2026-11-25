@@ -86,8 +86,12 @@ export class LocalFakeGateway {
   refundMode: FakeRefundMode = 'pending';
 
   constructor(private readonly clock: Clock) {
-    if (process.env.NODE_ENV === 'production')
-      throw new Error('The fake payment gateway never loads in production');
+    // Fails closed: only an explicit development or test environment may hold it.
+    const env = process.env.NODE_ENV;
+    if (env !== 'development' && env !== 'test')
+      throw new Error(
+        'The fake payment gateway loads only when NODE_ENV is development or test',
+      );
   }
 
   adapters(): PaymentAdapter[] {

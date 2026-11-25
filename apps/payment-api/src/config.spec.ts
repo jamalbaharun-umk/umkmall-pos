@@ -37,7 +37,8 @@ describe('environment', () => {
         loadEnv({ ...base, PAYMENT_ADAPTERS: '' }).PAYMENT_ADAPTERS,
       ).toEqual([]);
       expect(
-        loadEnv({ ...base, PAYMENT_ADAPTERS: ' fake ,' }).PAYMENT_ADAPTERS,
+        loadEnv({ ...base, NODE_ENV: 'test', PAYMENT_ADAPTERS: ' fake ,' })
+          .PAYMENT_ADAPTERS,
       ).toEqual(['fake']);
       expect(adapterListed('fake', {})).toBe(false);
       expect(adapterListed('fake', { PAYMENT_ADAPTERS: 'fake' })).toBe(true);
@@ -53,6 +54,10 @@ describe('environment', () => {
       expect(() =>
         loadEnv({ ...base, NODE_ENV: 'production', PAYMENT_ADAPTERS: 'fake' }),
       ).toThrow('Invalid environment: PAYMENT_ADAPTERS');
+      // An unset NODE_ENV counts as nothing: the fake needs an explicit development or test.
+      expect(() => loadEnv({ ...base, PAYMENT_ADAPTERS: 'fake' })).toThrow(
+        'Invalid environment: PAYMENT_ADAPTERS',
+      );
       expect(() => loadEnv({ ...base, NODE_ENV: 'production' })).not.toThrow();
       for (const NODE_ENV of ['development', 'test'])
         expect(() =>

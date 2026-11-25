@@ -105,6 +105,14 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     ].join(', ');
     throw new Error(`Invalid environment: ${invalid}`);
   }
+  // Fails closed: the fake gateway needs NODE_ENV to be set to development or test on purpose. An unset
+  // NODE_ENV (the schema would default it to development) is refused, as is production.
+  if (
+    parsed.data.PAYMENT_ADAPTERS.includes('fake') &&
+    source.NODE_ENV !== 'development' &&
+    source.NODE_ENV !== 'test'
+  )
+    throw new Error('Invalid environment: PAYMENT_ADAPTERS');
   return parsed.data;
 }
 
