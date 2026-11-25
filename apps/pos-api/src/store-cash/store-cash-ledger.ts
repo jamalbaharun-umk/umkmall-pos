@@ -8,11 +8,12 @@ import type { PosSession } from '../tenancy/session';
 
 /**
  * The store's cash ledger, "kas toko" (UMK-1963): cash the store holds outside every shift drawer.
- * Balance = Σ in − Σ out.
+ * Balance = Σ in − Σ out; a `transfer` (a collector's deposit into the safe) changes who holds the
+ * cash and leaves the balance as it was.
  *
  * This file is the only place that inserts ledger rows (guard in src/guards.spec.ts), and nothing
  * updates or deletes them. An entry is written inside the transaction of the movement it records (a
- * receivable payment's), so the two exist together or not at all; the unique index on the source row
+ * receivable payment's, a deposit's), so the two exist together or not at all; the unique index on the source row
  * refuses a second entry for the same source.
  */
 

@@ -134,6 +134,25 @@ describe('repo guards', () => {
       );
   });
 
+  it('writes pos.store_cash_deposits and the store ledger kind collector_deposit only in store-cash/store-cash-deposits.service.ts', () => {
+    const own = path.join('store-cash', 'store-cash-deposits.service.ts');
+    const offenders = files
+      .filter(({ f }) => f !== own)
+      .filter(({ text }) =>
+        /\.(insert|update|delete)\(\s*storeCashDeposits\b|(insert\s+into|update|delete\s+from)\s+pos\.store_cash_deposits\b|kind:\s*['"`]collector_deposit['"`]/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    const service = files.find(({ f }) => f === own)!.text;
+    // Through the ledger's one writer, under the collector's row lock, append-only.
+    expect(service).toMatch(/recordStoreCash\(/);
+    expect(service).toMatch(/\.for\('update'\)/);
+    expect(service).toMatch(/\.insert\(storeCashDeposits\)/);
+    expect(service).not.toMatch(/\.(update|delete)\(\s*storeCashDeposits\b/);
+  });
+
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {
     const offenders = files
       .filter(
