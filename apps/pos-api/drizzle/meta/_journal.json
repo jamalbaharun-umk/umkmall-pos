@@ -232,6 +232,13 @@
       "when": 1795629457870,
       "tag": "0032_deposit_shift",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795631282367,
+      "tag": "0033_pg_cashier_flow",
+      "breakpoints": true
     }
   ]
 }
