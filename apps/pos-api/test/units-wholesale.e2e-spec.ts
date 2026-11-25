@@ -911,6 +911,36 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       const viewer = await createCashier(app, store, ['reports.view']);
       await quote([{ productId, qty: 1 }], viewer.auth).expect(403);
     });
+
+    it('answers 422 for a cart above the total cap, like a sale does', async () => {
+      const { store, productId } = await tehStore(0, {
+        name: 'Barang mahal',
+        sellingPrice: 1_000_000_000_000,
+        units: [],
+        priceTiers: [],
+      });
+      await http()
+        .post('/sales/quote')
+        .set('Authorization', store.auth)
+        .send({ lines: [{ productId, qty: 2 }] })
+        .expect(422);
+    });
+
+    it('shows no wholesale badge when a tier price equals the normal price', async () => {
+      const { store, productId } = await tehStore(0, {
+        priceTiers: [{ minQty: 12, price: 3500 }],
+      });
+      const res = await http()
+        .post('/sales/quote')
+        .set('Authorization', store.auth)
+        .send({ lines: [{ productId, qty: 12 }] })
+        .expect(200);
+      expect(res.body.lines[0]).toMatchObject({
+        appliedTier: null,
+        savings: 0,
+        unitPrice: 3500,
+      });
+    });
   });
 
   describe('cross-tenant', () => {

@@ -177,7 +177,10 @@ export function priceLines(
       baseQty: l.qty * u.unitQty,
       normalUnitPrice: u.price,
       listPrice,
-      appliedTier: tier ? { minQty: tier.minQty, price: tier.price } : null,
+      appliedTier:
+        tier && tier.price < u.price
+          ? { minQty: tier.minQty, price: tier.price }
+          : null,
       savings: (u.price - listPrice) * l.qty,
       nextTier: nextTierFor(p.tiers, baseTotal),
     };

@@ -501,7 +501,9 @@ export class SalesService {
         nextTier: q.nextTier,
       };
     });
-    return { lines, subtotal: lines.reduce((n, l) => n + l.lineTotal, 0) };
+    const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
+    if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
+    return { lines, subtotal };
   }
 
   /** A live member of this store, else 422. */
