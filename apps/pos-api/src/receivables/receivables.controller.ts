@@ -500,6 +500,7 @@ export class ReceivablesService {
         isDebit: paymentMethods.isDebit,
         isWallet: paymentMethods.isWallet,
         isCredit: paymentMethods.isCredit,
+        isOnline: paymentMethods.isOnline,
       })
       .from(paymentMethods)
       .where(
@@ -515,6 +516,12 @@ export class ReceivablesService {
       throw fieldError(
         'paymentMethodId',
         'Piutang tidak dapat dibayar dengan kasbon',
+      );
+    // UMK-1991: an instalment is recorded as taken at the cashier; a PG bill for one is not built.
+    if (m.isOnline)
+      throw fieldError(
+        'paymentMethodId',
+        'Cicilan kasbon belum bisa dibayar dengan pembayaran online',
       );
     return {
       id: m.id,

@@ -39,9 +39,13 @@ import { priceLines, type ProductPricing } from '../catalog/pricing';
 import { loadPricing } from '../catalog/pricing-store';
 import { PaymentSync } from '../payments-client/payment-sync.service';
 import {
+  isInFlight,
+  isOnlineMethod,
   PaymentApiError,
   paymentMethodCode,
 } from '../payments-client/payments.client';
+import { SalePayments } from '../payments-client/sale-payment.service';
+import { cashMethodId, cashRounding } from './cash';
 import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -59,11 +63,7 @@ const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps e
 export const taxOf = (taxable: number, bps: number) =>
   Number((BigInt(taxable) * BigInt(bps) + 5000n) / 10000n);
 
-/**
- * UMK-1993: what a CASH total adds to reach the next Rp100, so no coin below Rp100 is needed
- * (Rp200.123 -> 77, amount due Rp200.200). 0 on a Rp100 boundary. Integer rupiah.
- */
-export const cashRounding = (total: number) => (100 - (total % 100)) % 100;
+export { cashRounding };
 
 /** Order-independent fingerprint of a sale request (lines sorted by product, then unit; keys sorted). */
 export const requestHash = (input: SaleInput) => {
@@ -111,6 +111,7 @@ export class SalesService {
     @InjectDb() private readonly db: Db,
     private readonly stock: StockService,
     private readonly payments: PaymentSync,
+    private readonly salePayments: SalePayments,
   ) {}
 
   private async byKey(tenantId: string, key: string) {
@@ -134,16 +135,29 @@ export class SalesService {
    * Step 2 (UMK-1991): charge through payment-api and complete the sale. For a sale that is already final
    * (a replay, a kasbon, payment-api off) it only reads the status. A sale still awaiting payment answers
    * 503: the cashier repeats the request with the same Idempotency-Key, or the job finishes it.
+   *
+   * A PG method (dynamic QRIS, VA) is not paid in this request: the sale is answered `awaiting_payment`
+   * with `payment`, which carries what the customer pays with (`checkout`) and until when (`expiresAt`).
    */
   private async finish(s: PosSession, id: string) {
     let refused = false;
-    const status = await this.payments
-      .settleSale(s.tenantId, id, 'charge')
+    const { outcome: status, payment } = await this.payments
+      .settle(s.tenantId, id, 'charge')
       .catch((e: unknown) => {
         if (!(e instanceof PaymentApiError)) throw e;
         refused = e.kind === 'rejected';
-        return 'awaiting_payment' as const;
+        return { outcome: 'awaiting_payment' as const, payment: null };
       });
+    if (
+      status === 'awaiting_payment' &&
+      payment &&
+      isInFlight(payment) &&
+      isOnlineMethod(payment.method)
+    )
+      return {
+        ...(await this.get(s, id, true)),
+        payment: await this.salePayments.view(s, id, payment),
+      };
     if (status === 'awaiting_payment')
       throw new ServiceUnavailableException({
         message: refused
@@ -285,6 +299,12 @@ export class SalesService {
           { total, rounding, amountDue },
           'paid',
         );
+    } else if (method.isOnline && !this.payments.enabled) {
+      throw fail(
+        'Metode pembayaran online belum bisa dipakai: layanan pembayaran tidak aktif',
+        {},
+        'paymentMethodId',
+      );
     } else if (input.paid !== total) {
       throw fail(
         'Pembayaran non-tunai harus sama dengan total',
@@ -407,7 +427,7 @@ export class SalesService {
           memberId: memberId!,
           total,
           paid: input.paid,
-          cashMethodId: await this.cashMethod(tx, s.tenantId),
+          cashMethodId: await cashMethodId(tx, s.tenantId),
           recordInPaymentApi: this.payments.enabled,
         })
       : null;
@@ -527,7 +547,7 @@ export class SalesService {
 
   /** The chosen live method of this store (default Tunai), else 422. */
   private async methodOf(tx: Tx, tenantId: string, id?: string) {
-    const methodId = id ?? (await this.cashMethod(tx, tenantId));
+    const methodId = id ?? (await cashMethodId(tx, tenantId));
     const [m] = await tx
       .select({
         id: paymentMethods.id,
@@ -535,6 +555,8 @@ export class SalesService {
         isDebit: paymentMethods.isDebit,
         isWallet: paymentMethods.isWallet,
         isCredit: paymentMethods.isCredit,
+        isOnline: paymentMethods.isOnline,
+        gatewayMethod: paymentMethods.gatewayMethod,
       })
       .from(paymentMethods)
       .where(
@@ -547,24 +569,6 @@ export class SalesService {
     if (!m)
       throw fail('Metode pembayaran tidak ditemukan', {}, 'paymentMethodId');
     return m;
-  }
-
-  /** The store's cash method, "Tunai", created on first use. */
-  private async cashMethod(tx: Tx, tenantId: string) {
-    await tx
-      .insert(paymentMethods)
-      .values({ tenantId, name: 'Tunai', isCash: true })
-      .onConflictDoNothing();
-    const [m] = await tx
-      .select({ id: paymentMethods.id })
-      .from(paymentMethods)
-      .where(
-        and(
-          eq(paymentMethods.tenantId, tenantId),
-          eq(paymentMethods.name, 'Tunai'),
-        ),
-      );
-    return m.id;
   }
 
   /** Cashiers see their own sales; `reports.view` sees the store's. */
@@ -605,6 +609,7 @@ export class SalesService {
           change: sales.change,
           costTotal: sales.costTotal,
           status: sales.status,
+          paymentMethodCode: sales.paymentMethodCode,
           voidedAt: sales.voidedAt,
           createdAt: sales.createdAt,
         })
@@ -667,8 +672,10 @@ export class SalesService {
       voidedCount: reversed.count,
     };
     return {
-      data: rows.map((r) => ({
+      data: rows.map(({ paymentMethodCode: code, ...r }) => ({
         ...r,
+        // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
+        onlinePayment: isOnlineMethod(code),
         amountDue: r.total + r.rounding,
         costTotal: showCost ? r.costTotal : undefined,
       })),
@@ -704,6 +711,7 @@ export class SalesService {
         overrideBy: sales.overrideBy,
         note: sales.note,
         status: sales.status,
+        paymentMethodCode: sales.paymentMethodCode,
         voidedAt: sales.voidedAt,
         createdAt: sales.createdAt,
       })
@@ -745,8 +753,11 @@ export class SalesService {
       // Base unit before the larger units of the same product.
       .orderBy(asc(saleLines.name), asc(saleLines.unitQty), asc(saleLines.id));
     const showCost = hasPermission(s, 'reports.view');
+    const { paymentMethodCode: code, ...rest } = sale;
     return {
-      ...sale,
+      ...rest,
+      // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
+      onlinePayment: isOnlineMethod(code),
       // UMK-1993: what the customer owes; `rounding` is its own line ("Pembulatan"), 0 unless cash.
       amountDue: sale.total + sale.rounding,
       costTotal: showCost ? sale.costTotal : undefined,

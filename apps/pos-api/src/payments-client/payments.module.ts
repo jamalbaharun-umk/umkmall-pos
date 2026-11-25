@@ -3,6 +3,8 @@ import { StockModule } from '../stock/stock.module';
 import { OnlinePaymentsController } from './online-payments.controller';
 import { PaymentSyncController } from './payment-sync.controller';
 import { PaymentSync } from './payment-sync.service';
+import { SalePaymentController } from './sale-payment.controller';
+import { SalePayments } from './sale-payment.service';
 import {
   PAYMENT_FETCH,
   type PaymentFetch,
@@ -13,7 +15,11 @@ import {
 @Global()
 @Module({
   imports: [StockModule],
-  controllers: [PaymentSyncController, OnlinePaymentsController],
+  controllers: [
+    PaymentSyncController,
+    OnlinePaymentsController,
+    SalePaymentController,
+  ],
   providers: [
     {
       provide: PAYMENT_FETCH,
@@ -21,7 +27,8 @@ import {
     },
     PaymentsClient,
     PaymentSync,
+    SalePayments,
   ],
-  exports: [PaymentsClient, PaymentSync],
+  exports: [PaymentsClient, PaymentSync, SalePayments],
 })
 export class PaymentsModule {}

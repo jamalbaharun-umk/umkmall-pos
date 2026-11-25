@@ -8,12 +8,24 @@ export type PaymentFetch = (
   init: RequestInit,
 ) => Promise<Response>;
 
+/**
+ * payment-api's methods a store may configure as an online (payment gateway) method. Only the local fake
+ * gateway until the legal gate (UMK-1977): a real provider adds its methods here.
+ */
+export const ONLINE_METHODS = ['fake_qris', 'fake_va'] as const;
+export type OnlineMethod = (typeof ONLINE_METHODS)[number];
+export const isOnlineMethod = (code: string | null): code is OnlineMethod =>
+  ONLINE_METHODS.includes(code as OnlineMethod);
+
 /** payment-api's methods for the POS's method kinds. Kasbon (`isCredit`) is not a payment method. */
-export type PaymentMethodCode = 'cash' | 'edc_debit' | 'static_qris';
+export type PaymentMethodCode =
+  'cash' | 'edc_debit' | 'static_qris' | OnlineMethod;
 export const paymentMethodCode = (m: {
   isCash: boolean;
   isDebit: boolean;
   isWallet: boolean;
+  isOnline?: boolean;
+  gatewayMethod?: string | null;
 }): PaymentMethodCode | null =>
   m.isCash
     ? 'cash'
@@ -21,7 +33,18 @@ export const paymentMethodCode = (m: {
       ? 'edc_debit'
       : m.isWallet
         ? 'static_qris'
-        : null;
+        : m.isOnline && isOnlineMethod(m.gatewayMethod ?? null)
+          ? (m.gatewayMethod as OnlineMethod)
+          : null;
+
+/** Money the PG received that paid no payment (late, duplicate, another amount); payment-api refunds it. */
+export type UnmatchedReceipt = {
+  id: string;
+  kind: string;
+  grossAmount: number;
+  needsReview: boolean;
+  refundStatus: string | null;
+};
 
 /** A payment as payment-api answers it (the fields pos-api uses). */
 export type Payment = {
@@ -30,6 +53,16 @@ export type Payment = {
   status: string;
   amount: number;
   method: string;
+  attempt: number;
+  /** What the payer needs for a PG payment: `qrString`, or `bank` and `vaNumber`. */
+  checkout: Record<string, string> | null;
+  /** ISO time the QR or VA stops accepting payment; null for a payment taken at the cashier. */
+  expiresAt: string | null;
+  /** ISO time payment-api last asked the PG. */
+  lastSyncedAt: string | null;
+  /** False: the PG cannot close an unpaid bill, which stays payable until it expires (D13). */
+  canCancel: boolean;
+  unmatchedReceipts: UnmatchedReceipt[];
 };
 
 /** A store's account at a payment gateway, as payment-api answers it (UMK-2019). No secret is in it. */
@@ -100,6 +133,10 @@ const toMerchantAccount = (v: unknown): MerchantAccount | null => {
     updatedAt: text(a.updatedAt),
   };
 };
+
+/** Still waiting for the payer: neither paid nor closed. */
+export const isInFlight = (p: { status: string }) =>
+  p.status === 'created' || p.status === 'pending';
 
 /**
  * payment-api gave no usable answer.
@@ -228,6 +265,94 @@ export class PaymentsClient {
         'GET',
         `/payments/${encodeURIComponent(id)}`,
         'GET /payments/:id',
+      ),
+    );
+  }
+
+  /** Every payment of an order (all attempts), newest first; without their unmatched receipts. */
+  async listByOrder(tenantId: string, orderRef: string): Promise<Payment[]> {
+    const page = (await this.call(
+      tenantId,
+      'GET',
+      `/payments?orderRef=${encodeURIComponent(orderRef)}&perPage=20`,
+      'GET /payments',
+    )) as { items?: unknown[] } | null;
+    if (!page || !Array.isArray(page.items))
+      throw new PaymentApiError('unavailable', null, 'bad_answer');
+    return page.items.map((item) => this.payment(item));
+  }
+
+  /** Manual status check: payment-api asks the PG (at most once per its interval) and answers the payment. */
+  async sync(tenantId: string, id: string): Promise<Payment> {
+    return this.payment(
+      await this.call(
+        tenantId,
+        'POST',
+        `/payments/${encodeURIComponent(id)}/sync`,
+        'POST /payments/:id/sync',
+      ),
+    );
+  }
+
+  /**
+   * Closes a bill that is still unpaid: no reason and no approver, it is neither a void nor a refund. Only
+   * for a payment that is still waiting. Rejected with `already_paid` when the payer paid first (the
+   * payment is then `paid`).
+   */
+  async cancelPending(
+    tenantId: string,
+    id: string,
+    actorRef: string,
+  ): Promise<Payment> {
+    return this.payment(
+      await this.call(
+        tenantId,
+        'POST',
+        `/payments/${encodeURIComponent(id)}/cancel`,
+        'POST /payments/:id/cancel',
+        { body: { actorRef } },
+      ),
+    );
+  }
+
+  /**
+   * PG payments only, the full amount. `approvedBy` is the approver whose PIN pos-api verified. A repeat
+   * answers the refund under way; on a refused refund it asks the PG again.
+   */
+  async refund(
+    tenantId: string,
+    id: string,
+    input: {
+      reasonCode: string;
+      note?: string;
+      actorRef: string;
+      approvedBy: string;
+    },
+  ): Promise<Payment> {
+    return this.payment(
+      await this.call(
+        tenantId,
+        'POST',
+        `/payments/${encodeURIComponent(id)}/refund`,
+        'POST /payments/:id/refund',
+        { body: input },
+      ),
+    );
+  }
+
+  /** The store returned the money of a refused refund by hand. */
+  async markRefundedManually(
+    tenantId: string,
+    id: string,
+    input: { note: string; actorRef: string; approvedBy: string },
+  ): Promise<Payment> {
+    return this.payment(
+      await this.call(
+        tenantId,
+        'POST',
+        `/payments/${encodeURIComponent(id)}/refund/manual`,
+        'POST /payments/:id/refund/manual',
+        { body: input },
       ),
     );
   }
@@ -373,12 +498,43 @@ export class PaymentsClient {
   private payment(body: unknown): Payment {
     if (!isPayment(body))
       throw new PaymentApiError('unavailable', null, 'bad_answer');
+    const raw = body as unknown as Record<string, unknown>;
+    const text = (v: unknown) => (typeof v === 'string' ? v : null);
+    const checkout =
+      raw.checkout && typeof raw.checkout === 'object'
+        ? Object.fromEntries(
+            Object.entries(raw.checkout as Record<string, unknown>).filter(
+              (e): e is [string, string] => typeof e[1] === 'string',
+            ),
+          )
+        : null;
+    const capabilities = raw.capabilities as { canCancel?: unknown } | null;
+    const unmatched = Array.isArray(raw.unmatchedReceipts)
+      ? (raw.unmatchedReceipts as Record<string, unknown>[])
+      : [];
     return {
       id: body.id,
       orderRef: body.orderRef,
       status: body.status,
       amount: body.amount,
       method: body.method,
+      attempt: Number.isSafeInteger(raw.attempt) ? (raw.attempt as number) : 1,
+      checkout,
+      expiresAt: text(raw.expiresAt),
+      lastSyncedAt: text(raw.lastSyncedAt),
+      canCancel: capabilities?.canCancel !== false,
+      unmatchedReceipts: unmatched
+        .filter(
+          (r) =>
+            typeof r.id === 'string' && Number.isSafeInteger(r.grossAmount),
+        )
+        .map((r) => ({
+          id: r.id as string,
+          kind: text(r.kind) ?? 'unknown',
+          grossAmount: r.grossAmount as number,
+          needsReview: r.needsReview === true,
+          refundStatus: text(r.refundStatus),
+        })),
     };
   }
 

@@ -73,6 +73,10 @@ export const paymentMethods = pos
       isDebit: boolean('is_debit').notNull().default(false),
       isCredit: boolean('is_credit').notNull().default(false),
       isWallet: boolean('is_wallet').notNull().default(false),
+      // UMK-1991: paid through a payment gateway (dynamic QRIS, VA). `gateway_method` is payment-api's method
+      // for it (`fake_qris`, `fake_va`), set exactly when the kind is online.
+      isOnline: boolean('is_online').notNull().default(false),
+      gatewayMethod: text('gateway_method'),
       deletedAt: timestamp('deleted_at', { withTimezone: true }),
       createdAt: createdAt(),
     },
@@ -84,7 +88,11 @@ export const paymentMethods = pos
       unique().on(t.tenantId, t.id),
       check(
         'payment_methods_kind_ck',
-        sql`${t.isCash}::int + ${t.isDebit}::int + ${t.isCredit}::int + ${t.isWallet}::int = 1`,
+        sql`${t.isCash}::int + ${t.isDebit}::int + ${t.isCredit}::int + ${t.isWallet}::int + ${t.isOnline}::int = 1`,
+      ),
+      check(
+        'payment_methods_online_ck',
+        sql`${t.isOnline} = (${t.gatewayMethod} is not null)`,
       ),
     ],
   )
@@ -166,6 +174,14 @@ export const sales = pos
       // payment-api's method for this sale, fixed when the sale was made: a later edit of the payment
       // method's kind never changes what is charged. Null exactly when the sale takes no payment there.
       paymentMethodCode: text('payment_method_code'),
+      // Which try at paying this sale: the charge key at payment-api is `<sale id>:<attempt>`. Only the switch
+      // from a PG method to cash starts a new one, and `payment_attempt_at` is when it started (the job waits
+      // from then before it gives an unanswered charge up).
+      paymentAttempt: integer('payment_attempt').notNull().default(1),
+      paymentAttemptAt: ts('payment_attempt_at').notNull().defaultNow(),
+      // The cashier asked to take cash instead of the PG payment: the cash tendered. While it is set, the PG
+      // attempt closing unpaid turns the sale into a cash sale instead of cancelling it.
+      switchCashPaid: rupiah('switch_cash_paid'),
       cancelledAt: ts('cancelled_at'),
       createdAt: createdAt(),
     },
@@ -176,6 +192,10 @@ export const sales = pos
         sql`${t.status} in ('completed', 'void', 'awaiting_payment', 'cancelled')
           and (${t.status} = 'void') = (${t.voidedAt} is not null)
           and (${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`,
+      ),
+      check(
+        'sales_attempt_ck',
+        sql`${t.paymentAttempt} >= 1 and (${t.switchCashPaid} is null or ${t.status} = 'awaiting_payment')`,
       ),
       // The job's sweep of sales still waiting for their payment.
       index('sales_awaiting_idx')
