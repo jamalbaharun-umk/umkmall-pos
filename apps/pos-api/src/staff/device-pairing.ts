@@ -279,8 +279,9 @@ export class DevicePairingController {
   @Post()
   @HttpCode(201)
   start(@Ip() address: string) {
-    const key = addressKey(address);
-    if (!this.starts.allow(key)) throw TOO_MANY();
+    // No address (the connection is gone, or the platform gives none): nothing to count by, so refused.
+    const key = address ? addressKey(address) : null;
+    if (!key || !this.starts.allow(key)) throw TOO_MANY();
     return this.pairing.start(key);
   }
 
@@ -288,7 +289,7 @@ export class DevicePairingController {
   @Post('status')
   @HttpCode(200)
   async status(@Ip() address: string, @Body() body: unknown) {
-    if (!this.polls.allow(addressKey(address)))
+    if (!address || !this.polls.allow(addressKey(address)))
       throw new HttpException(
         { message: 'Terlalu banyak permintaan, coba lagi nanti' },
         HttpStatus.TOO_MANY_REQUESTS,

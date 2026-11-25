@@ -6,6 +6,7 @@ import request from 'supertest';
 import {
   MAX_LIVE_PAIRINGS,
   DevicePairing,
+  DevicePairingController,
   MAX_LIVE_PAIRINGS_PER_ADDRESS,
   PAIRING_CODE_TTL_SECONDS,
   PAIRING_STARTS_PER_MINUTE,
@@ -542,6 +543,24 @@ describe('device pairing code (UMK-2022)', () => {
       }
       // Another address is not held back.
       await startFrom('192.0.2.60').expect(201);
+    } finally {
+      reached.mockRestore();
+    }
+  });
+
+  it('a request without a network address answers 429, not 500, and reaches nothing', async () => {
+    const controller = app.get(DevicePairingController);
+    const reached = jest.spyOn(app.get(DevicePairing), 'start');
+    try {
+      for (const address of [undefined, ''] as unknown as string[]) {
+        expect(() => controller.start(address)).toThrow(
+          expect.objectContaining({ status: 429 }),
+        );
+        await expect(
+          controller.status(address, { pairingToken: 'not-a-token' }),
+        ).rejects.toMatchObject({ status: 429 });
+      }
+      expect(reached).not.toHaveBeenCalled();
     } finally {
       reached.mockRestore();
     }
