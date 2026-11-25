@@ -5,8 +5,10 @@ import postgres from 'postgres';
 import request from 'supertest';
 import {
   MAX_LIVE_PAIRINGS,
+  DevicePairing,
   MAX_LIVE_PAIRINGS_PER_ADDRESS,
   PAIRING_CODE_TTL_SECONDS,
+  PAIRING_STARTS_PER_MINUTE,
   PAIRING_STATUS_POLLS_PER_MINUTE,
   PAIRING_TOKEN_GRACE_SECONDS,
 } from '../src/staff/device-pairing';
@@ -37,9 +39,18 @@ describe('device pairing code (UMK-2022)', () => {
     await admin.end();
   });
 
-  /** The signed-out device asks for a code. */
+  /** The signed-out device asks for a code. Each from an address of its own: the limits are per address. */
+  let devicesSeen = 0;
   const start = async () =>
-    (await http().post('/auth/device/pairing').expect(201)).body as {
+    (
+      await http()
+        .post('/auth/device/pairing')
+        .set(
+          'X-Forwarded-For',
+          `10.9.${Math.floor(devicesSeen / 250)}.${(devicesSeen++ % 250) + 1}`,
+        )
+        .expect(201)
+    ).body as {
       pairingToken: string;
       code: string;
       expiresIn: number;
@@ -493,6 +504,47 @@ describe('device pairing code (UMK-2022)', () => {
       select count(*)::int as n from pos.device_pairings
       where claimed_at is null and expires_at > now()`;
     expect(n).toBe(MAX_LIVE_PAIRINGS);
+  });
+
+  it('an IPv6 caller is its /64: other addresses of the same network share its cap', async () => {
+    for (let i = 1; i <= MAX_LIVE_PAIRINGS_PER_ADDRESS; i++)
+      await startFrom(`2001:db8:aa:1::${i.toString(16)}`).expect(201);
+    await startFrom('2001:db8:aa:1:ffff:ffff:ffff:ffff').expect(429);
+    await startFrom('2001:0DB8:00aa:0001::9').expect(429);
+    // Another /64 is another caller, and an IPv4 address written as IPv6 is that IPv4 address.
+    await startFrom('2001:db8:aa:2::1').expect(201);
+    await startFrom('::ffff:203.0.113.40').expect(201);
+    expect(await openFrom('2001:db8:aa:1::/64')).toBe(
+      MAX_LIVE_PAIRINGS_PER_ADDRESS,
+    );
+    expect(await openFrom('203.0.113.40')).toBe(1);
+  });
+
+  it('refuses a flood of code requests from one address before it reaches the database', async () => {
+    const reached = jest.spyOn(app.get(DevicePairing), 'start');
+    try {
+      // Within one minute of the clock, or the count starts again: at most two tries.
+      for (let tries = 0; ; tries++) {
+        reached.mockClear();
+        const minute = Math.floor(Date.now() / 60_000);
+        const statuses: number[] = [];
+        for (let i = 0; i < PAIRING_STARTS_PER_MINUTE + 5; i++)
+          statuses.push((await startFrom(`192.0.2.${50 + tries}`)).status);
+        if (Math.floor(Date.now() / 60_000) !== minute && tries === 0) continue;
+        expect(statuses.filter((code) => code === 201)).toHaveLength(
+          MAX_LIVE_PAIRINGS_PER_ADDRESS,
+        );
+        expect(statuses.slice(MAX_LIVE_PAIRINGS_PER_ADDRESS)).toEqual(
+          new Array(PAIRING_STARTS_PER_MINUTE).fill(429),
+        );
+        expect(reached).toHaveBeenCalledTimes(PAIRING_STARTS_PER_MINUTE);
+        break;
+      }
+      // Another address is not held back.
+      await startFrom('192.0.2.60').expect(201);
+    } finally {
+      reached.mockRestore();
+    }
   });
 
   it('limits the status polls of one network address per minute', async () => {
