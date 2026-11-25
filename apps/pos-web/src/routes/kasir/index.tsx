@@ -63,6 +63,7 @@ import {
 import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
 import { parsePayment, saleFailure, type ResumeDecision, type SalePayment } from './-online'
 import {
+  canAck,
   finishPlan,
   FORGOTTEN_NOTICE,
   gateOf,
@@ -70,6 +71,7 @@ import {
   HELD_STOCK_HINT,
   holdsStock,
   isOwn,
+  NOT_STORED_TEXT,
   onlineBlocked,
   orderNotice,
   OWN_SALE_OPEN_TEXT,
@@ -194,14 +196,18 @@ function Register({
   const onScreen = pend.state.showing ? payments[pend.state.showing] : undefined
   const online = onScreen ? { payment: onScreen, own: isOwn(pend.state, onScreen.saleId) } : null
   /** One sale becomes known together with its payment: the screen can never show a sale it has no payment of. */
+  const known = useRef<Record<string, SalePayment>>({})
   const track = (payment: SalePayment, ev: PendingEvent) => {
-    setPayments((p) => ({ ...p, [payment.saleId]: payment }))
+    known.current = { ...known.current, [payment.saleId]: payment }
+    setPayments(known.current)
     pend.dispatch(ev)
   }
   // A sale that should be on screen but has no payment here (it cannot happen through `track`): ask pos-api again.
+  // Both are read when the effect runs, not from the render that scheduled it: the store and this screen's state do
+  // not always land in the same render, and an older render would call a sale "unreachable" that is not.
   useEffect(() => {
-    const id = pend.state.showing
-    if (id && !payments[id]) pend.dispatch({ type: 'resume_answered', saleId: id, result: 'retry' })
+    const id = pend.current().showing
+    if (id && !known.current[id]) pend.dispatch({ type: 'resume_answered', saleId: id, result: 'retry' })
   }, [pend.state.showing, payments])
   // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
   const canDiscount = useCan('sales.price_override')
@@ -703,7 +709,9 @@ function Register({
               r.kind === 'paid' ? { kind: 'paid' } : { kind: 'closed', again: r.again },
             )
             pend.dispatch({ type: 'sale_finished', saleId: r.saleId })
-            setPayments(({ [r.saleId]: _done, ...rest }) => rest)
+            const { [r.saleId]: _done, ...rest } = known.current
+            known.current = rest
+            setPayments(rest)
             void router.invalidate() // stock is back (or sold): fresh products for the next order
             if (plan.clearCart) {
               clearOrder()
@@ -1221,6 +1229,11 @@ function PayDialog({
               </div>
             </>
           )}
+          {!pend.durable && (
+            <Alert variant="warning" size="small" role="alert">
+              {NOT_STORED_TEXT}
+            </Alert>
+          )}
           {notice && (
             <Alert variant="warning" size="small" role="alert">
               {notice === 'own_sale_open' ? OWN_SALE_OPEN_TEXT : notice === 'held_same' ? HELD_SAME_TEXT : RECORDED_TEXT}
@@ -1234,7 +1247,8 @@ function PayDialog({
                     color="light"
                     size="small"
                     width="auto"
-                    disabled={busy}
+                    // not while a request of this page load is still out: its answer says what happened to the sale
+                    disabled={busy || !canAck(pend.state)}
                     onClick={() => {
                       pend.dispatch({ type: 'recorded_acked' })
                       setError(undefined)

@@ -51,11 +51,18 @@ describe('createPendingStore', () => {
     const key = 'key' in plan ? plan.key : ''
     s.open() // the cashier left the register mid-request and came back: a new screen, the same store
     expect(s.current().recorded).toBe(true)
+    // the request is still out in this page load: the cashier is not asked to decide before its answer
+    expect(s.current().out).toBe(key)
+    s.dispatch({ type: 'recorded_acked' })
+    expect(s.current().key).toBe(key)
     // the old screen's request now answers: the sale waits for its payment
     s.dispatch({ type: 'sale_awaiting', key, saleId: A, readable: false })
-    expect(s.current().recorded).toBe(false)
+    expect(s.current().out).toBeNull()
     expect(s.current().sales).toEqual([{ id: A, key, shown: true, phase: 'unchecked' }])
     expect((t.stored()?.sales as unknown[]).length).toBe(1)
+    // and a late answer never frees the key by itself
+    expect(s.current().recorded).toBe(true)
+    expect(s.send('m-cash')).toEqual({ blocked: 'own_sale_open', saleId: A })
   })
   it('open() reads the state as after a reload: every sale is asked again, nothing is dropped', () => {
     const t = tab()
@@ -94,10 +101,26 @@ describe('createPendingStore', () => {
     }
     let n = 0
     const s = createPendingStore({ read: boom, write: boom, remove: boom, fresh: () => id(++n) })
+    expect(s.durable()).toBe(true) // nothing was written yet
     const key = s.current().key
+    expect(s.durable()).toBe(false) // not hidden: the pay dialog warns that a reload forgets a sale in progress
     expect(s.send('m-cash')).toEqual({ key })
     s.dispatch({ type: 'sale_paid', key })
     expect(s.current().key).not.toBe(key)
+  })
+  it('says so when a write fails later (storage full), and again when writes work', () => {
+    const t = tab()
+    let full = false
+    const s = createPendingStore({ ...t.io, write: (k, text) => (full ? (() => { throw new Error('quota') })() : t.io.write(k, text)) })
+    s.current()
+    expect(s.durable()).toBe(true)
+    full = true
+    s.send('m-cash')
+    expect(s.durable()).toBe(false)
+    expect(t.stored()?.sending).toBe(false) // the doubt did NOT reach storage: that is what the warning is for
+    full = false
+    s.dispatch({ type: 'sale_unanswered', key: s.current().key })
+    expect(s.durable()).toBe(true)
   })
   it('a tampered record starts empty', () => {
     const t = tab({ [KEY]: '{"v":1,"key":"../../x","sales":[{"id":"x"}]}' })

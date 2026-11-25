@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { initialState, planSend, reduce, rehydrate, serialize, type PendingEvent, type PendingState, type SendPlan } from './-pending'
+import { initialState, planSend, reduce, rehydrate, reopened, serialize, type PendingEvent, type PendingState, type SendPlan } from './-pending'
 
 // The register's memory of unfinished sales, kept per tab (like the open bill). Every decision is in `-pending.ts`;
 // this file only holds the state, hands it out and is the ONLY code that reads or writes its storage record (guard
@@ -26,6 +26,11 @@ export type PendingStore = {
    * because what the last screen knew of each sale (its payment, its waiting screen) is gone with it.
    */
   open: () => void
+  /**
+   * false once a write to the tab's storage failed (private window, storage full or blocked): the state then lives
+   * for this page load only, and the screen must say that a reload forgets a sale in progress.
+   */
+  durable: () => boolean
   subscribe: (listener: () => void) => () => void
 }
 
@@ -41,6 +46,7 @@ export type PendingIo = {
 /** The store without React or a browser, so it is tested as it is. */
 export function createPendingStore(io: PendingIo): PendingStore {
   let state: PendingState | null = null
+  let durable = true
   const listeners = new Set<() => void>()
   const read = (key: string) => {
     try {
@@ -55,8 +61,9 @@ export function createPendingStore(io: PendingIo): PendingStore {
     try {
       io.write(STORAGE_KEY, serialize(next))
       io.remove(LEGACY_KEY)
+      durable = true
     } catch {
-      // storage unavailable: the state lives for this page load only
+      durable = false // not hidden: `durable()` makes the pay dialog warn that a reload forgets this
     }
     return next
   }
@@ -77,7 +84,8 @@ export function createPendingStore(io: PendingIo): PendingStore {
       return plan
     },
     // What is in memory is newer than (or equal to) what is stored, so it is the memory that is read "as after a reload".
-    open: () => void apply(state ? rehydrate(serialize(state), null, io.fresh()) : load()),
+    open: () => void apply(state ? reopened(state, io.fresh()) : load()),
+    durable: () => durable,
     subscribe: (l) => {
       listeners.add(l)
       return () => void listeners.delete(l)
@@ -103,6 +111,8 @@ const NOTHING = initialState('')
 export type PendingHandle = Pick<PendingStore, 'current' | 'dispatch' | 'send'> & {
   /** The state of this render (for what a screen shows). */
   state: PendingState
+  /** Whether the state is stored for a reload (see `PendingStore.durable`). */
+  durable: boolean
 }
 
 export function usePending(): PendingHandle {
@@ -114,6 +124,8 @@ export function usePending(): PendingHandle {
   useEffect(() => store().open(), [])
   return {
     state,
+    // every write follows a state change, which renders this again; before the browser's state is read: nothing to warn of
+    durable: state === NOTHING || store().durable(),
     current: () => store().current(),
     dispatch: (ev) => store().dispatch(ev),
     send: (methodId) => store().send(methodId),

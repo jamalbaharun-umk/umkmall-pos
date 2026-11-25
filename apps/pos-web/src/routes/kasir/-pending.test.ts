@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parsePayment, resumeDecision, type ResumeAnswer, type SalePayment } from './-online'
 import {
+  canAck,
   finishPlan,
   FORGOTTEN_NOTICE,
   gateOf,
@@ -20,6 +21,7 @@ import {
   recordedDescription,
   reduce,
   rehydrate,
+  reopened,
   resumePlan,
   saleAnswerEvent,
   sendPlan,
@@ -267,6 +269,111 @@ describe('the next customer\'s identical order is never answered with a lost sal
   })
 })
 
+describe('an answer that arrives after the order was cleared, edited or reopened (review 5, major B)', () => {
+  // The request is out; the cashier clears the order (or leaves and returns), so `recorded` is set. The late answer
+  // tells what happened to the sale, never that the order on screen is that sale's order.
+  const cleared = () => {
+    const t = till()
+    expect(t.send(CASH)).toBe(K1)
+    t.do({ type: 'order_cleared' })
+    expect(t.state.recorded).toBe(true)
+    return t
+  }
+  const stillChecked = (t: ReturnType<typeof till>) => {
+    expect(t.state.recorded).toBe(true)
+    expect(t.state.key).toBe(K1)
+    expect(t.send(CASH)).toBe('blocked')
+    expect(canAck(t.state)).toBe(true)
+  }
+  it('a late 503 with a sale id (held) does not reopen sending under the key', () => {
+    const t = cleared()
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: CASH, online: false })
+    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false })
+    stillChecked(t)
+  })
+  it('a late online 503 with a sale id keeps the sale tracked and still sends nothing', () => {
+    const t = cleared()
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
+    expect(isTracked(t.state, A)).toBe(true)
+    stillChecked(t)
+  })
+  it('a late "no answer" does not either', () => {
+    const t = cleared()
+    t.do({ type: 'sale_unanswered', key: K1 })
+    stillChecked(t)
+  })
+  it('a late clean refusal does not either: an earlier request under the key may still have written', () => {
+    const t = cleared()
+    t.do({ type: 'sale_refused', key: K1 })
+    expect(t.state.sending).toBe(false)
+    stillChecked(t)
+  })
+  it('a late bill puts the sale on its waiting screen; the order is free again only when that sale ends', () => {
+    const t = cleared()
+    t.do({ type: 'sale_awaiting', key: K1, saleId: A, readable: true })
+    expect(t.state.recorded).toBe(true)
+    expect(t.send(CASH)).toBe('blocked')
+    t.do({ type: 'sale_finished', saleId: A })
+    expect(t.state.recorded).toBe(false)
+    expect(t.send(CASH)).not.toBe('blocked')
+  })
+  it('the same after the register was left and opened again mid-request', () => {
+    const t = till()
+    t.send(CASH)
+    const back = reopened(t.state, id(50))
+    expect(back.recorded).toBe(true)
+    const late = reduce(back, { type: 'sale_held', key: K1, saleId: A, methodId: CASH, online: false }, id(51))
+    expect(late.recorded).toBe(true)
+    expect(sendPlan(late)).toEqual({ blocked: 'recorded' })
+  })
+})
+
+describe('"Sudah saya cek" waits for a request that is still out in this page load', () => {
+  it('is refused until the answer came, also after the register was left and opened again', () => {
+    const t = till()
+    t.send(CASH)
+    t.do({ type: 'order_cleared' })
+    expect(canAck(t.state)).toBe(false)
+    const before = t.state
+    expect(t.do({ type: 'recorded_acked' })).toBe(before)
+    const back = reopened(t.state, id(50))
+    expect(back.out).toBe(K1)
+    expect(canAck(back)).toBe(false)
+    expect(reduce(back, { type: 'recorded_acked' }, id(51))).toBe(back)
+    const answered = reduce(back, { type: 'sale_unanswered', key: K1 }, id(52))
+    expect(answered.out).toBeNull()
+    expect(canAck(answered)).toBe(true)
+    expect(reduce(answered, { type: 'recorded_acked' }, id(53)).key).toBe(id(53))
+  })
+  it('a real reload forgets "out" (the request is gone with the page), and it is never stored', () => {
+    const t = till()
+    t.send(CASH)
+    expect(JSON.parse(serialize(t.state)).out).toBeUndefined()
+    t.reload()
+    expect(t.state.out).toBeNull()
+    expect(canAck(t.state)).toBe(true)
+  })
+  it('every answer of that request ends "out"; an answer of another key does not', () => {
+    for (const ev of [
+      { type: 'sale_paid', key: K1 },
+      { type: 'sale_refused', key: K1 },
+      { type: 'sale_unanswered', key: K1 },
+      { type: 'sale_mismatch', key: K1 },
+      { type: 'sale_cancelled', key: K1, saleId: A },
+      { type: 'sale_held', key: K1, saleId: A, methodId: CASH, online: false },
+      { type: 'sale_awaiting', key: K1, saleId: A, readable: true },
+    ] as PendingEvent[]) {
+      const t = till()
+      t.send(CASH)
+      expect(t.state.out).toBe(K1)
+      t.do({ type: 'sale_refused', key: id(77) })
+      expect(t.state.out).toBe(K1)
+      t.do(ev)
+      expect(t.state.out, ev.type).toBeNull()
+    }
+  })
+})
+
 describe('cash 503 with a sale id (the job completes it)', () => {
   const held = () => {
     const t = till()
@@ -274,7 +381,7 @@ describe('cash 503 with a sale id (the job completes it)', () => {
     t.do({ type: 'sale_held', key: K1, saleId: A, methodId: CASH, online: false })
     return t
   }
-  it('is not listed as a waiting online sale, and no method or edit gets a new key', () => {
+  it('is not listed as a waiting online sale, and the untouched order repeats under the same key whatever the method, also after a reload', () => {
     const t = held()
     expect(t.state.sales).toEqual([])
     expect(t.state.sending).toBe(false)
@@ -282,10 +389,22 @@ describe('cash 503 with a sale id (the job completes it)', () => {
     expect(t.peek(CASH)).toBe(K1)
     expect(t.peek(DEBIT)).toBe(K1)
     expect(t.peek(QRIS)).toBe(K1)
-    t.do({ type: 'cart_edited' })
-    expect(t.peek(CASH)).toBe(K1)
     expect(t.reload().held).toEqual({ saleId: A, methodId: CASH, online: false })
     expect(t.peek(CASH)).toBe(K1)
+  })
+  it('a cart edited by hand (the minus button, not Hapus semua) is no longer surely that sale\'s order: nothing is sent under its key until the cashier checked (review 5, major A)', () => {
+    // the job completes sale 1; the next customer's order, edited into the same items, must not be answered with it
+    const t = held()
+    t.do({ type: 'cart_edited' })
+    expect(t.state.key).toBe(K1)
+    expect(t.state.recorded).toBe(true)
+    expect(orderNotice(t.state)).toBe('recorded')
+    expect(t.peek(CASH)).toBe('recorded')
+    expect(t.send(CASH)).toBe('blocked')
+    t.do({ type: 'recorded_acked' })
+    const k = t.send(CASH)
+    expect(k).not.toBe('blocked')
+    expect(k).not.toBe(K1)
   })
   it('Hapus semua keeps the key and says a sale exists, until the cashier says it was checked', () => {
     const t = held()
@@ -787,6 +906,22 @@ describe('guard: one place remembers unfinished sales', () => {
       expect(text, f).not.toMatch(/randomUUID|idempotencyKey|pos\.online-sale|pos\.kasir\.pending/)
     }
     expect(code(sources.find((s) => s.f === 'index.tsx')!.text)).toMatch(/pend\.send\(methodId\)/)
+  })
+  it('pay() asks the store for the key (which stores "a request is out") BEFORE the one createSale call, and sends that key', () => {
+    const text = code(sources.find((s) => s.f === 'index.tsx')!.text)
+    const start = text.indexOf('async function pay(')
+    const body = text.slice(start, text.indexOf('const notice = orderNotice', start))
+    expect(start).toBeGreaterThan(-1)
+    const send = body.indexOf('pend.send(methodId)')
+    const create = body.indexOf('createSale(')
+    expect(send).toBeGreaterThan(-1)
+    expect(create).toBeGreaterThan(send)
+    expect(body.split('createSale(').length - 1).toBe(1)
+    expect(body.split('pend.send(').length - 1).toBe(1)
+    expect(body).toMatch(/const sendKey = plan\.key/)
+    expect(body.slice(create)).toMatch(/^createSale\(\{\s*data: \{\s*key: sendKey,/)
+    // and nothing is sent when the store says no
+    expect(body.slice(send, create)).toMatch(/if \('blocked' in plan\) return/)
   })
   it('the reducer is pure: no storage, clock or random in it', () => {
     const text = code(sources.find((s) => s.f === '-pending.ts')!.text)
