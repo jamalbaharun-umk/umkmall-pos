@@ -1,7 +1,8 @@
 import { createFileRoute, notFound, useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { Card } from '@umkmall/ui/compositions'
-import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField } from '@umkmall/ui/primitives'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
 import { cashDiff, checkRange, REPORTS, type Column, type ReportDef } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
@@ -65,14 +66,17 @@ async function downloadCsv(jenis: string, from: string, to: string) {
       ? ((await res.json().catch(() => null)) as { message?: unknown } | null)
       : null
     const fromServer = res && [403, 422, 502].includes(res.status) && typeof body?.message === 'string' ? body.message : null
-    toast(fromServer ?? 'Laporan belum bisa diunduh, coba lagi.', { variant: 'danger' })
+    showError(
+      res ? { status: res.status, error: fromServer ?? undefined } : { status: 0 },
+      { action: 'mengunduh laporan', fallback: 'Laporan belum bisa diunduh.' },
+    )
     return
   }
   const url = URL.createObjectURL(await res.blob())
   const a = Object.assign(document.createElement('a'), { href: url, download: `laporan-${jenis}-${from}_${to}.csv` })
   a.click()
   URL.revokeObjectURL(url)
-  toast('Laporan CSV diunduh.', { variant: 'success' })
+  notifySuccess('Laporan CSV diunduh')
 }
 
 function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: string; from: string; to: string; serverErrors?: FieldErrors }) {

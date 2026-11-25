@@ -14,12 +14,12 @@ import {
   TableRow,
   Text,
   TextField,
-  toast,
 } from '@umkmall/ui'
 import { useRef, useState, type FormEvent } from 'react'
 import { loadReceivable, payReceivable } from '../pelanggan/-api'
 import { parseRupiah } from '../pelanggan/-form'
 import { formatDay, formatMomentDay, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { useCan } from '@/components/shell'
 import { cashRoute, cashRouteNotice, paymentPlace, restAfter } from '../kasir/-shift-helpers'
 
@@ -87,16 +87,16 @@ function ReceivablePage() {
       if (!res.ok) {
         setAmountError(res.errors?.amount)
         if (!res.errors?.amount) setError(res.errors?.paymentMethodId ?? res.error)
-        toast(res.error, { variant: 'danger' })
+        showError(res, 'mencatat pembayaran piutang')
         return
       }
       // Fresh numbers first, then close and toast together: no moment showing the old balance.
       await router.invalidate()
       setOpen(false)
-      toast(`Pembayaran ${rupiah(parseRupiah(amount))} tercatat`, { variant: 'success' })
-    } catch {
+      notifySuccess(`Pembayaran ${rupiah(parseRupiah(amount))} tercatat`)
+    } catch (e) {
       setError('Terjadi kesalahan. Coba lagi sebentar lagi.')
-      toast('Terjadi kesalahan. Coba lagi sebentar lagi.', { variant: 'danger' })
+      showError(e, 'mencatat pembayaran piutang')
     } finally {
       inFlight.current = false
       setBusy(false)

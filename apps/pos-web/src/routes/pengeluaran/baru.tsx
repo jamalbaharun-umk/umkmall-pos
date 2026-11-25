@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Alert, Button, Chip, SegmentedControl, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, Chip, SegmentedControl, TextField } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { Page, PageError, PageLoading } from '@/components/page'
 import { placeErrors } from '@/lib/refusal'
 import { createExpense, loadExpenseForm } from './-api'
@@ -67,13 +68,14 @@ function NewExpense() {
         const placed = placeErrors(res, FIELDS)
         setErrors(placed.byField)
         setFormError(placed.formError)
-        toast(res.error, { variant: 'danger' })
+        showError(res, 'menyimpan pengeluaran')
         return
       }
-      toast('Pengeluaran tersimpan.', { variant: 'success' })
+      notifySuccess(`Pengeluaran ${rupiah(amount)} tersimpan`)
       await navigate({ to: '/pengeluaran/$id', params: { id: res.data.id } })
-    } catch {
+    } catch (e) {
       setFormError('Pengeluaran belum tersimpan. Cek sinyal lalu coba lagi.')
+      showError(e, 'menyimpan pengeluaran')
     } finally {
       inFlight.current = false
       setBusy(false)
