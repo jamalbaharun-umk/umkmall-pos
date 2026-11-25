@@ -231,8 +231,19 @@ export const saleLines = pos
         .notNull()
         .references(() => products.id, { onDelete: 'restrict' }),
       name: text('name').notNull(), // snapshot for the receipt
+      // In the line's unit (UMK-1985): 2 dus is qty 2, unit_qty 24, base_qty 48.
       qty: integer('qty').notNull(),
-      listPrice: rupiah('list_price').notNull(), // catalog price at the time of sale
+      // Unit name at the time of sale; null on a row from before UMK-1985 = the product's base unit.
+      unit: text('unit'),
+      // Base units per unit: 1 for the base unit.
+      unitQty: integer('unit_qty').notNull().default(1),
+      // What stock was drawn for: always qty × unit_qty.
+      baseQty: integer('base_qty').generatedAlwaysAs(sql`qty * unit_qty`),
+      // The unit's price before any wholesale tier; null on a row from before UMK-1985 = list_price.
+      normalUnitPrice: rupiah('normal_unit_price'),
+      // min_qty of the wholesale tier that set list_price; null = no tier.
+      appliedTierMinQty: integer('applied_tier_min_qty'),
+      listPrice: rupiah('list_price').notNull(), // the server's price per unit at the time of sale (tier applied)
       unitPrice: rupiah('unit_price').notNull(), // charged; differs only with an override
       lineTotal: rupiah('line_total').notNull(),
       costTotal: rupiah('cost_total').notNull(),
@@ -248,6 +259,7 @@ export const saleLines = pos
         'sale_lines_ck',
         sql`${t.qty} > 0 and ${t.unitPrice} >= 0 and ${t.lineTotal} = ${t.unitPrice} * ${t.qty} and ${t.costTotal} >= 0`,
       ),
+      check('sale_lines_unit_ck', sql`${t.unitQty} >= 1`),
     ],
   )
   .enableRLS();

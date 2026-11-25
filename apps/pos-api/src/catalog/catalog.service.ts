@@ -25,9 +25,19 @@ import {
   categories,
   productBarcodes,
   productImages,
+  productPriceTiers,
   products,
+  productUnits,
   stockBatches,
 } from '../db/schema';
+import {
+  pricingIssues,
+  pricingWarnings,
+  type PriceTier,
+  type ProductPricing,
+  type ProductUnit,
+} from './pricing';
+import { loadPricing, type StoredPricing } from './pricing-store';
 import type {
   ProductCreate,
   ProductQuery,
@@ -206,8 +216,13 @@ export class CatalogService {
         .from(products)
         .where(countsWhere),
     ]);
-    const [codes, onHand] = await Promise.all([
+    const [codes, pricing, onHand] = await Promise.all([
       this.barcodesOf(rows.map((r) => r.id)),
+      loadPricing(
+        this.db,
+        tenantId,
+        rows.map((r) => r.id),
+      ),
       this.stock.onHand(
         tenantId,
         rows.filter((r) => r.type === 'product').map((r) => r.id),
@@ -215,7 +230,7 @@ export class CatalogService {
     ]);
     return {
       data: rows.map((r) => ({
-        ...this.present(r, codes.get(r.id) ?? []),
+        ...this.present(r, codes.get(r.id) ?? [], pricing.get(r.id)),
         // Only `product` tracks stock; service and non_stock rows answer null.
         stock: r.type === 'product' ? (onHand[r.id] ?? 0) : null,
       })),
@@ -241,8 +256,9 @@ export class CatalogService {
       .innerJoin(categories, eq(categories.id, products.categoryId))
       .where(and(this.live(tenantId), eq(products.id, id)));
     if (!row) throw new NotFoundException();
-    const [codes, images] = await Promise.all([
+    const [codes, pricing, images] = await Promise.all([
       this.barcodesOf([id]),
+      loadPricing(this.db, tenantId, [id]),
       this.db
         .select({
           id: productImages.id,
@@ -258,11 +274,21 @@ export class CatalogService {
         )
         .orderBy(asc(productImages.createdAt)),
     ]);
-    return { ...this.present(row, codes.get(id) ?? []), images };
+    return {
+      ...this.present(row, codes.get(id) ?? [], pricing.get(id)),
+      images,
+    };
   }
 
   async createProduct(tenantId: string, input: ProductCreate) {
     const category = await this.requireCategory(tenantId, input.categoryId);
+    const pricing: ProductPricing = {
+      unit: input.unit ?? 'PCS',
+      sellingPrice: input.sellingPrice,
+      units: input.units ?? [],
+      tiers: input.priceTiers ?? [],
+    };
+    this.assertPricing(pricing);
     const generate = !input.sku;
     // A generated SKU can race another create; retry with the next number.
     for (let attempt = 0; ; attempt++) {
@@ -284,7 +310,7 @@ export class CatalogService {
               categoryId: input.categoryId,
               name: input.name,
               sku,
-              unit: input.unit,
+              unit: pricing.unit,
               costPrice: input.costPrice,
               sellingPrice: input.sellingPrice,
               type: input.type,
@@ -298,9 +324,14 @@ export class CatalogService {
             row.id,
             input.barcodes ?? [],
           );
+          await this.replaceUnits(tx, tenantId, row.id, pricing.units);
+          await this.replaceTiers(tx, tenantId, row.id, pricing.tiers);
           return row.id;
         });
-        return this.getProduct(tenantId, id);
+        return {
+          ...(await this.getProduct(tenantId, id)),
+          warnings: pricingWarnings(pricing),
+        };
       } catch (e) {
         if (
           generate &&
@@ -332,19 +363,41 @@ export class CatalogService {
         'Harga modal tidak boleh melebihi harga jual',
       );
     }
-    const { barcodes, ...fields } = input;
+    const { barcodes, units, priceTiers, ...fields } = input;
+    let pricing: ProductPricing;
     try {
-      await this.db.transaction(async (tx) => {
+      pricing = await this.db.transaction(async (tx) => {
+        // The row lock makes "read the stored units and tiers, check, write" one step per product.
+        const [locked] = await tx
+          .select({ unit: products.unit, sellingPrice: products.sellingPrice })
+          .from(products)
+          .where(and(this.live(tenantId), eq(products.id, id)))
+          .for('update');
+        if (!locked) throw new NotFoundException();
+        const stored = (await loadPricing(tx, tenantId, [id])).get(id);
+        const merged: ProductPricing = {
+          unit: fields.unit ?? locked.unit,
+          sellingPrice: fields.sellingPrice ?? locked.sellingPrice,
+          units: units ?? stored?.units ?? [],
+          tiers: priceTiers ?? stored?.tiers ?? [],
+        };
+        this.assertPricing(merged, priceTiers ? 'priceTiers' : 'sellingPrice');
         await tx
           .update(products)
           .set({ ...fields, updatedAt: new Date() })
           .where(and(this.live(tenantId), eq(products.id, id)));
         if (barcodes) await this.replaceBarcodes(tx, tenantId, id, barcodes);
+        if (units) await this.replaceUnits(tx, tenantId, id, units);
+        if (priceTiers) await this.replaceTiers(tx, tenantId, id, priceTiers);
+        return merged;
       });
     } catch (e) {
       rethrow(e);
     }
-    return this.getProduct(tenantId, id);
+    return {
+      ...(await this.getProduct(tenantId, id)),
+      warnings: pricingWarnings(pricing),
+    };
   }
 
   async deleteProduct(tenantId: string, id: string) {
@@ -518,6 +571,66 @@ export class CatalogService {
         .values(codes.map((code) => ({ tenantId, productId, code })));
   }
 
+  /** 422 on the first rule the product's units and tiers break (UMK-1985). */
+  private assertPricing(
+    pricing: ProductPricing,
+    priceField: 'priceTiers' | 'sellingPrice' = 'priceTiers',
+  ) {
+    const [issue] = pricingIssues(pricing, priceField);
+    if (issue) throw fieldError(issue.field, issue.message);
+  }
+
+  private async replaceUnits(
+    tx: Tx,
+    tenantId: string,
+    productId: string,
+    units: ProductUnit[],
+  ) {
+    await tx
+      .delete(productUnits)
+      .where(
+        and(
+          eq(productUnits.tenantId, tenantId),
+          eq(productUnits.productId, productId),
+        ),
+      );
+    if (units.length)
+      await tx.insert(productUnits).values(
+        units.map((u) => ({
+          tenantId,
+          productId,
+          name: u.name,
+          unitQty: u.unitQty,
+          price: u.price,
+        })),
+      );
+  }
+
+  private async replaceTiers(
+    tx: Tx,
+    tenantId: string,
+    productId: string,
+    tiers: PriceTier[],
+  ) {
+    await tx
+      .delete(productPriceTiers)
+      .where(
+        and(
+          eq(productPriceTiers.tenantId, tenantId),
+          eq(productPriceTiers.productId, productId),
+        ),
+      );
+    if (tiers.length)
+      await tx.insert(productPriceTiers).values(
+        tiers.map((t) => ({
+          tenantId,
+          productId,
+          minQty: t.minQty,
+          price: t.price,
+        })),
+      );
+  }
+
   private async barcodesOf(productIds: string[]) {
     const map = new Map<string, string[]>();
     if (!productIds.length) return map;
@@ -540,11 +653,15 @@ export class CatalogService {
       ...row
     }: { categoryName: string; categoryId: string } & Record<string, unknown>,
     barcodes: string[],
+    pricing?: StoredPricing,
   ) {
     return {
       ...row,
       category: { id: row.categoryId, name: categoryName },
       barcodes,
+      // UMK-1985: other units (smallest pack first) and wholesale tiers per base unit (lowest quantity first).
+      units: pricing?.units ?? [],
+      priceTiers: pricing?.tiers ?? [],
     };
   }
 }

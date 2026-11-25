@@ -100,6 +100,9 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       costPrice: 1000,
       sellingPrice: 6000,
       barcodes: [`899${Math.floor(Math.random() * 1e9)}`],
+      // UMK-1985: product_units, product_price_tiers.
+      units: [{ name: 'dus', unitQty: 12, price: 66_000 }],
+      priceTiers: [{ minQty: 6, price: 5800 }],
     }).expect(201);
     const productId = p.body.id as string;
     await http()

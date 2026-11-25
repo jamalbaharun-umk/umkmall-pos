@@ -301,6 +301,7 @@ export class StockService {
           gt(stockBatches.qtyRemaining, 0),
         ),
       )
+      .orderBy(asc(stockBatches.receivedAt), asc(stockBatches.id))
       .for('update');
     return batches.reduce((n, b) => n + b.qty, 0);
   }

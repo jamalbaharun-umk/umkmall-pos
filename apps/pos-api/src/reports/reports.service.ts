@@ -191,14 +191,14 @@ export class ReportsService {
   private lineRows(tenantId: string, start: SQL, end: SQL) {
     return sql`(
       select 'sale' as kind, s.created_at as at, s.number, s.actor_kind, s.actor_id,
-             l.id as line_id, l.product_id, l.name, l.qty, l.unit_price, l.line_total, l.cost_total
+             l.id as line_id, l.product_id, l.name, l.qty, l.unit, l.base_qty, l.unit_price, l.line_total, l.cost_total
         from pos.sale_lines l
         join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
        where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
          and s.status in (${FINAL_LIST})
       union all
       select 'void', v.created_at, s.number, v.actor_kind, v.actor_id,
-             l.id, l.product_id, l.name, -l.qty, l.unit_price, -l.line_total, -l.cost_total
+             l.id, l.product_id, l.name, -l.qty, l.unit, -l.base_qty, l.unit_price, -l.line_total, -l.cost_total
         from pos.sale_voids v
         join pos.sales s on s.tenant_id = v.tenant_id and s.id = v.sale_id
         join pos.sale_lines l on l.tenant_id = v.tenant_id and l.sale_id = v.sale_id
@@ -213,13 +213,14 @@ export class ReportsService {
       this.rows(sql`
         select x.number, x.kind, to_char(x.at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as time,
                x.actor_kind, st.name as staff_name,
-               p.sku, x.name, x.qty, x.unit_price, x.line_total, x.cost_total
+               p.sku, x.name, x.qty, coalesce(x.unit, p.unit) as unit, x.unit_price, x.line_total, x.cost_total
           from ${lineRows} x
           join pos.products p on p.tenant_id = ${tenantId} and p.id = x.product_id
           left join pos.staff st on st.tenant_id = ${tenantId} and st.id = x.actor_id
          order by x.at, x.number, x.kind, x.line_id
          limit ${ROW_CAP + 1}`),
       this.salesMetrics(tenantId, start, end),
+      // Totalled as rung up, in each line's own unit (UMK-1985); the product report counts base units.
       this.rows(sql`select coalesce(sum(x.qty), 0) as qty from ${lineRows} x`),
     ]);
     return {
@@ -234,7 +235,9 @@ export class ReportsService {
         cashier: cashierName(r),
         sku: r.sku as string,
         name: r.name as string,
+        // In the line's own unit (`unit`): qty × unitPrice = lineTotal.
         qty: n(r.qty),
+        unit: r.unit as string,
         unitPrice: n(r.unit_price),
         lineTotal: n(r.line_total),
         cost: n(r.cost_total),
@@ -251,12 +254,12 @@ export class ReportsService {
     const [rows, totals] = await Promise.all([
       // A product sold and voided inside the range nets to nothing and is left out.
       this.rows(sql`
-        select p.id, p.sku, p.name, sum(x.qty) as qty, sum(x.line_total) as sales,
+        select p.id, p.sku, p.name, sum(x.base_qty) as qty, sum(x.line_total) as sales,
                sum(x.cost_total) as cost
           from ${this.lineRows(tenantId, start, end)} x
           join pos.products p on p.tenant_id = ${tenantId} and p.id = x.product_id
          group by p.id
-        having sum(x.qty) <> 0 or sum(x.line_total) <> 0 or sum(x.cost_total) <> 0
+        having sum(x.base_qty) <> 0 or sum(x.line_total) <> 0 or sum(x.cost_total) <> 0
          order by sales desc, p.name`),
       this.salesMetrics(tenantId, start, end),
     ]);
