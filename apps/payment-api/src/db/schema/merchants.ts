@@ -68,9 +68,17 @@ export const merchantAccounts = payment
       // Last time the gateway was asked about this account.
       lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
       // How new the gateway's word is that `status` was last set or confirmed from: the gateway's own time
-      // of the account's last change (or, for a gateway that gives none, the time we asked). An answer
-      // older than this is discarded under the row lock.
+      // of the account's last change. An answer older than this is discarded under the row lock. Null for
+      // a gateway that gives no such time: `sync_version` orders its answers instead.
       statusObservedAt: timestamp('status_observed_at', {
+        withTimezone: true,
+      }),
+      // Counts the gateway answers applied to this row. An answer without the gateway's own time is applied
+      // only when no other answer was applied since the row was read; otherwise the gateway is asked again.
+      syncVersion: integer('sync_version').notNull().default(0),
+      // Last time the reconciliation tried this account, also when the gateway did not answer: an account
+      // that keeps failing goes to the back of the queue instead of holding its head.
+      reconcileAttemptedAt: timestamp('reconcile_attempted_at', {
         withTimezone: true,
       }),
       createdAt: createdAt(),

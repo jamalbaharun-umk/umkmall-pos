@@ -40,6 +40,9 @@ export type MerchantSource =
   'submit' | 'toggle' | 'webhook' | 'sync' | 'reconciliation';
 
 const SYSTEM_ACTOR = 'system';
+/** `settleOnce`: another answer was applied meanwhile and this one cannot be ordered against it. */
+const ASK_AGAIN = Symbol('ask again');
+const SETTLE_ATTEMPTS = 3;
 const REASON_MAX = 500;
 const DRAFT_FIELDS = [
   'businessType',
@@ -332,13 +335,36 @@ export class MerchantsService {
    * Throws when the gateway cannot be asked; the caller decides whether that is an error.
    *
    * The gateway is asked BEFORE the row is locked (never a call under a lock), so two answers can cross.
-   * Under the lock an answer is therefore discarded when it is older than the one the status already stands
-   * on (`status_observed_at`), or when the owner has since submitted a draft the gateway has not seen.
+   * Under the lock an answer is therefore discarded when
+   * - the owner has submitted since the row was read (`submitted_at` differs, or the draft is undelivered):
+   *   the answer is about an older draft;
+   * - it carries the gateway's time and is older than the one the status stands on (`status_observed_at`).
+   * An answer WITHOUT the gateway's time cannot be ordered by a clock of ours (the call that was sent first
+   * may be answered last), so it is applied only when no other answer was applied since the row was read
+   * (`sync_version`); otherwise the gateway is asked again, and that answer is newer than the one applied.
    */
   async settle(
     id: string,
     source: MerchantSource,
   ): Promise<MerchantRow | undefined> {
+    for (let attempt = 1; ; attempt++) {
+      const outcome = await this.settleOnce(id, source);
+      if (outcome !== ASK_AGAIN) return outcome;
+      if (attempt >= SETTLE_ATTEMPTS) {
+        // Answers keep crossing: leave the row to whoever applied last; the next check asks again.
+        const [row] = await this.db
+          .select()
+          .from(merchantAccounts)
+          .where(eq(merchantAccounts.id, id));
+        return row;
+      }
+    }
+  }
+
+  private async settleOnce(
+    id: string,
+    source: MerchantSource,
+  ): Promise<MerchantRow | undefined | typeof ASK_AGAIN> {
     const [row] = await this.db
       .select()
       .from(merchantAccounts)
@@ -353,9 +379,8 @@ export class MerchantsService {
     };
     if (row.draftUndelivered)
       ref.providerAccountId = await this.deliver(adapter, row);
-    const askedAt = this.clock.now();
     const answer = await adapter.getAccountStatus(ref);
-    const observedAt = answer.updatedAt ?? askedAt;
+    const observedAt = answer.updatedAt ?? null;
     const now = this.clock.now();
     return this.db.transaction(async (tx) => {
       const [locked] = await tx
@@ -367,15 +392,24 @@ export class MerchantsService {
       // A stale answer changes nothing, not even `last_synced_at`: the account is asked about again.
       if (
         locked.draftUndelivered ||
-        (locked.statusObservedAt &&
+        locked.submittedAt?.getTime() !== row.submittedAt?.getTime() ||
+        (observedAt &&
+          locked.statusObservedAt &&
           observedAt.getTime() < locked.statusObservedAt.getTime())
       )
         return locked;
+      if (!observedAt && locked.syncVersion !== row.syncVersion)
+        return ASK_AGAIN;
+      const applied = {
+        lastSyncedAt: now,
+        syncVersion: locked.syncVersion + 1,
+        ...(observedAt ? { statusObservedAt: observedAt } : {}),
+      };
       if (answer.status === 'not_found') {
         this.logger.warn(`merchant account ${id}: unknown at the gateway`);
         const [seen] = await tx
           .update(merchantAccounts)
-          .set({ lastSyncedAt: now })
+          .set({ lastSyncedAt: now, syncVersion: applied.syncVersion })
           .where(eq(merchantAccounts.id, id))
           .returning();
         return seen;
@@ -393,8 +427,7 @@ export class MerchantsService {
         const [seen] = await tx
           .update(merchantAccounts)
           .set({
-            lastSyncedAt: now,
-            statusObservedAt: observedAt,
+            ...applied,
             ...(target === locked.status ? { statusReason } : {}),
           })
           .where(eq(merchantAccounts.id, id))
@@ -404,7 +437,7 @@ export class MerchantsService {
       return this.move(tx, locked, target, 'gateway', {
         source,
         actorRef: SYSTEM_ACTOR,
-        set: { statusReason, lastSyncedAt: now, statusObservedAt: observedAt },
+        set: { statusReason, ...applied },
       });
     });
   }
@@ -413,11 +446,20 @@ export class MerchantsService {
    * Asks the gateway about accounts it has not been asked about for a while: those waiting on its review (or
    * whose draft it has not received) after the reconciliation threshold, and every other account it knows
    * slowly (`SLOW_RECONCILE_INTERVAL_MS`), so a lost webhook cannot leave a suspended account `active`.
+   *
+   * Every account of a batch is stamped as tried before the gateway is asked, and the queue is ordered by
+   * that stamp too: an account the gateway keeps failing on waits its turn again and cannot keep the others
+   * out of the batch.
    */
   async reconcile(limit = 100): Promise<{ accounts: number; failed: number }> {
+    const now = this.clock.now();
+    // The later of: the last answer applied (or, with none yet, the row's last change) and the last try.
+    const lastTried = sql`greatest(
+      coalesce(${merchantAccounts.lastSyncedAt}, ${merchantAccounts.updatedAt}),
+      coalesce(${merchantAccounts.reconcileAttemptedAt}, '-infinity'::timestamptz))`;
     const before = (ms: number) => {
-      const cutoff = new Date(this.clock.now().getTime() - ms).toISOString();
-      return sql`coalesce(${merchantAccounts.lastSyncedAt}, ${merchantAccounts.updatedAt}) <= ${cutoff}::timestamptz`;
+      const cutoff = new Date(now.getTime() - ms).toISOString();
+      return sql`${lastTried} <= ${cutoff}::timestamptz`;
     };
     const due = await this.db
       .select({ id: merchantAccounts.id })
@@ -437,11 +479,18 @@ export class MerchantsService {
           ),
         ),
       )
-      .orderBy(
-        sql`${merchantAccounts.lastSyncedAt} asc nulls first`,
-        asc(merchantAccounts.updatedAt),
-      )
+      .orderBy(sql`${lastTried} asc`, asc(merchantAccounts.id))
       .limit(limit);
+    if (due.length)
+      await this.db
+        .update(merchantAccounts)
+        .set({ reconcileAttemptedAt: now })
+        .where(
+          inArray(
+            merchantAccounts.id,
+            due.map((d) => d.id),
+          ),
+        );
     let failed = 0;
     for (const { id } of due) {
       try {

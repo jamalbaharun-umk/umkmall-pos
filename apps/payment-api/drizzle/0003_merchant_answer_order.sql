@@ -1,0 +1,2 @@
+ALTER TABLE "payment"."merchant_accounts" ADD COLUMN "sync_version" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "payment"."merchant_accounts" ADD COLUMN "reconcile_attempted_at" timestamp with time zone;
