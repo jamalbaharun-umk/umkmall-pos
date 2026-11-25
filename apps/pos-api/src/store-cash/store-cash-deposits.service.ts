@@ -20,7 +20,7 @@ import { recordStoreCash } from './store-cash-ledger';
 export const DepositInput = z
   .object({
     // The staff member who collected the cash and hands it over.
-    collectorId: UuidField,
+    collectorId: UuidField.transform((v) => v.toLowerCase()),
     amount: Rupiah.positive('Harus lebih dari 0'),
     note: z.string().trim().max(200).optional(),
   })
@@ -206,6 +206,12 @@ export class StoreCashDepositsService {
         const prior = await this.byKey(tx, s.tenantId, key);
         if (prior) return replay(prior);
         if (!who) throw new NotFoundException();
+        // Compared with the stored row's id, so a differently-cased uuid cannot slip past the check above.
+        if (who.id === s.actorId)
+          throw fieldError(
+            'collectorId',
+            'Setoran harus diterima oleh orang lain, bukan penyetor sendiri',
+          );
         const [cash] = await this.collectors(s.tenantId, tx, who.id);
         const outstanding =
           cash?.collectorKind === 'cashier' ? cash.outstanding : 0;

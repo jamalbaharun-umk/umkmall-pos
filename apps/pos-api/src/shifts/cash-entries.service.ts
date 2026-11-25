@@ -16,7 +16,11 @@ import {
 import { isUniqueViolation } from '../staff/http';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
-import { lockOpenShift, recordShiftCash } from './cash-ledger';
+import {
+  assertMayMoveDrawerCash,
+  lockOpenShift,
+  recordShiftCash,
+} from './cash-ledger';
 import { ShiftsService } from './shifts.service';
 
 const reasonsOf = (direction: 'in' | 'out'): readonly ManualCashReason[] =>
@@ -127,6 +131,8 @@ export class CashEntriesService {
   }
 
   async create(s: PosSession, key: string, input: CashEntryInput) {
+    // Agent sessions never move drawer cash out: refused before any lock or lookup.
+    if (input.direction === 'out') assertMayMoveDrawerCash(s.kind, 'out');
     const hash = requestHash(input);
     const replay = (prior: { id: string; hash: string }) => {
       if (prior.hash !== hash) throw fieldError('idempotencyKey', KEY_REUSED);

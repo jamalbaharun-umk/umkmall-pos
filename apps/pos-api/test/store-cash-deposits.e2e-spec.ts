@@ -347,6 +347,12 @@ describe('store cash handover: a collector’s outside-shift cash into the safe 
       amount: 2000,
     }).expect(422);
     expect(Object.keys(self.body.errors)).toEqual(['collectorId']);
+    // The same id in upper case is the same person: still refused.
+    const upper = await deposit(both.auth, {
+      collectorId: both.staffId.toUpperCase(),
+      amount: 2000,
+    }).expect(422);
+    expect(Object.keys(upper.body.errors)).toEqual(['collectorId']);
     expect(await written(s.tenantId)).toEqual({ deposits: 1, transfers: 1 });
     await deposit(s.auth, { collectorId: both.staffId, amount: 2000 }).expect(
       201,
