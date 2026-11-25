@@ -197,11 +197,17 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .expect(201);
 
     // An expense paid from the drawer (UMK-1984): expenses, and its shift ledger entry.
-    await post(
+    const expense = await post(
       '/expenses',
       { amount: 2000, category: 'transport', source: 'drawer' },
       randomUUID(),
     ).expect(201);
+    // Its edit history: expense_edits.
+    await http()
+      .patch(`/expenses/${expense.body.id}`)
+      .set('Authorization', s.auth)
+      .send({ note: 'ojek' })
+      .expect(200);
 
     // A void PIN and a voided cash sale (UMK-1962): void_pins, sale_voids, sale_void_returns.
     await put('/void-pin', { pin: '482913' }).expect(200);

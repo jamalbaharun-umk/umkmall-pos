@@ -15,8 +15,10 @@ import type { PosSession } from '../tenancy/session';
  * Expected cash = opening cash + cash sales + cash in − cash out.
  *
  * This file is the only place that inserts ledger rows (guard in src/guards.spec.ts). Each row is
- * written under the row lock of the actor's OPEN shift, the lock a sale and the close also take, so a
- * movement lands before the count or is refused, and a closed shift never changes.
+ * written under the row lock of an OPEN shift, the lock a sale and the close also take, so a movement
+ * lands before the count or is refused, and a closed shift never changes. The shift is the actor's own
+ * (`recordShiftCash`, `recordShiftCashIfOpen`) or, for a correction of one of its entries, the shift
+ * that entry is in (`recordShiftCashInShift`, UMK-1984).
  */
 
 export type CashEntry = {

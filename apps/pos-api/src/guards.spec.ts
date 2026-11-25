@@ -74,7 +74,7 @@ describe('repo guards', () => {
     const offenders = files
       .filter(({ f }) => f !== path.join('expenses', 'expenses.service.ts'))
       .filter(({ text }) =>
-        /\.(insert|update|delete)\(\s*expenses\b|(insert\s+into|update|delete\s+from)\s+pos\.expenses|kind:\s*['"`]expense(_reversal)?['"`]/i.test(
+        /\.(insert|update|delete)\(\s*(expenses|expenseEdits)\b|(insert\s+into|update|delete\s+from)\s+pos\.expense(s|_edits)\b|kind:\s*['"`]expense(_reversal)?['"`]/i.test(
           text,
         ),
       )
@@ -86,6 +86,9 @@ describe('repo guards', () => {
     )!.text;
     expect(service).toMatch(/recordShiftCash\(/);
     expect(service).toMatch(/recordShiftCashInShift\(/);
+    // The edit history is append-only: inserted, never changed.
+    expect(service).toMatch(/\.insert\(expenseEdits\)/);
+    expect(service).not.toMatch(/\.(update|delete)\(\s*expenseEdits\b/);
   });
 
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {

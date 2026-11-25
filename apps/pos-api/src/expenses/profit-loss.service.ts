@@ -16,6 +16,21 @@ import { ExpensesService, resolvePeriod } from './expenses.service';
  * Unlike the other reports' `grossProfit` (revenue − tax − cost), tax stays inside revenue here, as the
  * owner-approved screen shows the sum; `tax` is returned so a screen can name it.
  */
+/**
+ * What each figure is called on a screen and in the CSV. Gross and net profit say that tax is inside
+ * them: the dashboard's and the sales reports' gross profit take tax out (open owner question).
+ */
+export const PROFIT_LOSS_LABELS = {
+  revenue: 'Hasil jualan (termasuk pajak)',
+  cost: 'Modal barang terjual',
+  grossProfit: 'Untung kotor (termasuk pajak)',
+  expenses: 'Pengeluaran',
+  netProfit: 'Untung bersih (termasuk pajak)',
+  tax: 'Pajak (termasuk dalam hasil jualan)',
+  rounding: 'Pembulatan tunai (di luar hasil jualan)',
+  supplierPayments: 'Bayar pemasok (bukan pengeluaran)',
+} as const;
+
 @Injectable()
 export class ProfitLossService {
   constructor(
@@ -67,6 +82,9 @@ export class ProfitLossService {
       timezone: tz,
       from: range.from,
       to: range.to,
+      // Tax is inside revenue, gross profit and net profit; `labels` says so.
+      taxIncluded: true,
+      labels: PROFIT_LOSS_LABELS,
       current: current.figures,
       previous: previous.figures,
       netProfitChange: current.figures.netProfit - previous.figures.netProfit,

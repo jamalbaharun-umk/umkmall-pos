@@ -176,6 +176,13 @@
       "when": 1795591359525,
       "tag": "0024_expenses",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795592378214,
+      "tag": "0025_expense_edits",
+      "breakpoints": true
     }
   ]
 }

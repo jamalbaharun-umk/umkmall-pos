@@ -134,10 +134,10 @@ export class ExpensesController {
   }
 }
 
-// Profit is for whoever manages expenses (owner-approved design): a cashier with `reports.view` alone
-// does not see it.
+// Profit is a margin figure like the dashboard's: `reports.view`, never `expenses.manage` alone (someone
+// who only records expenses does not see what the store earns).
 @Controller('reports/profit-loss')
-@RequirePermission('expenses.manage')
+@RequirePermission('reports.view')
 export class ProfitLossController {
   constructor(private readonly profitLoss: ProfitLossService) {}
 
@@ -156,21 +156,18 @@ export class ProfitLossController {
     );
     const c = r.current;
     const p = r.previous;
+    const l = r.labels;
     return toCsv(
       ['Keterangan', `${c.from} s.d. ${c.to}`, `${p.from} s.d. ${p.to}`],
       [
-        ['Hasil jualan', c.revenue, p.revenue],
-        ['Modal barang terjual', c.cost, p.cost],
-        ['Untung kotor', c.grossProfit, p.grossProfit],
-        ['Pengeluaran', c.expenses, p.expenses],
-        ['Untung bersih', c.netProfit, p.netProfit],
-        ['Pajak (termasuk dalam hasil jualan)', c.tax, p.tax],
-        ['Pembulatan tunai (di luar hasil jualan)', c.rounding, p.rounding],
-        [
-          'Bayar pemasok (bukan pengeluaran)',
-          c.supplierPayments,
-          p.supplierPayments,
-        ],
+        [l.revenue, c.revenue, p.revenue],
+        [l.cost, c.cost, p.cost],
+        [l.grossProfit, c.grossProfit, p.grossProfit],
+        [l.expenses, c.expenses, p.expenses],
+        [l.netProfit, c.netProfit, p.netProfit],
+        [l.tax, c.tax, p.tax],
+        [l.rounding, c.rounding, p.rounding],
+        [l.supplierPayments, c.supplierPayments, p.supplierPayments],
         ...r.topExpenses.map((e) => [`Pengeluaran: ${e.label}`, e.total, null]),
       ],
     );

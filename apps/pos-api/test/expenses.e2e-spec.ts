@@ -18,6 +18,8 @@ const day = (offset = 0) =>
 describe('expense log and profit and loss (UMK-1984)', () => {
   let app: INestApplication;
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
+  // A second owner connection that holds a row lock while requests are in flight (the race tests).
+  const locker = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
   const http = () => request(app.getHttpServer());
 
   beforeAll(async () => {
@@ -26,7 +28,39 @@ describe('expense log and profit and loss (UMK-1984)', () => {
   afterAll(async () => {
     await app.close();
     await admin.end();
+    await locker.end();
   });
+
+  /** Resolves once `n` backends of this database wait for a lock: the requests are in flight, in order. */
+  async function untilWaiting(n: number) {
+    for (let i = 0; i < 400; i++) {
+      const [{ waiting }] = await admin<{ waiting: number }[]>`
+        select count(*)::int as waiting from pg_locks l
+        join pg_stat_activity a on a.pid = l.pid
+        where not l.granted and a.datname = current_database()`;
+      if (waiting >= n) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`fewer than ${n} requests reached the lock`);
+  }
+  /** Sends the request now (supertest sends on `then`) and returns its pending response. */
+  const send = (req: request.Test) => req.then((res) => res);
+  /**
+   * Holds the row lock of one shift or expense (`for update`, as the database owner) while `during`
+   * starts requests and waits until they queue behind it; the lock is released when `during` returns.
+   */
+  const holding = <T>(
+    table: 'shifts' | 'expenses',
+    id: string,
+    during: () => Promise<T>,
+  ) =>
+    locker.begin(async (sql) => {
+      await sql`select id from ${sql(`pos.${table}`)} where id = ${id} for update`;
+      return during();
+    }) as Promise<T>;
+  /** YYYY-MM-DD today in `tz`. */
+  const dayIn = (tz: string) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 
   const post = (auth: string, url: string, body: object = {}, key?: string) => {
     const r = http().post(url).set('Authorization', auth);
@@ -662,7 +696,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
   });
 
   describe('access', () => {
-    it('needs expenses.manage: a plain cashier gets 403 everywhere and does not see profit', async () => {
+    it('needs expenses.manage for the log and reports.view for the profit: neither permission opens the other', async () => {
       const s = await createStore();
       const e = (
         await spend(s.auth, {
@@ -671,6 +705,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           source: 'outside',
         }).expect(201)
       ).body;
+      // A cashier who sees reports but does not manage expenses: the report, not the log.
       const cashier = await createCashier(app, s, [
         'sales.create',
         'reports.view',
@@ -685,24 +720,36 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         '/expenses/csv',
         '/expenses/categories',
         `/expenses/${e.id}`,
-        '/reports/profit-loss',
-        '/reports/profit-loss/csv',
       ])
         await get(cashier.auth, url).expect(403);
       await patch(cashier.auth, `/expenses/${e.id}`, { note: 'x' }).expect(403);
       await post(cashier.auth, `/expenses/${e.id}/void`).expect(403);
+      await get(cashier.auth, '/reports/profit-loss').expect(200);
+      await get(cashier.auth, '/reports/profit-loss/csv').expect(200);
       await http().get('/expenses').expect(401);
+      await http().get('/reports/profit-loss').expect(401);
       expect(await rowCount(s.tenantId)).toBe(1);
 
-      // With the permission (and no reports.view) a cashier records and reads the report.
+      // A holder of expenses.manage alone records, reads, edits and voids expenses, and sees no profit.
       const keeper = await createCashier(app, s, ['expenses.manage']);
-      await spend(keeper.auth, {
+      const mine = await spend(keeper.auth, {
         amount: 2000,
         category: 'gaji',
         source: 'outside',
       }).expect(201);
-      await get(keeper.auth, '/reports/profit-loss').expect(200);
+      await get(keeper.auth, '/expenses').expect(200);
+      await get(keeper.auth, '/expenses/csv').expect(200);
+      await patch(keeper.auth, `/expenses/${mine.body.id}`, {
+        note: 'x',
+      }).expect(200);
+      await post(keeper.auth, `/expenses/${mine.body.id}/void`).expect(200);
+      await get(keeper.auth, '/reports/profit-loss').expect(403);
+      await get(keeper.auth, '/reports/profit-loss/csv').expect(403);
       await get(keeper.auth, '/reports/dashboard').expect(403);
+      // A cashier with neither sees neither.
+      const plain = await createCashier(app, s, ['sales.create']);
+      await get(plain.auth, '/expenses').expect(403);
+      await get(plain.auth, '/reports/profit-loss').expect(403);
     });
 
     it('cross-tenant: store B gets 404 on read, update and void of store A`s expense and sees none of it', async () => {
@@ -741,6 +788,333 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         (await get(a.auth, `/expenses/${e.id}`).expect(200)).body,
       ).toMatchObject({ note: null, voidedAt: null });
       expect(await current(a.auth)).toMatchObject({ expectedCash: 91_000 });
+    });
+  });
+
+  describe('edit history', () => {
+    it('keeps before and after of every edit, who and when; an edit that changes nothing leaves no trace', async () => {
+      const s = await createStore();
+      const keeper = await createCashier(app, s, ['expenses.manage']);
+      const e = (
+        await spend(s.auth, {
+          amount: 5000,
+          category: 'lainnya',
+          source: 'outside',
+          note: 'plastik',
+        }).expect(201)
+      ).body;
+      expect(e.edits).toEqual([]);
+      await patch(keeper.auth, `/expenses/${e.id}`, {
+        amount: 6000,
+        note: null,
+      }).expect(200);
+      const second = await patch(s.auth, `/expenses/${e.id}`, {
+        category: 'transport',
+        date: day(-2),
+        amount: 6000, // the same amount: not a change
+      }).expect(200);
+      expect(second.body.edits).toMatchObject([
+        {
+          changes: {
+            amount: { from: 5000, to: 6000 },
+            note: { from: 'plastik', to: null },
+          },
+          actorId: keeper.staffId,
+          actorKind: 'cashier',
+          actorName: 'Sari',
+          createdAt: expect.any(String),
+        },
+        {
+          changes: {
+            category: { from: 'lainnya', to: 'transport' },
+            date: { from: day(), to: day(-2) },
+          },
+          actorId: s.userId,
+          actorKind: 'owner',
+          actorName: 'Pemilik',
+        },
+      ]);
+      expect(Object.keys(second.body.edits[1].changes).sort()).toEqual([
+        'category',
+        'date',
+      ]);
+      // The same values again: no history row, "last edited" stays.
+      const same = await patch(keeper.auth, `/expenses/${e.id}`, {
+        category: 'transport',
+        note: '',
+        amount: 6000,
+        date: day(-2),
+      }).expect(200);
+      expect(same.body).toEqual(second.body);
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from pos.expense_edits where expense_id = ${e.id}`;
+      expect(n).toBe(2);
+      // A refused edit leaves none either.
+      await patch(s.auth, `/expenses/${e.id}`, { date: day(1) }).expect(422);
+      // The history is the expense's own: the list rows do not carry it, another store never reads it.
+      const other = await createStore();
+      await get(other.auth, `/expenses/${e.id}`).expect(404);
+      const read = await get(s.auth, `/expenses/${e.id}`).expect(200);
+      expect(read.body.edits).toHaveLength(2);
+    });
+  });
+
+  describe('races (the test holds the row lock and releases it when the requests are queued)', () => {
+    const drawerExpense = async (auth: string, amount = 30_000) =>
+      (
+        await spend(auth, {
+          amount,
+          category: 'transport',
+          source: 'drawer',
+        }).expect(201)
+      ).body as { id: string; shiftId: string };
+
+    it('a double tap on a drawer expense: one expense, one cash-out', async () => {
+      const s = await createStore();
+      const shift = (await open(s.auth, 100_000)).body as { id: string };
+      const key = randomUUID();
+      const body = { amount: 30_000, category: 'transport', source: 'drawer' };
+      const [a, b] = await holding('shifts', shift.id, async () => {
+        const first = send(spend(s.auth, body, key));
+        await untilWaiting(1);
+        const second = send(spend(s.auth, body, key));
+        await untilWaiting(2);
+        return [first, second];
+      }).then((pending) => Promise.all(pending));
+      expect([a.status, b.status]).toEqual([201, 201]);
+      expect(b.body).toEqual(a.body);
+      expect(await rowCount(s.tenantId)).toBe(1);
+      expect(await ledger(s.tenantId)).toEqual([
+        {
+          direction: 'out',
+          kind: 'expense',
+          amount: '30000',
+          ref_id: a.body.id,
+        },
+      ]);
+      expect(await current(s.auth)).toMatchObject({
+        expectedCash: 70_000,
+        expenses: 30_000,
+      });
+    });
+
+    it('two voids at once: one reversal', async () => {
+      const s = await createStore();
+      await open(s.auth, 100_000);
+      const e = await drawerExpense(s.auth);
+      const [a, b] = await holding('expenses', e.id, async () => {
+        const first = send(post(s.auth, `/expenses/${e.id}/void`));
+        await untilWaiting(1);
+        const second = send(
+          post(s.auth, `/expenses/${e.id}/void`, { reason: 'kedua' }),
+        );
+        await untilWaiting(2);
+        return [first, second];
+      }).then((pending) => Promise.all(pending));
+      expect([a.status, b.status]).toEqual([200, 200]);
+      // The first one in wins, reason included; the second finds it voided.
+      expect(a.body).toMatchObject({ drawerReversed: true, voidReason: null });
+      expect(b.body).toEqual(a.body);
+      expect(await ledger(s.tenantId)).toEqual([
+        { direction: 'out', kind: 'expense', amount: '30000', ref_id: e.id },
+        {
+          direction: 'in',
+          kind: 'expense_reversal',
+          amount: '30000',
+          ref_id: e.id,
+        },
+      ]);
+      expect(await current(s.auth)).toMatchObject({ expectedCash: 100_000 });
+    });
+
+    it('a void that reaches the shift before the close is counted in it', async () => {
+      const s = await createStore();
+      await open(s.auth, 100_000);
+      const e = await drawerExpense(s.auth);
+      const [voided, closed] = await holding('shifts', e.shiftId, async () => {
+        const first = send(post(s.auth, `/expenses/${e.id}/void`));
+        await untilWaiting(1);
+        const second = send(
+          post(s.auth, '/shifts/current/close', { countedCash: 100_000 }),
+        );
+        await untilWaiting(2);
+        return [first, second];
+      }).then((pending) => Promise.all(pending));
+      expect([voided.status, closed.status]).toEqual([200, 200]);
+      expect(voided.body.drawerReversed).toBe(true);
+      expect(closed.body).toMatchObject({
+        expectedCash: 100_000,
+        expenses: 30_000,
+        expenseReversals: 30_000,
+        difference: 0,
+      });
+    });
+
+    it('a void that reaches the shift after the close leaves it as counted', async () => {
+      const s = await createStore();
+      await open(s.auth, 100_000);
+      const e = await drawerExpense(s.auth);
+      const [closed, voided] = await holding('shifts', e.shiftId, async () => {
+        const first = send(
+          post(s.auth, '/shifts/current/close', { countedCash: 70_000 }),
+        );
+        await untilWaiting(1);
+        const second = send(post(s.auth, `/expenses/${e.id}/void`));
+        await untilWaiting(2);
+        return [first, second];
+      }).then((pending) => Promise.all(pending));
+      expect([closed.status, voided.status]).toEqual([200, 200]);
+      expect(closed.body).toMatchObject({
+        expectedCash: 70_000,
+        difference: 0,
+      });
+      expect(voided.body.drawerReversed).toBe(false);
+      expect(await ledger(s.tenantId)).toHaveLength(1);
+      const after = await get(s.auth, `/shifts/${e.shiftId}`).expect(200);
+      expect(after.body).toMatchObject({
+        expectedCash: 70_000,
+        expenseReversals: 0,
+      });
+    });
+
+    it('a drawer expense that reaches the shift after the close is refused', async () => {
+      const s = await createStore();
+      const shift = (await open(s.auth, 100_000)).body as { id: string };
+      const [closed, late] = await holding('shifts', shift.id, async () => {
+        const first = send(
+          post(s.auth, '/shifts/current/close', { countedCash: 100_000 }),
+        );
+        await untilWaiting(1);
+        const second = send(
+          spend(s.auth, {
+            amount: 5000,
+            category: 'transport',
+            source: 'drawer',
+          }),
+        );
+        await untilWaiting(2);
+        return [first, second];
+      }).then((pending) => Promise.all(pending));
+      expect([closed.status, late.status]).toEqual([200, 422]);
+      expect(closed.body.expectedCash).toBe(100_000);
+      expect(await rowCount(s.tenantId)).toBe(0);
+      expect(await ledger(s.tenantId)).toEqual([]);
+    });
+  });
+
+  describe('the store`s day (timezone)', () => {
+    const setTimezone = (s: Store, timezone: string) =>
+      put(s.auth, '/reports/settings', { timezone }).expect(200);
+
+    it('today, the default date and "not in the future" follow the store`s timezone, not the server`s', async () => {
+      // UTC+14 and UTC−12 are 26 hours apart: the first store's today is always the second's tomorrow.
+      const east = await createStore();
+      const west = await createStore();
+      await setTimezone(east, 'Pacific/Kiritimati');
+      await setTimezone(west, 'Etc/GMT+12');
+      const eastDay = dayIn('Pacific/Kiritimati');
+      const westDay = dayIn('Etc/GMT+12');
+      expect(eastDay > westDay).toBe(true);
+      const body = { amount: 1000, category: 'lainnya', source: 'outside' };
+
+      expect((await spend(east.auth, body).expect(201)).body.date).toBe(
+        eastDay,
+      );
+      expect((await spend(west.auth, body).expect(201)).body.date).toBe(
+        westDay,
+      );
+      // The east's today is a future date in the west, and fine in the east.
+      const future = await spend(west.auth, { ...body, date: eastDay }).expect(
+        422,
+      );
+      expect(future.body.errors).toEqual({
+        date: 'Tanggal tidak boleh di masa depan',
+      });
+      await spend(east.auth, { ...body, date: eastDay }).expect(201);
+      // A drawer expense is dated the store's today; the west's date is "not today" in the east.
+      await open(east.auth);
+      await spend(east.auth, {
+        ...body,
+        source: 'drawer',
+        date: westDay,
+      }).expect(422);
+      const drawer = await spend(east.auth, {
+        ...body,
+        source: 'drawer',
+      }).expect(201);
+      expect(drawer.body.date).toBe(eastDay);
+      // "Today" in the list and in the report is that store's day.
+      for (const [store, d, count] of [
+        [east, eastDay, 3],
+        [west, westDay, 1],
+      ] as [Store, string, number][]) {
+        const list = await get(store.auth, '/expenses?period=today').expect(
+          200,
+        );
+        expect(list.body).toMatchObject({ from: d, to: d, total: count });
+        const pl = await get(store.auth, '/reports/profit-loss').expect(200);
+        expect(pl.body).toMatchObject({ from: d, to: d });
+        expect(pl.body.current.expenses).toBe(count * 1000);
+      }
+    });
+
+    it('a sale around midnight counts in the store`s own day: WIB and WITA disagree for one hour', async () => {
+      // 16:30 UTC on 10 March = 23:30 WIB on the 10th = 00:30 WITA on the 11th.
+      const revenue = async (s: Store, date: string) =>
+        (
+          await get(
+            s.auth,
+            `/reports/profit-loss?from=${date}&to=${date}`,
+          ).expect(200)
+        ).body.current.revenue as number;
+      const storeWithSales = async (timezone: string, instants: string[]) => {
+        const s = await createStore();
+        await setTimezone(s, timezone);
+        const teh = await product(s, 'Es Teh', 5000, 3000);
+        await open(s.auth);
+        for (const at of instants) {
+          const sale = await sell(s, {
+            lines: [{ productId: teh, qty: 1 }],
+            paid: 5000,
+          });
+          await admin`update pos.sales set created_at = ${at}::timestamptz where id = ${sale.id}`;
+        }
+        return s;
+      };
+      const wib = await storeWithSales('Asia/Jakarta', [
+        '2026-03-10T16:30:00Z',
+      ]);
+      const wita = await storeWithSales('Asia/Makassar', [
+        '2026-03-10T16:30:00Z',
+      ]);
+      expect(await revenue(wib, '2026-03-10')).toBe(5000);
+      expect(await revenue(wib, '2026-03-11')).toBe(0);
+      expect(await revenue(wita, '2026-03-10')).toBe(0);
+      expect(await revenue(wita, '2026-03-11')).toBe(5000);
+      // The boundary itself, to the second: 23:59:59 is the old day, 00:00:00 the new one.
+      const edge = await storeWithSales('Asia/Jakarta', [
+        '2026-03-10T16:59:59Z',
+        '2026-03-10T17:00:00Z',
+        '2026-03-10T17:00:00Z',
+      ]);
+      expect(await revenue(edge, '2026-03-10')).toBe(5000);
+      expect(await revenue(edge, '2026-03-11')).toBe(10_000);
+      // An expense's day is the date it was given, whatever the timezone.
+      await spend(wita.auth, {
+        amount: 700,
+        category: 'lainnya',
+        source: 'outside',
+        date: '2026-03-10',
+      }).expect(201);
+      const pl = await get(
+        wita.auth,
+        '/reports/profit-loss?from=2026-03-10&to=2026-03-10',
+      ).expect(200);
+      expect(pl.body).toMatchObject({
+        timezone: 'Asia/Makassar',
+        current: { revenue: 0, expenses: 700, netProfit: -700 },
+        previous: { from: '2026-03-09', to: '2026-03-09' },
+      });
     });
   });
 
@@ -869,6 +1243,18 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         timezone: 'Asia/Jakarta',
         from: day(),
         to: day(),
+        // The tax-inclusive basis is said out loud (the dashboard's gross profit takes tax out).
+        taxIncluded: true,
+        labels: {
+          revenue: 'Hasil jualan (termasuk pajak)',
+          cost: 'Modal barang terjual',
+          grossProfit: 'Untung kotor (termasuk pajak)',
+          expenses: 'Pengeluaran',
+          netProfit: 'Untung bersih (termasuk pajak)',
+          tax: 'Pajak (termasuk dalam hasil jualan)',
+          rounding: 'Pembulatan tunai (di luar hasil jualan)',
+          supplierPayments: 'Bayar pemasok (bukan pengeluaran)',
+        },
         current: TODAY,
         previous: YESTERDAY,
         netProfitChange: 275,
@@ -1029,11 +1415,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       );
       expect(pl.text.split('\r\n')).toEqual([
         `Keterangan,${day()} s.d. ${day()},${day(-1)} s.d. ${day(-1)}`,
-        'Hasil jualan,39475,5500',
+        'Hasil jualan (termasuk pajak),39475,5500',
         'Modal barang terjual,20700,3000',
-        'Untung kotor,18775,2500',
+        'Untung kotor (termasuk pajak),18775,2500',
         'Pengeluaran,17100,1000',
-        'Untung bersih,1675,1500',
+        'Untung bersih (termasuk pajak),1675,1500',
         'Pajak (termasuk dalam hasil jualan),2225,500',
         'Pembulatan tunai (di luar hasil jualan),25,0',
         'Bayar pemasok (bukan pengeluaran),4000,0',

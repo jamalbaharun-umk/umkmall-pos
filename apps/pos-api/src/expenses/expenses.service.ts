@@ -13,6 +13,7 @@ import {
   isNull,
   lte,
   sql,
+  type AnyColumn,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { createHash, randomUUID } from 'node:crypto';
@@ -23,6 +24,8 @@ import {
   EXPENSE_CATEGORIES,
   EXPENSE_CATEGORY_LABELS,
   type ExpenseCategory,
+  type ExpenseChanges,
+  expenseEdits,
   expenses,
   staff,
   SUPPLIER_PAYMENT_CATEGORY,
@@ -128,7 +131,7 @@ export function resolvePeriod(q: PeriodQuery, today: string): ResolvedPeriod {
 }
 
 const voider = alias(staff, 'voider');
-const actorName = (kind: typeof expenses.actorKind, name: typeof staff.name) =>
+const actorName = (kind: AnyColumn, name: AnyColumn) =>
   sql<string>`case when ${kind} = 'owner' then 'Pemilik' else coalesce(${name}, 'Staf') end`;
 
 const columns = {
@@ -217,12 +220,37 @@ export class ExpensesService {
       );
   }
 
+  /** One expense with its edit history, oldest edit first. */
   async get(tenantId: string, id: string) {
     const [row] = await this.rows().where(
       and(eq(expenses.tenantId, tenantId), eq(expenses.id, id)),
     );
     if (!row) throw new NotFoundException();
-    return present(row);
+    const edits = await this.db
+      .select({
+        id: expenseEdits.id,
+        changes: expenseEdits.changes,
+        actorId: expenseEdits.actorId,
+        actorKind: expenseEdits.actorKind,
+        actorName: actorName(expenseEdits.actorKind, staff.name),
+        createdAt: expenseEdits.createdAt,
+      })
+      .from(expenseEdits)
+      .leftJoin(
+        staff,
+        and(
+          eq(staff.tenantId, expenseEdits.tenantId),
+          eq(staff.id, expenseEdits.actorId),
+        ),
+      )
+      .where(
+        and(
+          eq(expenseEdits.tenantId, tenantId),
+          eq(expenseEdits.expenseId, id),
+        ),
+      )
+      .orderBy(expenseEdits.createdAt, expenseEdits.id);
+    return { ...present(row), edits };
   }
 
   private async byKey(db: Db | Tx, tenantId: string, key: string) {
@@ -311,6 +339,8 @@ export class ExpensesService {
       const [row] = await tx
         .select({
           source: expenses.source,
+          category: expenses.category,
+          note: expenses.note,
           amount: expenses.amount,
           date: expenses.expenseDate,
           voidedAt: expenses.voidedAt,
@@ -337,13 +367,34 @@ export class ExpensesService {
           );
       } else if (date !== row.date && date > (await this.today(s.tenantId, tx)))
         throw fieldError('date', 'Tanggal tidak boleh di masa depan');
+      const category = input.category ?? row.category;
+      const note = input.note === undefined ? row.note : input.note || null;
+      // The history: before and after of every field this edit really changed.
+      const changes: ExpenseChanges = {
+        ...(category !== row.category
+          ? { category: { from: row.category, to: category } }
+          : {}),
+        ...(amount !== row.amount
+          ? { amount: { from: row.amount, to: amount } }
+          : {}),
+        ...(note !== row.note ? { note: { from: row.note, to: note } } : {}),
+        ...(date !== row.date ? { date: { from: row.date, to: date } } : {}),
+      };
+      // Nothing changed: no edit happened, so no history row and no new "last edited".
+      if (Object.keys(changes).length === 0) return;
+      await tx.insert(expenseEdits).values({
+        tenantId: s.tenantId,
+        expenseId: id,
+        changes,
+        actorId: s.actorId,
+        actorKind: s.kind,
+      });
       await tx
         .update(expenses)
         .set({
-          ...(input.category
-            ? { category: input.category, kind: kindOf(input.category) }
-            : {}),
-          ...(input.note !== undefined ? { note: input.note || null } : {}),
+          category,
+          kind: kindOf(category),
+          note,
           amount,
           expenseDate: date,
           updatedAt: new Date(),

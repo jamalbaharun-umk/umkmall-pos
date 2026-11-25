@@ -5,6 +5,7 @@ import {
   date,
   foreignKey,
   index,
+  jsonb,
   text,
   timestamp,
   unique,
@@ -115,6 +116,41 @@ export const expenses = pos
           and (${t.voidedAt} is not null or ${t.voidReason} is null)
           and (${t.drawerReversed} is not null) = (${t.voidedAt} is not null and ${t.source} = 'drawer')`,
       ),
+    ],
+  )
+  .enableRLS();
+
+/** One edited field: what it was and what it became. A cleared note is `null`. */
+export type ExpenseChange<T> = { from: T; to: T };
+export type ExpenseChanges = {
+  category?: ExpenseChange<ExpenseCategory>;
+  amount?: ExpenseChange<number>;
+  note?: ExpenseChange<string | null>;
+  date?: ExpenseChange<string>;
+};
+
+// The edit history of an expense: one append-only row per edit that changed something, with the
+// before and after value of every changed field, who and when. Never updated or deleted.
+export const expenseEdits = pos
+  .table(
+    'expense_edits',
+    {
+      id: id(),
+      tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'restrict' }),
+      expenseId: uuid('expense_id').notNull(),
+      changes: jsonb('changes').$type<ExpenseChanges>().notNull(),
+      actorId: uuid('actor_id').notNull(),
+      actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      index('expense_edits_expense_idx').on(t.tenantId, t.expenseId),
+      foreignKey({
+        columns: [t.tenantId, t.expenseId],
+        foreignColumns: [expenses.tenantId, expenses.id],
+      }).onDelete('restrict'),
     ],
   )
   .enableRLS();
