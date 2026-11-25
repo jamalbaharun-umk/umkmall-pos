@@ -16,20 +16,42 @@ no onboarding, no sub-merchant.
 ## Decisions
 
 - **An online payment method is configured per store.** `pos.payment_methods` gets a fifth kind `online` with a
-  `gateway_method` (`fake_qris` or `fake_va`, the list is `ONLINE_METHODS` in `payments.client.ts`). Creating one is
-  refused (422) while payment-api is off, and when `NODE_ENV=production`: a real provider waits for UMK-1977.
+  `gateway_method` (`fake_qris` or `fake_va`: `GATEWAY_METHODS` in `db/schema/sales.ts`, a database check, and
+  `ONLINE_METHODS` in `payments.client.ts`). Online payments are on only with payment-api on AND `NODE_ENV`
+  explicitly `development` or `test` (`loadEnv().onlinePaymentsAllowed`): production and an unset `NODE_ENV` refuse
+  them (fails closed; a real provider waits for UMK-1977). That is asked when a method is created (422) and again
+  at every sale (422, nothing taken), so a method that exists does not sell where it must not; a method whose
+  gateway method this version does not know does not sell either.
 - **Attempts.** `sales.payment_attempt` (1, 2, …) is the attempt the sale is being paid with; the charge key is
   `<saleId>:<attempt>`. Only the switch to cash starts a new attempt, and `payment_attempt_at` is when it started
   (the job's wait before it gives an unanswered charge up counts from there). A new QR for the same sale (D12) is not built:
   the cashier cancels and sells again.
-- **Switch to cash is an intent written before anything is closed.** `sales.switch_cash_paid` (the cash tendered)
-  is stored first; then the PG attempt is closed at payment-api (`POST /payments/:id/cancel`, or
-  `POST /payments/close` when no payment has the key). Any worker (the request, a status poll, the job) that then
-  finds the attempt closed unpaid turns the sale into a cash sale (method Tunai, cash rounding, attempt + 1) instead
-  of cancelling it, and charges it as `cash`. The PG says the bill was paid after all (D5) → the sale completes as
-  the PG sale, the intent is dropped and the request answers 409 `already_paid`. A switch left unfinished therefore
-  completes as cash, because the cashier said the cash was received (the M15 reasoning): a sale past its first
-  attempt is charged by every worker and never given up for want of a payment.
+- **Switch to cash is an intent written before anything is closed, and only the cashier's request acts on it.**
+  `sales.switch_cash_paid` (the cash tendered) is stored first; then that request closes the PG attempt at
+  payment-api (`POST /payments/:id/cancel`, or `POST /payments/close` when no payment has the key), turns the sale
+  into a cash sale (method Tunai, cash rounding, attempt + 1) and charges it as `cash`. The PG says the bill was
+  paid after all (D5) → the sale completes as the PG sale, the intent is dropped and the request answers 409
+  `already_paid`.
+  - **A request that got no usable answer takes the intent back** and says so (503 `payment_unavailable`, 409
+    `cancel_refused`): the sale waits for its PG payment as before, the customer can still pay the QR, and nothing
+    turns it into a cash sale later. If the close did reach payment-api, the bill is closed and the next poll
+    cancels the sale (the cashier sells again).
+  - **A poll, a check or a repeat of the sale never does the switch**: with an intent present they change
+    nothing. They also never cancel a sale that has one.
+  - **The job finishes a switch only when the bill was closed for it** (payment `cancelled`, intent still there:
+    the request died between the close and the turn). An intent whose bill is still open or closed by itself is
+    left alone; the cashier asks again or cancels (a cancel drops the intent first).
+  - Once the sale IS a cash sale (attempt 2) the cashier said the cash was received: every worker charges it and
+    none gives it up for want of a payment. A cash request that could not record the cash answers 503
+    `cash_payment_pending`.
+- **An answer is applied only to the sale that was read.** `settle` reads the sale without a lock, asks
+  payment-api, then writes under the sale's row lock. That write is refused as stale when the sale has moved to
+  another attempt, or when it would cancel a sale whose switch to cash is asked; the sale is then read again. So a
+  poll, a check or the job that read the sale before a switch can never cancel it after.
+- **No Idempotency-Key on refund, cancel and close.** Exactly-once rests on payment-api's state machine: a bill is
+  closed only while it waits (a second close answers the closed payment), a refund is asked only for a payment
+  that is `paid` (pos-api looks first, and payment-api answers the refund under way on a repeat), and the refund's
+  key at the PG is payment-api's own `refund_key`.
 - **A store that may not charge at the PG gets no bill** (UMK-2019). payment-api refuses the charge with
   `merchant_not_active`, `method_disabled`, `live_disabled` or `merchant_mode_mismatch` and writes no payment.
   pos-api then closes the charge key (`POST /payments/close`) and cancels the sale at once, stock and voucher back,
@@ -51,9 +73,11 @@ no onboarding, no sub-merchant.
 - **Statuses are payment-api's.** pos-api maps `created`/`pending` to `awaiting_payment` and passes the rest on.
   A payment is `expired` only when payment-api says so (after the PG's answer and the grace period);
   `checkoutExpired` tells the screen that the QR's own time is over while that is still open.
-- **Who may act.** Reading, checking and cancelling: the sale's own cashier, or `reports.view`. Paying in cash: the
-  sale's own cashier only (the cash goes into that shift's drawer). Refund: started with `sales.create`, approved by
-  PIN of a `sales.void` holder (the void rules). Retry and manual mark: `sales.void`.
+- **Who may act.** Reading, checking and cancelling: the sale's own cashier, or a holder of `sales.void` (the
+  supervisor who recovers a stuck payment). Not `reports.view`: the answer carries what pays the bill. Paying in
+  cash: the sale's own cashier only (the cash goes into that shift's drawer). Refund: started with `sales.create`,
+  approved by PIN of a `sales.void` holder (the void rules). Retry and manual mark: `sales.void`. Every action
+  route is for a person at the till (`assertPersonAtTill`): an agent session uses none of them.
 
 ## Endpoints
 
@@ -107,7 +131,7 @@ The store's gateway account is not active or the method is off → the same 409 
 
 ### Status
 
-- `GET /sales/:id/payment` (signed in; own sale or `reports.view`) → 200 SalePayment. The poll (every 3 s): reads
+- `GET /sales/:id/payment` (signed in; own sale or `sales.void`) → 200 SalePayment. The poll (every 3 s): reads
   payment-api's stored status, asks no PG, and applies the answer (completes or cancels the sale).
 - `POST /sales/:id/payment/check` (`sales.create`) → 200 SalePayment. "Cek status pembayaran": payment-api asks the
   PG (at most once per 5 s per payment), then as above. Recovers a lost webhook.
@@ -118,11 +142,15 @@ The store's gateway account is not active or the method is off → the same 409 
 up to Rp100) → 200 SalePayment with `saleStatus: 'completed'`, `method: 'cash'`. A repeat answers the same.
 409 `{ code }`: `already_paid` (the customer paid the QR; the sale is completed as a PG sale, give the cash back),
 `not_awaiting` (the sale is cancelled or was never waiting), `not_online` (nothing to switch from), `not_own_sale`,
-`cancel_refused` (payment-api would not close the bill; the sale still waits).
+`cancel_refused` (payment-api would not close the bill; the sale still waits), `payment_refused` (the sale is a cash
+sale already and payment-api refused to record its cash).
+503 `{ code }`: `payment_unavailable` (the switch did NOT happen and was taken back: the sale waits for its PG
+payment as before), `cash_payment_pending` (the sale IS a cash sale now, its cash is not recorded yet: repeat the
+request, or the job records it).
 
 ### Cancel
 
-`POST /sales/:id/payment/cancel` (`sales.create`; own sale or `reports.view`), no body, no PIN → 200 SalePayment
+`POST /sales/:id/payment/cancel` (`sales.create`; own sale or `sales.void`), no body, no PIN → 200 SalePayment
 with `saleStatus: 'cancelled'`; stock and voucher back. A repeat answers the same. 409 `already_paid` (completed
 instead), `not_awaiting` (a receipt: void or refund it), `cancel_refused`. It works for any sale that awaits
 payment, also a cash one whose charge never got an answer.
@@ -137,13 +165,27 @@ payment, also a cash one whose charge never got an answer.
 - `POST /sales/:id/refund/retry` (`sales.void`), no body → 200 void record. Asks a refused refund again; a refund
   that is pending or done is answered as it stands.
 - `POST /sales/:id/refund/manual` (`sales.void`) body `{ note }` → 200 void record with `refundStatus: 'succeeded'`.
-  Only for a refused refund (409 `not_refund_failed` otherwise).
+  Only for a refused refund (409 `not_refund_failed` otherwise); the mark asks payment-api where the refund stands
+  first.
 - Refund status: `refund.status` of `GET /sales/:id/payment`, and `refundStatus` of `GET /sales/:id/void`.
 
 ## Definition of Done
 
-- [test] An online method needs a gateway method, payment-api on and a non-production environment; a kasbon
-  instalment cannot be paid with one.
+- [test] An online method needs a gateway method, payment-api on and `NODE_ENV` explicitly development or test; a
+  kasbon instalment cannot be paid with one. With `NODE_ENV=production` and with it unset: creation 422, and a
+  sale with a method that exists 422 with nothing taken. An unknown gateway method is refused by the database
+  check, and a row that has one does not sell.
+- [test] A stale answer never cancels a sale switched to cash: a poll, a check and the job, each held after
+  reading the sale, against a switch held (a) with the bill just closed and (b) with the cash not yet recorded
+  (revert-red once).
+- [test] A switch that got 503 is taken back: poll, check and job leave the sale a PG sale, and the customer's QR
+  payment completes it with no cash. The close reached payment-api but its answer was lost: the sale is cancelled.
+  A switch whose request died is finished by the job only when the bill was closed for it.
+- [test] Two workers at once: cancel and switch, cancel and the customer's payment, checks and the job on a paid
+  bill, refund retries and the job, a refund's request and the job: one outcome, nothing twice. A refund that
+  succeeded is not overwritten by an older answer.
+- [test] Guard: every action route on a sale's payment and every refund route checks the session kind first
+  (`assertPersonAtTill`; revert-red once).
 - [test] A PG sale answers `awaiting_payment` with `qrString` (QRIS) or `bank` + `vaNumber` (VA), `expiresAt` 15
   minutes ahead, charge key `<saleId>:1`, stock and voucher taken; a repeat makes no second sale or bill (D10).
 - [test] Paid through the fake webhook: the poll completes the sale once; the shift's cash is untouched.
@@ -160,10 +202,10 @@ payment, also a cash one whose charge never got an answer.
 - [test] Repeats of every action are idempotent.
 - [test] Cross-tenant: store B gets 404 on store A's sale for every new route, and nothing of A changes.
 - [test] Permissions: a cashier without `sales.void` cannot retry or mark a refund; another cashier cannot read,
-  cancel or cash another cashier's sale.
+  cancel or cash another cashier's sale, also with `reports.view`; one with `sales.void` can read and cancel it.
 - [test] The shift does not close while a PG sale awaits payment.
-- [test] The job leaves an open PG sale waiting, finishes a switch left half done, sends a refund that could not be
-  sent and follows a pending refund.
+- [test] The job leaves an open PG sale waiting, records the cash of a sale already switched, sends a refund that
+  could not be sent and follows a pending refund.
 - [test] Guard: no payment-api call inside any transaction of `payments-client/` (revert-red once).
 - [cmd] `npm run lint && npm run typecheck && npm run build`;
   `PGTEST_DB=… PAYTEST_DB=… npx jest --runInBand` in `apps/pos-api`.
@@ -172,7 +214,8 @@ payment, also a cash one whose charge never got an answer.
 
 ## Files
 
-- `apps/pos-api/src/db/schema/sales.ts`, `voids.ts`, `payment-sync.ts`, one migration `pg_cashier_flow`.
+- `apps/pos-api/src/db/schema/sales.ts`, `voids.ts`, `payment-sync.ts`, migrations `pg_cashier_flow` and
+  `pg_cashier_flow_review` (the gateway-method check; the job's index on `payment_attempt_at`).
 - `apps/pos-api/src/payments-client/`: `payments.client.ts` (sync, cancel, refund, manual refund, list by order),
   `payment-sync.service.ts` (attempts, the switch, refunds, the job), new `sale-payment.service.ts` and
   `sale-payment.controller.ts`, `payments.module.ts`.

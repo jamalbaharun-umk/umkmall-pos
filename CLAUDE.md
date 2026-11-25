@@ -214,17 +214,27 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **A PG sale waits for its payment** (plan
   [2026-11-25-006](docs/plans/2026-11-25-006-feat-umk-1991-pg-cashier-flow-plan.md), the routes and their shapes are
   there). A payment method of kind `online` carries payment-api's method (`ONLINE_METHODS` in `payments.client.ts`:
-  only the fake gateway's `fake_qris` and `fake_va`; refused with payment-api off and in production, UMK-1977).
+  only the fake gateway's `fake_qris` and `fake_va`, also a database check). Online payments are on only with
+  payment-api on and `NODE_ENV` explicitly `development` or `test` (`PaymentSync.onlineEnabled`; production and an
+  unset `NODE_ENV` refuse them, UMK-1977), asked when a method is created AND at every sale.
   `POST /sales` answers `awaiting_payment` with `payment` (QR or VA, `expiresAt`). pos-api learns the outcome by the
   screen's poll (`GET /sales/:id/payment`), the manual check (`POST …/payment/check`, the PG is asked) and the job;
   payment-api pushes nothing. Statuses shown are payment-api's own; pos-api never decides `expired` by its clock.
   A charge payment-api refuses because the store may not charge there (`GATE_REFUSALS`) closes the charge key and
   cancels the sale at once (409 with the `code`).
-- **Switch to cash is written before anything is closed:** `sales.switch_cash_paid` first, then the PG bill is closed.
-  Whoever then finds that attempt closed unpaid (request, poll, job) turns the sale into a cash sale with attempt + 1
-  and charges it; a bill the customer paid first completes the PG sale instead (409 `already_paid`). Late money on
-  the closed bill is payment-api's (unmatched receipt, auto-refund); pos-api only shows it. Cancelling an awaiting
-  sale needs no PIN and writes no void.
+- **Switch to cash is written before anything is closed, and only the cashier's request does it:**
+  `sales.switch_cash_paid` first, then that request (`settle` mode `cash`) closes the PG bill, turns the sale into a
+  cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
+  `already_paid`). A request without a usable answer takes the intent back (`abandonCashSwitch`) and says so; a
+  poll, a check or a repeat of the sale never switches and never cancels a sale that has an intent; the job
+  finishes a switch only when the bill is `cancelled` (closed for it). Late money on the closed bill is
+  payment-api's (unmatched receipt, auto-refund); pos-api only shows it. Cancelling an awaiting sale needs no PIN
+  and writes no void.
+- **An answer is applied only to the sale that was read:** `applyToSale` takes the attempt the payment belongs to
+  and answers `stale` (read again) when the sale is at another attempt, or would be cancelled with a switch to cash
+  asked. A new write of a sale's step 2 keeps both checks.
+- **A sale's payment routes are for its cashier or a `sales.void` holder** (the answer carries the QR), and every
+  action on them, and every refund route, starts with `assertPersonAtTill(s.kind)` (guard test).
 - **A paid PG sale is refunded, never voided** (`POST /sales/:id/refund`; a void answers 409 `use_refund`, a refund
   of a CASHAC sale 409 `use_void`, both before the PIN is checked). The refund is the void record with
   `sale_voids.refund_status` (`pending`, `succeeded`, `failed`): same reasons, same PIN approver, the sale reversed at
