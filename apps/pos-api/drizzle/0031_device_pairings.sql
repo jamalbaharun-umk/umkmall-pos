@@ -10,6 +10,7 @@ CREATE TABLE "pos"."device_pairings" (
 	"tenant_id" uuid,
 	"code_hash" text,
 	"secret_hash" text NOT NULL,
+	"requester_hash" text,
 	"expires_at" timestamp with time zone NOT NULL,
 	"claimed_at" timestamp with time zone,
 	"device_id" uuid,

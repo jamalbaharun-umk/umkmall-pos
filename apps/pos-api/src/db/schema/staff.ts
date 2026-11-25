@@ -179,6 +179,10 @@ export const devicePairings = pos
       codeHash: text('code_hash'),
       // sha256 of the secret only the asking device holds. It becomes the bound device's secret.
       secretHash: text('secret_hash').notNull(),
+      // sha256 of the network address that asked for the code: the per-address cap on open codes counts it.
+      // The address itself is not stored.
+      requesterHash: text('requester_hash'),
+      // The code's end; after the claim, the end of the time the device may still fetch its token.
       expiresAt: ts('expires_at').notNull(),
       claimedAt: ts('claimed_at'),
       deviceId: uuid('device_id'),

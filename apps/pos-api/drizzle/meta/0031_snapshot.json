@@ -1,5 +1,5 @@
 {
-  "id": "1d365828-945b-471e-8a36-7507070515a8",
+  "id": "5afa102b-ce23-4421-b1ae-6f95ef34b54d",
   "prevId": "d7e50e33-5cc5-4702-ab97-38638af1c8d1",
   "version": "7",
   "dialect": "postgresql",
@@ -883,6 +883,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "requester_hash": {
+          "name": "requester_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "expires_at": {
           "name": "expires_at",

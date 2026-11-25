@@ -5,17 +5,18 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Ip,
   NotFoundException,
   Post,
 } from '@nestjs/common';
-import { and, count, eq, gt, isNull, lt, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, lt, lte, sql } from 'drizzle-orm';
 import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { devicePairingAttempts, devicePairings, devices } from '../db/schema';
 import { Public } from '../tenancy/decorators';
-import { isUniqueViolation, parseBody } from './http';
+import { parseBody } from './http';
 import { lockSeconds } from './pin-auth.controller';
 import { hashSecret, newDeviceSecret, secretMatches } from './secrets';
 
@@ -27,7 +28,24 @@ export const PAIRING_CODE_TTL_SECONDS = 10 * 60;
  * limits it.
  */
 export const MAX_LIVE_PAIRINGS = 1000;
+/**
+ * Codes open at once for one network address, so that one caller cannot use up `MAX_LIVE_PAIRINGS` and block
+ * pairing for every store. A shop pairing several tablets behind one address stays under it: a code stops
+ * counting when it is used or expired.
+ */
+export const MAX_LIVE_PAIRINGS_PER_ADDRESS = 5;
+/** How long after the claim the paired device may still fetch its token (a poll just after the code's end). */
+export const PAIRING_TOKEN_GRACE_SECONDS = 10 * 60;
+/** Status polls one network address may make per minute, per pos-api process. */
+export const PAIRING_STATUS_POLLS_PER_MINUTE = 120;
 const CODE_DIGITS = 6;
+// pg_advisory_xact_lock key: one code is drawn at a time, so the caps are counted and the row is written as one.
+const START_LOCK = 20220031;
+const TOO_MANY = () =>
+  new HttpException(
+    { message: 'Terlalu banyak permintaan kode, coba lagi nanti' },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
 
 const TOKEN =
   /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/;
@@ -55,65 +73,69 @@ type Claim =
 export class DevicePairing {
   constructor(@InjectDb() private readonly db: Db) {}
 
-  /** The signed-out device asks for a code. */
-  async start() {
-    // Housekeeping: pairings long past their end (also the used ones; the device row is what stays).
-    await this.db
-      .delete(devicePairings)
-      .where(lt(devicePairings.expiresAt, sql`now() - interval '1 day'`));
-    const [{ open }] = await this.db
-      .select({ open: count() })
-      .from(devicePairings)
-      .where(
-        and(
-          isNull(devicePairings.claimedAt),
-          gt(devicePairings.expiresAt, sql`now()`),
-        ),
-      );
-    if (open >= MAX_LIVE_PAIRINGS)
-      throw new HttpException(
-        { message: 'Terlalu banyak permintaan kode, coba lagi nanti' },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-
+  /**
+   * The signed-out device asks for a code. `address` is the caller's network address: open codes are capped
+   * per address and in all. The count and the insert are one step (a transaction-scoped advisory lock), so
+   * parallel requests cannot pass the caps together.
+   */
+  async start(address: string) {
+    const requesterHash = hashSecret(address);
     const secret = newDeviceSecret();
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const code = randomInt(0, 10 ** CODE_DIGITS)
-        .toString()
-        .padStart(CODE_DIGITS, '0');
-      const codeHash = hashSecret(code);
-      // An expired, unused pairing still holds its code's hash: free it.
-      await this.db
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${START_LOCK})`);
+      // Housekeeping: pairings long past their end (also the used ones; the device row is what stays).
+      await tx
         .delete(devicePairings)
+        .where(lt(devicePairings.expiresAt, sql`now() - interval '1 day'`));
+      const [{ open, mine }] = await tx
+        .select({
+          open: sql<number>`count(*)::int`,
+          mine: sql<number>`(count(*) filter (where ${devicePairings.requesterHash} = ${requesterHash}))::int`,
+        })
+        .from(devicePairings)
         .where(
           and(
-            eq(devicePairings.codeHash, codeHash),
-            lte(devicePairings.expiresAt, sql`now()`),
+            isNull(devicePairings.claimedAt),
+            gt(devicePairings.expiresAt, sql`now()`),
           ),
         );
-      try {
-        const [row] = await this.db
+      if (open >= MAX_LIVE_PAIRINGS || mine >= MAX_LIVE_PAIRINGS_PER_ADDRESS)
+        throw TOO_MANY();
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const code = randomInt(0, 10 ** CODE_DIGITS)
+          .toString()
+          .padStart(CODE_DIGITS, '0');
+        const codeHash = hashSecret(code);
+        // An expired, unused pairing still holds its code's hash: free it.
+        await tx
+          .delete(devicePairings)
+          .where(
+            and(
+              eq(devicePairings.codeHash, codeHash),
+              lte(devicePairings.expiresAt, sql`now()`),
+            ),
+          );
+        // Another open pairing drew the same code: nothing is written, draw again.
+        const [row] = await tx
           .insert(devicePairings)
           .values({
             codeHash,
             secretHash: hashSecret(secret),
+            requesterHash,
             expiresAt: sql`now() + make_interval(secs => ${PAIRING_CODE_TTL_SECONDS})`,
           })
+          .onConflictDoNothing()
           .returning({ id: devicePairings.id });
-        return {
-          pairingToken: `${row.id}.${secret}`,
-          code,
-          expiresIn: PAIRING_CODE_TTL_SECONDS,
-        };
-      } catch (err) {
-        // Another open pairing drew the same code: draw again.
-        if (!isUniqueViolation(err)) throw err;
+        if (row)
+          return {
+            pairingToken: `${row.id}.${secret}`,
+            code,
+            expiresIn: PAIRING_CODE_TTL_SECONDS,
+          };
       }
-    }
-    throw new HttpException(
-      { message: 'Terlalu banyak permintaan kode, coba lagi nanti' },
-      HttpStatus.TOO_MANY_REQUESTS,
-    );
+      throw TOO_MANY();
+    });
   }
 
   /**
@@ -183,6 +205,8 @@ export class DevicePairing {
           deviceId: device.id,
           claimedAt: sql`now()`,
           codeHash: null,
+          // The device learns of the claim by polling: give it time to, also when the code was about to end.
+          expiresAt: sql`greatest(${devicePairings.expiresAt}, now() + make_interval(secs => ${PAIRING_TOKEN_GRACE_SECONDS}))`,
         })
         .where(eq(devicePairings.id, pairing.id));
       await tx
@@ -196,7 +220,8 @@ export class DevicePairing {
   /**
    * The asking device looks whether it was paired. It proves itself with the secret it was handed at the
    * start; the answer is its own device token, built from that secret. Null: no such pairing (unknown,
-   * expired, wrong secret, or its device was revoked).
+   * expired, wrong secret, or its device was revoked). A claimed pairing answers until
+   * `PAIRING_TOKEN_GRACE_SECONDS` after the claim.
    */
   async status(pairingToken: string) {
     const m = TOKEN.exec(pairingToken);
@@ -236,22 +261,44 @@ export class DevicePairing {
 // The signed-out device's two routes: no session, and no store yet. Neither takes a pairing code.
 @Controller('auth/device/pairing')
 export class DevicePairingController {
+  /** Status polls per address in the current minute. In memory: a limit per process, lost on restart. */
+  private readonly polls = new Map<string, { minute: number; count: number }>();
+
   constructor(private readonly pairing: DevicePairing) {}
 
   @Public()
   @Post()
   @HttpCode(201)
-  start() {
-    return this.pairing.start();
+  start(@Ip() address: string) {
+    return this.pairing.start(address);
   }
 
   @Public()
   @Post('status')
   @HttpCode(200)
-  async status(@Body() body: unknown) {
+  async status(@Ip() address: string, @Body() body: unknown) {
+    this.countPoll(address);
     const { pairingToken } = parseBody(PairingStatus, body);
     const found = await this.pairing.status(pairingToken);
     if (!found) throw new NotFoundException();
     return found;
+  }
+
+  private countPoll(address: string) {
+    const minute = Math.floor(Date.now() / 60_000);
+    // Bounded: entries of past minutes are dropped before the map can grow without end.
+    if (this.polls.size > 10_000)
+      for (const [key, seen] of this.polls)
+        if (seen.minute !== minute) this.polls.delete(key);
+    const seen = this.polls.get(address);
+    if (!seen || seen.minute !== minute) {
+      this.polls.set(address, { minute, count: 1 });
+      return;
+    }
+    if (++seen.count > PAIRING_STATUS_POLLS_PER_MINUTE)
+      throw new HttpException(
+        { message: 'Terlalu banyak permintaan, coba lagi nanti' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
   }
 }

@@ -1,10 +1,14 @@
 import { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { createHash } from 'node:crypto';
 import postgres from 'postgres';
 import request from 'supertest';
 import {
   MAX_LIVE_PAIRINGS,
+  MAX_LIVE_PAIRINGS_PER_ADDRESS,
   PAIRING_CODE_TTL_SECONDS,
+  PAIRING_STATUS_POLLS_PER_MINUTE,
+  PAIRING_TOKEN_GRACE_SECONDS,
 } from '../src/staff/device-pairing';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
@@ -21,6 +25,8 @@ describe('device pairing code (UMK-2022)', () => {
 
   beforeAll(async () => {
     app = await createApp();
+    // As behind one proxy (POS_TRUSTED_PROXIES=1): the client address is the X-Forwarded-For entry.
+    (app as NestExpressApplication).set('trust proxy', 1);
   });
   afterEach(async () => {
     // Open codes are global: leave none behind for the next test's cap and collisions.
@@ -40,6 +46,15 @@ describe('device pairing code (UMK-2022)', () => {
     };
   const status = (pairingToken: string) =>
     http().post('/auth/device/pairing/status').send({ pairingToken });
+  /** A request for a code from this network address. */
+  const startFrom = (address: string) =>
+    http().post('/auth/device/pairing').set('X-Forwarded-For', address);
+  const openFrom = async (address: string) =>
+    (
+      await admin<{ n: number }[]>`
+        select count(*)::int as n from pos.device_pairings
+        where requester_hash = ${sha256(address)} and claimed_at is null and expires_at > now()`
+    )[0].n;
   const pair = (auth: string, code: string, name = 'Tablet depan') =>
     http()
       .post('/staff/devices/pair')
@@ -424,6 +439,100 @@ describe('device pairing code (UMK-2022)', () => {
     await admin`update pos.device_pairings set expires_at = now() - interval '1 second'
                 where code_hash = 'cap-1'`;
     await start();
+  });
+
+  it('caps the open codes of one network address, without touching another address', async () => {
+    const s = await createStore();
+    const codes: string[] = [];
+    for (let i = 0; i < MAX_LIVE_PAIRINGS_PER_ADDRESS; i++)
+      codes.push((await startFrom('203.0.113.7').expect(201)).body.code);
+    const res = await startFrom('203.0.113.7').expect(429);
+    expect(res.body).toEqual({
+      message: 'Terlalu banyak permintaan kode, coba lagi nanti',
+    });
+    // Another address (another shop) still gets its code.
+    await startFrom('203.0.113.8').expect(201);
+    // Only hashes: the address itself is not stored.
+    const stored = await admin<{ requester_hash: string }[]>`
+      select distinct requester_hash from pos.device_pairings where claimed_at is null`;
+    expect(stored.map((r) => r.requester_hash).sort()).toEqual(
+      [sha256('203.0.113.7'), sha256('203.0.113.8')].sort(),
+    );
+    // A used code no longer counts, and neither does an expired one.
+    await pair(s.auth, codes[0]).expect(201);
+    await startFrom('203.0.113.7').expect(201);
+    await startFrom('203.0.113.7').expect(429);
+    await admin`update pos.device_pairings set expires_at = now() - interval '1 second'
+                where code_hash = ${sha256(codes[1])}`;
+    await startFrom('203.0.113.7').expect(201);
+  });
+
+  it('parallel requests cannot pass the per-address cap together', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 3 * MAX_LIVE_PAIRINGS_PER_ADDRESS }, () =>
+        startFrom('203.0.113.20'),
+      ),
+    );
+    const by = (code: number) => results.filter((r) => r.status === code);
+    expect(by(201)).toHaveLength(MAX_LIVE_PAIRINGS_PER_ADDRESS);
+    expect(by(429)).toHaveLength(2 * MAX_LIVE_PAIRINGS_PER_ADDRESS);
+    expect(await openFrom('203.0.113.20')).toBe(MAX_LIVE_PAIRINGS_PER_ADDRESS);
+  });
+
+  it('parallel requests from many addresses cannot pass the global cap together', async () => {
+    await admin`
+      insert into pos.device_pairings (code_hash, secret_hash, expires_at)
+      select 'cap-' || g, 'x', now() + interval '10 minutes'
+      from generate_series(1, ${MAX_LIVE_PAIRINGS - 2}) g`;
+    const results = await Promise.all(
+      Array.from({ length: 12 }, (_, i) => startFrom(`198.51.100.${i + 1}`)),
+    );
+    expect(results.filter((r) => r.status === 201)).toHaveLength(2);
+    expect(results.filter((r) => r.status === 429)).toHaveLength(10);
+    const [{ n }] = await admin<{ n: number }[]>`
+      select count(*)::int as n from pos.device_pairings
+      where claimed_at is null and expires_at > now()`;
+    expect(n).toBe(MAX_LIVE_PAIRINGS);
+  });
+
+  it('limits the status polls of one network address per minute', async () => {
+    const poll = (address: string) =>
+      http()
+        .post('/auth/device/pairing/status')
+        .set('X-Forwarded-For', address)
+        .send({ pairingToken: 'not-a-token' });
+    // Within one minute of the clock, or the count starts again: at most two tries.
+    for (let tries = 0; ; tries++) {
+      const minute = Math.floor(Date.now() / 60_000);
+      const statuses: number[] = [];
+      for (let i = 0; i <= PAIRING_STATUS_POLLS_PER_MINUTE; i++)
+        statuses.push((await poll(`192.0.2.${10 + tries}`)).status);
+      if (Math.floor(Date.now() / 60_000) !== minute && tries === 0) continue;
+      expect(statuses.slice(0, -1).every((code) => code === 404)).toBe(true);
+      expect(statuses.at(-1)).toBe(429);
+      break;
+    }
+    await poll('192.0.2.99').expect(404);
+  });
+
+  it('a device paired just before its code ended can still fetch its token', async () => {
+    const s = await createStore();
+    const device = await start();
+    const id = device.pairingToken.split('.')[0];
+    await admin`update pos.device_pairings set expires_at = now() + interval '2 seconds' where id = ${id}`;
+    await pair(s.auth, device.code).expect(201);
+    const [{ left }] = await admin<{ left: number }[]>`
+      select extract(epoch from expires_at - now())::int as left from pos.device_pairings where id = ${id}`;
+    expect(left).toBeGreaterThan(PAIRING_TOKEN_GRACE_SECONDS - 30);
+    expect(left).toBeLessThanOrEqual(PAIRING_TOKEN_GRACE_SECONDS);
+    // Past the code's own end the token is still answered…
+    await admin`update pos.device_pairings set expires_at = expires_at - interval '5 seconds' where id = ${id}`;
+    expect((await status(device.pairingToken).expect(200)).body.status).toBe(
+      'paired',
+    );
+    // …and not after the grace.
+    await admin`update pos.device_pairings set expires_at = now() - interval '1 second' where id = ${id}`;
+    await status(device.pairingToken).expect(404);
   });
 
   it('the store purge tables: a claimed pairing and the attempts carry the store’s tenant id', async () => {
