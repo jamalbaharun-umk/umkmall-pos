@@ -10,6 +10,8 @@ import {
   requestLines,
   savingsNote,
   setEntryQty,
+  soldQtyText,
+  soldWholesaleNote,
   stockLines,
   subtotalOf,
   unitOptions,
@@ -169,5 +171,24 @@ describe('wholesale hint', () => {
     expect(wholesaleHints(cart, top)).toEqual([])
     expect(wholesaleHints(cart, null)).toEqual([])
     expect(wholesaleHints([cart[0]], quote)).toEqual([])
+  })
+})
+
+describe('sold lines (receipt and sale detail)', () => {
+  const tiered = {
+    qty: 12,
+    unit: 'pcs',
+    unitPrice: 3300,
+    normalUnitPrice: 3500,
+    appliedTier: { minQty: 12, price: 3300 },
+    savings: 2400,
+  }
+  it('words the quantity in the line unit and the wholesale saving', () => {
+    expect(soldQtyText(tiered)).toBe('12 pcs × Rp3.300')
+    expect(soldWholesaleNote(tiered)).toBe('Harga grosir (normal Rp3.500, hemat Rp2.400)')
+    expect(soldQtyText({ qty: 1, unit: 'Dus', unitPrice: 78000 })).toBe('1 Dus × Rp78.000')
+  })
+  it('has no wholesale note without a tier', () => {
+    expect(soldWholesaleNote({ ...tiered, appliedTier: null, savings: 0 })).toBeNull()
   })
 })

@@ -188,3 +188,19 @@ export type SavedLine = { productId: string; qty: number; unit?: string | null }
 
 export const savedLines = (cart: CartEntry[]): SavedLine[] =>
   cart.map((l) => ({ productId: l.product.id, qty: l.qty, ...(l.unit === null ? {} : { unit: l.unit }) }))
+
+type SoldLine = {
+  qty: number
+  unit: string
+  unitPrice: number
+  normalUnitPrice: number
+  appliedTier: Tier | null
+  savings: number
+}
+
+/** "12 pcs × Rp3.300": a sold line's quantity in its own unit at the price charged per unit. */
+export const soldQtyText = (l: Pick<SoldLine, 'qty' | 'unit' | 'unitPrice'>) => `${l.qty} ${l.unit} × ${rp(l.unitPrice)}`
+
+/** Receipt note of a wholesale line, null for any other: "Harga grosir (normal Rp3.500, hemat Rp2.400)". */
+export const soldWholesaleNote = (l: Pick<SoldLine, 'normalUnitPrice' | 'appliedTier' | 'savings'>) =>
+  l.appliedTier ? `Harga grosir (normal ${rp(l.normalUnitPrice)}, hemat ${rp(l.savings)})` : null
