@@ -116,6 +116,14 @@ test per resource, idempotent money changes), with these differences:
   no outbound call; PG payments are cancelled by **refund**. Kasbon is not a payment method: the caller keeps the
   receivable and each instalment is its own payment with its own `orderRef` (`<receivableId>:<n>`). No PG adapter before the legal gate (UMK-1977); nothing
   under `src/` may call out (guard test) until then. The PG flow is proven with `test/support/fake-gateway.ts`.
+- **The fake gateway is local only** (`src/adapters/fake/`, plan
+  [2026-11-25-003](docs/plans/2026-11-25-003-feat-umk-1991-fake-gateway-plan.md), usage there). It exists only when
+  the environment variable `PAYMENT_ADAPTERS=fake` (not the DI token of the same name; methods `fake_qris`,
+  `fake_va`; bills in memory) and only with `NODE_ENV` explicitly `development` or `test`: production and an unset
+  `NODE_ENV` are a boot error (fails closed, checked in `loadEnv` and again in the gateway's constructor). Its
+  settings such as `refundMode` are process-global, not per tenant. Its controls (`/dev/fake-gateway/…`) sit
+  behind the service key and the tenant header like every route, reach only that tenant's bills, change only the
+  gateway's own state and notify through `WebhooksService.receive`: they never write a payment and never call out.
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;
   payment-api stores it, pos-api verifies it). Every status change writes a `payment_events` audit row and an `outbox`
   row in the same transaction.

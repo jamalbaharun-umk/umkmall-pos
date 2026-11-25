@@ -190,6 +190,6 @@ export class WebhooksController {
     WebhooksService,
     ReconciliationService,
   ],
-  exports: [PaymentSettings, Clock],
+  exports: [PaymentSettings, Clock, WebhooksService],
 })
 export class PaymentsModule {}
