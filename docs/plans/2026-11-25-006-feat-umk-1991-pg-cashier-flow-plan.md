@@ -30,6 +30,14 @@ no onboarding, no sub-merchant.
   the PG sale, the intent is dropped and the request answers 409 `already_paid`. A switch left unfinished therefore
   completes as cash, because the cashier said the cash was received (the M15 reasoning): a sale past its first
   attempt is charged by every worker and never given up for want of a payment.
+- **A store that may not charge at the PG gets no bill** (UMK-2019). payment-api refuses the charge with
+  `merchant_not_active`, `method_disabled`, `live_disabled` or `merchant_mode_mismatch` and writes no payment.
+  pos-api then closes the charge key (`POST /payments/close`) and cancels the sale at once, stock and voucher back,
+  and answers 409 with that `code`. Any other refusal still leaves the sale waiting for the job.
+- **Owner rulings (defaults, 2026-11-25).** An unfinished switch to cash is completed as a cash sale by the job.
+  Retry and manual mark of a refused refund need `sales.void` and no new PIN. Only the sale's own cashier takes
+  cash for it. Cancel is allowed for any sale that awaits payment, PG or not. There is no new QR for the same sale:
+  the cashier cancels and sells again.
 - **Late PG money** on the closed attempt is payment-api's business: an unmatched receipt, refunded automatically
   (M5, D13). pos-api only shows it (`lateReceipts`).
 - **Cancel** of an awaiting sale needs no PIN (V2) and happens only on payment-api's answer (M17): payment-api
@@ -65,6 +73,8 @@ Every payment method is answered as `{ id, name, kind, gatewayMethod: string|nul
 201 with the sale as `GET /sales/:id` answers it, `status: 'awaiting_payment'`, plus `payment` (a **SalePayment**,
 below). Stock and voucher are taken. A repeat with the same key answers the same sale and the same QR (D10).
 PG refused or unreachable (M11) → 409 `{ message, saleId, status: 'cancelled' }`, stock and voucher back.
+The store's gateway account is not active or the method is off → the same 409 with `code`
+(`merchant_not_active` | `method_disabled` | `live_disabled` | `merchant_mode_mismatch`).
 
 `GET /sales/:id` and each row of `GET /sales` also carry `onlinePayment: boolean`.
 
@@ -138,6 +148,8 @@ payment, also a cash one whose charge never got an answer.
   minutes ahead, charge key `<saleId>:1`, stock and voucher taken; a repeat makes no second sale or bill (D10).
 - [test] Paid through the fake webhook: the poll completes the sale once; the shift's cash is untouched.
 - [test] Expired and failed bills cancel the sale with stock and voucher back; a failed charge (M11) answers 409.
+- [test] A store whose gateway account is not active: 409 with `code`, the sale cancelled at once, no bill, the
+  charge key closed; a repeat answers the same cancelled sale.
 - [test] Lost webhook (M1): the poll still says waiting, the manual check completes the sale.
 - [test] Switch to cash with the QR open (D5, D13): one cash payment `<saleId>:2` for the rounded amount, the drawer
   holds it, the sale is completed once; PG money that arrives later is an unmatched receipt refunded once (M5) and the
@@ -174,9 +186,11 @@ payment, also a cash one whose charge never got an answer.
 1. payment-api with the fake gateway: `NODE_ENV=development PAYMENT_ADAPTERS=fake PAYMENT_SERVICE_KEY=<key>` (and its
    `DATABASE_URL`), port 3001.
 2. pos-api with `PAYMENT_API_URL=http://localhost:3001 PAYMENT_SERVICE_KEY=<the same key>`.
-3. As the owner: `POST /payment-methods { "name": "QRIS", "kind": "online", "gatewayMethod": "fake_qris" }` (and
+3. The store's gateway account must be active with the method on: onboard it under "Pembayaran Online" (plan
+   2026-11-25-004 pg-onboarding). The tests seed it (`apps/payment-api/test/support/merchants.ts`).
+4. As the owner: `POST /payment-methods { "name": "QRIS", "kind": "online", "gatewayMethod": "fake_qris" }` (and
    `fake_va`). Until pos-web has the screens, the routes above are called directly.
-4. The customer and the gateway are played with payment-api's controls (plan 2026-11-25-003), headers
+5. The customer and the gateway are played with payment-api's controls (plan 2026-11-25-003), headers
    `X-Payment-Service-Key` and `X-Tenant-Id: <the store's tenant id>`: `GET /dev/fake-gateway/payments` lists the
    bills (`providerRef`, `orderRef` = the sale id), `POST /dev/fake-gateway/payments/<providerRef>/pay` pays one
    (`{ "webhook": "drop" }` loses the webhook), `/fail`, `/expire`, `/late-pay`;
