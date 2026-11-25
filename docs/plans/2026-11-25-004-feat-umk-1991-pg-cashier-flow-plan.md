@@ -19,7 +19,8 @@ no onboarding, no sub-merchant.
   `gateway_method` (`fake_qris` or `fake_va`, the list is `ONLINE_METHODS` in `payments.client.ts`). Creating one is
   refused (422) while payment-api is off, and when `NODE_ENV=production`: a real provider waits for UMK-1977.
 - **Attempts.** `sales.payment_attempt` (1, 2, …) is the attempt the sale is being paid with; the charge key is
-  `<saleId>:<attempt>`. Only the switch to cash starts a new attempt. A new QR for the same sale (D12) is not built:
+  `<saleId>:<attempt>`. Only the switch to cash starts a new attempt, and `payment_attempt_at` is when it started
+  (the job's wait before it gives an unanswered charge up counts from there). A new QR for the same sale (D12) is not built:
   the cashier cancels and sells again.
 - **Switch to cash is an intent written before anything is closed.** `sales.switch_cash_paid` (the cash tendered)
   is stored first; then the PG attempt is closed at payment-api (`POST /payments/:id/cancel`, or
@@ -87,8 +88,9 @@ PG refused or unreachable (M11) → 409 `{ message, saleId, status: 'cancelled' 
   "refund": null,                         // or { status: pending|succeeded|failed, sent: boolean, reasonCode,
                                           //      note, requestedAt }
   "lateReceipts": [                       // PG money that paid no sale (M5); payment-api refunds it
-    { "id": "uuid", "attempt": 1, "amount": 5123, "kind": "late", "refundStatus": "succeeded", "needsReview": false }
-  ]
+    { "id": "uuid", "attempt": 1, "amount": 5123, "kind": "late_payment", "refundStatus": "refunded",
+      "needsReview": false }              // kind: late_payment | duplicate | amount_mismatch;
+  ]                                       // refundStatus: none | pending | refunded | failed
 }
 ```
 
@@ -111,14 +113,16 @@ up to Rp100) → 200 SalePayment with `saleStatus: 'completed'`, `method: 'cash'
 
 `POST /sales/:id/payment/cancel` (`sales.create`; own sale or `reports.view`), no body, no PIN → 200 SalePayment
 with `saleStatus: 'cancelled'`; stock and voucher back. A repeat answers the same. 409 `already_paid` (completed
-instead), `not_awaiting` (a receipt: void or refund it).
+instead), `not_awaiting` (a receipt: void or refund it), `cancel_refused`. It works for any sale that awaits
+payment, also a cash one whose charge never got an answer.
 
 ### Refund
 
 - `POST /sales/:id/refund` (`sales.create`, header `Idempotency-Key`) body `{ reasonCode, note?, approverId, pin }`
   (the void's body) → 201 with the void record as `GET /sales/:id/void` answers it, plus `refundStatus`. The sale
   becomes `void`. 409 `use_void` on a sale that was not paid through a PG; `POST /sales/:id/void` on a PG sale
-  answers 409 `use_refund`. PIN errors as for a void (403, 429).
+  answers 409 `use_refund`; both refusals come before the PIN is checked. PIN errors as for a void (422 on a
+  wrong PIN, 429 when the approver is locked). A repeat with the same key answers the same record.
 - `POST /sales/:id/refund/retry` (`sales.void`), no body → 200 void record. Asks a refused refund again; a refund
   that is pending or done is answered as it stands.
 - `POST /sales/:id/refund/manual` (`sales.void`) body `{ note }` → 200 void record with `refundStatus: 'succeeded'`.
@@ -163,6 +167,22 @@ instead), `not_awaiting` (a receipt: void or refund it).
   `src/receivables/` (refusal), `src/guards.spec.ts`.
 - `apps/pos-api/test/pg-cashier-flow.e2e-spec.ts`, `test/support/payment-api.ts` (fake adapter, clock).
 - `CLAUDE.md` (pos-api's side).
+
+## Trying it locally
+
+1. payment-api with the fake gateway: `NODE_ENV=development PAYMENT_ADAPTERS=fake PAYMENT_SERVICE_KEY=<key>` (and its
+   `DATABASE_URL`), port 3001.
+2. pos-api with `PAYMENT_API_URL=http://localhost:3001 PAYMENT_SERVICE_KEY=<the same key>`.
+3. As the owner: `POST /payment-methods { "name": "QRIS", "kind": "online", "gatewayMethod": "fake_qris" }` (and
+   `fake_va`). Until pos-web has the screens, the routes above are called directly.
+4. The customer and the gateway are played with payment-api's controls (plan 2026-11-25-003), headers
+   `X-Payment-Service-Key` and `X-Tenant-Id: <the store's tenant id>`: `GET /dev/fake-gateway/payments` lists the
+   bills (`providerRef`, `orderRef` = the sale id), `POST /dev/fake-gateway/payments/<providerRef>/pay` pays one
+   (`{ "webhook": "drop" }` loses the webhook), `/fail`, `/expire`, `/late-pay`;
+   `POST /dev/fake-gateway/settings { "refundMode": "pending" | "succeed" | "fail" }` and
+   `POST /dev/fake-gateway/refunds/<refund id>/succeed` settle a refund.
+5. An expired bill closes the sale only after payment-api's grace period (`PAYMENT_EXPIRY_GRACE_SECONDS`, default 10
+   minutes; set it to 0 to see it at once), on a check or on payment-api's reconciliation.
 
 ## Not in this plan
 

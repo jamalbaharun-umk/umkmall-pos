@@ -207,13 +207,29 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   test). Every client method takes the tenant id first: `session.tenantId`, or the tenant of the pos row the job or
   the purge is working on. Never log the key, a header or a body.
 - **A sale is two steps** (cash → `cash`, debit → `edc_debit`, wallet → `static_qris`): written as
-  `awaiting_payment` with stock and voucher taken, then charged with key `<saleId>:1` for the amount due (cash:
-  `total + rounding`) and completed on `paid`. No clear answer → 503 and the sale stays `awaiting_payment`; a payment
-  closed unpaid → `cancelled`, stock and voucher back. A cancelled sale is never completed. All of this is
-  `PaymentSync.settleSale`.
+  `awaiting_payment` with stock and voucher taken, then charged with key `<saleId>:<attempt>` (`sales.payment_attempt`,
+  1 unless the sale was switched to cash) for the amount due (cash: `total + rounding`) and completed on `paid`. No
+  clear answer → 503 and the sale stays `awaiting_payment`; a payment closed unpaid → `cancelled`, stock and voucher
+  back. A cancelled sale is never completed. All of this is `PaymentSync.settle`.
+- **A PG sale waits for its payment** (plan
+  [2026-11-25-004](docs/plans/2026-11-25-004-feat-umk-1991-pg-cashier-flow-plan.md), the routes and their shapes are
+  there). A payment method of kind `online` carries payment-api's method (`ONLINE_METHODS` in `payments.client.ts`:
+  only the fake gateway's `fake_qris` and `fake_va`; refused with payment-api off and in production, UMK-1977).
+  `POST /sales` answers `awaiting_payment` with `payment` (QR or VA, `expiresAt`). pos-api learns the outcome by the
+  screen's poll (`GET /sales/:id/payment`), the manual check (`POST …/payment/check`, the PG is asked) and the job;
+  payment-api pushes nothing. Statuses shown are payment-api's own; pos-api never decides `expired` by its clock.
+- **Switch to cash is written before anything is closed:** `sales.switch_cash_paid` first, then the PG bill is closed.
+  Whoever then finds that attempt closed unpaid (request, poll, job) turns the sale into a cash sale with attempt + 1
+  and charges it; a bill the customer paid first completes the PG sale instead (409 `already_paid`). Late money on
+  the closed bill is payment-api's (unmatched receipt, auto-refund); pos-api only shows it. Cancelling an awaiting
+  sale needs no PIN and writes no void.
+- **A paid PG sale is refunded, never voided** (`POST /sales/:id/refund`; a void answers 409 `use_refund`, a refund
+  of a CASHAC sale 409 `use_void`, both before the PIN is checked). The refund is the void record with
+  `sale_voids.refund_status` (`pending`, `succeeded`, `failed`): same reasons, same PIN approver, the sale reversed at
+  once, the refund asked after the commit and followed by the job. Retry and "dikembalikan manual" need `sales.void`.
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
   exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
-  answer only while it still awaits payment.
+  answer only while it still awaits payment. Every transaction of `payments-client/` is in `payment-sync.service.ts`.
 - **A sale is cancelled only on a payment that payment-api says is closed.** "No payment found" is not an answer to
   cancel on: the job first closes the charge key (`POST /payments/close`, which writes a `cancelled` payment under
   it), so a charge still on its way can never be paid later.
@@ -228,7 +244,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   codes and counts only.
 - **The purge calls payment-api's purge** inside its transaction, after every pos delete and just before the commit;
   a failure rolls the pos deletes back and answers 503.
-- The integration test starts the real payment-api app in-process on database `<PAYTEST_DB or payment_test>_pos`.
+- The integration tests start the real payment-api app in-process on database `<PAYTEST_DB or payment_test>_pos`;
+  `test/pg-cashier-flow.e2e-spec.ts` starts it with the fake gateway and moves payment-api's clock.
 - **"Pembayaran Online" (UMK-2019)** is `online-payments.controller.ts`: a thin pass to payment-api's
   `/merchant-accounts`, every route behind `payments.manage` (the cashier's `GET /online-payments/methods` behind
   `sales.create`). pos-api stores nothing of it; the client copies only the known fields of an account. A test
