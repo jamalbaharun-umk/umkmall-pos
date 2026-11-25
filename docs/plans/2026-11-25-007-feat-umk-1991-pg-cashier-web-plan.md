@@ -64,3 +64,19 @@ refund's status, a retry and the owner's manual mark. The owner can create an on
 `-refund-panel.tsx`, edits to `index.tsx`, `-api.ts`, `-pay-step.ts`, `-void-*.ts(x)`, `riwayat.$id.tsx`,
 `riwayat.index.tsx`, `struk.$id.tsx`; `routes/metode-pembayaran/index.tsx` and `routes/pelanggan/-form.ts`, `-ui.tsx`,
 `-api.ts` (a field with `showWhen`; kind `online`); `lib/describe-error.ts`; `components/shell.tsx` (`useIsOwner`).
+
+## PR 27 review fixes (2026-11-25)
+
+Decisions are pure functions in `-online.ts`, each with a revert-red test: `resumeDecision` (a reload with no usable
+answer keeps the sale and blocks the register: `ResumeGate`; a completed sale clears the order that made it), `saleKey`
+(the Idempotency-Key is the order key + method + amount, so Tunai after an online 503 is a new request),
+`finishPlan` (a sale picked from "Menunggu" never wipes or reopens the cart; `own` is remembered with the sale id),
+`OPEN_PAST_CODE_TIME` (a code past its time with the payment still open is never "kedaluwarsa"), `saleFailure`,
+`paidFigures` (paid and change come from the sale's receipt, never from the typed text). The cash form is locked once
+the intent exists, the switch and cancel buttons stay usable after a reload, and a 503 on cancel / refund retry /
+manual mark says the request may have arrived (`payment_unclear`).
+
+Server gaps found: `SalePayment` has no cashier id, so a supervisor sees "Ganti ke tunai" until pos-api answers 409
+`not_own_sale` (the button then goes away); `GET /sales?status=awaiting_payment` returns other cashiers' sales to
+`reports.view` holders, whose payment route answers 404.
+Not exercised: no browser run and no component tests (the resume, poll and `OnlineWait` flows are reviewed by reading).
