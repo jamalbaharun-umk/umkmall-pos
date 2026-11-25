@@ -135,6 +135,28 @@ describe('repo guards', () => {
       );
   });
 
+  it('lets only a person at the till act on a sale’s PG payment: every action route checks the session kind first (UMK-1991)', () => {
+    // The switch to cash puts cash in a drawer; an agent session moves no payment and asks no refund.
+    const text = (f: string) => files.find((x) => x.f === f)!.text;
+    const actions = text(
+      path.join('payments-client', 'sale-payment.controller.ts'),
+    )
+      .split(/\n {2}@Post\(/)
+      .slice(1);
+    expect(actions.length).toBe(3);
+    const refunds = text(path.join('void', 'void.controller.ts'))
+      .split(/\n {2}@Post\(/)
+      .slice(1)
+      .filter((route) => route.startsWith("':id/refund"));
+    expect(refunds.length).toBe(3);
+    for (const route of [...actions, ...refunds]) {
+      const check = route.indexOf('assertPersonAtTill(s.kind);');
+      expect(check).toBeGreaterThan(-1);
+      // Before the route does anything else.
+      expect(check).toBeLessThan(route.indexOf('this.'));
+    }
+  });
+
   it('writes pos.store_cash_deposits and the kind collector_deposit (store and shift ledger) only in store-cash/store-cash-deposits.service.ts', () => {
     const own = path.join('store-cash', 'store-cash-deposits.service.ts');
     const offenders = files

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { z } from 'zod';
 import { validate } from '../common/validation';
+import { assertPersonAtTill } from '../shifts/cash-ledger';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
@@ -14,7 +15,10 @@ const CashInput = z
 
 /**
  * The payment of one sale, for the cashier's waiting screen (UMK-1991). The tenant is the session's; the
- * sale is the actor's own, or any of the store's with `reports.view`; anything else answers 404.
+ * sale is the actor's own, or any of the store's with `sales.void`; anything else answers 404.
+ *
+ * Every action is for a person at the till (`assertPersonAtTill`, the drawer's allow-list): the switch to
+ * cash puts cash in a drawer, and an agent session never moves a sale's payment.
  */
 @Controller('sales/:id/payment')
 export class SalePaymentController {
@@ -31,6 +35,7 @@ export class SalePaymentController {
   @HttpCode(200)
   @RequirePermission('sales.create')
   check(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    assertPersonAtTill(s.kind);
     return this.payments.status(s, parseId(id), 'sync');
   }
 
@@ -43,6 +48,7 @@ export class SalePaymentController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
+    assertPersonAtTill(s.kind);
     const saleId = parseId(id);
     return this.payments.payCash(s, saleId, validate(CashInput, body).paid);
   }
@@ -52,6 +58,7 @@ export class SalePaymentController {
   @HttpCode(200)
   @RequirePermission('sales.create')
   cancel(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    assertPersonAtTill(s.kind);
     return this.payments.cancel(s, parseId(id));
   }
 }

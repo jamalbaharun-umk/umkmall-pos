@@ -61,6 +61,12 @@ export const shifts = pos
   )
   .enableRLS();
 
+/**
+ * payment-api's methods an online payment method may carry (UMK-1991). Only the local fake gateway's until
+ * the legal gate (UMK-1977); a real provider adds its methods here, with a migration for the check below.
+ */
+export const GATEWAY_METHODS = ['fake_qris', 'fake_va'] as const;
+
 export const paymentMethods = pos
   .table(
     'payment_methods',
@@ -93,6 +99,13 @@ export const paymentMethods = pos
       check(
         'payment_methods_online_ck',
         sql`${t.isOnline} = (${t.gatewayMethod} is not null)`,
+      ),
+      // Only a method this version can charge: a sale with any other would wait for a payment for ever.
+      check(
+        'payment_methods_gateway_method_ck',
+        sql`${t.gatewayMethod} is null or ${t.gatewayMethod} in (${sql.raw(
+          GATEWAY_METHODS.map((m) => `'${m}'`).join(', '),
+        )})`,
       ),
     ],
   )
@@ -199,7 +212,7 @@ export const sales = pos
       ),
       // The job's sweep of sales still waiting for their payment.
       index('sales_awaiting_idx')
-        .on(t.createdAt)
+        .on(t.paymentAttemptAt)
         .where(sql`${t.status} = 'awaiting_payment'`),
       uniqueIndex('sales_tenant_idempotency_uq').on(
         t.tenantId,

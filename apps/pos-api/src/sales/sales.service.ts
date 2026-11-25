@@ -308,9 +308,15 @@ export class SalesService {
           { total, rounding, amountDue },
           'paid',
         );
-    } else if (method.isOnline && !this.payments.enabled) {
+    } else if (
+      method.isOnline &&
+      // Asked again here: a method that exists must not sell where online payments are off (payment-api
+      // off, production, NODE_ENV unset), nor with a gateway method this version does not know: such a
+      // sale would wait for a payment nothing can ask for.
+      (!this.payments.onlineEnabled || paymentMethodCode(method) === null)
+    ) {
       throw fail(
-        'Metode pembayaran online belum bisa dipakai: layanan pembayaran tidak aktif',
+        'Metode pembayaran online belum bisa dipakai',
         {},
         'paymentMethodId',
       );

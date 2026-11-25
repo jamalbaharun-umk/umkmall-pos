@@ -14,7 +14,6 @@ import {
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { fieldError, validate } from '../common/validation';
-import { loadEnv } from '../config';
 import { type Db, InjectDb } from '../db/db.module';
 import { paymentMethods } from '../db/schema';
 import { PaymentSync } from '../payments-client/payment-sync.service';
@@ -91,8 +90,6 @@ const live = (tenantId: string, id?: string) =>
 /** Payment methods (Lakasir PaymentMethodResource). "Tunai" is U3's seeded cash method and stays fixed. */
 @Injectable()
 export class PaymentMethodsService {
-  private readonly production = loadEnv().NODE_ENV === 'production';
-
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly payments: PaymentSync,
@@ -100,11 +97,11 @@ export class PaymentMethodsService {
 
   /**
    * UMK-1991: an online method works only through payment-api, and until the legal gate (UMK-1977) its
-   * only gateway is the local fake one, which never exists in production.
+   * only gateway is the local fake one: refused unless NODE_ENV is explicitly development or test.
    */
   private assertOnlineAllowed(kind?: PaymentKind) {
     if (kind !== 'online') return;
-    if (!this.payments.enabled || this.production)
+    if (!this.payments.onlineEnabled)
       throw fieldError('kind', 'Pembayaran online belum tersedia');
   }
 

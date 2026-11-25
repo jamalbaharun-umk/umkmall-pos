@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { loadEnv } from '../config';
+import { GATEWAY_METHODS } from '../db/schema';
 
 /** The HTTP call the client makes; a provider so a test can drop or delay an answer. */
 export const PAYMENT_FETCH = Symbol('PAYMENT_FETCH');
@@ -12,7 +13,7 @@ export type PaymentFetch = (
  * payment-api's methods a store may configure as an online (payment gateway) method. Only the local fake
  * gateway until the legal gate (UMK-1977): a real provider adds its methods here.
  */
-export const ONLINE_METHODS = ['fake_qris', 'fake_va'] as const;
+export const ONLINE_METHODS = GATEWAY_METHODS;
 export type OnlineMethod = (typeof ONLINE_METHODS)[number];
 export const isOnlineMethod = (code: string | null): code is OnlineMethod =>
   ONLINE_METHODS.includes(code as OnlineMethod);

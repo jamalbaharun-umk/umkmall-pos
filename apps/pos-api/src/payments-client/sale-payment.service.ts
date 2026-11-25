@@ -1,6 +1,5 @@
 import {
   ConflictException,
-  HttpException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -59,6 +58,8 @@ const MESSAGES: Record<string, string> = {
   not_refund_failed: 'Hanya refund yang ditolak yang bisa ditandai manual',
   payment_refused:
     'Layanan pembayaran menolak permintaan ini. Coba lagi atau hubungi pemilik.',
+  cash_payment_pending:
+    'Penjualan ini sudah menjadi penjualan tunai, tetapi pembayarannya belum tercatat. Coba lagi.',
 };
 
 /** A 409 with a stable `code` the screen can act on. */
@@ -85,6 +86,13 @@ export function paymentHttpError(error: unknown): unknown {
   );
 }
 
+/** 503: the sale is a cash sale already and only the record of its cash is missing. */
+const cashPending = () =>
+  new ServiceUnavailableException({
+    message: MESSAGES.cash_payment_pending,
+    code: 'cash_payment_pending',
+  });
+
 /**
  * The cashier's side of a sale's payment (UMK-1991): where it stands, the manual check, the switch to cash
  * and the cancel. Every route answers the same `SalePayment`.
@@ -100,7 +108,11 @@ export class SalePayments {
     private readonly client: PaymentsClient,
   ) {}
 
-  /** The sale as the actor may see it: their own, or any of the store's with `reports.view`. Else 404. */
+  /**
+   * The sale as the actor may see it here: their own, or any of the store's with `sales.void` (the
+   * supervisor who recovers a stuck payment or approves a refund). Else 404: the answer carries what pays
+   * the bill (the QR, the VA number), which is not for everyone who may read reports.
+   */
   private async sale(s: PosSession, saleId: string) {
     const [sale] = await this.db
       .select({
@@ -128,7 +140,7 @@ export class SalePayments {
       .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, saleId)));
     if (
       !sale ||
-      !(hasPermission(s, 'reports.view') || sale.actorId === s.actorId)
+      !(hasPermission(s, 'sales.void') || sale.actorId === s.actorId)
     )
       throw new NotFoundException();
     return sale;
@@ -156,42 +168,68 @@ export class SalePayments {
   /**
    * The cashier takes cash for a sale that waits for a PG payment. Only the sale's own cashier: the cash
    * goes into the drawer of the sale's shift, which is theirs.
+   *
+   * No usable answer from payment-api before the sale became a cash sale: the switch is taken back and the
+   * answer says so (503 `payment_unavailable`, 409 `cancel_refused`): the sale waits for its PG payment as
+   * before, and nothing turns it into a cash sale later. Once it IS a cash sale (the bill is closed) only
+   * the record of the cash is missing: 503 `cash_payment_pending`, and a repeat or the job finishes it.
    */
   async payCash(s: PosSession, saleId: string, paid: number) {
     const sale = await this.sale(s, saleId);
-    if (sale.status === 'awaiting_payment') {
-      if (sale.actorId !== s.actorId) throw refusal('not_own_sale');
-      // A sale that never was a PG sale has nothing to switch from: it is paid by repeating the sale.
-      if (!isOnlineMethod(sale.method) && sale.attempt === 1)
-        throw refusal('not_online');
-      // Already a cash sale: an earlier request switched it and only its charge is left.
-      if (sale.method !== 'cash') {
-        const asked = await this.sync.requestCashSwitch(
-          s.tenantId,
-          saleId,
-          paid,
+    if (sale.status !== 'awaiting_payment')
+      return this.cashOutcome(await this.view(s, saleId, null));
+    if (sale.actorId !== s.actorId) throw refusal('not_own_sale');
+    // A sale that never was a PG sale has nothing to switch from: it is paid by repeating the sale.
+    if (!isOnlineMethod(sale.method) && sale.attempt === 1)
+      throw refusal('not_online');
+    // Already a cash sale: an earlier request switched it and only its charge is left.
+    if (sale.method !== 'cash') {
+      const asked = await this.sync.requestCashSwitch(s.tenantId, saleId, paid);
+      if (asked === 'underpaid')
+        throw fieldError(
+          'paid',
+          'Uang dibayar kurang dari jumlah yang harus dibayar',
         );
-        if (asked === 'underpaid')
-          throw fieldError(
-            'paid',
-            'Uang dibayar kurang dari jumlah yang harus dibayar',
-          );
-        if (asked === 'not_online') throw refusal('not_online');
-      }
-      const { payment } = await this.settle(s, saleId, 'charge').catch(
-        (error: unknown) => {
-          // payment-api would not close the bill: the sale still waits for the PG payment.
-          if (error instanceof HttpException && error.getStatus() === 409)
-            throw refusal('cancel_refused');
-          throw error;
-        },
-      );
-      const view = await this.view(s, saleId, payment);
-      if (view.saleStatus === 'awaiting_payment')
-        throw paymentHttpError(new PaymentApiError('unavailable', null, null));
-      return this.cashOutcome(view);
+      if (asked === 'not_online') throw refusal('not_online');
     }
-    return this.cashOutcome(await this.view(s, saleId, null));
+    let payment: Payment | null;
+    try {
+      ({ payment } = await this.sync.settle(
+        s.tenantId,
+        saleId,
+        'cash',
+        new Date(),
+        paid,
+      ));
+    } catch (error) {
+      if (!(error instanceof PaymentApiError)) throw error;
+      await this.sync.abandonCashSwitch(s.tenantId, saleId);
+      if (await this.isCashNow(s, saleId))
+        throw error.kind === 'unavailable'
+          ? cashPending()
+          : refusal('payment_refused');
+      // payment-api would not close the bill: the sale still waits for the PG payment.
+      if (error.kind === 'rejected') throw refusal('cancel_refused');
+      throw paymentHttpError(error);
+    }
+    const view = await this.view(s, saleId, payment, true);
+    if (view.saleStatus === 'awaiting_payment') {
+      await this.sync.abandonCashSwitch(s.tenantId, saleId);
+      throw (await this.isCashNow(s, saleId))
+        ? cashPending()
+        : refusal('cancel_refused');
+    }
+    return this.cashOutcome(view);
+  }
+
+  /** The sale was switched and is a cash sale that still waits for the record of its cash. */
+  private async isCashNow(s: PosSession, saleId: string) {
+    const sale = await this.sale(s, saleId);
+    return (
+      sale.status === 'awaiting_payment' &&
+      sale.method === 'cash' &&
+      sale.attempt > 1
+    );
   }
 
   private cashOutcome(view: Awaited<ReturnType<SalePayments['view']>>) {
@@ -218,14 +256,22 @@ export class SalePayments {
     if (outcome === 'completed')
       throw refusal('already_paid', { saleId, status: outcome });
     if (outcome === 'awaiting_payment') throw refusal('cancel_refused');
-    return this.view(s, saleId, payment);
+    return this.view(s, saleId, payment, true);
   }
 
   /**
    * The `SalePayment` every route answers. `known` is the payment of the sale's current attempt when the
    * caller already has it; it is asked again for its details when it is a PG payment.
+   *
+   * `afterAction`: the caller has just moved the sale. payment-api failing to answer the details then must
+   * not turn a done action into a 503 that says nothing changed: the view is built from what is known.
    */
-  async view(s: PosSession, saleId: string, known: Payment | null) {
+  async view(
+    s: PosSession,
+    saleId: string,
+    known: Payment | null,
+    afterAction = false,
+  ) {
     const sale = await this.sale(s, saleId);
     const online = isOnlineMethod(sale.method);
     let payment = known;
@@ -247,7 +293,8 @@ export class SalePayments {
           );
         }
       } catch (error) {
-        throw paymentHttpError(error);
+        if (!afterAction) throw paymentHttpError(error);
+        others = [];
       }
     }
     const refund = await this.refund(s.tenantId, saleId, payment);

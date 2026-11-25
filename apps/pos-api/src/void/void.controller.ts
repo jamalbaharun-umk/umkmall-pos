@@ -16,6 +16,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { validate } from '../common/validation';
 import { IdempotencyKey } from '../sales/sales.schemas';
+import { assertPersonAtTill } from '../shifts/cash-ledger';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { StockModule } from '../stock/stock.module';
@@ -84,6 +85,7 @@ export class SaleVoidController {
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
   ) {
+    assertPersonAtTill(s.kind);
     const saleId = parseId(id);
     const { idempotencyKey } = validate(
       z.object({ idempotencyKey: IdempotencyKey }),
@@ -100,6 +102,7 @@ export class SaleVoidController {
   @HttpCode(200)
   @RequirePermission('sales.void')
   retryRefund(@CurrentSession() s: PosSession, @Param('id') id: string) {
+    assertPersonAtTill(s.kind);
     return this.voids.retryRefund(s, parseId(id));
   }
 
@@ -112,6 +115,7 @@ export class SaleVoidController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
+    assertPersonAtTill(s.kind);
     const saleId = parseId(id);
     return this.voids.markRefundManual(
       s,

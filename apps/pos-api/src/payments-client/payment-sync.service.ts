@@ -14,6 +14,7 @@ import {
   isNotNull,
   isNull,
   lt,
+  ne,
   sql,
 } from 'drizzle-orm';
 import { loadEnv } from '../config';
@@ -56,6 +57,9 @@ const CLOSED_UNPAID = new Set([
 
 const SWEEP_LIMIT = 100;
 
+/** How often `settle` reads a sale again after an answer turned out stale, or after a switch to cash. */
+const MAX_ROUNDS = 4;
+
 /** Our own refusal, counted and parked like payment-api's: the pos row and the payment do not agree. */
 const refused = (code: string) => new PaymentApiError('rejected', null, code);
 
@@ -69,8 +73,10 @@ export type SaleOutcome =
  * - `read`: the waiting screen's poll: payment-api's stored status, nothing is asked of the PG.
  * - `sync`: the manual check: payment-api asks the PG first.
  * - `cancel`: the cashier gives the sale up: the bill is closed first.
+ * - `cash`: the cashier takes cash for a sale that waits for a PG payment: the bill is closed first.
  */
-export type SettleMode = 'charge' | 'reconcile' | 'read' | 'sync' | 'cancel';
+export type SettleMode =
+  'charge' | 'reconcile' | 'read' | 'sync' | 'cancel' | 'cash';
 
 /** The sale's status afterwards, and the payment of its current attempt when payment-api was asked. */
 export type SaleSettlement = {
@@ -132,6 +138,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   private readonly afterMs: number;
   private readonly intervalMs: number;
   private readonly maxAttempts: number;
+  private readonly onlineAllowed: boolean;
   private timer: NodeJS.Timeout | null = null;
   private current: Promise<TickResult> | null = null;
 
@@ -144,11 +151,21 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     this.afterMs = env.POS_PAYMENT_RECONCILE_AFTER_SECONDS * 1000;
     this.intervalMs = env.POS_PAYMENT_RECONCILE_INTERVAL_SECONDS * 1000;
     this.maxAttempts = env.POS_PAYMENT_SYNC_MAX_ATTEMPTS;
+    this.onlineAllowed = env.onlinePaymentsAllowed;
   }
 
   /** False when PAYMENT_API_URL is unset: nothing is sent and sales complete in one step. */
   get enabled(): boolean {
     return this.client.enabled;
+  }
+
+  /**
+   * Whether a payment method of kind `online` may be created and sold with: payment-api is on AND this
+   * environment may use the fake gateway (`onlinePaymentsAllowed`). Asked when a method is created and
+   * again at every sale, so a method that exists in the database does not sell where it must not.
+   */
+  get onlineEnabled(): boolean {
+    return this.enabled && this.onlineAllowed;
   }
 
   async onModuleInit() {
@@ -190,9 +207,16 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * CLOSE the charge key: a charge of ours that is still on its way then answers the cancelled payment and
    * can never be paid.
    *
-   * A switch to cash (`switchCashPaid` set, see `requestCashSwitch`) closes the PG bill; once it is closed
-   * unpaid the sale becomes a cash sale with the next attempt number and is charged as `cash`, by whichever
-   * worker gets there. A bill the payer paid first completes the sale as the PG sale it was.
+   * A switch to cash (`switchCashPaid` set, see `requestCashSwitch`) is done by the cashier's own request
+   * (mode `cash`, with the cash tendered in `cashPaid`): it closes the PG bill, and once that is closed
+   * unpaid the sale becomes a cash sale with the next attempt number and is charged as `cash`. No other
+   * worker closes a bill for a switch. A poll, a check or a repeat of the sale that meets a switch in
+   * progress changes nothing; the job finishes one whose request died after the bill was closed for it
+   * (payment `cancelled`). A bill the payer paid first completes the sale as the PG sale it was.
+   *
+   * The sale is read without a lock, so an answer may be stale by the time it is applied: `applyToSale`
+   * refuses it (`stale`) when the sale has moved to another attempt, or would be cancelled while a switch to
+   * cash is asked, and the sale is read again.
    *
    * Throws PaymentApiError when payment-api gave no usable answer (`unavailable`) or one that does not fit
    * the sale (`rejected`): the sale has not moved then.
@@ -202,32 +226,32 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     saleId: string,
     mode: SettleMode,
     now: Date = new Date(),
+    cashPaid?: number,
   ): Promise<SaleSettlement> {
-    if (mode === 'cancel') await this.dropCashSwitch(tenantId, saleId);
-    // Two rounds at most: the PG attempt, then the cash attempt a switch turned it into.
-    for (let round = 0; round < 2; round += 1) {
-      const [sale] = await this.db
-        .select({
-          status: sales.status,
-          total: sales.total,
-          rounding: sales.rounding,
-          actorId: sales.actorId,
-          actorKind: sales.actorKind,
-          method: sales.paymentMethodCode,
-          attempt: sales.paymentAttempt,
-          attemptAt: sales.paymentAttemptAt,
-          switchCashPaid: sales.switchCashPaid,
-        })
-        .from(sales)
-        .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
+    for (let round = 0; round < MAX_ROUNDS; round += 1) {
+      // A cancel takes a switch to cash back first, in every round: a switch asked meanwhile loses.
+      if (mode === 'cancel') await this.dropCashSwitch(tenantId, saleId);
+      let sale = await this.saleForSettle(tenantId, saleId);
       if (!sale) return { outcome: 'not_found', payment: null };
       // Completed, voided or cancelled already: nothing is asked and nothing moves (M16).
       if (sale.status !== 'awaiting_payment' || !this.enabled)
         return { outcome: sale.status, payment: null };
       if (!sale.method) throw refused('no_method_code');
+      // The cashier's request keeps its own intent alive: another request that failed may have taken it back.
+      if (
+        mode === 'cash' &&
+        cashPaid !== undefined &&
+        sale.attempt === 1 &&
+        sale.switchCashPaid === null
+      ) {
+        await this.requestCashSwitch(tenantId, saleId, cashPaid);
+        sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
+        if (sale.status !== 'awaiting_payment' || !sale.method) continue;
+      }
 
       const switching = sale.switchCashPaid !== null;
-      const closing = switching || mode === 'cancel';
+      // Only a cancel and the cashier's own cash request close a bill.
+      const closing = mode === 'cancel' || (mode === 'cash' && switching);
       const actor = actorRef(sale.actorKind, sale.actorId);
       const charge = {
         orderRef: saleId,
@@ -241,7 +265,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       let refusedCode: string | undefined;
       // A sale past its first attempt was switched to cash: the cashier said the cash was received, so
       // every worker charges it (as it finishes a switch), and none gives it up for want of a payment.
-      if (!closing && (mode === 'charge' || sale.attempt > 1)) {
+      if (!closing && !switching && (mode === 'charge' || sale.attempt > 1)) {
         payment = await this.client
           .charge(tenantId, charge)
           .catch((error: unknown) => {
@@ -276,53 +300,67 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (payment.orderRef !== saleId || payment.amount !== charge.amount)
         throw refused('payment_mismatch');
       if (isInFlight(payment)) {
-        if (closing) {
-          payment = await this.closeBill(tenantId, payment, actor).catch(
-            async (error: unknown) => {
-              // A clear refusal: the bill stays open, so the switch is off (the sale must not turn into a
-              // cash sale later, behind the cashier's back). No answer at all leaves it for a retry.
-              if (error instanceof PaymentApiError && error.kind === 'rejected')
-                await this.dropCashSwitch(tenantId, saleId);
-              throw error;
-            },
-          );
-        } else if (mode === 'sync' && isOnlineMethod(sale.method)) {
+        if (closing) payment = await this.closeBill(tenantId, payment, actor);
+        else if (mode === 'sync' && isOnlineMethod(sale.method))
           payment = await this.client.sync(tenantId, payment.id);
-        }
       }
-      if (payment.status === 'paid')
-        return {
-          outcome: await this.applyToSale(
-            tenantId,
-            saleId,
-            'completed',
-            payment.id,
-          ),
-          payment,
-        };
+      if (payment.status === 'paid') {
+        const outcome = await this.applyToSale(
+          tenantId,
+          saleId,
+          'completed',
+          payment.id,
+          sale.attempt,
+        );
+        if (outcome === 'stale') continue;
+        return { outcome, payment };
+      }
       // A PG payment still open: the sale waits until payment-api pays or closes it.
       if (!CLOSED_UNPAID.has(payment.status))
         return { outcome: 'awaiting_payment', payment };
-      if (!switching)
-        return {
-          outcome: await this.applyToSale(
-            tenantId,
-            saleId,
-            'cancelled',
-            payment.id,
-          ),
-          payment,
-          refusedCode,
-        };
-      // The PG attempt is closed unpaid and the cashier took cash: charge the cash attempt next.
+      if (!switching) {
+        const outcome = await this.applyToSale(
+          tenantId,
+          saleId,
+          'cancelled',
+          payment.id,
+          sale.attempt,
+        );
+        if (outcome === 'stale') continue;
+        return { outcome, payment, refusedCode };
+      }
+      // The PG attempt is closed unpaid and the cashier took cash. Their own request turns the sale into a
+      // cash sale, and so does the job when the bill was closed for the switch (the request died after
+      // it). Anyone else leaves the sale as it is: the switch is not theirs to do, and the sale is not
+      // cancelled under a cashier who holds the customer's cash.
+      if (
+        mode !== 'cash' &&
+        !(mode === 'reconcile' && payment.status === 'cancelled')
+      )
+        return { outcome: 'awaiting_payment', payment };
+      // The next round charges the cash attempt.
       await this.turnToCash(tenantId, saleId, sale.attempt);
-      mode = 'charge';
     }
+    const sale = await this.saleForSettle(tenantId, saleId);
+    return { outcome: sale?.status ?? 'not_found', payment: null };
+  }
+
+  private async saleForSettle(tenantId: string, saleId: string) {
     const [sale] = await this.db
-      .select({ status: sales.status })
+      .select({
+        status: sales.status,
+        total: sales.total,
+        rounding: sales.rounding,
+        actorId: sales.actorId,
+        actorKind: sales.actorKind,
+        method: sales.paymentMethodCode,
+        attempt: sales.paymentAttempt,
+        attemptAt: sales.paymentAttemptAt,
+        switchCashPaid: sales.switchCashPaid,
+      })
       .from(sales)
       .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
-    return { outcome: sale?.status ?? 'not_found', payment: null };
+    return sale ?? null;
   }
 
   /** `settle` for the callers that need only the sale's status afterwards. */
@@ -392,6 +430,15 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * The cashier's cash request got no usable answer and said so: the switch is taken back, so nothing turns
+   * the sale into a cash sale later, behind the cashier's back. A sale that is a cash sale already is past
+   * this (its `switchCashPaid` is null) and is not touched.
+   */
+  async abandonCashSwitch(tenantId: string, saleId: string) {
+    await this.dropCashSwitch(tenantId, saleId);
+  }
+
   /** The switch to cash is off: the sale waits for its PG payment as before. */
   private async dropCashSwitch(tenantId: string, saleId: string) {
     await this.db
@@ -448,19 +495,27 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** The one write of step 2: under the sale's row lock, and only while the sale still awaits payment. */
+  /**
+   * The one write of step 2: under the sale's row lock, and only while the sale still awaits payment AND is
+   * still what the caller read before it asked payment-api. `attempt` is the attempt the payment belongs to:
+   * a sale that moved on to another attempt (it was switched to cash) is not touched by the old attempt's
+   * answer, and a sale is never cancelled while a switch to cash is asked. Both answer `stale`.
+   */
   private async applyToSale(
     tenantId: string,
     saleId: string,
     to: 'completed' | 'cancelled',
     paymentId: string,
-  ): Promise<SaleOutcome> {
+    attempt: number,
+  ): Promise<SaleOutcome | 'stale'> {
     return this.db.transaction(async (tx) => {
       const [sale] = await tx
         .select({
           status: sales.status,
           actorId: sales.actorId,
           voucherId: sales.voucherId,
+          attempt: sales.paymentAttempt,
+          switchCashPaid: sales.switchCashPaid,
         })
         .from(sales)
         .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)))
@@ -468,6 +523,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (!sale) return 'not_found';
       // Another worker applied the same answer first. A cancelled sale is never completed.
       if (sale.status !== 'awaiting_payment') return sale.status;
+      if (sale.attempt !== attempt) return 'stale';
+      if (to === 'cancelled' && sale.switchCashPaid !== null) return 'stale';
       if (to === 'completed') {
         await tx
           .update(sales)
@@ -599,12 +656,12 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           actorRef: actorRef(v.actorKind, v.actorId),
           approvedBy: actorRef(v.approvedByKind, v.approvedBy),
         });
-      const refundStatus = refundStatusOf(payment);
-      if (!refundStatus) throw refused('payment_mismatch');
+      if (!refundStatusOf(payment)) throw refused('payment_mismatch');
       await this.db
         .update(saleVoids)
-        .set({ paymentSyncPending: false, refundStatus })
+        .set({ paymentSyncPending: false })
         .where(mine);
+      await this.setRefundStatus(tenantId, voidId, payment);
       return true;
     }
     const ids: string[] = sale?.paymentId ? [sale.paymentId] : [];
@@ -685,11 +742,20 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   ): Promise<RefundStatus> {
     const refundStatus = refundStatusOf(payment);
     if (!refundStatus) throw refused('payment_mismatch');
+    // A refund that succeeded stays so: an older answer (a follower that read before it) changes nothing.
+    const mine = and(
+      eq(saleVoids.tenantId, tenantId),
+      eq(saleVoids.id, voidId),
+    );
     await this.db
       .update(saleVoids)
       .set({ refundStatus })
-      .where(and(eq(saleVoids.tenantId, tenantId), eq(saleVoids.id, voidId)));
-    return refundStatus;
+      .where(and(mine, ne(saleVoids.refundStatus, 'succeeded')));
+    const [row] = await this.db
+      .select({ refundStatus: saleVoids.refundStatus })
+      .from(saleVoids)
+      .where(mine);
+    return row?.refundStatus ?? refundStatus;
   }
 
   /**

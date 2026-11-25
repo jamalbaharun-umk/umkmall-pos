@@ -49,27 +49,70 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   let sync: PaymentSync;
   // `no_charge`: only a charge (POST /payments) fails; everything else reaches payment-api.
   let link: 'ok' | 'down' | 'no_charge' = 'ok';
+  type Call = { url: string; init: RequestInit };
+  /**
+   * Calls of pos-api to payment-api that a test holds: `before` stops the call before it is sent, `after`
+   * lets payment-api do it and holds its answer. Each hold stops the first call that matches, once.
+   */
+  type Hold = {
+    match: (c: Call) => boolean;
+    when: 'before' | 'after';
+    used: boolean;
+    reached: () => void;
+    gate: Promise<void>;
+  };
+  let holds: Hold[] = [];
+  /** The answer of the first matching call is lost: payment-api did it, pos-api never hears. */
+  let loseAnswerOf: ((c: Call) => boolean) | null = null;
+  function hold(match: Hold['match'], when: Hold['when'] = 'before') {
+    let release!: () => void;
+    let reached!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const held = new Promise<void>((r) => (reached = r));
+    holds.push({ match, when, used: false, reached, gate });
+    return { held, release };
+  }
+  const isFindByKey = (c: Call) =>
+    c.init.method === 'GET' && c.url.includes('/payments?idempotencyKey=');
+  const isCharge = (c: Call) =>
+    c.init.method === 'POST' && c.url.endsWith('/payments');
+  const isCancel = (c: Call) =>
+    c.init.method === 'POST' && c.url.endsWith('/cancel');
   const tenants: string[] = [];
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
   const http = () => request(app.getHttpServer());
 
-  async function posApp(env: Record<string, string>) {
+  /** `undefined` unsets the variable for this app. */
+  async function posApp(env: Record<string, string | undefined>) {
     const saved = Object.fromEntries(
       Object.keys(env).map((k) => [k, process.env[k]]),
     );
-    Object.assign(process.env, env);
+    for (const [k, v] of Object.entries(env))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
     try {
       const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
         .overrideProvider(PAYMENT_FETCH)
-        .useValue((url: string, init: RequestInit) => {
-          if (
-            link === 'down' ||
-            (link === 'no_charge' &&
-              init.method === 'POST' &&
-              url.endsWith('/payments'))
-          )
+        .useValue(async (url: string, init: RequestInit) => {
+          const call = { url, init };
+          if (link === 'down' || (link === 'no_charge' && isCharge(call)))
             throw new TypeError('fetch failed');
-          return fetch(url, init);
+          const h = holds.find((x) => !x.used && x.match(call));
+          if (h) h.used = true;
+          if (h?.when === 'before') {
+            h.reached();
+            await h.gate;
+          }
+          const res = await fetch(url, init);
+          if (loseAnswerOf?.(call)) {
+            loseAnswerOf = null;
+            throw new TypeError('fetch failed');
+          }
+          if (h?.when === 'after') {
+            h.reached();
+            await h.gate;
+          }
+          return res;
         })
         .compile();
       const a = moduleRef.createNestApplication();
@@ -128,6 +171,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   });
   beforeEach(async () => {
     link = 'ok';
+    holds = [];
+    loseAnswerOf = null;
     await gatewaySettings('pending');
   });
 
@@ -368,6 +413,96 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     });
   });
 
+  describe('where online payments are off (M1, M3)', () => {
+    it.each([
+      ['production', 'production'],
+      ['unset', undefined],
+    ])(
+      'NODE_ENV %s: an online method cannot be created, and one that exists does not sell',
+      async (_name, nodeEnv) => {
+        // The method exists (made where online payments are allowed) before this environment meets it.
+        const s = await shop();
+        const other = await posApp({
+          PAYMENT_API_URL: pay.url,
+          PAYMENT_SERVICE_KEY: pay.serviceKey,
+          PAYMENT_API_ALLOW_HTTP: 'true',
+          POS_PAYMENT_RECONCILE_INTERVAL_SECONDS: '0',
+          NODE_ENV: nodeEnv,
+        });
+        try {
+          const there = () => request(other.getHttpServer());
+          const made = await there()
+            .post('/payment-methods')
+            .set('Authorization', s.auth)
+            .send({ name: 'VA', kind: 'online', gatewayMethod: 'fake_va' })
+            .expect(422);
+          expect(made.body.errors).toEqual({
+            kind: 'Pembayaran online belum tersedia',
+          });
+          const sold = await there()
+            .post('/sales')
+            .set('Authorization', s.auth)
+            .set('Idempotency-Key', randomUUID())
+            .send({
+              lines: [{ productId: s.productId, qty: 1 }],
+              paymentMethodId: s.qris,
+              paid: s.price,
+            })
+            .expect(422);
+          expect(sold.body.errors).toEqual({
+            paymentMethodId: 'Metode pembayaran online belum bisa dipakai',
+          });
+          // Nothing was taken and nothing waits.
+          const [{ n }] = await admin<
+            { n: number }[]
+          >`select count(*)::int as n from pos.sales where tenant_id = ${s.tenantId}`;
+          expect(n).toBe(0);
+          expect(await onHand(s)).toBe(20);
+          expect(await bills(s.tenantId)).toEqual([]);
+          // A cash sale is as before.
+          await there()
+            .post('/sales')
+            .set('Authorization', s.auth)
+            .set('Idempotency-Key', randomUUID())
+            .send({ lines: [{ productId: s.productId, qty: 1 }], paid: 10_000 })
+            .expect(201);
+        } finally {
+          await other.close();
+        }
+      },
+    );
+
+    it('a gateway method this version does not know is refused by the database, and a method that has one does not sell', async () => {
+      const s = await shop();
+      const insert = (name: string) =>
+        admin`insert into pos.payment_methods (tenant_id, name, is_online, gateway_method)
+          values (${s.tenantId}, ${name}, true, 'gopay_dynamic') returning id`;
+      await expect(insert('GoPay')).rejects.toThrow(
+        /payment_methods_gateway_method_ck/,
+      );
+      // A row from before the check (or of a newer version): the sale is refused before anything is taken.
+      await admin`alter table pos.payment_methods drop constraint payment_methods_gateway_method_ck`;
+      try {
+        const [row] = await insert('GoPay');
+        const res = await sell(s, {
+          paymentMethodId: row.id as string,
+        }).expect(422);
+        expect(res.body.errors).toEqual({
+          paymentMethodId: 'Metode pembayaran online belum bisa dipakai',
+        });
+        expect(await onHand(s)).toBe(20);
+        const [{ n }] = await admin<
+          { n: number }[]
+        >`select count(*)::int as n from pos.sales where tenant_id = ${s.tenantId}`;
+        expect(n).toBe(0);
+        await admin`delete from pos.payment_methods where id = ${row.id as string}`;
+      } finally {
+        await admin`alter table pos.payment_methods add constraint payment_methods_gateway_method_ck
+          check (gateway_method is null or gateway_method in ('fake_qris', 'fake_va'))`;
+      }
+    });
+  });
+
   describe('starting a PG sale', () => {
     it('D10 a QRIS sale awaits payment with the QR and its 15-minute expiry, key <saleId>:1, stock and voucher taken; a repeat is the same sale and the same QR', async () => {
       const s = await shop(5000);
@@ -525,6 +660,46 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect((await paymentsOf(res.body.saleId)).map((p) => p.status)).toEqual([
         'cancelled',
       ]);
+    });
+
+    it('the voucher quota comes back when the store may not charge, and when the bill closes unpaid', async () => {
+      const s = await shop(5000);
+      const v = await post(s.auth, '/vouchers', {
+        name: 'Hemat',
+        code: `V${Math.random().toString(36).slice(2, 8)}`,
+        type: 'percentage',
+        nominal: 10,
+        kuota: 5,
+        startDate: jakartaDay(-1),
+        expired: jakartaDay(1),
+      }).expect(201);
+      const quota = async () =>
+        (
+          await admin<
+            { kuota: number }[]
+          >`select kuota from pos.vouchers where id = ${v.body.id}`
+        )[0].kuota;
+      const body = { voucherCode: v.body.code, paid: 4500 };
+
+      await seedMerchant(pay.sql, {
+        tenantId: s.tenantId,
+        status: 'suspended',
+      });
+      await sell(s, body).expect(409);
+      expect(await quota()).toBe(5);
+      await seedMerchant(pay.sql, { tenantId: s.tenantId });
+
+      const saleId = (await sell(s, body).expect(201)).body.id as string;
+      expect(await quota()).toBe(4);
+      // The bill closes unpaid (failed here; an expired bill takes the same way out, tested below).
+      await onBill(s, saleId, 'fail');
+      const closed = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(closed.body).toMatchObject({
+        saleStatus: 'cancelled',
+        status: 'failed',
+      });
+      expect(await quota()).toBe(5);
+      expect(await onHand(s)).toBe(20);
     });
 
     it('a PG sale must be paid in the exact total', async () => {
@@ -802,7 +977,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await onHand(s)).toBe(19);
     });
 
-    it('M17 payment-api down: 503 and the sale still waits; the same request finishes it when payment-api is back, and so does the job', async () => {
+    it('M17 M2 payment-api down: 503, the switch is taken back and nobody finishes it; the customer can still pay the QR, or the cashier asks again', async () => {
       const s = await shop();
       const saleId = (await sell(s).expect(201)).body.id as string;
       link = 'down';
@@ -810,54 +985,168 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         paid: 6000,
       }).expect(503);
       expect(down.body.code).toBe('payment_unavailable');
+      // Nothing changed, as the answer says: no switch is left behind.
       expect(await saleRow(saleId)).toMatchObject({
         status: 'awaiting_payment',
         payment_attempt: 1,
-        switch_cash_paid: '6000',
+        payment_method_code: 'fake_qris',
+        switch_cash_paid: null,
       });
       link = 'ok';
+      // Neither the poll, the check nor the job turns it into a cash sale.
       const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
-      // The poll saw the switch that was asked and finished it.
       expect(view.body).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        method: 'fake_qris',
+        attempt: 1,
+        switchingToCash: false,
+      });
+      expect(view.body.checkout.qrString).toEqual(expect.any(String));
+      await post(s.auth, `/sales/${saleId}/payment/check`).expect(200);
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 0,
+        cancelled: 0,
+      });
+      // The cashier, told the switch did not happen, lets the customer scan: a QRIS sale, no cash.
+      await onBill(s, saleId, 'pay');
+      const paid = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(paid.body).toMatchObject({
+        saleStatus: 'completed',
+        status: 'paid',
+        method: 'fake_qris',
+        attempt: 1,
+        lateReceipts: [],
+      });
+      expect(await shift(s.auth)).toMatchObject({
+        cashSales: 0,
+        salesCount: 1,
+      });
+
+      // Or the cashier asks again once payment-api is back.
+      const other = (await sell(s).expect(201)).body.id as string;
+      link = 'down';
+      await post(s.auth, `/sales/${other}/payment/cash`, {
+        paid: 6000,
+      }).expect(503);
+      link = 'ok';
+      const again = await post(s.auth, `/sales/${other}/payment/cash`, {
+        paid: 6000,
+      }).expect(200);
+      expect(again.body).toMatchObject({
         saleStatus: 'completed',
         method: 'cash',
         attempt: 2,
       });
-      expect(await saleRow(saleId)).toMatchObject({
+      expect(await saleRow(other)).toMatchObject({
         paid: '6000',
         change: '800',
       });
+      expect(await shift(s.auth)).toMatchObject({
+        cashSales: 5200,
+        salesCount: 2,
+      });
+    });
 
-      // The job does the same for a switch nobody came back to.
-      const other = (await sell(s).expect(201)).body.id as string;
-      link = 'down';
-      await post(s.auth, `/sales/${other}/payment/cash`, {
+    it('M2 the close reached payment-api but its answer was lost: 503, and the sale is then cancelled, never a cash sale', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      loseAnswerOf = isCancel;
+      const res = await post(s.auth, `/sales/${saleId}/payment/cash`, {
         paid: 5200,
       }).expect(503);
-      link = 'ok';
+      expect(res.body.code).toBe('payment_unavailable');
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 1,
+        switch_cash_paid: null,
+      });
+      // The bill is closed, so the QR cannot be paid; the poll says so and the sale is cancelled.
+      const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(view.body).toMatchObject({
+        saleStatus: 'cancelled',
+        status: 'cancelled',
+      });
+      expect(await onHand(s)).toBe(20);
+      expect(await shift(s.auth)).toMatchObject({
+        cashSales: 0,
+        salesCount: 0,
+      });
+      const gone = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 5200,
+      }).expect(409);
+      expect(gone.body.code).toBe('not_awaiting');
+    });
+
+    it('a switch whose request died: the poll and the check change nothing; the job finishes it only when the bill was closed for it', async () => {
+      const s = await shop();
+      // The request wrote the switch and closed the bill, then died.
+      const closed = (await sell(s).expect(201)).body.id as string;
+      const [bill] = await paymentsOf(closed);
+      await admin`update pos.sales set switch_cash_paid = 5200 where id = ${closed}`;
+      const res = await fetch(`${pay.url}/payments/${bill.id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'X-Payment-Service-Key': pay.serviceKey,
+          'X-Tenant-Id': s.tenantId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ actorRef: `owner:${s.userId}` }),
+      });
+      expect(res.ok).toBe(true);
+      // The request wrote the switch and died before it closed the bill.
+      const open = (await sell(s).expect(201)).body.id as string;
+      await admin`update pos.sales set switch_cash_paid = 5200 where id = ${open}`;
+
+      for (const id of [closed, open]) {
+        const view = await get(s.auth, `/sales/${id}/payment`).expect(200);
+        expect(view.body).toMatchObject({
+          saleStatus: 'awaiting_payment',
+          switchingToCash: true,
+          attempt: 1,
+        });
+        await post(s.auth, `/sales/${id}/payment/check`).expect(200);
+        expect(await saleRow(id)).toMatchObject({
+          status: 'awaiting_payment',
+          payment_attempt: 1,
+          switch_cash_paid: '5200',
+        });
+      }
       expect(await sync.tick(later())).toMatchObject({
         completed: 1,
         cancelled: 0,
         failed: 0,
       });
-      expect(await saleRow(other)).toMatchObject({
+      expect(await saleRow(closed)).toMatchObject({
         status: 'completed',
         payment_method_code: 'cash',
         payment_attempt: 2,
       });
-      expect(await shift(s.auth)).toMatchObject({
-        cashSales: 10_400,
-        salesCount: 2,
+      // The open bill is nobody's to close but the cashier's: it still waits, and the QR still pays it.
+      expect(await saleRow(open)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 1,
       });
+      expect((await paymentsOf(open)).map((p) => p.status)).toEqual([
+        'pending',
+      ]);
+      // The cashier gives it up: a cancel takes the switch back first.
+      await post(s.auth, `/sales/${open}/payment/cancel`).expect(200);
+      expect(await saleRow(open)).toMatchObject({
+        status: 'cancelled',
+        switch_cash_paid: null,
+      });
+      expect(await onHand(s)).toBe(19);
     });
 
     it('the bill was closed but the cash charge got no answer: the sale is a cash sale that still waits, and the job charges it, never cancels it', async () => {
       const s = await shop();
       const saleId = (await sell(s).expect(201)).body.id as string;
       link = 'no_charge';
-      await post(s.auth, `/sales/${saleId}/payment/cash`, {
+      const pending = await post(s.auth, `/sales/${saleId}/payment/cash`, {
         paid: 5200,
       }).expect(503);
+      // A code of its own: the sale IS a cash sale now, only the record of the cash is missing.
+      expect(pending.body.code).toBe('cash_payment_pending');
       expect(await saleRow(saleId)).toMatchObject({
         status: 'awaiting_payment',
         payment_attempt: 2,
@@ -885,6 +1174,34 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
     });
 
+    it('a sale switched to cash is a cash sale for good: it is voided (not refunded) and its cash leaves the drawer', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(200);
+      const expected = async () =>
+        (await get(s.auth, '/shifts/current').expect(200)).body.shift
+          .expectedCash as number;
+      expect(await expected()).toBe(100_000 + 5200);
+      const wrong = await refund(s, saleId).expect(409);
+      expect(wrong.body.code).toBe('use_void');
+      await post(
+        s.auth,
+        `/sales/${saleId}/void`,
+        approval(s),
+        randomUUID(),
+      ).expect(201);
+      expect(await expected()).toBe(100_000);
+      expect(
+        (await paymentsOf(saleId)).map((p) => [p.method, p.status]),
+      ).toEqual([
+        ['fake_qris', 'cancelled'],
+        ['cash', 'voided'],
+      ]);
+      expect(await onHand(s)).toBe(20);
+    });
+
     it('only a sale that waits for a PG payment is switched: a cash sale, a finished sale and a cancelled sale are refused', async () => {
       const s = await shop();
       const cashSale = await sell(s, {
@@ -909,6 +1226,243 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
       expect(await paymentsOf(cancelled)).toHaveLength(1);
       expect(await onHand(s)).toBe(19);
+    });
+  });
+
+  describe('a stale answer never cancels a sale switched to cash (B1)', () => {
+    /**
+     * `stale` reads the sale while it waits for its QR payment and is held before it asks payment-api.
+     * Meanwhile the cashier switches to cash; that request is held too, at `cashAt`. Then `stale` goes on
+     * with what it read, and at last the cash request finishes.
+     */
+    async function race(
+      stale: (s: Shop, saleId: string) => PromiseLike<unknown>,
+      cashAt: 'cash_charge' | 'bill_closed',
+    ) {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      const first = hold(isFindByKey);
+      const staleRun = Promise.resolve(stale(s, saleId));
+      await first.held;
+      const second =
+        cashAt === 'cash_charge'
+          ? // The sale is a cash sale at attempt 2 and its cash is not recorded yet.
+            hold(isCharge)
+          : // The bill is closed for the switch and the sale is still at attempt 1.
+            hold(isCancel, 'after');
+      const cash = post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 5200,
+      }).then((r) => r);
+      await second.held;
+      expect(await saleRow(saleId)).toMatchObject(
+        cashAt === 'cash_charge'
+          ? { status: 'awaiting_payment', payment_attempt: 2 }
+          : {
+              status: 'awaiting_payment',
+              payment_attempt: 1,
+              switch_cash_paid: '5200',
+            },
+      );
+      first.release();
+      await staleRun;
+      // The stale worker found attempt 1 closed unpaid. It must not have cancelled the sale.
+      expect((await saleRow(saleId)).status).not.toBe('cancelled');
+      expect(await onHand(s)).toBe(19);
+      second.release();
+      const res = await cash;
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        saleStatus: 'completed',
+        method: 'cash',
+        attempt: 2,
+      });
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'completed',
+        payment_method_code: 'cash',
+        paid: '5200',
+      });
+      expect(
+        (await paymentsOf(saleId)).map((p) => [p.method, p.status]),
+      ).toEqual([
+        ['fake_qris', 'cancelled'],
+        ['cash', 'paid'],
+      ]);
+      expect(await onHand(s)).toBe(19);
+      expect(await shift(s.auth)).toMatchObject({
+        cashSales: 5200,
+        salesCount: 1,
+      });
+    }
+    const poll = (s: Shop, saleId: string) =>
+      get(s.auth, `/sales/${saleId}/payment`).then((r) => r);
+    const check = (s: Shop, saleId: string) =>
+      post(s.auth, `/sales/${saleId}/payment/check`).then((r) => r);
+    const job = () => sync.tick(later());
+
+    it('a poll that read the sale before the switch, applied while the cash is being recorded', () =>
+      race(poll, 'cash_charge'));
+    it('a poll that read the sale before the switch, applied when the bill has just been closed for it', () =>
+      race(poll, 'bill_closed'));
+    it('a manual check that read the sale before the switch', () =>
+      race(check, 'cash_charge'));
+    it('a manual check, applied when the bill has just been closed', () =>
+      race(check, 'bill_closed'));
+    it('the job that read the sale before the switch', () =>
+      race(job, 'cash_charge'));
+    it('the job, applied when the bill has just been closed', () =>
+      race(job, 'bill_closed'));
+  });
+
+  describe('two workers at once', () => {
+    /** Whatever won, the sale and payment-api agree and nothing was taken or given twice. */
+    async function settled(s: Shop, saleId: string) {
+      const sale = await saleRow(saleId);
+      const payments = await paymentsOf(saleId);
+      const paid = payments.filter((p) => p.status === 'paid');
+      expect(['completed', 'cancelled']).toContain(sale.status);
+      expect(paid).toHaveLength(sale.status === 'completed' ? 1 : 0);
+      if (sale.status === 'completed') expect(sale.payment_id).toBe(paid[0].id);
+      expect(await onHand(s)).toBe(sale.status === 'completed' ? 19 : 20);
+      expect(sale.switch_cash_paid).toBeNull();
+      return sale;
+    }
+
+    it('a cancel and a switch to cash at once: one of them wins, the sale is cancelled or a cash sale, never both', async () => {
+      for (let i = 0; i < 3; i += 1) {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        const [cancel, cash] = await Promise.all([
+          post(s.auth, `/sales/${saleId}/payment/cancel`),
+          post(s.auth, `/sales/${saleId}/payment/cash`, { paid: 5200 }),
+        ]);
+        let sale = await saleRow(saleId);
+        // Neither got through (each took the other's step back): the cashier asks again.
+        if (sale.status === 'awaiting_payment') {
+          expect([cancel.status, cash.status]).toEqual([409, 409]);
+          await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+        }
+        sale = await settled(s, saleId);
+        if (cash.status === 200) expect(sale.status).toBe('completed');
+        if (cancel.status === 200) expect(sale.status).toBe('cancelled');
+        expect(await shift(s.auth)).toMatchObject({
+          cashSales: sale.status === 'completed' ? 5200 : 0,
+        });
+      }
+    });
+
+    it('a cancel and the customer’s payment at once: cancelled with nothing paid, or completed with the payment', async () => {
+      for (let i = 0; i < 3; i += 1) {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        const [cancel] = await Promise.all([
+          post(s.auth, `/sales/${saleId}/payment/cancel`),
+          onBill(s, saleId, i % 2 ? 'pay' : 'late-pay').catch(() => undefined),
+        ]);
+        expect([200, 409]).toContain(cancel.status);
+        await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+        const sale = await settled(s, saleId);
+        if (cancel.status === 200) expect(sale.status).toBe('cancelled');
+        else expect(cancel.body.code).toBe('already_paid');
+      }
+    });
+
+    it('two checks, a poll and the job at once on a paid bill complete the sale once', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await onBill(s, saleId, 'pay', { webhook: 'drop' });
+      const [a, b, c, tick] = await Promise.all([
+        post(s.auth, `/sales/${saleId}/payment/check`),
+        post(s.auth, `/sales/${saleId}/payment/check`),
+        get(s.auth, `/sales/${saleId}/payment`),
+        sync.tick(later()),
+      ]);
+      expect([a.status, b.status, c.status]).toEqual([200, 200, 200]);
+      expect(tick.failed).toBe(0);
+      expect((await settled(s, saleId)).status).toBe('completed');
+      expect(await shift(s.auth)).toMatchObject({ salesCount: 1 });
+    });
+
+    it('two refund retries and the job at once ask the gateway for one refund', async () => {
+      const s = await shop();
+      const saleId = await paidSale(s);
+      await gatewaySettings('fail');
+      expect((await refund(s, saleId).expect(201)).body.refundStatus).toBe(
+        'failed',
+      );
+      await gatewaySettings('pending');
+      const before = (await billOf(s, saleId)).refunds.length;
+      const [a, b, tick] = await Promise.all([
+        post(s.auth, `/sales/${saleId}/refund/retry`),
+        post(s.auth, `/sales/${saleId}/refund/retry`),
+        sync.tick(later()),
+      ]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      expect(tick.failed).toBe(0);
+      expect((await billOf(s, saleId)).refunds).toHaveLength(before + 1);
+      const [payment] = await paymentsOf(saleId);
+      expect(payment.status).toBe('refund_pending');
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/refunds/${payment.refund_key}/succeed`,
+      );
+      await sync.tick(later());
+      expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
+    });
+
+    it('a refund whose request and the job send it at once is asked once', async () => {
+      const s = await shop();
+      const saleId = await paidSale(s);
+      link = 'down';
+      await refund(s, saleId).expect(201);
+      link = 'ok';
+      const [a, b] = await Promise.all([
+        sync.tick(later()),
+        post(s.auth, `/sales/${saleId}/refund/retry`),
+      ]);
+      expect(a.failed).toBe(0);
+      expect(b.status).toBe(200);
+      expect((await billOf(s, saleId)).refunds).toHaveLength(1);
+      expect((await voidsOf(saleId))[0]).toMatchObject({
+        refund_status: 'pending',
+        payment_sync_pending: false,
+      });
+      const [payment] = await paymentsOf(saleId);
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/refunds/${payment.refund_key}/succeed`,
+      );
+      await sync.tick(later());
+      expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
+    });
+
+    it('a refund that succeeded is not overwritten by an older answer', async () => {
+      const s = await shop();
+      const saleId = await paidSale(s);
+      await refund(s, saleId).expect(201);
+      const [payment] = await paymentsOf(saleId);
+      // A follower (the job's way) read the payment while the refund was on its way and is held with
+      // that answer.
+      const stale = hold(
+        (c) =>
+          c.init.method === 'GET' && c.url.endsWith(`/payments/${payment.id}`),
+        'after',
+      );
+      const follower = sync.followRefund(s.tenantId, saleId);
+      await stale.held;
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/refunds/${payment.refund_key}/succeed`,
+      );
+      const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(view.body.refund.status).toBe('succeeded');
+      expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
+      stale.release();
+      // It answers what is stored, not the older answer it holds.
+      expect(await follower).toBe('succeeded');
+      expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
     });
   });
 
@@ -1205,6 +1759,21 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
     });
 
+    it('V4 a refund the gateway refused a moment ago is marked by hand at once: the mark asks where the refund stands first', async () => {
+      const s = await shop();
+      const saleId = await paidSale(s);
+      await refund(s, saleId).expect(201);
+      const [payment] = await paymentsOf(saleId);
+      await gateway(s.tenantId, 'POST', `/refunds/${payment.refund_key}/fail`);
+      // Nothing has asked since: pos-api still has it as pending.
+      expect((await voidsOf(saleId))[0].refund_status).toBe('pending');
+      const res = await post(s.auth, `/sales/${saleId}/refund/manual`, {
+        note: 'Dikembalikan tunai ke pelanggan',
+      }).expect(200);
+      expect(res.body.refundStatus).toBe('succeeded');
+      expect((await paymentsOf(saleId))[0].status).toBe('refunded');
+    });
+
     it('a refund while payment-api is down reverses the sale and is sent by the job, once', async () => {
       const s = await shop();
       const saleId = await paidSale(s);
@@ -1290,6 +1859,24 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         paid: 10_000,
       }).expect(404);
       await post(budi.auth, `/sales/${saleId}/payment/cancel`).expect(404);
+
+      // What pays the bill (the QR) is not for everyone who may read reports: only the sale's cashier, or
+      // someone with `sales.void` who recovers a stuck payment.
+      const reader = await createCashier(app, s, [
+        'sales.create',
+        'reports.view',
+      ]);
+      await get(reader.auth, `/sales/${saleId}/payment`).expect(404);
+      await post(reader.auth, `/sales/${saleId}/payment/cancel`).expect(404);
+      const supervisor = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+      ]);
+      const seen = await get(
+        supervisor.auth,
+        `/sales/${saleId}/payment`,
+      ).expect(200);
+      expect(seen.body.checkout.qrString).toEqual(expect.any(String));
 
       await get(s.auth, `/sales/${saleId}/payment`).expect(200);
       const notOwn = await post(s.auth, `/sales/${saleId}/payment/cash`, {

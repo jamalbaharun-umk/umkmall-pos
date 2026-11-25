@@ -422,6 +422,13 @@ export class VoidService {
 
   /** `POST /sales/:id/refund/manual`: the store returned the money of a refused refund by hand (V4). */
   async markRefundManual(s: PosSession, saleId: string, note: string) {
+    await this.refundView(s, saleId);
+    // What is stored may be old (the gateway refused the refund and nothing has asked since): ask first.
+    await this.payments
+      .followRefund(s.tenantId, saleId)
+      .catch((error: unknown) => {
+        throw paymentHttpError(error);
+      });
     const refund = await this.refundView(s, saleId);
     // Only a refund the gateway refused; one already marked answers as it stands.
     if (refund.refundStatus === 'succeeded') return refund;
