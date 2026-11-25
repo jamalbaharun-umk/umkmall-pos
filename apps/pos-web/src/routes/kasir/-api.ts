@@ -93,7 +93,7 @@ export type Result<T = undefined> =
   { ok: true; data: T } | { ok: false; error: string; errors?: Record<string, string>; total?: number; status?: number }
 
 const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk berjualan.',
+  403: 'Anda tidak punya izin untuk berjualan.',
   404: 'Data tidak ditemukan.',
 }
 
@@ -105,7 +105,7 @@ async function refusalOf(res: Response): Promise<Refusal> {
     const body = (await res.json().catch(() => null)) as { message?: unknown; errors?: unknown; total?: unknown } | null
     return {
       status: res.status,
-      error: typeof body?.message === 'string' ? body.message : 'Data belum benar. Periksa isian kamu.',
+      error: typeof body?.message === 'string' ? body.message : 'Data belum benar. Periksa isian Anda.',
       errors: body?.errors && typeof body.errors === 'object' ? (body.errors as Record<string, string>) : undefined,
       total: typeof body?.total === 'number' ? body.total : undefined,
     }

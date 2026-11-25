@@ -149,7 +149,7 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
       </Button>
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-bold text-default-primary">Halo, {staff.name}</h1>
-        <p className="text-sm text-default-secondary">Masukkan PIN kamu</p>
+        <p className="text-sm text-default-secondary">Masukkan PIN Anda</p>
       </div>
       <div className="flex h-4 gap-2" role="status" aria-label={`${pin.length} angka dimasukkan`}>
         {Array.from({ length: Math.max(pin.length, 4) }, (_, i) => (

@@ -82,7 +82,7 @@ export function refundGuidance(kind: MethodKind | null, total: number, rupiah: (
     case 'cash':
       return {
         needsShift: true,
-        text: `Uang ${rupiah(total)} dikembalikan ke pelanggan dari laci, dan keluar dari kas shift kamu yang sedang buka. Buka shift dulu bila belum.`,
+        text: `Uang ${rupiah(total)} dikembalikan ke pelanggan dari laci, dan keluar dari kas shift Anda yang sedang buka. Buka shift dulu bila belum.`,
       }
     case 'debit':
     case 'wallet':
@@ -129,7 +129,7 @@ export function voidFailure(status: number, body: unknown): VoidFailure {
   if (status === 403)
     return {
       kind: 'forbidden',
-      error: 'Kamu tidak punya izin untuk membuat penjualan, jadi tidak bisa memulai pembatalan.',
+      error: 'Anda tidak punya izin untuk membuat penjualan, jadi tidak bisa memulai pembatalan.',
       errors,
     }
   if (status === 404) return { kind: 'gone', error: 'Struk tidak ditemukan.', errors }

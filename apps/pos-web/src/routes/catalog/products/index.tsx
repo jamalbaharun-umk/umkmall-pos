@@ -134,7 +134,7 @@ function ProductsPage() {
                 </Button>
               }
             >
-              Tambahkan produk pertamamu, misalnya “Es Teh Manis”.
+              Tambahkan produk pertama Anda, misalnya “Es Teh Manis”.
             </Empty>
           )
         ) : (

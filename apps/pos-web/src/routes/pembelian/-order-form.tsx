@@ -68,8 +68,8 @@ export function OrderForm({
       <Page crumbs={crumbs} title={title}>
         <Card variant="outlined">
           <Empty
-            title="Kamu tidak punya izin"
-            hint="Membuat pembelian butuh izin Kelola pembelian. Minta pemilik toko menambahkannya ke peranmu."
+            title="Anda tidak punya izin"
+            hint="Membuat pembelian butuh izin Kelola pembelian. Minta pemilik toko menambahkannya ke peran Anda."
           />
         </Card>
       </Page>

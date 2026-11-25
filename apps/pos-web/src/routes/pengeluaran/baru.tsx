@@ -125,7 +125,7 @@ function NewExpense() {
           {drawer ? (
             <Alert variant="info" size="small">
               Uang diambil dari laci. Hitungan laci langsung berkurang{amount > 0 ? ` ${rupiah(amount)}` : ''}. Tanggal otomatis hari ini.
-              {!hasShift && ' Kamu belum membuka shift: buka shift dulu, atau pilih Di luar laci.'}
+              {!hasShift && ' Anda belum membuka shift: buka shift dulu, atau pilih Di luar laci.'}
             </Alert>
           ) : (
             <p className="text-sm text-default-secondary">Tidak mengubah uang di laci. Tanggal boleh hari lain.</p>

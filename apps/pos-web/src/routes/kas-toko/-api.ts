@@ -29,6 +29,6 @@ export const loadStoreCash = createServerFn()
   .handler(async ({ data }) => {
     const res = await api(`/store-cash?page=${data}&perPage=20`)
     if (!res.ok)
-      throw new Error(res.status === 403 ? 'Kamu tidak punya izin melihat kas toko.' : 'Gagal memuat kas toko.')
+      throw new Error(res.status === 403 ? 'Anda tidak punya izin melihat kas toko.' : 'Gagal memuat kas toko.')
     return (await res.json()) as StoreCashPage
   })

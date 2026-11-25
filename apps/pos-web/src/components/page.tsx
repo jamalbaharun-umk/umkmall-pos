@@ -84,7 +84,7 @@ export function PageLoading() {
   )
 }
 
-export const NO_PERMISSION = 'Kamu tidak punya izin untuk ini'
+export const NO_PERMISSION = 'Anda tidak punya izin untuk ini'
 
 export function PageError({ error }: ErrorComponentProps) {
   const router = useRouter()
@@ -93,7 +93,7 @@ export function PageError({ error }: ErrorComponentProps) {
     return (
       <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8 md:py-8">
         <Panel>
-          <Empty title={NO_PERMISSION}>Minta pemilik toko menambahkan izin yang dibutuhkan ke peranmu.</Empty>
+          <Empty title={NO_PERMISSION}>Minta pemilik toko menambahkan izin yang dibutuhkan ke peran Anda.</Empty>
         </Panel>
       </div>
     )
@@ -131,8 +131,8 @@ export function RequiredLabel({ children }: { children: ReactNode }) {
 export function NoAccess({ permission }: { permission: string }) {
   return (
     <Panel>
-      <Empty title="Kamu tidak punya izin untuk ini">
-        Minta pemilik toko menambahkan izin “{permission}” ke peranmu.
+      <Empty title="Anda tidak punya izin untuk ini">
+        Minta pemilik toko menambahkan izin “{permission}” ke peran Anda.
       </Empty>
     </Panel>
   )

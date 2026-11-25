@@ -32,7 +32,7 @@ export type Failure = { ok: false; status: number; error: string; errors?: Field
 export type Result<T> = { ok: true; data: T } | Failure
 
 const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin melihat laporan.',
+  403: 'Anda tidak punya izin melihat laporan.',
 }
 const OFFLINE = 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.'
 
@@ -41,7 +41,7 @@ async function failure(res: Response, fallback: string): Promise<Failure> {
   if (res.status === 422) {
     const body = (await res.json().catch(() => null)) as { message?: unknown; errors?: unknown } | null
     const errors = body?.errors && typeof body.errors === 'object' ? (body.errors as FieldErrors) : undefined
-    const error = typeof body?.message === 'string' ? body.message : 'Periksa kembali isian kamu'
+    const error = typeof body?.message === 'string' ? body.message : 'Periksa kembali isian Anda'
     return { ok: false, status: 422, error, errors }
   }
   return { ok: false, status: res.status, error: ERRORS[res.status] ?? fallback }

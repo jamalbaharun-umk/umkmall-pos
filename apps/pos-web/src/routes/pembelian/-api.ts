@@ -37,9 +37,9 @@ export type StockProduct = { id: string; name: string; sku: string; costPrice: n
 export type Result = { ok: true; id?: string } | { ok: false; error: string; errors?: Record<string, string>; status?: number }
 
 const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk ini.',
+  403: 'Anda tidak punya izin untuk ini.',
   404: 'Data tidak ditemukan, mungkin sudah dihapus.',
-  422: 'Data belum benar. Periksa isian kamu.',
+  422: 'Data belum benar. Periksa isian Anda.',
 }
 
 async function load<T>(path: string): Promise<T> {

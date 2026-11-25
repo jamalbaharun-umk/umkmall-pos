@@ -87,7 +87,7 @@ function SuppliersPage() {
         {shown.length === 0 ? (
           <Empty
             title={suppliers.length === 0 ? 'Belum ada pemasok' : 'Pemasok tidak ditemukan'}
-            hint={suppliers.length === 0 ? 'Tambahkan pemasok tempat kamu membeli barang.' : 'Coba kata lain.'}
+            hint={suppliers.length === 0 ? 'Tambahkan pemasok tempat Anda membeli barang.' : 'Coba kata lain.'}
           />
         ) : (
           <Table density="comfortable">

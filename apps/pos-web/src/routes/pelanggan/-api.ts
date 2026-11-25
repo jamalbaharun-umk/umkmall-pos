@@ -60,9 +60,9 @@ const resource = (r: Resource) => {
 }
 
 const ERRORS: Record<number, string> = {
-  403: 'Kamu tidak punya izin untuk ini.',
+  403: 'Anda tidak punya izin untuk ini.',
   404: 'Data tidak ditemukan, mungkin sudah dihapus.',
-  422: 'Data belum benar. Periksa isian kamu.',
+  422: 'Data belum benar. Periksa isian Anda.',
 }
 
 async function load<T>(path: string): Promise<T> {

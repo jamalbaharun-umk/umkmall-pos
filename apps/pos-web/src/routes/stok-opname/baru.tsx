@@ -59,8 +59,8 @@ function NewOpnamePage() {
       <Page crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Buat' }]} title="Stok opname baru">
         <Card variant="outlined">
           <Empty
-            title="Kamu tidak punya izin"
-            hint="Membuat stok opname butuh izin Kelola pembelian. Minta pemilik toko menambahkannya ke peranmu."
+            title="Anda tidak punya izin"
+            hint="Membuat stok opname butuh izin Kelola pembelian. Minta pemilik toko menambahkannya ke peran Anda."
           />
         </Card>
       </Page>
@@ -130,7 +130,7 @@ function NewOpnamePage() {
   return (
     <Page crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Buat' }]} title="Stok opname baru">
       <Alert variant="info" treatment="accent">
-        Jumlah yang kamu hitung menggantikan stok saat opname disetujui; penjualan sebelum itu ikut terhitung.
+        Jumlah yang Anda hitung menggantikan stok saat opname disetujui; penjualan sebelum itu ikut terhitung.
       </Alert>
       <form onSubmit={submit} noValidate className="space-y-6">
         <Card variant="outlined" padding="large">

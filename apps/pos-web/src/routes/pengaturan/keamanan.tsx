@@ -191,7 +191,7 @@ function ApproverList({ approvers, selfId, isOwner }: { approvers: ApproverRow[]
               <li key={`${a.kind}:${a.id}`} className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <span className="font-medium">
                   {a.kind === 'owner' ? 'Pemilik' : a.name}
-                  {a.id === selfId && <span className="text-default-secondary"> (kamu)</span>}
+                  {a.id === selfId && <span className="text-default-secondary"> (Anda)</span>}
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
                   {locked ? (

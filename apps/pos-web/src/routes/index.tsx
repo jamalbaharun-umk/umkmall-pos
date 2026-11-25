@@ -49,7 +49,7 @@ function Home() {
     if (!masuk && !keluar) return
     // Next tick: the Toaster renders after the page, so it subscribes after this effect runs.
     // Not cleared on re-run: stripping the flag below re-runs this effect before the timer fires.
-    setTimeout(() => notifySuccess(masuk ? 'Berhasil masuk' : 'Kamu sudah keluar'))
+    setTimeout(() => notifySuccess(masuk ? 'Berhasil masuk' : 'Anda sudah keluar'))
     void navigate({ search: ({ masuk: _m, keluar: _k, ...rest }) => rest, replace: true })
   }, [masuk, keluar, navigate])
   return home.signedIn ? (

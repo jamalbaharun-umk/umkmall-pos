@@ -72,9 +72,9 @@ inline errors stay in addition. Nothing else is redesigned.
 | staf/peran | saveRole, deleteRole | Peran dibuat/disimpan/dihapus | Gagal membuat/menyimpan/menghapus peran |
 | staf/perangkat | bindThisDevice, revokeDevice, revokeSession | Perangkat terhubung/dicabut, Sesi kasir diakhiri | Gagal menghubungkan/mencabut perangkat, Gagal mengakhiri sesi kasir |
 | laporan | CSV download | Laporan CSV diunduh | Gagal mengunduh laporan |
-| index | sign in / sign out landing | Berhasil masuk / Kamu sudah keluar | (page-level alert on the sign-in screen stays) |
+| index | sign in / sign out landing | Berhasil masuk / Anda sudah keluar | (page-level alert on the sign-in screen stays) |
 
-Client-side validation that used to show a red toast ("Periksa kembali isian kamu") now opens the dialog with the
+Client-side validation that used to show a red toast ("Periksa kembali isian Anda") now opens the dialog with the
 guideline's 422 text; the field messages stay under the inputs.
 
 ## Not covered
