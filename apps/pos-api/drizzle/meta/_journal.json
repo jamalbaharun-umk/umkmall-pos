@@ -218,6 +218,13 @@
       "when": 1795610511218,
       "tag": "0030_admin_role_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795610767883,
+      "tag": "0031_device_pairings",
+      "breakpoints": true
     }
   ]
 }

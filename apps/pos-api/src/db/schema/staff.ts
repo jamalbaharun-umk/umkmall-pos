@@ -162,3 +162,46 @@ export const pinAttempts = pos
     ],
   )
   .enableRLS();
+
+// UMK-2022: pairing a cashier device by code. The signed-out device asks for a 6-digit code and shows it; the
+// owner enters it on their own signed-in device, which binds the device to that session's store.
+export const devicePairings = pos
+  .table(
+    'device_pairings',
+    {
+      id: id(),
+      // Null until the owner enters the code: before that the device belongs to no store. Set from the
+      // owner's session, never from a request.
+      tenantId: uuid('tenant_id').references(() => tenants.id, {
+        onDelete: 'restrict',
+      }),
+      // sha256 of the 6-digit code; the code itself is never stored. Null once used: a code works once.
+      codeHash: text('code_hash'),
+      // sha256 of the secret only the asking device holds. It becomes the bound device's secret.
+      secretHash: text('secret_hash').notNull(),
+      expiresAt: ts('expires_at').notNull(),
+      claimedAt: ts('claimed_at'),
+      deviceId: uuid('device_id'),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      // Two open pairings never share a code.
+      uniqueIndex('device_pairings_code_uq').on(t.codeHash),
+      foreignKey({
+        columns: [t.tenantId, t.deviceId],
+        foreignColumns: [devices.tenantId, devices.id],
+      }).onDelete('cascade'),
+    ],
+  )
+  .enableRLS();
+
+// Wrong pairing codes per store: the same lock as PIN sign-in (pin_attempts).
+export const devicePairingAttempts = pos
+  .table('device_pairing_attempts', {
+    tenantId: uuid('tenant_id')
+      .primaryKey()
+      .references(() => tenants.id, { onDelete: 'restrict' }),
+    failures: integer('failures').notNull().default(0),
+    lockedUntil: ts('locked_until'),
+  })
+  .enableRLS();
