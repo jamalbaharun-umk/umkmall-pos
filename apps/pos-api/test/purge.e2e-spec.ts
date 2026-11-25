@@ -123,6 +123,16 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .set('Authorization', s.auth)
       .attach('file', PNG, { filename: 'logo.png', contentType: 'image/png' })
       .expect(201);
+    await http()
+      .post('/store/profile/qris')
+      .set('Authorization', s.auth)
+      .attach('file', PNG, { filename: 'qris.png', contentType: 'image/png' })
+      .expect(201);
+    expect(
+      readdirSync(path.join(imageDir(s.tenantId), 'store')).filter((f) =>
+        f.startsWith('qris-'),
+      ),
+    ).toHaveLength(1); // the purge below must take it with the rest
 
     // Staff, role, device, PIN session, a failed PIN attempt.
     const cashier = await createCashier(app, s, ['sales.create']);

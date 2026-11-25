@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { confirmButtonLabel, isStaticQris, payStepOf, qrisScanHint } from './-pay-step'
+import { confirmButtonLabel, isStaticQris, payStepOf, qrisScanHint, qrisSrc } from './-pay-step'
 
 describe('payStepOf', () => {
   it('maps each kind to its step', () => {
@@ -23,5 +23,11 @@ describe('static QRIS copy', () => {
     expect(confirmButtonLabel('wallet')).toBe('Sudah diterima')
     expect(confirmButtonLabel('debit')).toBe('Bayar')
     expect(confirmButtonLabel('cash')).toBe('Bayar')
+  })
+})
+
+describe('qrisSrc', () => {
+  it('versions the image url', () => {
+    expect(qrisSrc('2026-11-25T01:00:00Z')).toBe('/pengaturan/qris?v=2026-11-25T01%3A00%3A00Z')
   })
 })

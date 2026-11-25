@@ -20,6 +20,9 @@ export type Profile = {
   otherBusinessType: string | null
   address: string | null
   hasLogo: boolean
+  /** UMK-1992: the store has uploaded its static QRIS. */
+  qrisConfigured: boolean
+  updatedAt: string | null
 }
 export type ProfileInput = { name: string; businessType: string; otherBusinessType?: string; address: string }
 type Result = { error?: string; errors?: Record<string, string> }
@@ -64,6 +67,19 @@ export const uploadLogo = createServerFn({ method: 'POST' })
   })
 
 export const deleteLogo = createServerFn({ method: 'POST' }).handler(() => write('/store/profile/logo', 'DELETE'))
+
+export const uploadQris = createServerFn({ method: 'POST' })
+  .validator((d: FormData) => d)
+  .handler(async ({ data }): Promise<Result> => {
+    const file = data.get('file')
+    if (!(file instanceof File)) return { error: 'Kode QRIS tidak valid.' }
+    const body = new FormData()
+    body.set('file', file)
+    const res = await api('/store/profile/qris', { method: 'POST', body })
+    return res.ok ? {} : refusalOf(res)
+  })
+
+export const deleteQris = createServerFn({ method: 'POST' }).handler(() => write('/store/profile/qris', 'DELETE'))
 
 export const saveAppSettings = createServerFn({ method: 'POST' })
   .validator((d: { taxBps: number; timezone?: string }) => d)

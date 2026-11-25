@@ -50,7 +50,15 @@ import {
   type Quote,
   canProceedToPayment,
 } from './-helpers'
-import { confirmButtonLabel, isStaticQris, payStepOf, qrisScanHint, QRIS_NO_BANK_CHECK } from './-pay-step'
+import {
+  confirmButtonLabel,
+  isStaticQris,
+  payStepOf,
+  qrisScanHint,
+  qrisSrc,
+  QRIS_LOAD_ERROR,
+  QRIS_NO_BANK_CHECK,
+} from './-pay-step'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -64,8 +72,8 @@ export const Route = createFileRoute('/kasir/')({
 })
 
 function CashierPage() {
-  const { shift, products, taxBps, methods } = Route.useLoaderData()
-  return shift ? <Register products={products} taxBps={taxBps} methods={methods} /> : <OpenShift />
+  const { shift, products, taxBps, methods, qris } = Route.useLoaderData()
+  return shift ? <Register products={products} taxBps={taxBps} methods={methods} qris={qris} /> : <OpenShift />
 }
 
 function OpenShift() {
@@ -123,7 +131,19 @@ function OpenShift() {
 type CartLine = CartEntry<Product>
 const ALL = 'semua'
 
-function Register({ products, taxBps, methods }: { products: Product[]; taxBps: number; methods: PaymentMethod[] }) {
+type Qris = { configured: boolean; version: string }
+
+function Register({
+  products,
+  taxBps,
+  methods,
+  qris,
+}: {
+  products: Product[]
+  taxBps: number
+  methods: PaymentMethod[]
+  qris: Qris
+}) {
   const router = useRouter()
   const [q, setQ] = useState('')
   const [category, setCategory] = useState(ALL)
@@ -550,6 +570,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
           note={note}
           idempotencyKey={key}
           methods={methods}
+          qris={qris}
           member={member}
           onMemberChange={setMember}
           voucher={voucher}
@@ -739,6 +760,7 @@ function PayDialog({
   note,
   idempotencyKey,
   methods,
+  qris,
   member,
   onMemberChange,
   voucher,
@@ -754,6 +776,7 @@ function PayDialog({
   note: string
   idempotencyKey: string
   methods: PaymentMethod[]
+  qris: Qris
   member: MemberOption | null
   onMemberChange: (m: MemberOption | null) => void
   voucher: AppliedVoucher | null
@@ -770,6 +793,8 @@ function PayDialog({
   const isExact = step === 'confirm'
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  // UMK-1992: the wallet method shows the store's static QRIS image (or says it is not set).
+  const [qrisBroken, setQrisBroken] = useState(false)
   const lock = useRef(false) // state lags a burst of clicks; the ref does not
   // The server computes the total; when it disagrees with this screen (a price changed), its figure is shown and due.
   const [serverTotal, setServerTotal] = useState<number>()
@@ -898,6 +923,28 @@ function PayDialog({
               <Text variant="h4" weight="bold">
                 {rupiah(due)}
               </Text>
+              {qris.configured ? (
+                qrisBroken ? (
+                  <p role="alert" className="text-sm text-default-error">
+                    {QRIS_LOAD_ERROR}
+                  </p>
+                ) : (
+                  <img
+                    src={qrisSrc(qris.version)}
+                    alt="Kode QRIS toko"
+                    onError={() => setQrisBroken(true)}
+                    className="mx-auto size-56 rounded-lg bg-white object-contain"
+                  />
+                )
+              ) : (
+                <Alert variant="warning" size="small">
+                  <span className="font-semibold">QRIS belum diatur.</span> Unggah kode QRIS toko di{' '}
+                  <Link to="/pengaturan" className="underline">
+                    Pengaturan, tab Pembayaran
+                  </Link>
+                  .
+                </Alert>
+              )}
               <p className="text-sm text-default-secondary">{qrisScanHint(rupiah(due))}</p>
               <Alert variant="warning" size="small">
                 {QRIS_NO_BANK_CHECK}

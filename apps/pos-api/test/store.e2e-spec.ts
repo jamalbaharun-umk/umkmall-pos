@@ -1,4 +1,6 @@
 import { INestApplication } from '@nestjs/common';
+import { readdirSync } from 'node:fs';
+import path from 'node:path';
 import request from 'supertest';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
@@ -149,6 +151,155 @@ describe('store profile (settings)', () => {
       .get('/store/profile/logo')
       .set('Authorization', a.auth)
       .expect(404);
+  });
+
+  it('qris: needs a saved profile, refuses non-images, uploads, replaces (old file deleted), serves and deletes', async () => {
+    const fresh = await createStore();
+    expect(
+      (await http().get('/store/profile').set('Authorization', fresh.auth)).body
+        .qrisConfigured,
+    ).toBe(false);
+    await refused(
+      http()
+        .post('/store/profile/qris')
+        .set('Authorization', fresh.auth)
+        .attach('file', PNG, 'qris.png'),
+      409,
+      'file',
+      'Simpan profil toko dulu sebelum mengunggah kode QRIS',
+    );
+    await put(profile).expect(200);
+    await http()
+      .get('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(404);
+    await http()
+      .delete('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(404);
+    for (const bad of [
+      Buffer.from('hello'),
+      Buffer.alloc(2 * 1024 * 1024 + 1, 1),
+    ]) {
+      await refused(
+        http()
+          .post('/store/profile/qris')
+          .set('Authorization', a.auth)
+          .attach('file', bad, 'x.png'),
+        422,
+        'file',
+        'Kode QRIS harus JPG, PNG atau WebP, maksimal 2 MB',
+      );
+    }
+    await http()
+      .post('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(422);
+    const up = await http()
+      .post('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .attach('file', PNG, 'qris.png')
+      .expect(201);
+    expect(up.body.qrisConfigured).toBe(true);
+    expect(up.body.hasLogo).toBe(false); // the logo is untouched
+    const dir = path.join(
+      process.env.POS_STORAGE_DIR!,
+      'tenants',
+      a.tenantId,
+      'store',
+    );
+    const first = readdirSync(dir).filter((f) => f.startsWith('qris-'));
+    expect(first).toHaveLength(1);
+    const got = await http()
+      .get('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(200);
+    expect(got.headers['content-type']).toBe('image/png');
+    expect(got.headers['x-content-type-options']).toBe('nosniff');
+    expect(Buffer.compare(got.body as Buffer, PNG)).toBe(0);
+    // replace: one file left, a different one
+    await http()
+      .post('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .attach('file', PNG, 'again.png')
+      .expect(201);
+    const second = readdirSync(dir).filter((f) => f.startsWith('qris-'));
+    expect(second).toHaveLength(1);
+    expect(second[0]).not.toBe(first[0]);
+    // cross-tenant: B sees nothing of A's QRIS, read, delete and upload leave A's alone
+    expect(
+      (await http().get('/store/profile').set('Authorization', b.auth)).body
+        .qrisConfigured,
+    ).toBe(false);
+    await http()
+      .get('/store/profile/qris')
+      .set('Authorization', b.auth)
+      .expect(404);
+    await http()
+      .delete('/store/profile/qris')
+      .set('Authorization', b.auth)
+      .expect(404);
+    await put(profile, b).expect(200);
+    await http()
+      .post('/store/profile/qris')
+      .set('Authorization', b.auth)
+      .attach('file', PNG, 'b.png')
+      .expect(201);
+    await http()
+      .delete('/store/profile/qris')
+      .set('Authorization', b.auth)
+      .expect(204);
+    await http()
+      .get('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(200);
+    // delete
+    await http()
+      .delete('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(204);
+    await http()
+      .get('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(404);
+    expect(readdirSync(dir).filter((f) => f.startsWith('qris-'))).toHaveLength(
+      0,
+    );
+    expect(
+      (await http().get('/store/profile').set('Authorization', a.auth)).body
+        .qrisConfigured,
+    ).toBe(false);
+  });
+
+  it('qris: a cashier with sales.create reads it, only catalog.manage changes it', async () => {
+    await put(profile).expect(200);
+    await http()
+      .post('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .attach('file', PNG, 'q.png')
+      .expect(201);
+    const cashier = await createCashier(app, a, ['sales.create']);
+    expect(
+      (await http().get('/store/profile').set('Authorization', cashier.auth))
+        .body.qrisConfigured,
+    ).toBe(true);
+    await http()
+      .get('/store/profile/qris')
+      .set('Authorization', cashier.auth)
+      .expect(200);
+    await http()
+      .post('/store/profile/qris')
+      .set('Authorization', cashier.auth)
+      .attach('file', PNG, 'q.png')
+      .expect(403);
+    await http()
+      .delete('/store/profile/qris')
+      .set('Authorization', cashier.auth)
+      .expect(403);
+    await http()
+      .delete('/store/profile/qris')
+      .set('Authorization', a.auth)
+      .expect(204);
   });
 
   it('a cashier reads the profile but cannot change it without catalog.manage', async () => {
