@@ -494,12 +494,18 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
           </div>
         </dl>
         {quoteState === 'error' && (
-          <Alert variant="warning" size="small" role="alert">
+          <Alert
+            variant="warning"
+            size="small"
+            role="alert"
+            action={
+              <Button type="outline" color="light" size="small" width="auto" onClick={() => setQuoteTry((n) => n + 1)}>
+                Coba lagi
+              </Button>
+            }
+          >
             Harga satuan dan grosir belum bisa dicek ke server, jadi total ini hanya perkiraan dan bisa lebih tinggi dari
             yang ditagihkan. Coba lagi sebelum lanjut ke pembayaran.
-            <Button type="outline" color="light" size="small" width="auto" className="mt-2" onClick={() => setQuoteTry((n) => n + 1)}>
-              Coba lagi
-            </Button>
           </Alert>
         )}
         {over.length > 0 && (
