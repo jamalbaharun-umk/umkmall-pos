@@ -33,6 +33,7 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'sales.void': 'Menyetujui pembatalan struk (dengan PIN)',
   'expenses.manage': 'Mengelola pengeluaran',
   'store_cash.manage': 'Menerima setoran kas toko',
+  'payments.manage': 'Mengelola Pembayaran Online',
 }
 
 async function load<T>(path: string): Promise<T> {

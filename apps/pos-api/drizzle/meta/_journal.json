@@ -211,6 +211,13 @@
       "when": 1795607851769,
       "tag": "0029_store_qris",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795610511218,
+      "tag": "0030_admin_role_backfill",
+      "breakpoints": true
     }
   ]
 }

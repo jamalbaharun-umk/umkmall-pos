@@ -1,12 +1,19 @@
 import { Controller, INestApplication, Post } from '@nestjs/common';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { Test } from '@nestjs/testing';
 import postgres from 'postgres';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import {
+  ADMIN_EXCLUDED_PERMISSIONS,
+  ADMIN_PERMISSIONS,
+  PERMISSIONS,
+} from '../src/staff/permissions';
 import { lockSeconds } from '../src/staff/pin-auth.controller';
 import { RequirePermission } from '../src/staff/require-permission';
 import { signSession } from '../src/tenancy/session';
-import { ADMIN_DATABASE_URL } from './support/env';
+import { ADMIN_DATABASE_URL, APP_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
 
@@ -16,6 +23,13 @@ class ProbeController {
   @Post('override')
   @RequirePermission('sales.price_override')
   override() {
+    return { ok: true };
+  }
+
+  // Stands in for the "Pembayaran Online" routes (UMK-2021).
+  @Post('payments')
+  @RequirePermission('payments.manage')
+  payments() {
     return { ok: true };
   }
 }
@@ -39,15 +53,37 @@ describe('staff, roles, devices and PIN sign-in (U4)', () => {
   });
 
   describe('roles', () => {
-    it('seeds Pemilik and Kasir on first use and manages roles', async () => {
+    it('seeds Pemilik, Admin and Kasir on first use and manages roles', async () => {
       const a = await createStore();
       const list = await http().get('/roles').set('Authorization', a.auth);
       expect(list.status).toBe(200);
       expect((list.body as { name: string }[]).map((r) => r.name)).toEqual([
+        'Admin',
         'Kasir',
         'Pemilik',
       ]);
-      expect(list.body[0].permissions).toEqual(['sales.create']);
+      expect(list.body[1].permissions).toEqual(['sales.create']);
+      // Admin (UMK-2021): everything but staff management and online payments; it holds sales.void.
+      expect(ADMIN_EXCLUDED_PERMISSIONS).toEqual([
+        'staff.manage',
+        'payments.manage',
+      ]);
+      expect(list.body[0].permissions).toEqual([...ADMIN_PERMISSIONS].sort());
+      expect(list.body[0].permissions).toHaveLength(PERMISSIONS.length - 2);
+      expect(list.body[0].permissions).toContain('sales.void');
+      expect(list.body[0].permissions).not.toContain('staff.manage');
+      expect(list.body[0].permissions).not.toContain('payments.manage');
+      // Only Pemilik holds payments.manage by default.
+      expect(list.body[2].permissions).toEqual([...PERMISSIONS].sort());
+      // The owner can still edit the default role.
+      await http()
+        .patch(`/roles/${list.body[0].id}`)
+        .set('Authorization', a.auth)
+        .send({ permissions: ['reports.view'] })
+        .expect(200)
+        .expect(({ body }) =>
+          expect(body.permissions).toEqual(['reports.view']),
+        );
 
       const created = await http()
         .post('/roles')
@@ -88,6 +124,72 @@ describe('staff, roles, devices and PIN sign-in (U4)', () => {
         .get(`/roles/${created.body.id}`)
         .set('Authorization', a.auth)
         .expect(404);
+    });
+  });
+
+  describe('Admin role backfill (migration 0030)', () => {
+    const migration = readFileSync(
+      path.join(__dirname, '..', 'drizzle', '0030_admin_role_backfill.sql'),
+      'utf8',
+    );
+    const rolesOf = (tenantId: string) =>
+      admin<{ name: string; permissions: string[] }[]>`
+        select r.name, coalesce(array_agg(p.permission order by p.permission)
+                 filter (where p.permission is not null), '{}') as permissions
+        from pos.roles r
+        left join pos.role_permissions p on p.role_id = r.id and p.tenant_id = r.tenant_id
+        where r.tenant_id = ${tenantId} group by r.id, r.name order by lower(r.name)`;
+
+    it('gives a store that has roles the Admin role once, leaves an existing "admin" and a store without roles alone', async () => {
+      // As before UMK-2021: a store with Pemilik and Kasir only.
+      const old = await createStore();
+      // A store whose owner already made a role called "admin".
+      const own = await createStore();
+      // A store whose roles were never used.
+      const unused = await createStore();
+      const seed = async (tenantId: string, name: string, perms: string[]) => {
+        const [role] = await admin<{ id: string }[]>`
+          insert into pos.roles (tenant_id, name) values (${tenantId}, ${name}) returning id`;
+        for (const permission of perms)
+          await admin`insert into pos.role_permissions (tenant_id, role_id, permission)
+                      values (${tenantId}, ${role.id}, ${permission})`;
+      };
+      await seed(old.tenantId, 'Pemilik', ['sales.create', 'staff.manage']);
+      await seed(old.tenantId, 'Kasir', ['sales.create']);
+      await seed(own.tenantId, 'Kasir', ['sales.create']);
+      await seed(own.tenantId, 'admin', ['reports.view']);
+
+      // The migration runs as pos_app in every environment.
+      const app = postgres(APP_DATABASE_URL, { max: 1 });
+      try {
+        await app.unsafe(migration);
+        await app.unsafe(migration); // a second run adds nothing
+      } finally {
+        await app.end();
+      }
+
+      expect(await rolesOf(old.tenantId)).toEqual([
+        // The snapshot in the migration is the constant's set (change both, or new and old stores differ).
+        { name: 'Admin', permissions: [...ADMIN_PERMISSIONS].sort() },
+        { name: 'Kasir', permissions: ['sales.create'] },
+        // Pemilik is not touched: it does not gain payments.manage.
+        { name: 'Pemilik', permissions: ['sales.create', 'staff.manage'] },
+      ]);
+      expect(await rolesOf(own.tenantId)).toEqual([
+        { name: 'admin', permissions: ['reports.view'] },
+        { name: 'Kasir', permissions: ['sales.create'] },
+      ]);
+      expect(await rolesOf(unused.tenantId)).toEqual([]);
+      // …and that store still gets the three defaults on first use.
+      const list = await http()
+        .get('/roles')
+        .set('Authorization', unused.auth)
+        .expect(200);
+      expect((list.body as { name: string }[]).map((r) => r.name)).toEqual([
+        'Admin',
+        'Kasir',
+        'Pemilik',
+      ]);
     });
   });
 
@@ -416,6 +518,35 @@ describe('staff, roles, devices and PIN sign-in (U4)', () => {
         .set('Authorization', cashier.auth)
         .send({ permissions: ['staff.manage'] })
         .expect(403);
+    });
+
+    it('payments.manage: the owner passes, the default Admin role and a cashier get 403', async () => {
+      const a = await createStore();
+      await http()
+        .post('/test-probe/payments')
+        .set('Authorization', a.auth)
+        .expect(201);
+      const adminStaff = await createCashier(app, a, [...ADMIN_PERMISSIONS]);
+      await http()
+        .post('/test-probe/payments')
+        .set('Authorization', adminStaff.auth)
+        .expect(403);
+      // Admin does not manage staff either, and may approve a void.
+      await http()
+        .get('/staff')
+        .set('Authorization', adminStaff.auth)
+        .expect(403);
+      const cashier = await createCashier(app, a, ['sales.create']);
+      await http()
+        .post('/test-probe/payments')
+        .set('Authorization', cashier.auth)
+        .expect(403);
+      // A role the owner gives the permission to passes.
+      const trusted = await createCashier(app, a, ['payments.manage']);
+      await http()
+        .post('/test-probe/payments')
+        .set('Authorization', trusted.auth)
+        .expect(201);
     });
 
     it('lets a cashier with staff.manage manage staff', async () => {
