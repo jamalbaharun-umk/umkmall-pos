@@ -16,6 +16,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { devicePairingAttempts, devicePairings, devices } from '../db/schema';
 import { Public } from '../tenancy/decorators';
+import { addressKey, AddressRateLimiter } from './address-limits';
 import { parseBody } from './http';
 import { lockSeconds } from './pin-auth.controller';
 import { hashSecret, newDeviceSecret, secretMatches } from './secrets';
@@ -31,12 +32,18 @@ export const MAX_LIVE_PAIRINGS = 1000;
 /**
  * Codes open at once for one network address, so that one caller cannot use up `MAX_LIVE_PAIRINGS` and block
  * pairing for every store. A shop pairing several tablets behind one address stays under it: a code stops
- * counting when it is used or expired.
+ * counting when it is used or expired. "One address" is `addressKey`: an IPv4 address, or an IPv6 /64.
  */
 export const MAX_LIVE_PAIRINGS_PER_ADDRESS = 5;
+/**
+ * Requests for a code one network address may make per minute, per pos-api process. Checked in memory
+ * BEFORE the database: a request for a code takes a lock all such requests share, so a flood must not get
+ * that far.
+ */
+export const PAIRING_STARTS_PER_MINUTE = 10;
 /** How long after the claim the paired device may still fetch its token (a poll just after the code's end). */
 export const PAIRING_TOKEN_GRACE_SECONDS = 10 * 60;
-/** Status polls one network address may make per minute, per pos-api process. */
+/** Status polls one network address may make per minute, per pos-api process. Also before the database. */
 export const PAIRING_STATUS_POLLS_PER_MINUTE = 120;
 const CODE_DIGITS = 6;
 // pg_advisory_xact_lock key: one code is drawn at a time, so the caps are counted and the row is written as one.
@@ -74,7 +81,7 @@ export class DevicePairing {
   constructor(@InjectDb() private readonly db: Db) {}
 
   /**
-   * The signed-out device asks for a code. `address` is the caller's network address: open codes are capped
+   * The signed-out device asks for a code. `address` is the caller's `addressKey`: open codes are capped
    * per address and in all. The count and the insert are one step (a transaction-scoped advisory lock), so
    * parallel requests cannot pass the caps together.
    */
@@ -261,8 +268,10 @@ export class DevicePairing {
 // The signed-out device's two routes: no session, and no store yet. Neither takes a pairing code.
 @Controller('auth/device/pairing')
 export class DevicePairingController {
-  /** Status polls per address in the current minute. In memory: a limit per process, lost on restart. */
-  private readonly polls = new Map<string, { minute: number; count: number }>();
+  private readonly starts = new AddressRateLimiter(PAIRING_STARTS_PER_MINUTE);
+  private readonly polls = new AddressRateLimiter(
+    PAIRING_STATUS_POLLS_PER_MINUTE,
+  );
 
   constructor(private readonly pairing: DevicePairing) {}
 
@@ -270,35 +279,24 @@ export class DevicePairingController {
   @Post()
   @HttpCode(201)
   start(@Ip() address: string) {
-    return this.pairing.start(address);
+    // No address (the connection is gone, or the platform gives none): nothing to count by, so refused.
+    const key = address ? addressKey(address) : null;
+    if (!key || !this.starts.allow(key)) throw TOO_MANY();
+    return this.pairing.start(key);
   }
 
   @Public()
   @Post('status')
   @HttpCode(200)
   async status(@Ip() address: string, @Body() body: unknown) {
-    this.countPoll(address);
-    const { pairingToken } = parseBody(PairingStatus, body);
-    const found = await this.pairing.status(pairingToken);
-    if (!found) throw new NotFoundException();
-    return found;
-  }
-
-  private countPoll(address: string) {
-    const minute = Math.floor(Date.now() / 60_000);
-    // Bounded: entries of past minutes are dropped before the map can grow without end.
-    if (this.polls.size > 10_000)
-      for (const [key, seen] of this.polls)
-        if (seen.minute !== minute) this.polls.delete(key);
-    const seen = this.polls.get(address);
-    if (!seen || seen.minute !== minute) {
-      this.polls.set(address, { minute, count: 1 });
-      return;
-    }
-    if (++seen.count > PAIRING_STATUS_POLLS_PER_MINUTE)
+    if (!address || !this.polls.allow(addressKey(address)))
       throw new HttpException(
         { message: 'Terlalu banyak permintaan, coba lagi nanti' },
         HttpStatus.TOO_MANY_REQUESTS,
       );
+    const { pairingToken } = parseBody(PairingStatus, body);
+    const found = await this.pairing.status(pairingToken);
+    if (!found) throw new NotFoundException();
+    return found;
   }
 }

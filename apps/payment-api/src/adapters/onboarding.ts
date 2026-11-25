@@ -49,8 +49,8 @@ export interface AccountStatusResult {
   /**
    * When the account last changed at the gateway, by the gateway's own clock. payment-api never applies an
    * answer older than one it already applied, so two answers that cross on the way cannot put an old status
-   * over a new one. An adapter whose gateway gives no such time leaves it out; the time payment-api asked
-   * is used instead.
+   * over a new one. An adapter whose gateway gives no such time leaves it out: payment-api then applies the
+   * answer only when no other answer was applied since it read the account, and asks again otherwise.
    */
   updatedAt?: Date;
 }

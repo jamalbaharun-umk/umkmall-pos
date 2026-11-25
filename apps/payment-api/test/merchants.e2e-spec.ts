@@ -119,9 +119,11 @@ describe('merchant onboarding', () => {
           status_reason: string | null;
           credentials_encrypted: string | null;
           draft_undelivered: boolean;
+          sync_version: number;
+          last_synced_at: Date | null;
         }[]
       >`select id, status, provider_account_id, enabled_methods, status_reason, credentials_encrypted,
-               draft_undelivered
+               draft_undelivered, sync_version, last_synced_at
         from payment.merchant_accounts where tenant_id = ${s.tenantId}`
     )[0];
   const moves = async (s: { tenantId: string }) =>
@@ -715,6 +717,269 @@ describe('merchant onboarding', () => {
       clock.advance(SLOW_RECONCILE_INTERVAL_MS + MINUTE);
       await reconcile.tick();
       expect((await row(s)).status).toBe('active');
+    });
+
+    it('an answer about the draft before the owner’s new submit is discarded', async () => {
+      const s = await submitted();
+      const { id } = await row(s);
+      clock.advance(MINUTE);
+      await review(s, 'needs-fix', { reason: 'Nama usaha salah' }).expect(200);
+      // A status check reads "needs fix" and is held on its way back…
+      const adapter = app.get(AdapterRegistry).onboarding('fake')!;
+      const ask = adapter.getAccountStatus.bind(adapter);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let asked!: () => void;
+      const reading = new Promise<void>((resolve) => (asked = resolve));
+      const spy = jest
+        .spyOn(adapter, 'getAccountStatus')
+        .mockImplementationOnce(async (merchant) => {
+          const answer = await ask(merchant);
+          asked();
+          await held;
+          return answer;
+        })
+        // …and the status check that follows the owner's new submit gets no answer at all.
+        .mockImplementationOnce(() => Promise.reject(new Error('no answer')));
+      try {
+        const slow = app.get(MerchantsService).settle(id, 'sync');
+        await reading;
+        await s.put(FAKE, { businessName: 'Warung Sari Baru' }).expect(200);
+        const again = await s.post(`${FAKE}/submit`, SUBMIT).expect(200);
+        expect(again.body.status).toBe('submitted');
+        expect((await row(s)).draft_undelivered).toBe(false);
+        // The old "needs fix" lands now: it is about the draft before this submit.
+        release();
+        expect((await slow)?.status).toBe('submitted');
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await row(s)).toMatchObject({
+        status: 'submitted',
+        status_reason: null,
+      });
+      expect(await moves(s)).toEqual([
+        'submitted/submit',
+        'needs_fix/webhook',
+        'submitted/submit',
+      ]);
+    });
+
+    it('a gateway that gives no time of its own: a crossed answer is not applied, the gateway is asked again', async () => {
+      const s = await active();
+      const { id } = await row(s);
+      const adapter = app.get(AdapterRegistry).onboarding('fake')!;
+      const ask = adapter.getAccountStatus.bind(adapter);
+      const timeless = async (merchant: Parameters<typeof ask>[0]) => {
+        const answer = await ask(merchant);
+        return { status: answer.status, reason: answer.reason };
+      };
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let asked!: () => void;
+      const reading = new Promise<void>((resolve) => (asked = resolve));
+      const spy = jest
+        .spyOn(adapter, 'getAccountStatus')
+        .mockImplementation(timeless)
+        .mockImplementationOnce(async (merchant) => {
+          const answer = await timeless(merchant);
+          asked();
+          await held;
+          return answer;
+        });
+      try {
+        // "verified" is read and held; the gateway suspends and that news is applied first.
+        const slow = app.get(MerchantsService).settle(id, 'sync');
+        await reading;
+        await review(s, 'suspend', { reason: 'Dibekukan' }).expect(200);
+        expect((await row(s)).status).toBe('suspended');
+        release();
+        expect((await slow)?.status).toBe('suspended');
+        // held answer, the webhook's answer, and the question asked again.
+        expect(spy).toHaveBeenCalledTimes(3);
+        expect((await row(s)).status).toBe('suspended');
+        // Without a crossing answer the first answer is simply applied.
+        await review(s, 'approve').expect(200);
+        expect((await row(s)).status).toBe('active');
+        expect(spy).toHaveBeenCalledTimes(4);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('two answers with the same gateway time: the one that crossed is not applied, the gateway is asked again', async () => {
+      const s = await active();
+      const { id } = await row(s);
+      const adapter = app.get(AdapterRegistry).onboarding('fake')!;
+      const ask = adapter.getAccountStatus.bind(adapter);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let asked!: () => void;
+      const reading = new Promise<void>((resolve) => (asked = resolve));
+      const spy = jest
+        .spyOn(adapter, 'getAccountStatus')
+        .mockImplementationOnce(async (merchant) => {
+          const answer = await ask(merchant);
+          asked();
+          await held;
+          return answer;
+        });
+      try {
+        const slow = app.get(MerchantsService).settle(id, 'sync');
+        await reading;
+        // The suspension carries the very time of the "verified" that is held (one tick of the gateway's
+        // clock), and is applied first.
+        const gatewayAccount = app.get(LocalFakeGateway).accountOf(s.tenantId)!;
+        const tick = gatewayAccount.updatedAt;
+        await review(s, 'suspend', {
+          reason: 'Dibekukan',
+          webhook: 'drop',
+        }).expect(200);
+        gatewayAccount.updatedAt = tick;
+        await app.get(MerchantsService).settle(id, 'webhook');
+        expect((await row(s)).status).toBe('suspended');
+        release();
+        expect((await slow)?.status).toBe('suspended');
+        expect(spy).toHaveBeenCalledTimes(3);
+      } finally {
+        spy.mockRestore();
+      }
+      expect((await row(s)).status).toBe('suspended');
+    });
+
+    it('gives up after three crossed answers and leaves the account as the last answer left it', async () => {
+      const s = await active();
+      const { id } = await row(s);
+      await review(s, 'suspend', {
+        reason: 'Dibekukan',
+        webhook: 'drop',
+      }).expect(200);
+      const adapter = app.get(AdapterRegistry).onboarding('fake')!;
+      const ask = adapter.getAccountStatus.bind(adapter);
+      // Every answer is without the gateway's time, and another answer is applied while it is on its way.
+      const spy = jest
+        .spyOn(adapter, 'getAccountStatus')
+        .mockImplementation(async (merchant) => {
+          const answer = await ask(merchant);
+          await sql`update payment.merchant_accounts set sync_version = sync_version + 1 where id = ${id}`;
+          return { status: answer.status, reason: answer.reason };
+        });
+      try {
+        const before = await row(s);
+        const settled = await app.get(MerchantsService).settle(id, 'sync');
+        expect(spy).toHaveBeenCalledTimes(3);
+        // Nothing of the three answers was applied: the row is answered as it stands.
+        expect(settled).toMatchObject({ status: 'active' });
+        expect(await row(s)).toMatchObject({
+          status: 'active',
+          sync_version: before.sync_version + 3,
+          last_synced_at: before.last_synced_at,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      // The next check, without a crossing, applies the gateway's word.
+      expect((await app.get(MerchantsService).settle(id, 'sync'))?.status).toBe(
+        'suspended',
+      );
+    });
+
+    it('every applied answer counts in sync_version, also one that moves nothing and "not found"', async () => {
+      const merchants = app.get(MerchantsService);
+      // No move: the gateway still says what we have.
+      const s = await verified();
+      const first = await row(s);
+      clock.advance(MINUTE);
+      await merchants.settle(first.id, 'sync');
+      const second = await row(s);
+      expect(second).toMatchObject({
+        status: 'verified',
+        sync_version: first.sync_version + 1,
+      });
+      expect(second.last_synced_at!.getTime()).toBeGreaterThan(
+        first.last_synced_at!.getTime(),
+      );
+      // Not found: an account the gateway does not know (seeded, never created there).
+      const t = newStore();
+      await seedMerchant(sql, { tenantId: t.tenantId });
+      const seeded = await row(t);
+      expect(seeded).toMatchObject({ sync_version: 0, last_synced_at: null });
+      await merchants.settle(seeded.id, 'sync');
+      const after = await row(t);
+      expect(after).toMatchObject({ status: 'active', sync_version: 1 });
+      expect(after.last_synced_at).not.toBeNull();
+    });
+
+    it('accounts the gateway keeps failing on do not keep the others out of the reconciliation', async () => {
+      const failing = [await submitted(), await submitted()];
+      const ids = await Promise.all(
+        failing.map(async (f) => (await row(f)).id),
+      );
+      clock.advance(MINUTE);
+      const waiting = await submitted();
+      await review(waiting, 'approve', { webhook: 'drop' }).expect(200);
+      await sql`update payment.merchant_accounts set last_synced_at = now() + interval '10 years'
+                where tenant_id not in ${sql([...failing, waiting].map((x) => x.tenantId))}`;
+      const adapter = app.get(AdapterRegistry).onboarding('fake')!;
+      const ask = adapter.getAccountStatus.bind(adapter);
+      // How many of the failing accounts are stamped as tried at the moment the gateway is asked about one.
+      const stamped: number[] = [];
+      const spy = jest
+        .spyOn(adapter, 'getAccountStatus')
+        .mockImplementation(async (merchant) => {
+          if (!ids.includes(merchant.id)) return ask(merchant);
+          const [{ n }] = await sql<{ n: number }[]>`
+            select count(*)::int as n from payment.merchant_accounts
+            where id in ${sql(ids)} and reconcile_attempted_at is not null`;
+          stamped.push(n);
+          throw new Error('no answer');
+        });
+      const merchants = app.get(MerchantsService);
+      try {
+        clock.advance(3 * MINUTE);
+        // A batch of two: the two oldest are the failing ones.
+        expect(await merchants.reconcile(2)).toEqual({
+          accounts: 0,
+          failed: 2,
+        });
+        expect((await row(waiting)).status).toBe('submitted');
+        // Each was stamped just before its own turn, not the whole batch up front.
+        expect(stamped).toEqual([1, 2]);
+        // The next batch is not the same two again.
+        expect(await merchants.reconcile(2)).toEqual({
+          accounts: 1,
+          failed: 0,
+        });
+        expect((await row(waiting)).status).toBe('verified');
+        // The failing ones are tried again once the threshold passed.
+        clock.advance(3 * MINUTE);
+        expect(await merchants.reconcile(2)).toEqual({
+          accounts: 0,
+          failed: 2,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('a rejected account the gateway reopens without a webhook is found by the slow reconciliation', async () => {
+      const s = await submitted();
+      await review(s, 'reject', { reason: 'Data tidak cocok' }).expect(200);
+      expect((await row(s)).status).toBe('rejected');
+      await sql`update payment.merchant_accounts set last_synced_at = now() + interval '10 years'
+                where tenant_id <> ${s.tenantId}`;
+      // The fake's controls cannot reopen a rejected account: its state is set as the gateway would.
+      clock.advance(MINUTE);
+      const gatewayAccount = app.get(LocalFakeGateway).accountOf(s.tenantId)!;
+      gatewayAccount.status = 'verified';
+      gatewayAccount.reason = null;
+      gatewayAccount.updatedAt = clock.now();
+      clock.advance(SLOW_RECONCILE_INTERVAL_MS);
+      await reconcile.tick();
+      expect(await row(s)).toMatchObject({
+        status: 'verified',
+        status_reason: null,
+      });
     });
 
     it('a webhook that cannot be processed stays in the inbox and is retried', async () => {

@@ -72,10 +72,11 @@ export const RECONCILE_SOON: readonly MerchantStatus[] = ['submitted'];
 
 /**
  * Nothing is expected from the gateway, but it may still change its mind (suspend, reinstate, verify after
- * the owner's fix on its page) and its webhook may be lost: the reconciliation asks about these too, slowly.
+ * the owner's fix on its page, reopen a rejected account) and its webhook may be lost: the reconciliation asks about these too, slowly.
  */
 export const RECONCILE_SLOWLY: readonly MerchantStatus[] = [
   'needs_fix',
+  'rejected',
   'verified',
   'active',
   'suspended',
