@@ -13,6 +13,8 @@ export type Field = {
   placeholder?: string
   max?: number
   noSpaces?: boolean
+  /** UMK-1991: the field exists only while this holds (the gateway method of an online payment method). */
+  showWhen?: (values: Values) => boolean
   /** Extra rule across fields (percentage ≤ 100, dates ordered): a message, or undefined when fine. */
   check?: (value: string, values: Values) => string | undefined
 }
@@ -35,10 +37,13 @@ export const isPhone = (p: string) => {
   return /^\+?[0-9][0-9 -]{6,18}[0-9]$/.test(p.trim()) && digits >= 8 && digits <= 15
 }
 
+/** The fields that apply to these values: a hidden field is neither checked nor sent. */
+export const visibleFields = (fields: Field[], values: Values) => fields.filter((f) => !f.showWhen || f.showWhen(values))
+
 /** Field → message for every rule the value breaks (first rule per field). */
 export function checkFields(fields: Field[], values: Values): Errors {
   const errors: Errors = {}
-  for (const f of fields) {
+  for (const f of visibleFields(fields, values)) {
     const v = (values[f.name] ?? '').trim()
     const fail = (m: string) => (errors[f.name] ??= m)
     if (!v) {
@@ -60,7 +65,7 @@ export function checkFields(fields: Field[], values: Values): Errors {
 /** Form strings → API body: numbers parsed, blank optional fields sent as null (numbers omitted). */
 export function toBody(fields: Field[], values: Values) {
   return Object.fromEntries(
-    fields.flatMap((f): [string, unknown][] => {
+    visibleFields(fields, values).flatMap((f): [string, unknown][] => {
       const raw = (values[f.name] ?? '').trim()
       if (f.type === 'number') return raw === '' ? [] : [[f.name, parseRupiah(raw)]]
       return [[f.name, raw === '' && f.optional ? null : raw]]

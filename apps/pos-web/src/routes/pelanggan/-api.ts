@@ -6,8 +6,9 @@ import { api } from '@/lib/api.server'
 // computes every amount; these only relay. Mutations return a Result instead of throwing, for forms.
 
 export type Member = { id: string; name: string; code: string; phone: string | null; address: string | null }
-export type PaymentKind = 'cash' | 'debit' | 'credit' | 'wallet'
-export type PaymentMethod = { id: string; name: string; kind: PaymentKind }
+export type PaymentKind = 'cash' | 'debit' | 'credit' | 'wallet' | 'online'
+/** `gatewayMethod` (UMK-1991): payment-api's method of an `online` method (fake_qris, fake_va); null otherwise. */
+export type PaymentMethod = { id: string; name: string; kind: PaymentKind; gatewayMethod?: string | null }
 export type OpenShift = { id: string; openedAt: string } | null
 export type Voucher = {
   id: string
@@ -157,8 +158,8 @@ export const loadReceivable = createServerFn()
       load<{ data: PaymentMethod[] }>('/payment-methods'),
       openShiftOf(),
     ])
-    // A kasbon is never paid with another kasbon.
-    return { receivable, methods: methods.data.filter((m) => m.kind !== 'credit'), shift }
+    // A kasbon is never paid with another kasbon, and an instalment is never charged at a payment gateway (UMK-1991).
+    return { receivable, methods: methods.data.filter((m) => m.kind !== 'credit' && m.kind !== 'online'), shift }
   })
 
 // `key` is made once per payment dialog, so a double tap or a retry records one payment.
