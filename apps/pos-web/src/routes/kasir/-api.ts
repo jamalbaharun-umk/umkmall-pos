@@ -1,10 +1,11 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import type { Quote, SaleUnit } from './-helpers'
+import type { CashTotals } from './-shift-helpers'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
 
-export type Shift = {
+export type Shift = CashTotals & {
   id: string
   openingCash: number
   openedAt: string

@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { Button, Card, Text, TextField } from '@umkmall/ui'
+import { Alert, Button, Card, Text, TextField } from '@umkmall/ui'
 import { useRef, useState } from 'react'
 import { act, Empty, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { closeShift, loadCurrentShift, type Shift } from './-api'
 import { cashDifference, parseRupiah } from './-money'
+import { CLOSE_BLOCKED_HINT, drawerRows, isPendingPaymentRefusal } from './-shift-helpers'
 
 // Closing the cash drawer (Lakasir: cashier header action): expected cash, counted cash, the difference.
 export const Route = createFileRoute('/kasir/tutup')({
@@ -17,6 +18,8 @@ function CloseShiftPage() {
   const { shift } = Route.useLoaderData()
   const [counted, setCounted] = useState('')
   const [error, setError] = useState<string>()
+  // pos-api refuses the close while a sale of the shift awaits payment: say which, and what to do.
+  const [blocked, setBlocked] = useState<string>()
   const [busy, setBusy] = useState(false)
   const lock = useRef(false) // state lags a burst of clicks; the ref does not
   const [closed, setClosed] = useState<Shift>()
@@ -31,6 +34,7 @@ function CloseShiftPage() {
     const amount = parseRupiah(counted)
     if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 150.000')
     setError(undefined)
+    setBlocked(undefined)
     ask(
       'Tutup shift?',
       async () => {
@@ -41,6 +45,7 @@ function CloseShiftPage() {
         setBusy(false)
         if (!r.ok) {
           setError(r.errors.countedCash)
+          if (isPendingPaymentRefusal(r.error)) setBlocked(r.error)
           return r.error
         }
         if (r.res.ok) setClosed(r.res.data)
@@ -81,10 +86,18 @@ function CloseShiftPage() {
             </Text>
             <dl className="mt-3 space-y-1 text-sm">
               <Row label="Dibuka" value={formatDate(shift.openedAt)} />
-              <Row label="Uang awal" value={rupiah(shift.openingCash)} />
-              <Row label={`Penjualan tunai (${shift.salesCount})`} value={rupiah(shift.cashSales)} />
-              <Row label="Seharusnya di laci" value={rupiah(shift.expectedCash)} strong />
+              {drawerRows(shift).map((r) => (
+                <Row key={r.key} label={r.label} value={`${r.sign}${rupiah(r.amount)}`} strong={r.strong} />
+              ))}
             </dl>
+            <p className="mt-2 text-xs text-default-secondary">
+              Kasbon yang dibayar tunai di luar shift (oleh staf tanpa shift) masuk kas toko, bukan laci ini.
+            </p>
+            {blocked && (
+              <Alert variant="danger" size="small" role="alert" className="mt-4">
+                {blocked} {CLOSE_BLOCKED_HINT}
+              </Alert>
+            )}
             <form onSubmit={submit} noValidate className="mt-5 space-y-4">
               <TextField
                 label="Uang yang dihitung"
@@ -138,9 +151,9 @@ function Summary({ shift }: { shift: Shift }) {
   const diff = shift.difference ?? 0
   return (
     <dl className="mt-3 space-y-1 text-sm">
-      <Row label="Uang awal" value={rupiah(shift.openingCash)} />
-      <Row label={`Penjualan tunai (${shift.salesCount ?? 0})`} value={rupiah(shift.cashSales ?? 0)} />
-      <Row label="Seharusnya di laci" value={rupiah(shift.expectedCash ?? 0)} />
+      {drawerRows(shift).map((r) => (
+        <Row key={r.key} label={r.label} value={`${r.sign}${rupiah(r.amount)}`} />
+      ))}
       <Row label="Dihitung" value={rupiah(shift.countedCash ?? 0)} />
       <div
         className={`flex justify-between pt-2 text-base font-bold ${diff === 0 ? 'text-default-success' : 'text-default-error'}`}
