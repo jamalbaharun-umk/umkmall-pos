@@ -50,7 +50,7 @@ export function isSafeText(text: unknown): text is string {
  * a sale refused at the PG). Each says what happened and what to do in the cashier's words; the server's own long text
  * is never used for these. `primary` is the dialog's main button.
  */
-export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary: PrimaryAction }> = {
+export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary: PrimaryAction; helpCode?: string }> = {
   payment_unavailable: {
     what: 'Layanan pembayaran tidak menjawab, jadi tidak ada yang berubah.',
     todo: 'Coba lagi sebentar. Jika berulang, hubungi pemilik.',
@@ -70,12 +70,13 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
   },
   // the sale was written but the charge got no answer: the same key repeats it, never a second sale
   sale_waiting: {
-    what: 'Penjualan sudah dibuat, tetapi layanan pembayaran belum menjawab.',
-    todo: 'Tekan Bayar lagi. Penjualan tidak akan tercatat dua kali.',
+    what: 'Sistem pembayaran online tidak menjawab. Stok ditahan untuk penjualan ini dan belum pasti ada tagihan.',
+    todo: 'Coba lagi dengan penjualan yang sama; tagihan tidak akan ganda. Cara bayar lain bisa dipilih setelah sistem memastikan percobaan ini berakhir.',
     primary: 'retry',
+    helpCode: 'PAYMENT_UNAVAILABLE',
   },
   already_paid: {
-    what: 'Pelanggan sudah membayar lewat kode ini. Penjualan selesai dengan pembayaran itu.',
+    what: 'Pelanggan sudah membayar. Gateway memastikan tagihan ini sudah lunas, jadi permintaan ditolak. Penjualan selesai dengan pembayaran online.',
     todo: 'Jika Anda sudah menerima uang tunai, kembalikan ke pelanggan.',
     primary: 'reload',
   },
@@ -105,13 +106,13 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
     primary: 'none',
   },
   use_void: {
-    what: 'Penjualan ini tidak dibayar lewat QRIS atau VA, jadi dibatalkan dengan void, bukan refund.',
-    todo: 'Gunakan Batalkan transaksi.',
+    what: 'Pembayaran tunai tidak bisa direfund.',
+    todo: 'Gunakan Void (Batalkan transaksi).',
     primary: 'reload',
   },
   use_refund: {
-    what: 'Penjualan ini dibayar lewat QRIS atau VA, jadi dibatalkan dengan refund, bukan void.',
-    todo: 'Gunakan Refund pembayaran online.',
+    what: 'Pembayaran online tidak bisa di-void.',
+    todo: 'Gunakan Refund struk.',
     primary: 'reload',
   },
   not_refund_failed: {
@@ -196,7 +197,8 @@ export function describeError(error: unknown, fallback: string): ErrorDescriptio
   const paymentCode = typeof f.code === 'string' ? PAYMENT_CODES[f.code] : undefined
   // A bad permission or a missing sale keeps its own, stricter text below; every other status takes the payment code's.
   if (paymentCode && status !== 401 && status !== 403 && status !== 404 && status !== 422 && status !== 429) {
-    return { ...paymentCode, code: f.code!.toUpperCase() }
+    const { helpCode, ...text } = paymentCode
+    return { ...text, code: helpCode ?? f.code!.toUpperCase() }
   }
   if (f.code === 'PIN_INVALID') {
     return {

@@ -7,8 +7,13 @@ import {
   closedText,
   countdown,
   forgetPending,
+  agoText,
+  cashSwitchWarning,
+  isLink,
   isQris,
   keepPolling,
+  vaGroups,
+  waitingFor,
   lateReceiptText,
   outcomeOf,
   paidLater,
@@ -248,8 +253,9 @@ describe('paymentFailure and the error dialog', () => {
 
   it('503 on the sale itself says the sale waits and the same key repeats it', () => {
     const d = dialog('sale', 503, { saleId: ID, status: 'awaiting_payment' })
-    expect(d.what).toMatch(/Penjualan sudah dibuat/)
-    expect(d.todo).toMatch(/tidak akan tercatat dua kali/)
+    expect(d.what).toMatch(/Stok ditahan/)
+    expect(d.todo).toMatch(/tagihan tidak akan ganda/)
+    expect(d.code).toBe('PAYMENT_UNAVAILABLE')
   })
 
   it('409 codes get their own sentence, never the server text', () => {
@@ -276,5 +282,41 @@ describe('paymentFailure and the error dialog', () => {
   it('no answer at all is offline; an unknown code is not trusted', () => {
     expect(dialog('check', 0, null).code).toBe('OFFLINE')
     expect(paymentFailure('check', 409, { code: 'Robert;DROP' }).code).toBeUndefined()
+  })
+})
+
+describe('design 26 details', () => {
+  it('reads a payment-page link only when it is https', () => {
+    const l = pay({ method: 'fake_checkout', checkout: { paymentUrl: 'https://pay.example/abc' } })
+    expect(isLink(l.checkout)).toBe(true)
+    expect(pay({ checkout: { paymentUrl: 'javascript:alert(1)' } }).checkout).toBeNull()
+    expect(pay({ checkout: { paymentUrl: 'http://pay.example/abc' } }).checkout).toBeNull()
+  })
+  it('writes a VA number in groups of four', () => {
+    expect(vaGroups('8077123456789012')).toBe('8077 1234 5678 9012')
+    expect(vaGroups('80771')).toBe('8077 1')
+  })
+  it('says how long ago the last check was', () => {
+    const now = new Date('2026-11-25T10:00:10Z').getTime()
+    expect(agoText('2026-11-25T10:00:07Z', now)).toBe('3 detik lalu')
+    expect(agoText('2026-11-25T09:57:00Z', now)).toBe('3 menit lalu')
+    expect(agoText(null, now)).toBeNull()
+  })
+  it('warns on the switch to cash only when the gateway cannot close the code, with the time it stays valid', () => {
+    expect(cashSwitchWarning(pay())).toBeNull()
+    expect(cashSwitchWarning(pay({ canCloseAtGateway: false }))).toMatch(/masih berlaku sampai \d\d.\d\d/)
+    expect(cashSwitchWarning(pay({ canCloseAtGateway: false, expiresAt: null }))).not.toMatch(/sampai/)
+  })
+  it('names how long a sale has waited', () => {
+    const now = new Date('2026-11-25T10:30:00Z').getTime()
+    expect(waitingFor('2026-11-25T10:29:50Z', now)).toBe('baru saja')
+    expect(waitingFor('2026-11-25T10:26:00Z', now)).toBe('4 menit')
+    expect(waitingFor('2026-11-25T08:00:00Z', now)).toBe('2 jam')
+    expect(waitingFor('x', now)).toBe('')
+  })
+  it('never writes a validity time of its own: the countdown comes from expiresAt, so a longer VA just counts longer', () => {
+    const now = new Date('2026-11-25T10:00:00Z').getTime()
+    expect(countdown('2026-11-25T11:00:00Z', now)?.text).toBe('60:00')
+    expect(countdown('2026-11-25T10:15:00Z', now)?.text).toBe('15:00')
   })
 })

@@ -164,7 +164,9 @@ describe('refund of an online sale, UMK-1991', () => {
   })
   it('each refund state has its label and next step', () => {
     expect(refundStateText('pending')?.label).toBe('Refund diproses')
+    expect(refundStateText('pending')?.body).toMatch(/hanya menampilkan refund yang sama/)
     expect(refundStateText('succeeded')?.color).toBe('success')
+    expect(refundStateText('succeeded', 'Rp130.536')?.body).toBe('Gateway memastikan Rp130.536 kembali ke pelanggan.')
     const failed = refundStateText('failed')
     expect(failed?.color).toBe('danger')
     expect(failed?.body).toMatch(/dikembalikan manual/)

@@ -94,7 +94,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
     if (answer.ok) {
       notifySuccess(
         online
-          ? `Refund struk #${sale.number} diajukan. Gateway mengembalikan uang ke pelanggan.`
+          ? `Refund ${rupiah(sale.amountDue)} diminta. Struk #${sale.number} dibatalkan`
           : `Struk #${sale.number} dibatalkan`,
       )
       onChanged(answer.saleVoid)
@@ -131,14 +131,14 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
           onClose()
         }
       }}
-      title={online ? `Refund pembayaran online #${sale.number}?` : `Batalkan transaksi #${sale.number}?`}
+      title={online ? `Refund struk #${sale.number}?` : `Batalkan transaksi #${sale.number}?`}
       size="small"
       centered
     >
       <form noValidate onSubmit={submit} className="flex flex-col gap-4 px-6 pb-6">
         <p className="text-sm text-default-secondary">
           {online
-            ? 'Seluruh pembayaran dikembalikan lewat gateway dan tidak bisa dikembalikan sebagian. Stok dan voucher kembali sekarang, struk tetap ada dengan tanda VOID.'
+            ? 'Refund hanya penuh dan hanya sekali. Penjualan dibatalkan dan stok serta voucher kembali sekarang; struk tetap ada dengan tanda VOID. Dana kembali ke pelanggan saat gateway memastikan.'
             : 'Seluruh struk dibatalkan dan tidak bisa dikembalikan atau dibatalkan sebagian. Stok dan voucher kembali, struk tetap ada dengan tanda VOID.'}
         </p>
         <Alert variant="info" size="small">
@@ -244,7 +244,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
             isLoading={busy}
             disabled={approvers.state !== 'ready' || !anyApprover}
           >
-            {online ? 'Refund pembayaran' : 'Batalkan transaksi'}
+            {online ? `Refund ${rupiah(sale.amountDue)}` : 'Batalkan transaksi'}
           </Button>
         </div>
       </form>

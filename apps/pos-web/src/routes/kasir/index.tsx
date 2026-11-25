@@ -60,7 +60,7 @@ import {
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
-import { OnlineWait, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
+import { AwaitingList, OnlineWait, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
 import { forgetPending, parsePayment, type SalePayment } from './-online'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
@@ -167,6 +167,7 @@ function Register({
   // UMK-1991: a PG sale waits for its payment on its own screen; a reload brings the screen back.
   const [waiting, setWaiting] = useState<SalePayment | null>(null)
   const resume = useResumeOnlineSale()
+  const [listing, setListing] = useState(false)
   const online = waiting ?? resume.resumed
   // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
   const canDiscount = useCan('sales.price_override')
@@ -373,6 +374,11 @@ function Register({
             Rincian pesanan
           </Text>
           <div className="flex gap-1 whitespace-nowrap">
+            {chargeable.length > 0 && (
+              <Button width="auto" type="text" size="compact" onClick={() => setListing(true)}>
+                Menunggu
+              </Button>
+            )}
             <Button width="auto" asChild type="text" size="compact">
               <Link to="/kasir/riwayat">Riwayat</Link>
             </Button>
@@ -612,6 +618,7 @@ function Register({
         />
       )}
       <SuccessDialog sale={paid} onClose={() => setPaid(undefined)} />
+      <AwaitingList open={listing} onClose={() => setListing(false)} onPick={setWaiting} />
       {online && (
         <OnlineWait
           key={online.saleId}
@@ -623,6 +630,8 @@ function Register({
             void router.invalidate() // stock is back (or sold): fresh products for the next order
             // A new key either way: the same key would answer the finished sale again.
             setKey(crypto.randomUUID())
+            // Expired or failed: straight to choosing another way to pay, the cart is still there.
+            if (r.kind === 'closed' && r.again) setPaying(true)
             if (r.kind === 'paid') {
               setCart([])
               setNote('')
@@ -1028,8 +1037,9 @@ function PayDialog({
           )}
           {step === 'online' && (
             <Alert variant="info" size="small">
-              Pelanggan membayar lewat {method?.gatewayMethod === 'fake_va' ? 'nomor Virtual Account' : 'kode QR'} di layar
-              berikutnya. Berlaku 15 menit. Stok dan voucher ditahan sampai dibayar atau dibatalkan.
+              QRIS online dan Virtual Account hanya muncul bila Pembayaran Online aktif dan metodenya menyala. Pelanggan
+              bayar dari aplikasi bank atau e-wallet mana pun; status masuk otomatis. Stok dan voucher ditahan sampai
+              dibayar atau dibatalkan.
             </Alert>
           )}
           {hiddenOnline > 0 && (
@@ -1105,6 +1115,12 @@ function PayDialog({
             </>
           )}
           <ErrorText>{error}</ErrorText>
+          {busy && step === 'online' && (
+            <p className="text-center text-xs text-default-secondary" role="status">
+              Membuat {method?.gatewayMethod === 'fake_va' ? 'nomor VA' : 'QRIS'}… tombol dikunci supaya tidak tertagih
+              dua kali.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <Button width="auto" htmlType="submit" size="large" isLoading={busy}>
               {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind, method?.gatewayMethod)}

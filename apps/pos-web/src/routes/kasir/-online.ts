@@ -17,7 +17,8 @@ export type PaymentStatus =
   | 'refund_failed'
   | 'voided'
 export type SaleStatus = 'awaiting_payment' | 'completed' | 'void' | 'cancelled'
-export type Checkout = { qrString: string } | { bank: string; vaNumber: string }
+/** A QR, a virtual account, or (a PG with its own payment page) a link. The server decides which; the screen follows. */
+export type Checkout = { qrString: string } | { bank: string; vaNumber: string } | { paymentUrl: string }
 export type RefundStatus = 'pending' | 'succeeded' | 'failed'
 export type LateReceipt = {
   id: string
@@ -49,8 +50,8 @@ export type SalePayment = {
 
 /** The waiting screen asks pos-api for the status this often (payment-api asks the PG at most every 5 s itself). */
 export const POLL_MS = 3000
-/** A QR or VA lives 15 minutes; only used for the copy, the real time is `expiresAt`. */
-export const VALID_MINUTES = 15
+// How long a QR or VA lives is never written on a screen: it is the payment's own `expiresAt` (a VA may live longer
+// than a QR and the owner has not fixed the value).
 
 const SALE_STATUSES: readonly string[] = ['awaiting_payment', 'completed', 'void', 'cancelled']
 const PAYMENT_STATUSES: readonly string[] = [
@@ -72,6 +73,8 @@ function parseCheckout(v: unknown): Checkout | null {
   if (!isObject(v)) return null
   if (typeof v.qrString === 'string' && v.qrString) return { qrString: v.qrString }
   if (typeof v.vaNumber === 'string' && v.vaNumber) return { bank: str(v.bank) ?? '', vaNumber: v.vaNumber }
+  // only an https link is ever offered to open or share
+  if (typeof v.paymentUrl === 'string' && /^https:\/\/\S+$/.test(v.paymentUrl)) return { paymentUrl: v.paymentUrl }
   return null
 }
 
@@ -166,18 +169,18 @@ export function closedText(why: 'expired' | 'failed' | 'cancelled'): { title: st
   switch (why) {
     case 'expired':
       return {
-        title: 'Waktu pembayaran habis',
-        body: 'Pelanggan belum membayar sampai batas waktu. Penjualan dibatalkan dan stok kembali. Pesanan masih ada di kasir: pilih cara bayar lain atau buat kode baru.',
+        title: 'Kode kedaluwarsa',
+        body: 'Pelanggan belum membayar sampai batas waktu. Penjualan dibatalkan dan stok kembali. Pesanan masih ada di kasir: pilih cara bayar lain.',
       }
     case 'failed':
       return {
         title: 'Pembayaran gagal',
-        body: 'Pembayaran ditolak atau gagal. Penjualan dibatalkan dan stok kembali. Pesanan masih ada di kasir: coba lagi atau pilih cara bayar lain.',
+        body: 'Gateway menolak tagihan. Stok sudah dikembalikan dan tidak ada uang yang ditagih. Isi keranjang tetap ada.',
       }
     default:
       return {
-        title: 'Penjualan dibatalkan',
-        body: 'Penjualan dibatalkan sebelum dibayar. Stok dan voucher sudah kembali. Pesanan masih ada di kasir.',
+        title: 'Pembayaran dibatalkan',
+        body: 'Tagihan ditutup di gateway. Stok dikembalikan. Pembatalan tagihan bukan void: tanpa PIN dan tanpa catatan void.',
       }
   }
 }
@@ -252,9 +255,40 @@ export function paidLater(createdAt: string, paidAt: string | null | undefined):
 }
 
 export const gatewayLabel = (m: string | null | undefined) =>
-  m === 'fake_qris' ? 'QRIS dinamis (tiruan)' : m === 'fake_va' ? 'Virtual Account (tiruan)' : 'Pembayaran online'
+  m === 'fake_qris' ? 'QRIS online' : m === 'fake_va' ? 'Virtual Account' : 'Pembayaran online'
 
 export const isQris = (c: Checkout | null): c is { qrString: string } => !!c && 'qrString' in c
+/** "4 menit" since a sale was rung up, for the list of waiting sales. */
+export function waitingFor(createdAt: string, now: number): string {
+  const t = new Date(createdAt).getTime()
+  if (Number.isNaN(t)) return ''
+  const m = Math.max(0, Math.floor((now - t) / 60_000))
+  return m < 1 ? 'baru saja' : m < 60 ? `${m} menit` : `${Math.floor(m / 60)} jam`
+}
+
+export const isLink = (c: Checkout | null): c is { paymentUrl: string } => !!c && 'paymentUrl' in c
+
+/** A VA number in groups of four, as it is read out and typed: "8077 1234 5678 9012". */
+export const vaGroups = (va: string) => va.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim()
+
+/** "3 detik lalu" for the last check; null when there is none. */
+export function agoText(iso: string | null, now: number): string | null {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return null
+  const s = Math.max(0, Math.round((now - t) / 1000))
+  return s < 60 ? `${s} detik lalu` : `${Math.floor(s / 60)} menit lalu`
+}
+
+/**
+ * The switch to cash's warning when the gateway cannot close the QR: it stays payable until `expiresAt`, and money that
+ * arrives later is refunded by itself (design 26, screen 11). null when the bill can be closed.
+ */
+export function cashSwitchWarning(p: SalePayment): string | null {
+  if (p.canCloseAtGateway) return null
+  const until = clockText(p.expiresAt)
+  return `Gateway ini tidak bisa menutup kode. Kode masih berlaku${until ? ` sampai ${until}` : ''}. Bila pelanggan tetap membayar, uangnya dikembalikan otomatis dan tampil sebagai pembayaran terlambat.`
+}
 
 // ---- Resume after a reload ----
 

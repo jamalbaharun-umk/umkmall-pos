@@ -34,7 +34,7 @@ function SalePage() {
         <>
           {r.status === 'completed' && canStart && (
             <Button width="auto" type="outline" color="danger" onClick={() => setVoiding(true)}>
-              {online ? 'Refund pembayaran online' : 'Batalkan transaksi'}
+              {online ? 'Refund struk' : 'Batalkan transaksi'}
             </Button>
           )}
           <Button width="auto" asChild type="outline" color="light">
@@ -56,6 +56,11 @@ function SalePage() {
       {r.status === 'cancelled' && (
         <Alert variant="info" size="small" className="mb-4" role="status">
           Penjualan ini dibatalkan sebelum dibayar. Stok dan voucher sudah kembali; tidak ada struk.
+        </Alert>
+      )}
+      {online && r.status === 'completed' && (
+        <Alert variant="info" size="small" className="mb-4">
+          Pembayaran lewat gateway dikembalikan dengan refund penuh. Butuh PIN admin dan alasan, sama seperti void.
         </Alert>
       )}
       {voided && (

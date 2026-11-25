@@ -125,3 +125,21 @@ export const markRefundManual = createServerFn({ method: 'POST' })
     })
     return r.ok ? { ok: true, data: r.json as SaleVoid } : r
   })
+
+export type AwaitingSale = { id: string; number: number; total: number; amountDue: number; createdAt: string }
+
+/** The sales that wait for a payment (the actor's own, or all with `reports.view`): `GET /sales?status=awaiting_payment`. */
+export const loadAwaitingSales = createServerFn().handler(async (): Promise<Answer<AwaitingSale[]>> => {
+  const r = await call('poll', '/sales?status=awaiting_payment&perPage=50', { method: 'GET' })
+  if (!r.ok) return r
+  const rows = (r.json as { data?: unknown } | null)?.data
+  const data = Array.isArray(rows)
+    ? rows.flatMap((x): AwaitingSale[] => {
+        const o = x as Partial<AwaitingSale>
+        return typeof o.id === 'string' && Number.isInteger(o.number) && Number.isInteger(o.total)
+          ? [{ id: o.id, number: o.number!, total: o.total!, amountDue: o.amountDue ?? o.total!, createdAt: String(o.createdAt ?? '') }]
+          : []
+      })
+    : []
+  return { ok: true, data }
+})

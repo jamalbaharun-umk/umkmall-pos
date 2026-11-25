@@ -93,7 +93,7 @@ export function refundGuidance(kind: MethodKind | null, total: number, rupiah: (
     case 'online':
       return {
         needsShift: false,
-        text: `Pembayaran online dikembalikan gateway ke pelanggan sebesar ${rupiah(total)}. Laci tidak berubah dan tidak perlu shift buka. Penjualan dibalik sekarang; pengembalian uangnya bisa butuh waktu.`,
+        text: `Refund ${rupiah(total)} ke pelanggan lewat gateway. Pembayaran non-tunai tidak mengeluarkan uang dari laci; kas shift tidak berubah.`,
       }
     case 'credit':
       return {
@@ -197,21 +197,24 @@ export const lockText = (lockedUntil: string | null, now = Date.now()) => {
 
 export type RefundState = 'pending' | 'succeeded' | 'failed'
 
-export function refundStateText(status: RefundState | null | undefined): { label: string; color: 'warning' | 'success' | 'danger'; body: string } | null {
+export function refundStateText(
+  status: RefundState | null | undefined,
+  amountText = 'dana',
+): { label: string; color: 'warning' | 'success' | 'danger'; body: string } | null {
   switch (status) {
     case 'pending':
       return {
         label: 'Refund diproses',
         color: 'warning',
-        body: 'Gateway sedang mengembalikan uang ke pelanggan. Status diperbarui otomatis; muat ulang halaman untuk melihatnya.',
+        body: 'Gateway menerima permintaan refund; dana belum kembali ke pelanggan. Penjualan sudah dibatalkan dan stok sudah kembali. Status diperbarui otomatis saat gateway memastikan. Menekan Refund lagi hanya menampilkan refund yang sama.',
       }
     case 'succeeded':
-      return { label: 'Refund berhasil', color: 'success', body: 'Uang sudah dikembalikan ke pelanggan.' }
+      return { label: 'Refund selesai', color: 'success', body: `Gateway memastikan ${amountText} kembali ke pelanggan.` }
     case 'failed':
       return {
-        label: 'Refund ditolak',
+        label: 'Refund gagal',
         color: 'danger',
-        body: 'Gateway menolak refund ini, jadi uang belum kembali ke pelanggan. Coba ajukan lagi. Bila tetap ditolak, pemilik bisa menandainya dikembalikan manual setelah mentransfer sendiri.',
+        body: 'Gateway menolak refund. Uang pelanggan belum kembali. Pemilik bisa mencoba lagi, atau menandainya dikembalikan manual bila uang sudah dikembalikan di luar gateway.',
       }
     default:
       return null

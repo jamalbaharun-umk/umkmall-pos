@@ -1,7 +1,8 @@
+import { useRouter } from '@tanstack/react-router'
 import { Alert, Badge, Button, Dialog, TextField } from '@umkmall/ui'
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { rupiah } from '@/components/pos-page'
-import { useCan, useIsOwner } from '@/components/shell'
+import { useIsOwner } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { markRefundManual, retryRefund } from './-online-api'
 import type { SaleVoid } from './-void-api'
@@ -9,18 +10,27 @@ import { MANUAL_NOTE_MAX, manualNoteError, refundStateText } from './-void-helpe
 
 /**
  * Where the refund of a paid QRIS or VA sale stands (UMK-1991): pending, succeeded or refused, with the next step.
- * "Ajukan lagi" is for a holder of `sales.void` (no new PIN); "Tandai dikembalikan manual" is the owner's alone, after
- * the money went back outside the system. Every action ends in a success toast or the error dialog.
+ * "Coba lagi" and "Dikembalikan manual" are the owner's alone (approved design 27), the second after the money went
+ * back outside the system. The design also asks the admin PIN for "Coba lagi"; pos-api does not take one yet. Every action ends in a success toast or the error dialog.
  */
 export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onChanged: () => void }) {
-  const canRetry = useCan('sales.void')
+  // Design 27: only the owner retries or marks a refund returned by hand; others see the status.
   const owner = useIsOwner()
+  const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [marking, setMarking] = useState(false)
   const [note, setNote] = useState('')
   const [noteError, setNoteError] = useState<string>()
   const lock = useRef(false)
-  const state = refundStateText(saleVoid.refundStatus)
+  const amount = saleVoid.total + saleVoid.rounding
+  const state = refundStateText(saleVoid.refundStatus, rupiah(amount))
+  // A pending refund is followed by asking pos-api again (its job settles it), so the status moves by itself.
+  const pending = saleVoid.refundStatus === 'pending'
+  useEffect(() => {
+    if (!pending) return
+    const t = setInterval(() => void router.invalidate(), 5000)
+    return () => clearInterval(t)
+  }, [pending, router])
   if (!state) return null
 
   async function retry() {
@@ -31,7 +41,7 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
     lock.current = false
     setBusy(false)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'mengajukan refund lagi', retry: () => void retry() })
-    notifySuccess('Refund diajukan lagi ke gateway')
+    notifySuccess('Refund diminta lagi ke gateway')
     onChanged()
   }
 
@@ -64,23 +74,19 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
       <Alert variant={state.color === 'danger' ? 'danger' : state.color === 'success' ? 'success' : 'info'} size="small" role="status">
         {state.body}
       </Alert>
-      {saleVoid.refundStatus === 'failed' && (
-        <div className="flex flex-wrap gap-2">
-          {canRetry && (
+      {saleVoid.refundStatus === 'failed' &&
+        (owner ? (
+          <div className="flex flex-wrap gap-2">
             <Button width="auto" size="small" isLoading={busy} disabled={busy} onClick={() => void retry()}>
-              Ajukan refund lagi
+              Coba lagi
             </Button>
-          )}
-          {owner && (
             <Button width="auto" size="small" type="outline" color="light" disabled={busy} onClick={() => setMarking(true)}>
-              Tandai dikembalikan manual
+              Dikembalikan manual
             </Button>
-          )}
-          {!canRetry && !owner && (
-            <p className="text-sm text-default-secondary">Minta pemilik atau admin berizin pembatalan untuk mengajukannya lagi.</p>
-          )}
-        </div>
-      )}
+          </div>
+        ) : (
+          <p className="text-sm text-default-secondary">Hanya pemilik yang bisa mencoba lagi atau menandai refund ini.</p>
+        ))}
       <Dialog
         open={marking}
         onOpenChange={(o) => !o && !busy && setMarking(false)}
@@ -90,12 +96,12 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
       >
         <form noValidate onSubmit={mark} className="flex flex-col gap-4 px-6 pb-6">
           <p className="text-sm text-default-secondary">
-            Hanya tandai setelah Anda benar-benar mengembalikan {rupiah(saleVoid.total + saleVoid.rounding)} ke pelanggan
-            di luar sistem. Sistem menanyakan gateway dulu; bila refund ternyata sudah berhasil, statusnya mengikuti
-            gateway.
+            Struk #{saleVoid.saleNumber} · {rupiah(amount)}. Gunakan hanya bila uang sudah Anda kembalikan ke pelanggan di
+            luar gateway, misalnya transfer langsung. Sistem menanyakan gateway dulu; bila refund ternyata sudah
+            berhasil, statusnya mengikuti gateway.
           </p>
           <TextField
-            label="Bagaimana uang dikembalikan?"
+            label="Catatan (wajib)"
             value={note}
             maxLength={MANUAL_NOTE_MAX}
             onChange={(e) => {
@@ -103,14 +109,14 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
               setNoteError(undefined)
             }}
             error={noteError}
-            placeholder="Contoh: transfer ke rekening pelanggan"
+            placeholder="mis. transfer BCA 25 Nov, bukti di WA"
           />
           <div className="flex justify-end gap-2">
             <Button type="outline" color="light" width="auto" disabled={busy} onClick={() => setMarking(false)}>
               Batal
             </Button>
             <Button htmlType="submit" width="auto" isLoading={busy}>
-              Tandai dikembalikan
+              Tandai selesai
             </Button>
           </div>
         </form>
