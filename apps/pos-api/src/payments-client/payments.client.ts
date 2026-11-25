@@ -61,6 +61,8 @@ export type Payment = {
   expiresAt: string | null;
   /** ISO time payment-api last asked the PG. */
   lastSyncedAt: string | null;
+  /** ISO time the payment became `paid`, by payment-api's clock. */
+  paidAt: string | null;
   /** False: the PG cannot close an unpaid bill, which stays payable until it expires (D13). */
   canCancel: boolean;
   unmatchedReceipts: UnmatchedReceipt[];
@@ -523,6 +525,7 @@ export class PaymentsClient {
       checkout,
       expiresAt: text(raw.expiresAt),
       lastSyncedAt: text(raw.lastSyncedAt),
+      paidAt: text(raw.paidAt),
       canCancel: capabilities?.canCancel !== false,
       unmatchedReceipts: unmatched
         .filter(

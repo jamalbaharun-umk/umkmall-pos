@@ -601,8 +601,9 @@ export class SalesService {
         ? eq(sales.status, q.status)
         : inArray(sales.status, [...FINAL_SALE_STATUSES]),
       q.shiftId ? eq(sales.shiftId, q.shiftId) : undefined,
-      q.from ? gte(sales.createdAt, new Date(q.from)) : undefined,
-      q.to ? lt(sales.createdAt, new Date(q.to)) : undefined,
+      // By the paid time, as the reports count (a PG sale paid after midnight is in the new day).
+      q.from ? gte(sales.paidAt, new Date(q.from)) : undefined,
+      q.to ? lt(sales.paidAt, new Date(q.to)) : undefined,
     );
     const showCost = hasPermission(s, 'reports.view');
     const [rows, [rung], [reversed]] = await Promise.all([
@@ -626,6 +627,7 @@ export class SalesService {
           status: sales.status,
           paymentMethodCode: sales.paymentMethodCode,
           voidedAt: sales.voidedAt,
+          paidAt: sales.paidAt,
           createdAt: sales.createdAt,
         })
         .from(sales)
@@ -634,7 +636,7 @@ export class SalesService {
           and(eq(staff.tenantId, sales.tenantId), eq(staff.id, sales.actorId)),
         )
         .where(where)
-        .orderBy(desc(sales.createdAt), desc(sales.number))
+        .orderBy(desc(sales.paidAt), desc(sales.number))
         .limit(q.perPage)
         .offset((q.page - 1) * q.perPage),
       this.db
@@ -728,6 +730,7 @@ export class SalesService {
         status: sales.status,
         paymentMethodCode: sales.paymentMethodCode,
         voidedAt: sales.voidedAt,
+        paidAt: sales.paidAt,
         createdAt: sales.createdAt,
       })
       .from(sales)

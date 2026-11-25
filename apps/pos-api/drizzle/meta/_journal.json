@@ -246,6 +246,13 @@
       "when": 1795632373610,
       "tag": "0034_pg_cashier_flow_review",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795633177941,
+      "tag": "0035_sale_paid_at",
+      "breakpoints": true
     }
   ]
 }

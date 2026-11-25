@@ -311,6 +311,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           'completed',
           payment.id,
           sale.attempt,
+          // A sale that waited for a PG payment counts from when the payer paid.
+          isOnlineMethod(payment.method) ? payment.paidAt : null,
         );
         if (outcome === 'stale') continue;
         return { outcome, payment };
@@ -489,6 +491,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           change: Math.max(sale.paid - sale.total - rounding, 0),
           paymentAttempt: attempt + 1,
           paymentAttemptAt: sql`now()`,
+          // The cashier holds the cash now: the sale counts from this moment.
+          paidAt: sql`now()`,
           switchCashPaid: null,
         })
         .where(mine);
@@ -500,6 +504,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * still what the caller read before it asked payment-api. `attempt` is the attempt the payment belongs to:
    * a sale that moved on to another attempt (it was switched to cash) is not touched by the old attempt's
    * answer, and a sale is never cancelled while a switch to cash is asked. Both answer `stale`.
+   * `paidAt` (a PG payment's paid time) becomes the sale's `paid_at`, the moment it is reported at.
    */
   private async applyToSale(
     tenantId: string,
@@ -507,6 +512,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     to: 'completed' | 'cancelled',
     paymentId: string,
     attempt: number,
+    paidAt: string | null = null,
   ): Promise<SaleOutcome | 'stale'> {
     return this.db.transaction(async (tx) => {
       const [sale] = await tx
@@ -528,7 +534,17 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (to === 'completed') {
         await tx
           .update(sales)
-          .set({ status: 'completed', paymentId, switchCashPaid: null })
+          .set({
+            status: 'completed',
+            paymentId,
+            switchCashPaid: null,
+            // payment-api's clock is not ours: never before the sale was rung up, never in the future.
+            ...(paidAt
+              ? {
+                  paidAt: sql`greatest(${sales.createdAt}, least(${paidAt}::timestamptz, now()))`,
+                }
+              : {}),
+          })
           .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
         return 'completed';
       }

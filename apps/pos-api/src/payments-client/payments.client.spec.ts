@@ -219,7 +219,7 @@ describe('payment-api client (UMK-1991)', () => {
     expect(online(null)).toBeNull();
   });
 
-  it('reads what a PG payment adds: checkout, expiry, last check, whether the bill can be closed, late money', async () => {
+  it('reads what a PG payment adds: checkout, expiry, last check, paid time, whether the bill can be closed, late money', async () => {
     const pg = {
       ...PAYMENT,
       method: 'fake_qris',
@@ -228,6 +228,7 @@ describe('payment-api client (UMK-1991)', () => {
       checkout: { qrString: 'QR', n: 5 },
       expiresAt: '2026-11-25T10:15:00.000Z',
       lastSyncedAt: null,
+      paidAt: '2026-11-25T10:03:00.000Z',
       capabilities: { canCancel: false },
       unmatchedReceipts: [
         {
@@ -250,6 +251,7 @@ describe('payment-api client (UMK-1991)', () => {
       checkout: { qrString: 'QR' },
       expiresAt: '2026-11-25T10:15:00.000Z',
       lastSyncedAt: null,
+      paidAt: '2026-11-25T10:03:00.000Z',
       canCancel: false,
       unmatchedReceipts: [
         {
@@ -269,6 +271,7 @@ describe('payment-api client (UMK-1991)', () => {
       checkout: null,
       expiresAt: null,
       lastSyncedAt: null,
+      paidAt: null,
       canCancel: true,
       unmatchedReceipts: [],
     });

@@ -1,6 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import postgres from 'postgres';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -1801,6 +1803,129 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         'POST',
         `/refunds/${payment.refund_key}/succeed`,
       );
+    });
+  });
+
+  describe('a sale counts from when it was paid (owner ruling 2026-11-25)', () => {
+    const revenue = async (s: Shop, day: string) =>
+      (
+        (await get(s.auth, `/reports/sales?from=${day}&to=${day}`).expect(200))
+          .body as { totals: { revenue: number } }
+      ).totals.revenue;
+    const listed = async (s: Shop, fromDay: string, toDay: string) =>
+      (
+        (
+          await get(
+            s.auth,
+            `/sales?from=${fromDay}T00:00:00%2B07:00&to=${toDay}T00:00:00%2B07:00`,
+          ).expect(200)
+        ).body as { data: { id: string }[] }
+      ).data.map((x) => x.id);
+    /** The sale was rung up yesterday at 23:58 (store time) and still waits. */
+    const rungUpYesterday = (saleId: string) =>
+      admin`update pos.sales set
+          created_at = (${jakartaDay(-1)}::date + time '23:58') at time zone 'Asia/Jakarta',
+          paid_at = (${jakartaDay(-1)}::date + time '23:58') at time zone 'Asia/Jakarta'
+        where id = ${saleId}`;
+    const times = async (saleId: string) =>
+      (
+        await admin<
+          { at_creation: boolean; today: boolean; future: boolean }[]
+        >`select paid_at = created_at as at_creation, paid_at > now() as future,
+            (paid_at at time zone 'Asia/Jakarta')::date = ${jakartaDay()}::date as today
+          from pos.sales where id = ${saleId}`
+      )[0];
+
+    it('a PG sale rung up before midnight and paid after it is in the new day’s report and list, not the old day’s', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await rungUpYesterday(saleId);
+      // Waiting: in no day's figures.
+      expect(await revenue(s, jakartaDay(-1))).toBe(0);
+      expect(await revenue(s, jakartaDay())).toBe(0);
+
+      await onBill(s, saleId, 'pay');
+      await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      // payment-api's clock runs ahead in this file: the paid time is never taken into the future.
+      expect(await times(saleId)).toEqual({
+        at_creation: false,
+        today: true,
+        future: false,
+      });
+      expect(await revenue(s, jakartaDay(-1))).toBe(0);
+      expect(await revenue(s, jakartaDay())).toBe(PRICE);
+      expect(await listed(s, jakartaDay(-1), jakartaDay())).toEqual([]);
+      expect(await listed(s, jakartaDay(), jakartaDay(1))).toEqual([saleId]);
+      const sale = await get(s.auth, `/sales/${saleId}`).expect(200);
+      expect(sale.body.paidAt).not.toBe(sale.body.createdAt);
+
+      // Its refund is a reversal on the day of the refund, as a void is.
+      await refund(s, saleId).expect(201);
+      expect(await revenue(s, jakartaDay(-1))).toBe(0);
+      expect(await revenue(s, jakartaDay())).toBe(0);
+      const [payment] = await paymentsOf(saleId);
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/refunds/${payment.refund_key}/succeed`,
+      );
+      await sync.tick(later());
+    });
+
+    it('a sale switched to cash counts from when the cashier took the cash; a sale paid at once counts from when it was rung up', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await rungUpYesterday(saleId);
+      await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 5200,
+      }).expect(200);
+      expect(await times(saleId)).toMatchObject({
+        at_creation: false,
+        today: true,
+      });
+      expect(await revenue(s, jakartaDay(-1))).toBe(0);
+      expect(await revenue(s, jakartaDay())).toBe(PRICE);
+
+      const cash = await sell(s, {
+        paymentMethodId: undefined,
+        paid: 10_000,
+      }).expect(201);
+      expect((await times(cash.body.id as string)).at_creation).toBe(true);
+      // A cancelled sale is in no day's figures.
+      const gone = (await sell(s).expect(201)).body.id as string;
+      await post(s.auth, `/sales/${gone}/payment/cancel`).expect(200);
+      expect(await revenue(s, jakartaDay())).toBe(2 * PRICE);
+    });
+
+    it('the migration dates every earlier sale at the time it was rung up', async () => {
+      const s = await shop();
+      const cash = await sell(s, {
+        paymentMethodId: undefined,
+        paid: 10_000,
+      }).expect(201);
+      const id = cash.body.id as string;
+      const statement = readFileSync(
+        path.join(__dirname, '..', 'drizzle', '0035_sale_paid_at.sql'),
+        'utf8',
+      )
+        .split('--> statement-breakpoint')
+        .map((x) => x.replace(/^\s*--.*$/gm, '').trim())
+        .find((x) => x.startsWith('UPDATE'))!;
+      // As the migration finds a row: `paid_at` stamped by the new column's default. Rolled back after.
+      const rollback = new Error('rollback');
+      await admin
+        .begin(async (tx) => {
+          await tx`update pos.sales set created_at = now() - interval '40 days' where id = ${id}`;
+          await tx.unsafe(statement);
+          const [row] = await tx<
+            { same: boolean }[]
+          >`select paid_at = created_at as same from pos.sales where id = ${id}`;
+          expect(row.same).toBe(true);
+          throw rollback;
+        })
+        .catch((e: unknown) => {
+          if (e !== rollback) throw e;
+        });
     });
   });
 

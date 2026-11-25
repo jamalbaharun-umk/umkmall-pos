@@ -1372,7 +1372,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
             lines: [{ productId: teh, qty: 1 }],
             paid: 5000,
           });
-          await admin`update pos.sales set created_at = ${at}::timestamptz where id = ${sale.id}`;
+          await admin`update pos.sales set created_at = ${at}::timestamptz, paid_at = ${at}::timestamptz where id = ${sale.id}`;
         }
         return s;
       };
@@ -1478,7 +1478,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         lines: [{ productId: teh, qty: 1 }],
         paid: 5500,
       });
-      await admin`update pos.sales set created_at = created_at - interval '1 day' where id = ${f.id}`;
+      await admin`update pos.sales set created_at = created_at - interval '1 day', paid_at = paid_at - interval '1 day' where id = ${f.id}`;
 
       const out = (amount: number, category: string, extra: object = {}) =>
         spend(s.auth, { amount, category, source: 'outside', ...extra }).expect(
@@ -1674,8 +1674,8 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         lines: [{ productId: teh, qty: 2 }],
         paid: 10_000,
       });
-      await admin`update pos.sales set created_at = now() - interval '1 day' - interval '1 minute' where id = ${early.id}`;
-      await admin`update pos.sales set created_at = now() - interval '1 day' + interval '1 minute' where id = ${late.id}`;
+      await admin`update pos.sales set created_at = now() - interval '1 day' - interval '1 minute', paid_at = now() - interval '1 day' - interval '1 minute' where id = ${early.id}`;
+      await admin`update pos.sales set created_at = now() - interval '1 day' + interval '1 minute', paid_at = now() - interval '1 day' + interval '1 minute' where id = ${late.id}`;
       const res = await get(s.auth, '/reports/profit-loss').expect(200);
       // Both sales are yesterday's unless this runs in the two minutes around the store's midnight.
       const [{ same }] = await admin<{ same: boolean }[]>`

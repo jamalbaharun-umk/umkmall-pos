@@ -196,6 +196,10 @@ export const sales = pos
       // attempt closing unpaid turns the sale into a cash sale instead of cancelling it.
       switchCashPaid: rupiah('switch_cash_paid'),
       cancelledAt: ts('cancelled_at'),
+      // The moment the sale counts from in every report and list (owner ruling 2026-11-25): when it was
+      // PAID. That is when it was rung up, except for a sale that waited for a payment gateway: the
+      // gateway's paid time, or the moment the cashier took cash instead.
+      paidAt: ts('paid_at').notNull().defaultNow(),
       createdAt: createdAt(),
     },
     (t) => [
@@ -220,6 +224,7 @@ export const sales = pos
       ),
       uniqueIndex('sales_tenant_number_uq').on(t.tenantId, t.number),
       index('sales_tenant_created_idx').on(t.tenantId, t.createdAt),
+      index('sales_tenant_paid_idx').on(t.tenantId, t.paidAt),
       index('sales_shift_idx').on(t.shiftId),
       foreignKey({
         columns: [t.tenantId, t.shiftId],
