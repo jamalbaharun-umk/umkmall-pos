@@ -16,11 +16,27 @@ import {
   type ProductInput,
   type ProductType,
 } from '../-api'
+import {
+  MAX_TIERS,
+  MAX_UNITS,
+  blankTier,
+  blankUnit,
+  clearRowErrors,
+  tierErrors,
+  tierRowsOf,
+  tiersToInput,
+  unitErrors,
+  unitHint,
+  unitRowsOf,
+  unitsToInput,
+  type TierRow,
+  type UnitRow,
+} from './-helpers'
 
 export const TYPE_LABEL: Record<ProductType, string> = { product: 'Barang', service: 'Jasa', non_stock: 'Tanpa stok' }
 const TYPES = (Object.keys(TYPE_LABEL) as ProductType[]).map((value) => ({ value, label: TYPE_LABEL[value] }))
 
-const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'lowStockThreshold', 'file'] as const
+const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'lowStockThreshold', 'file', 'units', 'priceTiers'] as const
 
 /**
  * Lakasir's product form: images, name, barcodes (repeater), SKU (blank = generated), category, stock (create only),
@@ -42,6 +58,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     barcodes: [] as string[],
     stock: '',
     lowStockThreshold: '5',
+    units: [] as UnitRow[],
+    priceTiers: [] as TierRow[],
   }
   const [form, setForm] = useState(
     product
@@ -57,6 +75,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           isActive: product.isActive,
           barcodes: product.barcodes,
           lowStockThreshold: String(product.lowStockThreshold),
+          units: unitRowsOf(product.units),
+          priceTiers: tierRowsOf(product.priceTiers),
         }
       : blank,
   )
@@ -78,7 +98,11 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
     e.preventDefault()
     if (busy) return
     setError(undefined)
-    const found = productErrors(form, Boolean(product))
+    const found = {
+      ...productErrors(form, Boolean(product)),
+      ...unitErrors(form.units, form.unit || 'PCS'),
+      ...tierErrors(form.priceTiers, form.sellingPrice),
+    }
     setErrors(found)
     if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
     const costPrice = Number(plainNumber(form.costPrice) || '0')
@@ -94,6 +118,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       isActive: form.isActive,
       lowStockThreshold: Number(plainNumber(form.lowStockThreshold) || '5'),
       barcodes: form.barcodes.map((b) => b.trim()).filter(Boolean),
+      units: unitsToInput(form.units),
+      priceTiers: tiersToInput(form.priceTiers),
     }
     setBusy(true)
     try {
@@ -122,6 +148,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       }
       toast(product ? 'Produk disimpan' : 'Produk dibuat', { variant: 'success' })
       if (problems.length) toast(problems.join(' '), { variant: 'warning' })
+      // Saved, but a unit costs more than buying loose at the best price: the server says so, the owner decides.
+      for (const w of saved.warnings ?? []) toast(w.message, { variant: 'warning' })
       if (again) {
         setForm(blank)
         setFiles([])
@@ -323,6 +351,26 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
         </div>
       </Panel>
 
+      <UnitsEditor
+        baseUnit={form.unit}
+        sellingPrice={form.sellingPrice}
+        rows={form.units}
+        errors={errors}
+        onChange={(rows, i) => {
+          set('units', rows)
+          setErrors((all) => clearRowErrors(all, 'units', i))
+        }}
+      />
+      <TiersEditor
+        baseUnit={form.unit}
+        rows={form.priceTiers}
+        errors={errors}
+        onChange={(rows, i) => {
+          set('priceTiers', rows)
+          setErrors((all) => clearRowErrors(all, 'priceTiers', i))
+        }}
+      />
+
       {error && <Alert variant="danger">{error}</Alert>}
 
       <div className="flex flex-wrap gap-2">
@@ -349,6 +397,167 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       </div>
       {confirm.dialog}
     </form>
+  )
+}
+
+/** UMK-1985 "Satuan lain": a pack of the base unit with its own fixed price (1 dus = 24 pcs). */
+function UnitsEditor({
+  baseUnit,
+  sellingPrice,
+  rows,
+  errors,
+  onChange,
+}: {
+  baseUnit: string
+  sellingPrice: string
+  rows: UnitRow[]
+  errors: Errors
+  onChange: (rows: UnitRow[], changedRow?: number) => void
+}) {
+  const patch = (i: number, p: Partial<UnitRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...p } : r)), i)
+  return (
+    <Panel className="flex flex-col gap-4 p-6">
+      <div>
+        <h2 className="text-base font-semibold text-default-primary">Satuan lain</h2>
+        <p className="text-sm text-default-secondary">
+          Jual juga per kemasan, misalnya dus. Stok tetap dihitung dalam {baseUnit.trim() || 'satuan dasar'}.
+        </p>
+      </div>
+      {errors.units && <Alert variant="danger" size="small">{errors.units}</Alert>}
+      {rows.length === 0 && <p className="text-sm text-default-secondary">Belum ada satuan lain.</p>}
+      {rows.map((r, i) => {
+        const hint = unitHint(r, baseUnit, sellingPrice)
+        return (
+          <fieldset key={i} className="grid gap-3 rounded-lg border border-border-light p-4 md:grid-cols-3">
+            <legend className="px-1 text-sm font-medium text-default-primary">Satuan {i + 1}</legend>
+            <TextField
+              label="Nama satuan"
+              value={r.name}
+              onChange={(e) => patch(i, { name: e.target.value })}
+              placeholder="Contoh: Dus"
+              maxLength={20}
+              required
+              error={errors[`units.${i}.name`]}
+            />
+            <TextField
+              label={`Isi (${baseUnit.trim() || 'satuan dasar'})`}
+              inputMode="numeric"
+              value={r.unitQty}
+              onChange={(e) => patch(i, { unitQty: e.target.value })}
+              placeholder="24"
+              required
+              error={errors[`units.${i}.unitQty`]}
+            />
+            <TextField
+              label="Harga per satuan"
+              prefix="Rp"
+              inputMode="numeric"
+              value={r.price}
+              onChange={(e) => patch(i, { price: e.target.value })}
+              placeholder="78000"
+              required
+              error={errors[`units.${i}.price`]}
+            />
+            <div className="flex items-center justify-between gap-2 md:col-span-3">
+              <span className="text-xs text-default-secondary">{hint}</span>
+              <Button
+                type="text"
+                color="danger"
+                size="small"
+                width="auto"
+                onClick={() => onChange(rows.filter((_, j) => j !== i))}
+              >
+                Hapus
+              </Button>
+            </div>
+          </fieldset>
+        )
+      })}
+      <Button
+        type="outline"
+        color="light"
+        size="small"
+        width="auto"
+        className="self-start"
+        disabled={rows.length >= MAX_UNITS}
+        onClick={() => onChange([...rows, blankUnit()])}
+      >
+        <Plus className="size-4" aria-hidden /> Tambah satuan
+      </Button>
+    </Panel>
+  )
+}
+
+/** UMK-1985 "Harga grosir": the base unit's price per unit once the cart holds at least `minQty` of the product. */
+function TiersEditor({
+  baseUnit,
+  rows,
+  errors,
+  onChange,
+}: {
+  baseUnit: string
+  rows: TierRow[]
+  errors: Errors
+  onChange: (rows: TierRow[], changedRow?: number) => void
+}) {
+  const unit = baseUnit.trim() || 'satuan dasar'
+  const patch = (i: number, p: Partial<TierRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...p } : r)), i)
+  return (
+    <Panel className="flex flex-col gap-4 p-6">
+      <div>
+        <h2 className="text-base font-semibold text-default-primary">Harga grosir per {unit}</h2>
+        <p className="text-sm text-default-secondary">
+          Harga turun saat jumlah di keranjang (dihitung dalam {unit}) mencapai batas. Urutkan dari jumlah terkecil;
+          harga makin murah.
+        </p>
+      </div>
+      {errors.priceTiers && <Alert variant="danger" size="small">{errors.priceTiers}</Alert>}
+      {rows.length === 0 && <p className="text-sm text-default-secondary">Belum ada harga grosir.</p>}
+      {rows.map((r, i) => (
+        <div key={i} className="grid items-start gap-3 md:grid-cols-[1fr_1fr_auto]">
+          <TextField
+            label={`Beli mulai (${unit})`}
+            inputMode="numeric"
+            value={r.minQty}
+            onChange={(e) => patch(i, { minQty: e.target.value })}
+            placeholder="12"
+            required
+            error={errors[`priceTiers.${i}.minQty`]}
+          />
+          <TextField
+            label={`Harga per ${unit}`}
+            prefix="Rp"
+            inputMode="numeric"
+            value={r.price}
+            onChange={(e) => patch(i, { price: e.target.value })}
+            placeholder="3300"
+            required
+            error={errors[`priceTiers.${i}.price`]}
+          />
+          <Button
+            type="text"
+            color="danger"
+            size="small"
+            width="auto"
+            className="md:mt-7"
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+          >
+            Hapus
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="outline"
+        color="light"
+        size="small"
+        width="auto"
+        className="self-start"
+        disabled={rows.length >= MAX_TIERS}
+        onClick={() => onChange([...rows, blankTier()])}
+      >
+        <Plus className="size-4" aria-hidden /> Tambah harga grosir
+      </Button>
+    </Panel>
   )
 }
 
