@@ -98,6 +98,21 @@ export class ShiftsService {
     return (await cashTotals(db, tenantId, [shiftId])).get(shiftId) ?? NO_CASH;
   }
 
+  /**
+   * What the drawer of this store's shift should hold right now. Inside a transaction that holds the
+   * shift's row lock the figure cannot move (UMK-1984: the "more than the drawer holds" warning).
+   */
+  async expectedCashOf(db: Db | Tx, tenantId: string, shiftId: string) {
+    const [shift] = await db
+      .select({ openingCash: shifts.openingCash })
+      .from(shifts)
+      .where(and(eq(shifts.tenantId, tenantId), eq(shifts.id, shiftId)));
+    if (!shift) throw new NotFoundException();
+    const t = await this.totals(db, shiftId);
+    const cash = await this.cashOf(db, tenantId, shiftId);
+    return expectedCash(shift.openingCash, t.cashSales, cash);
+  }
+
   /** The actor's open shift with its running totals, or null. */
   async current(s: PosSession) {
     const [shift] = await this.db

@@ -23,8 +23,17 @@ export const CASH_DIRECTIONS = ['in', 'out'] as const;
  * void cash out) is added here and needs no migration.
  * - receivable_payment (in): ref_id = pos.receivable_payments.id
  * - void_refund (out): ref_id = pos.sale_voids.id, the cash given back for a voided sale (UMK-1962)
+ * - expense (out): ref_id = pos.expenses.id, an expense or supplier payment paid from the drawer
+ *   (UMK-1984). Written only by src/expenses/expenses.service.ts.
+ * - expense_reversal (in): ref_id = pos.expenses.id, a voided drawer expense whose shift is still open.
+ * A supplier payment tied to a purchase order (UMK-1970) gets its own kind here when it is built.
  */
-export const CASH_ENTRY_KINDS = ['receivable_payment', 'void_refund'] as const;
+export const CASH_ENTRY_KINDS = [
+  'receivable_payment',
+  'void_refund',
+  'expense',
+  'expense_reversal',
+] as const;
 
 export const shiftCashEntries = pos
   .table(

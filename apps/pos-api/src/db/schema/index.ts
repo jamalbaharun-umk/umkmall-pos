@@ -11,6 +11,7 @@ export * from './members';
 export * from './receivables';
 export * from './shift-cash';
 export * from './store-cash';
+export * from './expenses';
 export * from './voids';
 export * from './payment-sync';
 export * from './store';

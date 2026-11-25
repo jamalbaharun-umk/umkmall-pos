@@ -1,0 +1,132 @@
+# UMK-1984: expense log and simple profit and loss report (server part)
+
+Epic UMK-1924, unit U5 (reports). Design approved by the owner on 2026-11-24 (tab 1 "Pengeluaran & laba
+rugi" of the P0 design, plus the money-source toggle). This plan covers pos-api only; the screens are a
+separate change.
+
+## Goal
+The owner (or staff with `expenses.manage`) records what the store paid out, and sees a profit and loss
+report in everyday words: sales − cost of goods = gross profit; gross profit − expenses = net profit.
+
+## Rulings used
+- An expense has an amount (integer rupiah > 0), a category from a fixed list, an optional note, a date and
+  a money source.
+- Categories: `bayar_pemasok` (Bayar pemasok), `listrik_air` (Listrik & air), `sewa` (Sewa), `gaji` (Gaji),
+  `transport` (Transport), `lainnya` (Lainnya).
+- **A supplier payment is its own record kind** (`kind = 'supplier_payment'` ⇔ category `bayar_pemasok`,
+  a check constraint). It is listed, it can take cash out of a drawer, and it is never an expense of the
+  profit and loss report: the goods' cost is already cost of goods sold.
+- Source `drawer` ("Laci kasir"): cash leaves the actor's OPEN shift now; without an open shift 422. The
+  date is today (store timezone); another date is refused. An amount above the drawer's expected cash is
+  allowed and flagged (`exceedsDrawerCash`), as the design warns and does not block.
+- Source `outside` ("Di luar laci"): no drawer effect; the date defaults to today, may be in the past,
+  never in the future.
+- Revenue is the existing report definition (Σ sale totals, tax included; owner confirmed). Kasbon sales
+  are revenue. Cash rounding stays outside revenue and profit. A void is a reversal dated at the void.
+- Permission `expenses.manage` for every route here, the profit and loss report included (a cashier
+  without it does not see profit).
+
+## Schema (migration `0024_expenses`)
+`pos.expenses`: `tenant_id` FK → `pos.tenants`, RLS, `kind`, `category`, `amount`, `note`, `expense_date`
+(a store-local `date`), `source`, `shift_id` + `drawer_cash_before` (drawer only), actor, `idempotency_key`
+(unique per tenant) + `request_hash`, `updated_at`/`updated_by_*`, and the soft delete: `voided_at`,
+`voided_by_*`, `void_reason`, `drawer_reversed`. Checks keep kind/category, source/shift and the void
+columns consistent. The purge discovers the table by its `tenant_id`.
+
+Shift ledger kinds (`CASH_ENTRY_KINDS`, text column, no migration): `expense` (out, `ref_id` = the expense)
+and `expense_reversal` (in, `ref_id` = the expense). Both expense kinds use them. UMK-1970 (a supplier
+payment tied to a purchase order, paid from a drawer) is not built: it can write `pos.expenses` rows of
+kind `supplier_payment` through the same service, or add its own ledger kind; nothing here blocks either.
+
+## Routes (all `expenses.manage`, tenant from the session)
+- `POST /expenses` + `Idempotency-Key` → 201 the expense. Same key and body → the first expense, nothing
+  written; same key, other body → 422.
+- `GET /expenses?period=today|week|month` or `?from&to` (+ `status=active|voided|all`, paging): rows newest
+  first and a `summary` over the whole range (active rows only): `expenses` (P&L expenses),
+  `supplierPayments`, `fromDrawer`, `outside`, `byCategory`.
+- `GET /expenses/csv` (same filter), `GET /expenses/categories`, `GET /expenses/:id`.
+- `PATCH /expenses/:id`: category and note always; amount and date only of an `outside` expense (a drawer
+  expense's cash already moved: void it and record it again). A voided expense is not edited (409).
+- `POST /expenses/:id/void` `{ reason? }`: the soft delete. Repeating it changes nothing.
+- `GET /reports/profit-loss?period=…|from&to` and `/csv`.
+
+## Decisions (documented, tested)
+- **Void of a drawer expense.** The expense row is locked, then its shift. Shift still open → one
+  `expense_reversal` cash-in entry in THAT shift (whoever voids), so its expected cash is back where it was:
+  `drawerReversed: true`. Shift already closed → no ledger entry anywhere: that shift was counted with the
+  expense in it and never changes, and no other drawer received money: `drawerReversed: false`. The expense
+  leaves the totals and the profit and loss report either way. (The alternative, a cash-in in the voiding
+  actor's current shift, would raise a drawer that holds no such cash; open owner question below.)
+- **A voided expense is removed, not reversed by date.** An expense's day is the date the user chose, so a
+  past period can already change by backdating; a void takes the row out of every total of its date.
+- **Gross profit in this report = revenue − cost**, revenue including tax, as the approved design shows
+  ("Hasil jualan − Modal barang terjual = Untung kotor"). The other reports' `grossProfit` is
+  revenue − tax − cost. The response carries `tax` so a screen can show it; with tax 0 both agree. Open
+  owner question below.
+- **Previous period.** `period` mode compares like the dashboard: sales up to the same moment one period
+  earlier (yesterday / 7 days / 1 month back), expenses through the same date. `from`/`to` mode compares
+  whole days with the span of the same length just before `from`.
+- **Week** = Monday to today; **month** = the 1st to today (store timezone).
+- Lock order: expense row, then shift (void); create takes only the shift lock (through
+  `recordShiftCash`), then inserts.
+
+## Definition of Done
+- [test] `POST /expenses` outside: 201, row with kind, category label, date default today (store timezone),
+  no shift, no ledger entry; expected cash of an open shift unchanged.
+- [test] Drawer expense: one `expense` ledger entry, the shift's expected cash and `cashOut`/`expenses` drop
+  once, live, at close and in `GET /reports/shifts`; `exceedsDrawerCash` flags an amount above the drawer
+  and still saves; without an open shift 422 and nothing is written; a date other than today 422.
+- [test] Replay: same key and body → the first expense, one row, one ledger entry; other body → 422.
+- [test] Validation (422, Indonesian, never 500): amount 0 / negative / float / string, unknown category,
+  unknown source, unknown key, future date, impossible date, missing or bad `Idempotency-Key`, bad period,
+  `period` with `from`, `from` without `to`.
+- [test] Supplier payment: listed, lowers the drawer when paid from it, in `supplierPayments`, not in
+  `expenses` of the list summary nor of the profit and loss report.
+- [test] List: period filters, `from`/`to`, paging, totals by category, voided rows hidden by default.
+- [test] Update: rules above; void: soft delete with who/when/reason, repeat is a no-op, open shift gets one
+  reversal, a closed shift is unchanged (row, stored expected cash, ledger).
+- [test] Permission: a cashier with `sales.create` only gets 403 on every route; with `expenses.manage`
+  they record from their own drawer.
+- [test] Cross-tenant: store B gets 404 on read, update and void of store A's expense; B's list and report
+  show nothing of A.
+- [test] Profit and loss, fixture checked by hand: tax, cash rounding (outside revenue), a void (reversal),
+  a kasbon sale (revenue), expenses, a supplier payment (excluded), a voided expense (excluded); previous
+  period with backdated sales and expenses; top categories; CSV.
+- [test] Guards: RLS and `tenant_id` (`db.e2e-spec`, `purge.e2e-spec` seed reaches `pos.expenses`); only
+  `expenses/expenses.service.ts` writes the `expense` / `expense_reversal` ledger kinds and the
+  `pos.expenses` table; the shift ledger is still inserted only in `shifts/cash-ledger.ts`.
+- [test] Revert-red, once each: without the ledger write; with supplier payments counted in the report;
+  with the ledger kind written from another file; without the tenant filter on read.
+- [test] An agent (MCP) session records only `outside` expenses and its rows are marked "via agent":
+  **not built**. No agent session kind exists (`ACTOR_KINDS` is owner/cashier); it comes with UMK-1981 and
+  must refuse `source = drawer` for that kind in `ExpensesService.create`.
+- [cmd] `npm run lint && npm run typecheck && npm run build`; `PGTEST_DB=pos_u1984 npx jest --runInBand`.
+- [qa] Expense list, form and profit and loss screens (loading, empty, error; Indonesian): not in this
+  change.
+
+## Files
+- `apps/pos-api/src/db/schema/expenses.ts`, `db/schema/index.ts` (one line), `db/schema/shift-cash.ts`
+  (two kinds), `drizzle/0024_expenses.sql`.
+- `apps/pos-api/src/expenses/`: `expenses.schemas.ts`, `expenses.service.ts`, `profit-loss.service.ts`,
+  `expenses.controller.ts` (controllers and module); `app.module.ts` (one line).
+- `apps/pos-api/src/shifts/cash-ledger.ts` (`recordShiftCashInShift`, totals `expenses` /
+  `expenseReversals`), `shifts.service.ts` (`expectedCashOf`), `shifts.module.ts` (export).
+- `apps/pos-api/src/reports/reports.service.ts` (`salesTotals` hook, shift rows gain `expenses`,
+  `expenseReversals`), `reports.controller.ts` (export the service).
+- `apps/pos-api/src/guards.spec.ts`.
+
+## Tests
+`apps/pos-api/test/expenses.e2e-spec.ts` (new), `test/purge.e2e-spec.ts` (seed), `src/guards.spec.ts`.
+
+## Follow-ups (not built)
+- UMK-1970: supplier payment tied to a purchase order, paid from the drawer.
+- UMK-1981: agent write tool "record an expense" (outside only), the "via agent" mark.
+- Expenses paid from the store cash ("kas toko", UMK-1963 follow-up): a third source.
+- Shift close screen line "Pengeluaran dari laci" = `expenses − expenseReversals` (UI).
+
+## Open owner questions
+1. Gross profit with tax: this report follows the design (tax inside revenue and so inside gross profit);
+   the dashboard and sales reports subtract tax. Which one should both show?
+2. Void of a drawer expense whose shift is closed: no drawer changes (built). Or should the cash be
+   entered into the drawer open now?
+3. Should `expenses.manage` alone show profit, or should the report also need `reports.view`?

@@ -130,6 +130,25 @@ export class ReportsService {
   }
 
   /**
+   * The hook of the profit and loss report (UMK-1984): the same revenue, tax, cost and rounding as
+   * every report here, for whole store days `[from, to]`; with `cutoff` (a timestamptz expression) the
+   * window ends there when that is earlier ("up to the same moment one period ago").
+   */
+  async salesTotals(
+    tenantId: string,
+    tz: string,
+    range: DateRange,
+    cutoff?: SQL,
+  ) {
+    const { start, end } = this.bounds(range, tz);
+    return this.salesMetrics(
+      tenantId,
+      start,
+      cutoff ? sql`least(${end}, ${cutoff})` : end,
+    );
+  }
+
+  /**
    * Current period so far vs the same span one period earlier ("this week so far" vs "last week up to the same
    * moment"). Lakasir compared overlapping windows.
    */
@@ -279,6 +298,7 @@ export class ReportsService {
              to_char(sh.closed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as closed_at,
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
              c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds,
+             c.expenses, c.expense_reversals,
              s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
@@ -293,7 +313,11 @@ export class ReportsService {
                  coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'receivable_payment'), 0)
                    as receivable_payments,
                  coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'void_refund'), 0)
-                   as void_refunds
+                   as void_refunds,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'expense'), 0)
+                   as expenses,
+                 coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'expense_reversal'), 0)
+                   as expense_reversals
             from pos.shift_cash_entries e
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
@@ -309,6 +333,9 @@ export class ReportsService {
         openingCash: n(r.opening_cash),
         receivablePayments: n(r.receivable_payments),
         voidRefunds: n(r.void_refunds),
+        // Paid from the drawer (expenses and supplier payments, UMK-1984) and voided ones put back.
+        expenses: n(r.expenses),
+        expenseReversals: n(r.expense_reversals),
         voidCount: n(r.void_count),
         cashIn: n(r.cash_in),
         cashOut: n(r.cash_out),
