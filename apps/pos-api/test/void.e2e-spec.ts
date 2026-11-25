@@ -677,6 +677,9 @@ describe('void a full sale (UMK-1962)', () => {
         cashIn: 2500,
         cashOut: 0,
         balance: 2500,
+        // Nothing handed over to the safe yet (UMK-1924 U3).
+        outstanding: 2500,
+        handedOver: 0,
       });
       // The payment row keeps its audit: still marked, still not in a shift.
       const r = await get(s.auth, `/receivables/${rid}`).expect(200);

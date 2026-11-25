@@ -11,6 +11,8 @@ export const PERMISSIONS = [
   'receivables.manage',
   'sales.void',
   'expenses.manage',
+  // Receives a collector's outside-shift cash into the store safe (UMK-1924 U3).
+  'store_cash.manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

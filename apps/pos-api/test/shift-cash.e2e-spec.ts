@@ -640,6 +640,9 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
         cashIn: 1250,
         cashOut: 0,
         balance: 1250,
+        // Nothing handed over to the safe yet (UMK-1924 U3).
+        outstanding: 1250,
+        handedOver: 0,
       });
       expect(
         (await get(s.auth, `/shifts/${s.shiftId}`).expect(200)).body,
@@ -841,6 +844,9 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
         cashIn: 700,
         cashOut: 0,
         balance: 700,
+        // Nothing handed over to the safe yet (UMK-1924 U3).
+        outstanding: 700,
+        handedOver: 0,
       });
       // Store-wide: no payment is in a shift ledger and marked outside, or in both ledgers.
       const both = await admin`
@@ -894,12 +900,21 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
         cashIn: 1500,
         cashOut: 0,
         balance: 1500,
+        // Nothing handed over to the safe yet (UMK-1924 U3).
+        outstanding: 1500,
+        handedOver: 0,
       });
       expect(cashA.data.map((e) => e.refId)).toContain(
         paidA.body.payments[0].id,
       );
       const cashB = await storeCash(b.auth);
-      expect(cashB.summary).toEqual({ cashIn: 700, cashOut: 0, balance: 700 });
+      expect(cashB.summary).toEqual({
+        cashIn: 700,
+        cashOut: 0,
+        balance: 700,
+        outstanding: 700,
+        handedOver: 0,
+      });
       expect(cashB.data.map((e) => e.refId)).toEqual([
         paidB.body.payments[0].id,
       ]);

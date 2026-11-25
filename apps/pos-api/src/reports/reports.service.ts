@@ -301,7 +301,7 @@ export class ReportsService {
              to_char(sh.closed_at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as closed_at,
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
              c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds,
-             c.expenses, c.expense_reversals,
+             c.expenses, c.expense_reversals, c.manual_in, c.manual_out,
              s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
@@ -320,7 +320,11 @@ export class ReportsService {
                  coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'expense'), 0)
                    as expenses,
                  coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'expense_reversal'), 0)
-                   as expense_reversals
+                   as expense_reversals,
+                 coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'manual_in'), 0)
+                   as manual_in,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'manual_out'), 0)
+                   as manual_out
             from pos.shift_cash_entries e
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
@@ -339,6 +343,9 @@ export class ReportsService {
         // Paid from the drawer (expenses and supplier payments, UMK-1984) and voided ones put back.
         expenses: n(r.expenses),
         expenseReversals: n(r.expense_reversals),
+        // Cash put in or taken out of the drawer by hand (UMK-1924 U3).
+        manualIn: n(r.manual_in),
+        manualOut: n(r.manual_out),
         voidCount: n(r.void_count),
         cashIn: n(r.cash_in),
         cashOut: n(r.cash_out),

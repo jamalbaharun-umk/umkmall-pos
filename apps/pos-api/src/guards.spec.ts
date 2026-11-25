@@ -91,6 +91,68 @@ describe('repo guards', () => {
     expect(service).not.toMatch(/\.(update|delete)\(\s*expenseEdits\b/);
   });
 
+  it('writes pos.manual_cash_entries and the manual kinds of the shift ledger only in shifts/cash-entries.service.ts', () => {
+    const own = path.join('shifts', 'cash-entries.service.ts');
+    const offenders = files
+      .filter(({ f }) => f !== own)
+      .filter(({ text }) =>
+        /\.(insert|update|delete)\(\s*manualCashEntries\b|(insert\s+into|update|delete\s+from)\s+pos\.manual_cash_entries\b|kind:[^,;\n]*['"`]manual_(in|out)['"`]/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    // The service goes through the ledger (the shift's row lock, the agent allow-list), and its rows are
+    // append-only.
+    const service = files.find(({ f }) => f === own)!.text;
+    expect(service).toMatch(/recordShiftCash\(/);
+    expect(service).toMatch(/\.insert\(manualCashEntries\)/);
+    expect(service).not.toMatch(/\.(update|delete)\(\s*manualCashEntries\b/);
+  });
+
+  it('refuses a drawer cash-out for a session kind off the allow-list in every writer of the shift ledger', () => {
+    const ledger = files.find(
+      ({ f }) => f === path.join('shifts', 'cash-ledger.ts'),
+    )!.text;
+    // The allow-list names people at the till only: never an agent.
+    const list = /DRAWER_CASH_OUT_ACTOR_KINDS[^=]*=\s*\[([^\]]*)\]/.exec(
+      ledger,
+    );
+    expect(list).not.toBeNull();
+    expect(list![1].replace(/[\s'",]+/g, ' ').trim()).toBe('owner cashier');
+    // Every function that reaches the insert checks the session kind first.
+    const writers = ledger.split(/\nexport async function /).slice(1);
+    const inserting = writers.filter((w) => /await insertEntry\(/.test(w));
+    expect(inserting.length).toBe(2);
+    for (const w of inserting)
+      expect(
+        w.indexOf('assertMayMoveDrawerCash(s.kind, entry.direction)'),
+      ).toBeGreaterThan(-1);
+    for (const w of inserting)
+      expect(w.indexOf('assertMayMoveDrawerCash(')).toBeLessThan(
+        w.indexOf('await '),
+      );
+  });
+
+  it('writes pos.store_cash_deposits and the store ledger kind collector_deposit only in store-cash/store-cash-deposits.service.ts', () => {
+    const own = path.join('store-cash', 'store-cash-deposits.service.ts');
+    const offenders = files
+      .filter(({ f }) => f !== own)
+      .filter(({ text }) =>
+        /\.(insert|update|delete)\(\s*storeCashDeposits\b|(insert\s+into|update|delete\s+from)\s+pos\.store_cash_deposits\b|kind:\s*['"`]collector_deposit['"`]/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    const service = files.find(({ f }) => f === own)!.text;
+    // Through the ledger's one writer, under the collector's row lock, append-only.
+    expect(service).toMatch(/recordStoreCash\(/);
+    expect(service).toMatch(/\.for\('update'\)/);
+    expect(service).toMatch(/\.insert\(storeCashDeposits\)/);
+    expect(service).not.toMatch(/\.(update|delete)\(\s*storeCashDeposits\b/);
+  });
+
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {
     const offenders = files
       .filter(
