@@ -7,6 +7,7 @@ import {
   Dialog,
   Icon,
   SegmentedControl,
+  SelectionCard,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -17,10 +18,37 @@ import {
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
-import { createSale, loadCashier, openShift, type MemberOption, type PaymentMethod, type Product } from './-api'
+import {
+  createSale,
+  loadCashier,
+  openShift,
+  quoteCart,
+  type MemberOption,
+  type PaymentMethod,
+  type Product,
+} from './-api'
 import { MemberRow, VoucherRow, type AppliedVoucher } from './-u7'
 import { readCart, restoreCart, writeCart } from './-cart'
 import { overStock, stockOverMessage, stockState } from './-stock'
+import {
+  addEntry,
+  baseQtyInCart,
+  cartSignature,
+  entryKey,
+  needsUnitPicker,
+  priceEntries,
+  requestLines,
+  savedLines,
+  savingsNote,
+  setEntryQty,
+  stockLines,
+  subtotalOf,
+  unitLabel,
+  unitOptions,
+  wholesaleHints,
+  type CartEntry,
+  type Quote,
+} from './-helpers'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -90,7 +118,7 @@ function OpenShift() {
   )
 }
 
-type CartLine = { product: Product; qty: number }
+type CartLine = CartEntry<Product>
 const ALL = 'semua'
 
 function Register({ products, taxBps, methods }: { products: Product[]; taxBps: number; methods: PaymentMethod[] }) {
@@ -98,6 +126,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const [q, setQ] = useState('')
   const [category, setCategory] = useState(ALL)
   const [cart, setCart] = useState<CartLine[]>([])
+  const [picking, setPicking] = useState<Product>()
   const [note, setNote] = useState('')
   const [editingNote, setEditingNote] = useState(false)
   const [paying, setPaying] = useState(false)
@@ -119,7 +148,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
     setRestored(true)
   }, [])
   useEffect(() => {
-    if (restored) writeCart({ lines: cart.map((l) => ({ productId: l.product.id, qty: l.qty })), note })
+    if (restored) writeCart({ lines: savedLines(cart), note })
   }, [restored, cart, note])
   const [key, setKey] = useState(() => crypto.randomUUID())
   useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher, discountText])
@@ -140,7 +169,37 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
     )
   }, [q, category, products])
 
-  const subtotal = cart.reduce((n, l) => n + l.product.sellingPrice * l.qty, 0)
+  // UMK-1985: pos-api prices the cart (unit price, wholesale tier). The quote follows the cart after a short pause;
+  // until it answers, lines show the unit's list price. A quote of an older cart is never used.
+  const [quote, setQuote] = useState<{ sig: string; quote: Quote }>()
+  const [quoteState, setQuoteState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const sig = cartSignature(cart)
+  useEffect(() => {
+    if (cart.length === 0) {
+      setQuote(undefined)
+      setQuoteState('idle')
+      return
+    }
+    let stale = false
+    setQuoteState('loading')
+    const t = setTimeout(() => {
+      quoteCart({ data: requestLines(cart) })
+        .then((r) => {
+          if (stale) return
+          if (r.ok) setQuote({ sig, quote: r.data })
+          setQuoteState(r.ok ? 'idle' : 'error')
+        })
+        .catch(() => !stale && setQuoteState('error'))
+    }, 250)
+    return () => {
+      stale = true
+      clearTimeout(t)
+    }
+  }, [sig])
+  const current = quote?.sig === sig ? quote.quote : null
+  const priced = priceEntries(cart, current)
+  const hints = wholesaleHints(cart, current)
+  const subtotal = subtotalOf(priced)
   const discountBad = canDiscount ? discountError(discountText, subtotal) : undefined
   const discount = canDiscount && !discountBad && discountText.trim() ? parseRupiah(discountText) : 0
   // Estimate shown to the cashier; pos-api computes the charged total the same way: discount, then the voucher on
@@ -148,10 +207,10 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   const voucherDiscount = voucher?.discount ?? 0
   const tax = taxOf(subtotal - discount - voucherDiscount, taxBps)
   const total = subtotal - discount - voucherDiscount + tax
-  const qtyOf = (id: string) => cart.find((l) => l.product.id === id)?.qty ?? 0
+  const qtyOf = (id: string) => baseQtyInCart(cart, id)
 
   // Stock is only a hint here (pos-api refuses an oversold sale); an empty product says why nothing was added.
-  const over = overStock(cart.map((l) => ({ name: l.product.name, stock: l.product.stock, qty: l.qty })))
+  const over = overStock(stockLines(cart))
   useEffect(() => {
     if (!soldOut) return
     const t = setTimeout(() => setSoldOut(undefined), 4000)
@@ -163,18 +222,11 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
       return
     }
     setSoldOut(undefined)
-    addToCart(product)
+    // A product with other units asks which one first; the base unit is the default choice.
+    if (needsUnitPicker(product)) setPicking(product)
+    else setCart((c) => addEntry(c, product, null, 1))
   }
-  const addToCart = (product: Product) =>
-    setCart((c) =>
-      c.some((l) => l.product.id === product.id)
-        ? c.map((l) => (l.product.id === product.id ? { ...l, qty: l.qty + 1 } : l))
-        : [...c, { product, qty: 1 }],
-    )
-  const setQty = (id: string, qty: number) =>
-    setCart((c) =>
-      qty <= 0 ? c.filter((l) => l.product.id !== id) : c.map((l) => (l.product.id === id ? { ...l, qty } : l)),
-    )
+  const setQty = (key: string, qty: number) => setCart((c) => setEntryQty(c, key, qty))
 
   return (
     <main className="grid min-h-svh bg-default-secondary md:grid-cols-[1fr_minmax(320px,380px)]">
@@ -240,7 +292,10 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
                   aria-label={`Tambah ${p.name}`}
                   className={`flex h-full min-h-32 w-full flex-col gap-1 rounded-2xl border border-default-primary bg-default-primary p-3 text-left transition active:scale-[0.98] hover:border-default-brand${state === 'out' ? ' opacity-55' : ''}`}
                 >
-                  <span className="text-sm text-default-brand">{rupiah(p.sellingPrice)}</span>
+                  <span className="text-sm text-default-brand">
+                    {rupiah(p.sellingPrice)}
+                    {needsUnitPicker(p) && <span className="text-default-secondary"> / {p.unit}</span>}
+                  </span>
                   <span className="line-clamp-2 font-semibold text-default-primary">{p.name}</span>
                   <span className="text-xs text-default-secondary">{p.category.name}</span>
                   <span className="text-xs text-default-secondary">
@@ -318,48 +373,67 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             </div>
           ) : (
             <ul className="space-y-2">
-              {cart.map((l) => (
-                <li key={l.product.id} className="rounded-2xl border border-default-primary p-3">
-                  <p className="flex justify-between gap-2">
-                    <span className="min-w-0 truncate font-medium">{l.product.name}</span>
-                    <span className="shrink-0 text-default-brand">{rupiah(l.product.sellingPrice * l.qty)}</span>
-                  </p>
-                  {overStock([{ name: l.product.name, stock: l.product.stock, qty: l.qty }]).length > 0 && (
-                    <Alert variant="warning" size="small" role="alert" className="mt-2">
-                      {stockOverMessage(l.product.stock ?? 0)}
-                    </Alert>
-                  )}
-                  <div className="mt-2 flex items-center gap-2">
-                    <Button
-                      iconOnly
-                      aria-label={`Tambah ${l.product.name}`}
-                      size="small"
-                      onClick={() => setQty(l.product.id, l.qty + 1)}
-                    >
-                      <Icon name="plus" size="sm" />
-                    </Button>
-                    <QtyField name={l.product.name} qty={l.qty} onChange={(n) => setQty(l.product.id, n)} />
-                    <Button
-                      iconOnly
-                      aria-label={`Kurangi ${l.product.name}`}
-                      size="small"
-                      type="outline"
-                      color="light"
-                      onClick={() => setQty(l.product.id, l.qty - 1)}
-                    >
-                      <Icon name="minus" size="sm" />
-                    </Button>
-                    <Button
-                      iconOnly
-                      aria-label={`Hapus ${l.product.name}`}
-                      size="small"
-                      type="ghost"
-                      color="danger"
-                      onClick={() => setQty(l.product.id, 0)}
-                    >
-                      <Icon name="trash" size="sm" />
-                    </Button>
-                  </div>
+              {cart.map((l, i) => {
+                const key = entryKey(l)
+                const name = l.unit ? `${l.product.name} (${l.unit})` : l.product.name
+                const pl = priced[i]
+                const note = savingsNote(pl)
+                return (
+                  <li key={key} className="rounded-2xl border border-default-primary p-3">
+                    <p className="flex justify-between gap-2">
+                      <span className="min-w-0 truncate font-medium">{l.product.name}</span>
+                      <span className="shrink-0 text-default-brand">{rupiah(pl.lineTotal)}</span>
+                    </p>
+                    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-default-secondary">
+                      <span>
+                        {l.qty} {unitLabel(l.product, l.unit)} × {rupiah(pl.unitPrice)}
+                      </span>
+                      {pl.appliedTier && (
+                        <Badge color="success" size="small">
+                          Harga grosir
+                        </Badge>
+                      )}
+                    </p>
+                    {note && <p className="mt-1 text-xs text-default-secondary">{note}</p>}
+                    <div className="mt-2 flex items-center gap-2">
+                      <Button
+                        iconOnly
+                        aria-label={`Tambah ${name}`}
+                        size="small"
+                        onClick={() => setQty(key, l.qty + 1)}
+                      >
+                        <Icon name="plus" size="sm" />
+                      </Button>
+                      <QtyField name={name} qty={l.qty} onChange={(n) => setQty(key, n)} />
+                      <Button
+                        iconOnly
+                        aria-label={`Kurangi ${name}`}
+                        size="small"
+                        type="outline"
+                        color="light"
+                        onClick={() => setQty(key, l.qty - 1)}
+                      >
+                        <Icon name="minus" size="sm" />
+                      </Button>
+                      <Button
+                        iconOnly
+                        aria-label={`Hapus ${name}`}
+                        size="small"
+                        type="ghost"
+                        color="danger"
+                        onClick={() => setQty(key, 0)}
+                      >
+                        <Icon name="trash" size="sm" />
+                      </Button>
+                    </div>
+                  </li>
+                )
+              })}
+              {hints.map((h) => (
+                <li key={`hint-${h.productId}`}>
+                  <Alert variant="info" size="small">
+                    {h.text}
+                  </Alert>
                 </li>
               ))}
             </ul>
@@ -401,7 +475,10 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
         </dl>
 
         <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
-          <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
+          <Row
+            label={quoteState === 'loading' ? 'Subtotal (menghitung…)' : 'Subtotal'}
+            value={<span className="text-default-brand">{rupiah(subtotal)}</span>}
+          />
           {discount > 0 && (
             <Row label="Diskon" value={<span className="text-default-brand">−{rupiah(discount)}</span>} />
           )}
@@ -414,6 +491,12 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             <dd className="text-default-brand">{rupiah(total)}</dd>
           </div>
         </dl>
+        {quoteState === 'error' && (
+          <Alert variant="warning" size="small" role="alert">
+            Harga satuan dan grosir belum bisa dicek ke server, jadi total ini perkiraan. Server tetap menghitung harga
+            saat pembayaran.
+          </Alert>
+        )}
         {over.length > 0 && (
           <Alert variant="warning" size="small" role="alert">
             {stockOverMessage(over[0].stock ?? 0)}
@@ -422,13 +505,21 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
         <Button
           size="large"
           width="full"
-          disabled={cart.length === 0 || over.length > 0}
+          disabled={cart.length === 0 || over.length > 0 || quoteState === 'loading'}
           onClick={() => (discountBad ? toast(`Diskon: ${discountBad}`, { variant: 'danger' }) : setPaying(true))}
         >
           Lanjut ke pembayaran
         </Button>
       </aside>
 
+      <UnitPicker
+        product={picking}
+        onClose={() => setPicking(undefined)}
+        onAdd={(product, unit, qty) => {
+          setCart((c) => addEntry(c, product, unit, qty))
+          setPicking(undefined)
+        }}
+      />
       <NoteDialog open={editingNote} note={note} onClose={() => setEditingNote(false)} onSave={setNote} />
       {paying && (
         <PayDialog
@@ -485,6 +576,74 @@ function QtyField({ name, qty, onChange }: { name: string; qty: number; onChange
       }}
       onBlur={() => setText(String(qty))}
     />
+  )
+}
+
+/** UMK-1985: which unit to add (the base unit is chosen first) and how many of it. Prices are the list prices. */
+function UnitPicker({
+  product,
+  onClose,
+  onAdd,
+}: {
+  product?: Product
+  onClose: () => void
+  onAdd: (product: Product, unit: string | null, qty: number) => void
+}) {
+  const [choice, setChoice] = useState('')
+  const [qtyText, setQtyText] = useState('1')
+  useEffect(() => {
+    setChoice('')
+    setQtyText('1')
+  }, [product?.id])
+  const options = product ? unitOptions(product) : []
+  const qtyBad = qtyError(qtyText)
+  const picked = options.find((o) => (o.unit ?? '') === choice) ?? options[0]
+  return (
+    <Dialog
+      open={!!product}
+      onOpenChange={(o) => !o && onClose()}
+      centered
+      size="small"
+      title={product?.name ?? 'Pilih satuan'}
+    >
+      {product && picked && (
+        <form
+          noValidate
+          className="space-y-4 px-6 pb-6"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!qtyBad) onAdd(product, picked.unit, Number(qtyText.trim()))
+          }}
+        >
+          <SelectionCard
+            label="Pilih satuan"
+            options={options.map((o) => ({
+              value: o.unit ?? '',
+              label: o.unitQty > 1 ? `${o.label} (isi ${o.unitQty})` : o.label,
+              badge: rupiah(o.price),
+              description: o.saving > 0 ? `Hemat ${rupiah(o.saving)} dibanding ${o.unitQty} ${product.unit}` : undefined,
+            }))}
+            value={[picked.unit ?? '']}
+            onValueChange={(v) => setChoice(v[0] ?? '')}
+          />
+          <TextField
+            label="Jumlah"
+            inputMode="numeric"
+            value={qtyText}
+            onChange={(e) => setQtyText(e.target.value)}
+            error={qtyBad}
+          />
+          <div className="flex justify-end gap-2">
+            <Button width="auto" type="outline" color="light" onClick={onClose}>
+              Batal
+            </Button>
+            <Button width="auto" htmlType="submit">
+              Tambah ke pesanan
+            </Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
   )
 }
 
@@ -619,7 +778,7 @@ function PayDialog({
     const res = await createSale({
       data: {
         key: idempotencyKey,
-        lines: cart.map((l) => ({ productId: l.product.id, qty: l.qty })),
+        lines: requestLines(cart),
         paid: amount,
         discount: discount > 0 ? discount : undefined,
         note: note || undefined,
