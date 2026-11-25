@@ -35,6 +35,8 @@ import {
   shifts,
   staff,
 } from '../db/schema';
+import { priceLines, type ProductPricing } from '../catalog/pricing';
+import { loadPricing } from '../catalog/pricing-store';
 import { PaymentSync } from '../payments-client/payment-sync.service';
 import {
   PaymentApiError,
@@ -49,7 +51,7 @@ import {
   consumeVoucher,
   evaluateVoucher,
 } from '../vouchers/vouchers.controller';
-import type { SaleInput, SalesQuery } from './sales.schemas';
+import type { QuoteInput, SaleInput, SalesQuery } from './sales.schemas';
 
 const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps every product in safe-integer range
 
@@ -63,11 +65,11 @@ export const taxOf = (taxable: number, bps: number) =>
  */
 export const cashRounding = (total: number) => (100 - (total % 100)) % 100;
 
-/** Order-independent fingerprint of a sale request (lines sorted, keys sorted). */
+/** Order-independent fingerprint of a sale request (lines sorted by product, then unit; keys sorted). */
 export const requestHash = (input: SaleInput) => {
-  const lines = [...input.lines].sort((x, y) =>
-    x.productId < y.productId ? -1 : 1,
-  );
+  const order = (l: { productId: string; unit?: string }) =>
+    `${l.productId}:${(l.unit ?? '').toLowerCase()}`;
+  const lines = [...input.lines].sort((x, y) => (order(x) < order(y) ? -1 : 1));
   const norm = { ...input, lines, note: input.note || undefined };
   const stable = JSON.stringify(norm, (_k, v: unknown) =>
     v && typeof v === 'object' && !Array.isArray(v)
@@ -207,45 +209,29 @@ export class SalesService {
       .for('update');
     if (!shift) throw fail('Buka shift dulu sebelum berjualan');
 
-    const ids = input.lines.map((l) => l.productId);
-    const rows = await tx
-      .select({
-        id: products.id,
-        name: products.name,
-        sellingPrice: products.sellingPrice,
-      })
-      .from(products)
-      .where(
-        and(
-          eq(products.tenantId, s.tenantId),
-          inArray(products.id, ids),
-          isNull(products.deletedAt),
-          eq(products.isActive, true),
-        ),
-      );
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    const missing = ids.filter((pid) => !byId.has(pid));
-    if (missing.length)
-      throw fail(
-        'Produk tidak ditemukan atau tidak aktif',
-        { productIds: missing },
-        `lines.${input.lines.findIndex((l) => l.productId === missing[0])}.productId`,
-      );
-
+    const { byId, priced } = await this.price(tx, s.tenantId, input.lines);
     const canOverride = hasPermission(s, 'sales.price_override');
-    const lines = input.lines.map((l) => {
+    const lines = input.lines.map((l, i) => {
       const p = byId.get(l.productId)!;
+      const q = priced[i];
+      // A client price replaces the price of the line's unit, and only with the permission.
       const overridden =
-        canOverride && l.price !== undefined && l.price !== p.sellingPrice;
-      const unitPrice = overridden ? l.price! : p.sellingPrice;
+        canOverride && l.price !== undefined && l.price !== q.listPrice;
+      const unitPrice = overridden ? l.price! : q.listPrice;
       return {
         productId: p.id,
         name: p.name,
         qty: l.qty,
-        listPrice: p.sellingPrice,
+        unit: q.unit,
+        unitQty: q.unitQty,
+        baseQty: q.baseQty,
+        normalUnitPrice: q.normalUnitPrice,
+        appliedTierMinQty: q.appliedTier?.minQty ?? null,
+        listPrice: q.listPrice,
         unitPrice,
         lineTotal: unitPrice * l.qty,
         priceOverriddenBy: overridden ? s.actorId : null,
+        index: i,
       };
     });
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
@@ -344,14 +330,41 @@ export class SalesService {
 
     let costTotal = 0;
     // Product-id order: two multi-item sales lock batches in the same order (no deadlock).
-    for (const l of [...lines].sort((x, y) =>
-      x.productId < y.productId ? -1 : 1,
-    )) {
+    const ordered = [...lines].sort((x, y) =>
+      x.productId < y.productId ? -1 : x.productId > y.productId ? 1 : 0,
+    );
+    // UMK-1985: a product on several lines (pcs + dus) is checked once against its whole draw in base
+    // units, so the refusal names what is really left, before any of its lines draws.
+    const needed = new Map<string, number>();
+    for (const l of ordered)
+      needed.set(l.productId, (needed.get(l.productId) ?? 0) + l.baseQty);
+    const checked = new Set<string>();
+    for (const l of ordered) {
+      const p = byId.get(l.productId)!;
+      if (
+        p.type === 'product' &&
+        needed.get(l.productId) !== l.baseQty &&
+        !checked.has(l.productId)
+      ) {
+        checked.add(l.productId);
+        const available = await this.stock.lockedOnHand(
+          tx,
+          s.tenantId,
+          l.productId,
+        );
+        if (available < needed.get(l.productId)!)
+          throw fail(
+            `Stok ${p.name} tidak cukup (sisa ${available})`,
+            { productId: l.productId, available },
+            `lines.${l.index}.qty`,
+          );
+      }
+      // Stock is kept in base units: 1 dus of 24 draws 24, and its FIFO cost is the line's cost.
       const { costTotal: cost } = await this.stock
         .consume(tx, {
           tenantId: s.tenantId,
           productId: l.productId,
-          qty: l.qty,
+          qty: l.baseQty,
           refId: sale.id,
           actorId: s.actorId,
         })
@@ -362,16 +375,25 @@ export class SalesService {
               string,
               unknown
             >;
-            const i = input.lines.findIndex((x) => x.productId === l.productId);
-            throw fail(body.message, body, `lines.${i}.qty`);
+            throw fail(body.message, body, `lines.${l.index}.qty`);
           }
           throw e;
         });
       costTotal += cost;
       await tx.insert(saleLines).values({
-        ...l,
         tenantId: s.tenantId,
         saleId: sale.id,
+        productId: l.productId,
+        name: l.name,
+        qty: l.qty,
+        unit: l.unit,
+        unitQty: l.unitQty,
+        normalUnitPrice: l.normalUnitPrice,
+        appliedTierMinQty: l.appliedTierMinQty,
+        listPrice: l.listPrice,
+        unitPrice: l.unitPrice,
+        lineTotal: l.lineTotal,
+        priceOverriddenBy: l.priceOverriddenBy,
         costTotal: cost,
       });
     }
@@ -387,6 +409,99 @@ export class SalesService {
         })
       : null;
     return { id: sale.id, downPaymentId };
+  }
+
+  /**
+   * UMK-1985: the live, active products of a cart and the server's price of every line (unit and wholesale
+   * tier, catalog/pricing.ts). 422 on an unknown product, an unknown unit, or a product and unit named twice.
+   */
+  private async price(
+    db: Db | Tx,
+    tenantId: string,
+    lines: { productId: string; qty: number; unit?: string }[],
+  ) {
+    const ids = [...new Set(lines.map((l) => l.productId))];
+    const [rows, pricing] = await Promise.all([
+      db
+        .select({
+          id: products.id,
+          name: products.name,
+          type: products.type,
+          unit: products.unit,
+          sellingPrice: products.sellingPrice,
+        })
+        .from(products)
+        .where(
+          and(
+            eq(products.tenantId, tenantId),
+            inArray(products.id, ids),
+            isNull(products.deletedAt),
+            eq(products.isActive, true),
+          ),
+        ),
+      loadPricing(db, tenantId, ids),
+    ]);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const missing = ids.filter((pid) => !byId.has(pid));
+    if (missing.length)
+      throw fail(
+        'Produk tidak ditemukan atau tidak aktif',
+        { productIds: missing },
+        `lines.${lines.findIndex((l) => l.productId === missing[0])}.productId`,
+      );
+    const pricingOf = (id: string): ProductPricing => {
+      const p = byId.get(id)!;
+      const extra = pricing.get(id);
+      return {
+        unit: p.unit,
+        sellingPrice: p.sellingPrice,
+        units: extra?.units ?? [],
+        tiers: extra?.tiers ?? [],
+      };
+    };
+    const priced = priceLines(lines, pricingOf);
+    const seen = new Set<string>();
+    const complete = priced.map((q, i) => {
+      if (!q)
+        throw fail(
+          'Satuan tidak ditemukan untuk produk ini',
+          {},
+          `lines.${i}.unit`,
+        );
+      // "pcs" and no unit at all are the same line.
+      const key = `${lines[i].productId}:${q.unit}`;
+      if (seen.has(key))
+        throw fail('Satu produk dan satuan cukup satu baris', {}, 'lines');
+      seen.add(key);
+      return q;
+    });
+    return { byId, priced: complete };
+  }
+
+  /**
+   * `POST /sales/quote`: what the cart's lines would cost now, with nothing written and no stock check.
+   * The cart shows "Harga grosir" from `appliedTier` and "Tambah N lagi" from `nextTier`.
+   */
+  async quote(s: PosSession, input: QuoteInput) {
+    const { byId, priced } = await this.price(this.db, s.tenantId, input.lines);
+    const lines = input.lines.map((l, i) => {
+      const q = priced[i];
+      return {
+        productId: l.productId,
+        name: byId.get(l.productId)!.name,
+        qty: l.qty,
+        unit: q.unit,
+        unitQty: q.unitQty,
+        baseQty: q.baseQty,
+        normalUnitPrice: q.normalUnitPrice,
+        unitPrice: q.listPrice,
+        lineTotal: q.listPrice * l.qty,
+        appliedTier: q.appliedTier,
+        savings: q.savings,
+        nextTier: q.nextTier,
+      };
+    });
+    return { lines, subtotal: lines.reduce((n, l) => n + l.lineTotal, 0) };
   }
 
   /** A live member of this store, else 422. */
@@ -604,6 +719,15 @@ export class SalesService {
         productId: saleLines.productId,
         name: saleLines.name,
         qty: saleLines.qty,
+        // A line from before UMK-1985 was sold in the product's base unit.
+        unit: sql<string>`coalesce(${saleLines.unit}, ${products.unit})`,
+        unitQty: saleLines.unitQty,
+        baseQty: sql<number>`${saleLines.qty} * ${saleLines.unitQty}`,
+        normalUnitPrice:
+          sql<number>`coalesce(${saleLines.normalUnitPrice}, ${saleLines.listPrice})`.mapWith(
+            Number,
+          ),
+        appliedTierMinQty: saleLines.appliedTierMinQty,
         listPrice: saleLines.listPrice,
         unitPrice: saleLines.unitPrice,
         lineTotal: saleLines.lineTotal,
@@ -611,16 +735,28 @@ export class SalesService {
         priceOverriddenBy: saleLines.priceOverriddenBy,
       })
       .from(saleLines)
+      .innerJoin(products, eq(products.id, saleLines.productId))
       .where(and(eq(saleLines.tenantId, s.tenantId), eq(saleLines.saleId, id)))
-      .orderBy(asc(saleLines.name));
+      // Base unit before the larger units of the same product.
+      .orderBy(asc(saleLines.name), asc(saleLines.unitQty), asc(saleLines.id));
     const showCost = hasPermission(s, 'reports.view');
     return {
       ...sale,
       // UMK-1993: what the customer owes; `rounding` is its own line ("Pembulatan"), 0 unless cash.
       amountDue: sale.total + sale.rounding,
       costTotal: showCost ? sale.costTotal : undefined,
-      lines: lines.map((l) => ({
+      lines: lines.map(({ appliedTierMinQty, ...l }) => ({
         ...l,
+        // UMK-1985: the wholesale tier that set the price ("Harga grosir"), and what it saved against the
+        // unit's normal price. An override changes `unitPrice`, never these.
+        appliedTier:
+          appliedTierMinQty === null
+            ? null
+            : { minQty: appliedTierMinQty, price: l.listPrice },
+        savings:
+          appliedTierMinQty === null
+            ? 0
+            : (l.normalUnitPrice - l.listPrice) * l.qty,
         costTotal: showCost ? l.costTotal : undefined,
       })),
     };
@@ -645,8 +781,14 @@ export class SalesService {
       lines: sale.lines.map((l) => ({
         name: l.name,
         qty: l.qty,
+        unit: l.unit,
+        unitQty: l.unitQty,
+        baseQty: l.baseQty,
         unitPrice: l.unitPrice,
         lineTotal: l.lineTotal,
+        normalUnitPrice: l.normalUnitPrice,
+        appliedTier: l.appliedTier,
+        savings: l.savings,
       })),
       subtotal: sale.subtotal,
       discount: sale.discount,

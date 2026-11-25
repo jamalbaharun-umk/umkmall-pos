@@ -7,29 +7,51 @@ export const IdempotencyKey = z
   .string()
   .regex(/^[A-Za-z0-9_-]{8,100}$/, 'Idempotency-Key tidak valid');
 
+// UMK-1985: a product may be on several lines, one per unit (12 pcs + 1 dus). The same product and unit
+// twice is refused: the client adds the quantities.
+const unitKey = (l: { productId: string; unit?: string }) =>
+  `${l.productId}:${(l.unit ?? '').toLowerCase()}`;
+
+const lineFields = {
+  productId: Uuid,
+  // In the line's unit: 2 with unit "dus" is two cartons.
+  qty: z
+    .number()
+    .int('Jumlah harus bilangan bulat')
+    .positive('Jumlah harus lebih dari 0')
+    .max(100_000, 'Jumlah maksimal 100.000'),
+  // Name of one of the product's units (any case); omitted = the base unit.
+  unit: z
+    .string()
+    .trim()
+    .min(1, 'Satuan tidak valid')
+    .max(20, 'Satuan tidak valid')
+    .optional(),
+};
+
+const linesOf = <T extends z.ZodType<{ productId: string; unit?: string }>>(
+  line: T,
+) =>
+  z
+    .array(line)
+    .min(1)
+    .max(200)
+    .refine(
+      (ls) => new Set(ls.map(unitKey)).size === ls.length,
+      'Satu produk dan satuan cukup satu baris',
+    );
+
 export const SaleInput = z
   .object({
-    lines: z
-      .array(
-        z
-          .object({
-            productId: Uuid,
-            qty: z
-              .number()
-              .int('Jumlah harus bilangan bulat')
-              .positive('Jumlah harus lebih dari 0')
-              .max(100_000, 'Jumlah maksimal 100.000'),
-            // Honoured only with sales.price_override; otherwise the catalog price is used.
-            price: rupiah.optional(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(200)
-      .refine(
-        (ls) => new Set(ls.map((l) => l.productId)).size === ls.length,
-        'Satu produk cukup satu baris',
-      ),
+    lines: linesOf(
+      z
+        .object({
+          ...lineFields,
+          // Honoured only with sales.price_override; otherwise the server's unit or wholesale price is used.
+          price: rupiah.optional(),
+        })
+        .strict(),
+    ),
     // Honoured only with sales.price_override.
     discount: rupiah.optional(),
     // U7: member (required for a credit method), voucher code, payment method (default Tunai).
@@ -39,6 +61,11 @@ export const SaleInput = z
     paid: rupiah,
     note: z.string().trim().max(200).optional(),
   })
+  .strict();
+
+/** `POST /sales/quote`: the cart's lines only; nothing is written. */
+export const QuoteInput = z
+  .object({ lines: linesOf(z.object(lineFields).strict()) })
   .strict();
 
 export const SalesQuery = z.object({
@@ -56,4 +83,5 @@ export const SettingsInput = z
   .strict();
 
 export type SaleInput = z.infer<typeof SaleInput>;
+export type QuoteInput = z.infer<typeof QuoteInput>;
 export type SalesQuery = z.infer<typeof SalesQuery>;

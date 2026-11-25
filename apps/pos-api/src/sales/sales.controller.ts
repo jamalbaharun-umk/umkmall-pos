@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
   Param,
   Post,
   Put,
@@ -16,6 +17,7 @@ import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   IdempotencyKey,
+  QuoteInput,
   SaleInput,
   SalesQuery,
   SettingsInput,
@@ -40,6 +42,14 @@ export class SalesController {
       }).idempotencyKey,
       validate(SaleInput, body),
     );
+  }
+
+  /** UMK-1985: the server's price of a cart (unit and wholesale tier), nothing written. */
+  @Post('quote')
+  @HttpCode(200)
+  @RequirePermission('sales.create')
+  quote(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    return this.sales.quote(s, validate(QuoteInput, body));
   }
 
   @Get()

@@ -124,3 +124,59 @@ export const productImages = pos
     (t) => [index('product_images_product_idx').on(t.productId)],
   )
   .enableRLS();
+
+// UMK-1985: other units a product is sold in (dus = 24 pcs) at a fixed price per unit. The base unit is
+// products.unit / products.selling_price; stock is always kept in base units. A sale line snapshots the
+// unit's name, multiplier and price, so editing or removing a row here never changes a past sale.
+export const productUnits = pos
+  .table(
+    'product_units',
+    {
+      id: id(),
+      tenantId: tenantId(),
+      // Same tenant as the product: the catalog service checks the product before every write.
+      productId: uuid('product_id')
+        .notNull()
+        .references(() => products.id, { onDelete: 'cascade' }),
+      name: text('name').notNull(),
+      // Base units in one of this unit.
+      unitQty: integer('unit_qty').notNull(),
+      price: rupiah('price').notNull(),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      uniqueIndex('product_units_product_name_uq').on(
+        t.productId,
+        sql`lower(${t.name})`,
+      ),
+      index('product_units_tenant_idx').on(t.tenantId),
+      check('product_units_ck', sql`${t.unitQty} >= 2 and ${t.price} > 0`),
+    ],
+  )
+  .enableRLS();
+
+// UMK-1985: wholesale tiers, per base unit: from `min_qty` base units of the product in one cart (all its
+// lines, a dus counted as its base units) a base-unit line costs `price`.
+export const productPriceTiers = pos
+  .table(
+    'product_price_tiers',
+    {
+      id: id(),
+      tenantId: tenantId(),
+      productId: uuid('product_id')
+        .notNull()
+        .references(() => products.id, { onDelete: 'cascade' }),
+      minQty: integer('min_qty').notNull(),
+      price: rupiah('price').notNull(),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      uniqueIndex('product_price_tiers_product_min_uq').on(
+        t.productId,
+        t.minQty,
+      ),
+      index('product_price_tiers_tenant_idx').on(t.tenantId),
+      check('product_price_tiers_ck', sql`${t.minQty} >= 2 and ${t.price} > 0`),
+    ],
+  )
+  .enableRLS();

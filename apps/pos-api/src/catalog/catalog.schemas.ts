@@ -32,6 +32,16 @@ const barcodes = z
     'Barcode tidak boleh ganda',
   );
 
+const unitPrice = (what: string) =>
+  z
+    .number({
+      required_error: `${what} wajib diisi`,
+      invalid_type_error: `${what} harus berupa angka`,
+    })
+    .int(`${what} harus bilangan bulat rupiah`)
+    .positive(`${what} harus lebih dari 0`)
+    .max(1_000_000_000_000, `${what} terlalu besar`);
+
 const productFields = {
   categoryId: z
     .string({ required_error: 'Pilih kategori' })
@@ -63,6 +73,49 @@ const productFields = {
     .max(1_000_000, 'Batas stok menipis terlalu besar')
     .optional(),
   barcodes: barcodes.optional(),
+  // UMK-1985. Each list replaces the stored one when sent. Rules across fields (unique names, tier order,
+  // tier against the base price) are checked by the service on the merged product: catalog/pricing.ts.
+  units: z
+    .array(
+      z
+        .object({
+          name: z
+            .string({ required_error: 'Nama satuan wajib diisi' })
+            .trim()
+            .min(1, 'Nama satuan wajib diisi')
+            .max(20, 'Maksimal 20 karakter'),
+          unitQty: z
+            .number({
+              required_error: 'Isi per satuan wajib diisi',
+              invalid_type_error: 'Isi per satuan harus berupa angka',
+            })
+            .int('Isi per satuan harus bilangan bulat')
+            .min(2, 'Isi per satuan minimal 2')
+            .max(10_000, 'Isi per satuan maksimal 10.000'),
+          price: unitPrice('Harga satuan'),
+        })
+        .strict(),
+    )
+    .max(10, 'Maksimal 10 satuan')
+    .optional(),
+  priceTiers: z
+    .array(
+      z
+        .object({
+          minQty: z
+            .number({
+              required_error: 'Jumlah minimal wajib diisi',
+              invalid_type_error: 'Jumlah minimal harus berupa angka',
+            })
+            .int('Jumlah minimal harus bilangan bulat')
+            .min(2, 'Jumlah minimal grosir paling sedikit 2')
+            .max(1_000_000, 'Jumlah minimal terlalu besar'),
+          price: unitPrice('Harga grosir'),
+        })
+        .strict(),
+    )
+    .max(10, 'Maksimal 10 tingkat harga grosir')
+    .optional(),
 };
 
 const costNotAboveSelling = (p: {

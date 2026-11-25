@@ -110,7 +110,7 @@ describe('validation: sales, shifts, suppliers, purchasing, stock opname', () =>
         }),
         422,
         'lines',
-        'Satu produk cukup satu baris',
+        'Satu produk dan satuan cukup satu baris',
       );
       await refused(
         sell({
