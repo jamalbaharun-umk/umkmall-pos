@@ -105,7 +105,8 @@ describe('repo guards', () => {
     // The service goes through the ledger (the shift's row lock, the agent allow-list), and its rows are
     // append-only.
     const service = files.find(({ f }) => f === own)!.text;
-    expect(service).toMatch(/recordShiftCash\(/);
+    expect(service).toMatch(/recordShiftCashAt\(/);
+    expect(service).toMatch(/assertPersonAtTill\(s\.kind\)/);
     expect(service).toMatch(/\.insert\(manualCashEntries\)/);
     expect(service).not.toMatch(/\.(update|delete)\(\s*manualCashEntries\b/);
   });
@@ -123,7 +124,7 @@ describe('repo guards', () => {
     // Every function that reaches the insert checks the session kind first.
     const writers = ledger.split(/\nexport async function /).slice(1);
     const inserting = writers.filter((w) => /await insertEntry\(/.test(w));
-    expect(inserting.length).toBe(2);
+    expect(inserting.length).toBe(3);
     for (const w of inserting)
       expect(
         w.indexOf('assertMayMoveDrawerCash(s.kind, entry.direction)'),

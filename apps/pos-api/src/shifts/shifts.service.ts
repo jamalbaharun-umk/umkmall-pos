@@ -14,16 +14,23 @@ import {
   sql,
   type SQL,
 } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  expenses,
   FINAL_SALE_STATUSES,
   MANUAL_CASH_REASON_LABELS,
   manualCashEntries,
   paymentMethods,
+  receivablePayments,
+  receivables,
   sales,
+  saleVoids,
   shiftCashEntries,
   shifts,
+  staff,
+  storeCashDeposits,
 } from '../db/schema';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -35,6 +42,7 @@ import {
   lockOpenShift,
   NO_CASH,
 } from './cash-ledger';
+import { shiftActorName, shiftNumber } from './shift-read';
 
 const shiftColumns = {
   id: shifts.id,
@@ -47,6 +55,13 @@ const shiftColumns = {
   expectedCash: shifts.expectedCash,
   cashSales: shifts.cashSales,
   salesCount: shifts.salesCount,
+};
+
+/** For a select (never a RETURNING): the stored columns plus what a screen calls the shift. */
+const shiftReadColumns = {
+  ...shiftColumns,
+  number: shiftNumber,
+  actorName: shiftActorName,
 };
 
 type ShiftRow = {
@@ -118,7 +133,7 @@ export class ShiftsService {
   /** The actor's open shift with its running totals, or null. */
   async current(s: PosSession) {
     const [shift] = await this.db
-      .select(shiftColumns)
+      .select(shiftReadColumns)
       .from(shifts)
       .where(
         and(
@@ -140,9 +155,18 @@ export class ShiftsService {
     };
   }
 
+  /** One shift of this store as a screen reads it (after a write: a RETURNING cannot number it). */
+  private async read(db: Db | Tx, tenantId: string, id: string) {
+    const [row] = await db
+      .select(shiftReadColumns)
+      .from(shifts)
+      .where(and(eq(shifts.tenantId, tenantId), eq(shifts.id, id)));
+    return row;
+  }
+
   async open(s: PosSession, openingCash: number) {
     try {
-      const [row] = await this.db
+      const [{ id }] = await this.db
         .insert(shifts)
         .values({
           tenantId: s.tenantId,
@@ -150,7 +174,8 @@ export class ShiftsService {
           actorKind: s.kind,
           openingCash,
         })
-        .returning(shiftColumns);
+        .returning({ id: shifts.id });
+      const row = await this.read(this.db, s.tenantId, id);
       return { ...withDifference(row), ...NO_CASH };
     } catch (e) {
       if (isUniqueViolation(e))
@@ -186,7 +211,7 @@ export class ShiftsService {
         });
       const t = await this.totals(tx, shift.id);
       const cash = await this.cashOf(tx, s.tenantId, shift.id);
-      const [row] = await tx
+      await tx
         .update(shifts)
         .set({
           closedAt: new Date(),
@@ -195,8 +220,8 @@ export class ShiftsService {
           cashSales: t.cashSales,
           salesCount: t.salesCount,
         })
-        .where(eq(shifts.id, shift.id))
-        .returning(shiftColumns);
+        .where(eq(shifts.id, shift.id));
+      const row = await this.read(tx, s.tenantId, shift.id);
       return { ...withDifference(row), ...cash };
     });
   }
@@ -212,7 +237,7 @@ export class ShiftsService {
     const where = this.scope(s);
     const [rows, [{ total }]] = await Promise.all([
       this.db
-        .select(shiftColumns)
+        .select(shiftReadColumns)
         .from(shifts)
         .where(where)
         .orderBy(desc(shifts.openedAt))
@@ -236,11 +261,16 @@ export class ShiftsService {
 
   async get(s: PosSession, id: string) {
     const [row] = await this.db
-      .select(shiftColumns)
+      .select(shiftReadColumns)
       .from(shifts)
       .where(and(this.scope(s), eq(shifts.id, id)));
     if (!row) throw new NotFoundException();
     const e = shiftCashEntries;
+    // Who recorded the entry, and for a collector's deposit who handed the cash over: names only.
+    const recorder = alias(staff, 'recorder');
+    const collector = alias(staff, 'collector');
+    // The `expense` entry an `expense_reversal` puts back (same expense, same shift).
+    const undone = alias(shiftCashEntries, 'undone');
     const [cash, cashEntries] = await Promise.all([
       this.cashOf(this.db, s.tenantId, id),
       this.db
@@ -253,9 +283,80 @@ export class ShiftsService {
           note: e.note,
           // Manual cash in/out only (UMK-1924 U3): why the cash moved.
           reason: manualCashEntries.reason,
+          actorId: e.actorId,
+          actorKind: e.actorKind,
+          actorName: sql<string>`case when ${e.actorKind} = 'owner' then 'Pemilik'
+            else coalesce(${recorder.name}, 'Staf') end`,
+          collectorId: storeCashDeposits.collectorId,
+          collectorName: collector.name,
+          // Reversal markers (design fitur 20: "Dibatalkan", "Pembalik"), derived from rows the server
+          // already writes: a voided expense, a void of a sale, a kasbon cancelled with its sale.
+          expenseVoidedAt: expenses.voidedAt,
+          undoneEntryId: undone.id,
+          voidedSaleId: saleVoids.saleId,
+          receivableCancelledAt: receivables.cancelledAt,
           createdAt: e.createdAt,
         })
         .from(e)
+        .leftJoin(
+          recorder,
+          and(eq(recorder.tenantId, e.tenantId), eq(recorder.id, e.actorId)),
+        )
+        .leftJoin(
+          storeCashDeposits,
+          and(
+            eq(storeCashDeposits.tenantId, e.tenantId),
+            eq(storeCashDeposits.id, e.refId),
+            eq(e.kind, 'collector_deposit'),
+          ),
+        )
+        .leftJoin(
+          collector,
+          and(
+            eq(collector.tenantId, e.tenantId),
+            eq(collector.id, storeCashDeposits.collectorId),
+          ),
+        )
+        .leftJoin(
+          expenses,
+          and(
+            eq(expenses.tenantId, e.tenantId),
+            eq(expenses.id, e.refId),
+            inArray(e.kind, ['expense', 'expense_reversal']),
+          ),
+        )
+        .leftJoin(
+          undone,
+          and(
+            eq(undone.tenantId, e.tenantId),
+            eq(undone.refId, e.refId),
+            eq(undone.kind, 'expense'),
+            eq(e.kind, 'expense_reversal'),
+          ),
+        )
+        .leftJoin(
+          saleVoids,
+          and(
+            eq(saleVoids.tenantId, e.tenantId),
+            eq(saleVoids.id, e.refId),
+            eq(e.kind, 'void_refund'),
+          ),
+        )
+        .leftJoin(
+          receivablePayments,
+          and(
+            eq(receivablePayments.tenantId, e.tenantId),
+            eq(receivablePayments.id, e.refId),
+            eq(e.kind, 'receivable_payment'),
+          ),
+        )
+        .leftJoin(
+          receivables,
+          and(
+            eq(receivables.tenantId, e.tenantId),
+            eq(receivables.id, receivablePayments.receivableId),
+          ),
+        )
         .leftJoin(
           manualCashEntries,
           and(
@@ -270,10 +371,34 @@ export class ShiftsService {
     return {
       ...withDifference(row),
       ...cash,
-      cashEntries: cashEntries.map((c) => ({
-        ...c,
-        reasonLabel: c.reason ? MANUAL_CASH_REASON_LABELS[c.reason] : null,
-      })),
+      cashEntries: cashEntries.map(
+        ({
+          expenseVoidedAt,
+          undoneEntryId,
+          voidedSaleId,
+          receivableCancelledAt,
+          ...c
+        }) => ({
+          ...c,
+          reasonLabel: c.reason ? MANUAL_CASH_REASON_LABELS[c.reason] : null,
+          // This entry's source was undone later.
+          reversed:
+            (c.kind === 'expense' && expenseVoidedAt !== null) ||
+            (c.kind === 'receivable_payment' && receivableCancelledAt !== null),
+          // This entry undoes something: an expense's cash-out (`entryId`: that ledger row), or a
+          // sale's cash (a sale's cash is not a ledger row, so no `entryId`).
+          reversalOf:
+            c.kind === 'expense_reversal' && c.refId
+              ? {
+                  type: 'expense' as const,
+                  id: c.refId,
+                  entryId: undoneEntryId,
+                }
+              : c.kind === 'void_refund' && voidedSaleId
+                ? { type: 'sale' as const, id: voidedSaleId, entryId: null }
+                : null,
+        }),
+      ),
     };
   }
 }

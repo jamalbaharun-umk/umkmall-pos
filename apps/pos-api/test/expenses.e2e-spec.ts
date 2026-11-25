@@ -615,6 +615,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       ).body;
       expect(e).toMatchObject({ actorKind: 'cashier', actorName: 'Sari' });
       expect(await current(rina.auth)).toMatchObject({ expectedCash: 38_000 });
+      const rinaShift = (await current(rina.auth)).id as string;
+      const unmarked = await get(rina.auth, `/shifts/${rinaShift}`).expect(200);
+      expect(unmarked.body.cashEntries).toMatchObject([
+        { kind: 'expense', reversed: false, reversalOf: null },
+      ]);
 
       // The owner voids it: the cash-in lands in Rina's shift, not the owner's.
       const voided = await post(s.auth, `/expenses/${e.id}/void`, {
@@ -656,6 +661,31 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       ]);
       // The drawer got it back, so the store cash did not.
       expect(await storeCash(s.tenantId)).toEqual([]);
+      // The drawer list marks both lines (design fitur 20): the expense "Dibatalkan", and its
+      // "Pembalik" pointing at it; each names who recorded it.
+      const marked = await get(rina.auth, `/shifts/${rinaShift}`).expect(200);
+      const [spent, back] = marked.body.cashEntries as { id: string }[];
+      expect(marked.body.cashEntries).toMatchObject([
+        {
+          kind: 'expense',
+          refId: e.id,
+          reversed: true,
+          reversalOf: null,
+          actorId: rina.staffId,
+          actorKind: 'cashier',
+          actorName: 'Sari',
+        },
+        {
+          kind: 'expense_reversal',
+          refId: e.id,
+          reversed: false,
+          reversalOf: { type: 'expense', id: e.id, entryId: spent.id },
+          actorId: s.userId,
+          actorKind: 'owner',
+          actorName: 'Pemilik',
+        },
+      ]);
+      expect(back.id).not.toBe(spent.id);
       expect((await get(s.auth, '/expenses').expect(200)).body).toMatchObject({
         total: 0,
         summary: { count: 0, expenses: 0, fromDrawer: 0 },

@@ -29,6 +29,8 @@ export const CASH_DIRECTIONS = ['in', 'out'] as const;
  * - manual_in / manual_out: ref_id = pos.manual_cash_entries.id, cash a cashier put into or took out of
  *   the drawer by hand (extra float, a bank deposit; UMK-1924 U3). Written only by
  *   src/shifts/cash-entries.service.ts.
+ * - collector_deposit (in): ref_id = pos.store_cash_deposits.id, a collector's outside-shift cash received
+ *   into this drawer ("Setoran penagih"). Written only by src/store-cash/store-cash-deposits.service.ts.
  * A supplier payment tied to a purchase order (UMK-1970) gets its own kind here when it is built.
  */
 export const CASH_ENTRY_KINDS = [
@@ -38,6 +40,7 @@ export const CASH_ENTRY_KINDS = [
   'expense_reversal',
   'manual_in',
   'manual_out',
+  'collector_deposit',
 ] as const;
 
 export const shiftCashEntries = pos

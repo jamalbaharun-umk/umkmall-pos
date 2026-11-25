@@ -16,6 +16,23 @@ export function fieldError(
   return new HttpException({ message, errors: { [field]: message } }, status);
 }
 
+/**
+ * A `fieldError` a screen can act on without reading its text: the same body plus a stable `code`
+ * (`SHIFT_REQUIRED`, `DRAWER_INSUFFICIENT`, ...) and, where the screen needs a figure to recover, the
+ * server's own number (`extra`; never a value the client sent).
+ */
+export function codedError(
+  code: string,
+  field: string,
+  message: string,
+  extra: Record<string, number> = {},
+): HttpException {
+  return new HttpException(
+    { message, errors: { [field]: message }, code, ...extra },
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
+}
+
 const rp = (n: number | bigint) => `Rp${Number(n).toLocaleString('id-ID')}`;
 
 /** Indonesian messages for zod's built-in checks; a schema's own message (refine, regex) wins. */

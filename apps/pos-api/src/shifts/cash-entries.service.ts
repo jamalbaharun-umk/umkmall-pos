@@ -2,7 +2,12 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { fieldError, formatRupiah, Rupiah } from '../common/validation';
+import {
+  codedError,
+  formatRupiah,
+  Rupiah,
+  UuidField,
+} from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import {
   CASH_DIRECTIONS,
@@ -17,9 +22,9 @@ import { isUniqueViolation } from '../staff/http';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
 import {
-  assertMayMoveDrawerCash,
-  lockOpenShift,
-  recordShiftCash,
+  assertPersonAtTill,
+  lockShiftForCash,
+  recordShiftCashAt,
 } from './cash-ledger';
 import { ShiftsService } from './shifts.service';
 
@@ -36,6 +41,8 @@ export const CashEntryInput = z
       errorMap: () => ({ message: 'Pilih salah satu alasan' }),
     }),
     note: z.string().trim().max(200).optional(),
+    // An owner may name the open shift whose drawer the cash is for; everyone else uses their own.
+    shiftId: UuidField.transform((v) => v.toLowerCase()).optional(),
   })
   .strict()
   .superRefine((i, ctx) => {
@@ -57,7 +64,16 @@ export type CashEntryInput = z.infer<typeof CashEntryInput>;
 /** Same key + same request → the first entry; same key + another request → refused. */
 const requestHash = (i: CashEntryInput) =>
   createHash('sha256')
-    .update(JSON.stringify([i.direction, i.amount, i.reason, i.note ?? null]))
+    .update(
+      JSON.stringify([
+        i.direction,
+        i.amount,
+        i.reason,
+        i.note ?? null,
+        // Only when named, so a key from before this field replays as it did.
+        ...(i.shiftId ? [i.shiftId] : []),
+      ]),
+    )
     .digest('hex');
 
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk catatan kas lain';
@@ -83,7 +99,9 @@ const columns = {
  * Manual drawer cash (UMK-1924 U3): cash a cashier puts into or takes out of the open drawer by hand.
  * This file is the only writer of `pos.manual_cash_entries` and of the shift ledger kinds `manual_in` /
  * `manual_out` (guard in src/guards.spec.ts); the ledger row itself is inserted by cash-ledger.ts under
- * the shift's row lock, which also refuses a cash-out for a session kind that is not a person at the till.
+ * the shift's row lock. Only a person at the till records either direction (design fitur 20: an agent
+ * records neither cash out nor cash in). Refusals carry a `code`: `SHIFT_REQUIRED`, `SHIFT_NOT_YOURS`,
+ * `DRAWER_INSUFFICIENT` (with `drawerCash`), `IDEMPOTENCY_KEY_REUSED`, `AGENT_FORBIDDEN`.
  */
 @Injectable()
 export class CashEntriesService {
@@ -131,11 +149,16 @@ export class CashEntriesService {
   }
 
   async create(s: PosSession, key: string, input: CashEntryInput) {
-    // Agent sessions never move drawer cash out: refused before any lock or lookup.
-    if (input.direction === 'out') assertMayMoveDrawerCash(s.kind, 'out');
+    // Agent sessions never record drawer cash by hand, in or out: refused before any lock or lookup.
+    assertPersonAtTill(s.kind);
     const hash = requestHash(input);
     const replay = (prior: { id: string; hash: string }) => {
-      if (prior.hash !== hash) throw fieldError('idempotencyKey', KEY_REUSED);
+      if (prior.hash !== hash)
+        throw codedError(
+          'IDEMPOTENCY_KEY_REUSED',
+          'idempotencyKey',
+          KEY_REUSED,
+        );
       return prior.id;
     };
     let id: string;
@@ -144,16 +167,17 @@ export class CashEntriesService {
         // The shift's row lock first (the lock a sale and the close take), then the key: a duplicate in
         // flight waits here and then finds the first entry, instead of being judged against a drawer
         // the first one already changed.
-        await lockOpenShift(tx, s);
+        await lockShiftForCash(tx, s, input.shiftId);
         // A retry (double tap, network replay) finds the first entry and changes nothing, also once
         // the shift has closed.
         const prior = await this.byKey(tx, s.tenantId, key);
         if (prior) return replay(prior);
         const newId = randomUUID();
         // Writes the movement into the locked shift's ledger; 422 without an open shift.
-        const shiftId = await recordShiftCash(
+        const shiftId = await recordShiftCashAt(
           tx,
           s,
+          input.shiftId,
           {
             direction: input.direction,
             kind: input.direction === 'in' ? 'manual_in' : 'manual_out',
@@ -171,9 +195,12 @@ export class CashEntriesService {
             : after + input.amount;
         // More than the drawer holds cannot be taken out: refused, and the ledger row rolls back.
         if (input.direction === 'out' && input.amount > drawerCashBefore)
-          throw fieldError(
+          throw codedError(
+            'DRAWER_INSUFFICIENT',
             'amount',
             `Jumlah lebih besar dari uang di laci (${formatRupiah(Math.max(drawerCashBefore, 0))})`,
+            // What the drawer holds now, so the form can show the new limit.
+            { drawerCash: Math.max(drawerCashBefore, 0) },
           );
         // Claims the key: a concurrent duplicate fails here and rolls its ledger entry back.
         await tx.insert(manualCashEntries).values({
