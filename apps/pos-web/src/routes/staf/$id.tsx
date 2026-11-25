@@ -1,5 +1,6 @@
-import { Button, toast } from '@umkmall/ui/primitives'
+import { Button } from '@umkmall/ui/primitives'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { Page, PageError, PageLoading } from '@/components/page'
 import { deleteStaff, loadMember } from './-api'
@@ -22,11 +23,11 @@ function EditStaff() {
       `Hapus ${member.name}?`,
       async () => {
         const r = await deleteStaff({ data: member.id })
-        if (!r.ok) return r.error
-        toast('Staf dihapus', { variant: 'success' })
+        if (!r.ok) return r
+        notifySuccess('Staf dihapus')
         await navigate({ to: '/staf' })
       },
-      { body: 'Staf yang dihapus tidak bisa masuk lagi dan sesi kasirnya berakhir.' },
+      { body: 'Staf yang dihapus tidak bisa masuk lagi dan sesi kasirnya berakhir.', action: 'menghapus staf' },
     )
   return (
     <Page

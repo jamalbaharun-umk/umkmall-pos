@@ -1,7 +1,8 @@
-import { Alert, Button, CheckBox, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, CheckBox, TextField } from '@umkmall/ui/primitives'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Search } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { Panel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { required } from '@/lib/validate'
@@ -26,20 +27,22 @@ export function RoleForm({ role, permissions }: { role?: Role; permissions: stri
     setError(undefined)
     const missing = required(name, 'Nama peran wajib diisi')
     setNameError(missing)
-    if (missing) return toast('Periksa kembali isian kamu', { variant: 'danger' })
+    const verb = role ? 'menyimpan peran' : 'membuat peran'
+    if (missing) return showError({ status: 422, error: 'Beberapa isian belum benar. Periksa yang ditandai merah.' }, verb)
     setBusy(true)
     const res = await saveRole({ data: { id: role?.id, name: name.trim(), permissions: granted } }).catch(() => ({
       ok: false as const,
       error: GENERIC_ERROR,
+      status: 0,
     }))
     setBusy(false)
     if (!res.ok) {
       const placed = placeErrors(res, ['name'])
       setNameError(placed.byField.name)
       setError(placed.formError)
-      return toast(res.error, { variant: 'danger' })
+      return showError(res, verb)
     }
-    toast(role ? 'Peran disimpan' : 'Peran dibuat', { variant: 'success' })
+    notifySuccess(role ? 'Peran disimpan' : 'Peran dibuat')
     await navigate({ to: '/staf/peran' })
   }
 

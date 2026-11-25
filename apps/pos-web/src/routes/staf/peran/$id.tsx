@@ -1,5 +1,6 @@
-import { Button, toast } from '@umkmall/ui/primitives'
+import { Button } from '@umkmall/ui/primitives'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { Page, PageError, PageLoading } from '@/components/page'
 import { deleteRole, loadRole } from '../-api'
@@ -22,11 +23,11 @@ function EditRole() {
       `Hapus peran ${role.name}?`,
       async () => {
         const r = await deleteRole({ data: role.id })
-        if (!r.ok) return r.error
-        toast('Peran dihapus', { variant: 'success' })
+        if (!r.ok) return r
+        notifySuccess('Peran dihapus')
         await navigate({ to: '/staf/peran' })
       },
-      { body: 'Staf dengan peran ini kehilangan izinnya.' },
+      { body: 'Staf dengan peran ini kehilangan izinnya.', action: 'menghapus peran' },
     )
   return (
     <Page

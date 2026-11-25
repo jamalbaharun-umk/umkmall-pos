@@ -1,6 +1,7 @@
-import { Alert, Button, CheckBox, Select, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, CheckBox, Select, TextField } from '@umkmall/ui/primitives'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { Panel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { staffErrors, type Errors } from '@/lib/validate'
@@ -29,19 +30,20 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
     setError(undefined)
     const found = staffErrors({ name, pin, pin2 }, Boolean(member))
     setErrors(found)
-    if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
+    const verb = member ? 'menyimpan staf' : 'menambah staf'
+    if (Object.keys(found).length) return showError({ status: 422, error: 'Beberapa isian belum benar. Periksa yang ditandai merah.' }, verb)
     setBusy(true)
     const res = await saveStaff({
       data: { id: member?.id, name: name.trim(), pin: pin || undefined, roleIds, active },
-    }).catch(() => ({ ok: false as const, error: GENERIC_ERROR }))
+    }).catch(() => ({ ok: false as const, error: GENERIC_ERROR, status: 0 }))
     setBusy(false)
     if (!res.ok) {
       const placed = placeErrors(res, ['name', 'pin', 'roleIds'])
       setErrors(placed.byField)
       setError(placed.formError)
-      return toast(res.error, { variant: 'danger' })
+      return showError(res, verb)
     }
-    toast(member ? 'Staf disimpan' : 'Staf ditambahkan', { variant: 'success' })
+    notifySuccess(member ? 'Staf disimpan' : 'Staf ditambahkan')
     if (again) {
       setName('')
       setPin('')

@@ -1,7 +1,8 @@
-import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField, toast } from '@umkmall/ui/primitives'
+import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField } from '@umkmall/ui/primitives'
 import { Link, createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { Pencil, Search, Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { Empty, Page, PageError, PageLoading, Panel, dateTime } from '@/components/page'
 import { deleteStaff, loadStaffPage } from './-api'
@@ -27,11 +28,11 @@ function StaffPage() {
       `Hapus ${name}?`,
       async () => {
         const r = await deleteStaff({ data: id })
-        if (!r.ok) return r.error
-        toast('Staf dihapus', { variant: 'success' })
+        if (!r.ok) return r
+        notifySuccess('Staf dihapus')
         await router.invalidate()
       },
-      { body: 'Staf yang dihapus tidak bisa masuk lagi dan sesi kasirnya berakhir.' },
+      { body: 'Staf yang dihapus tidak bisa masuk lagi dan sesi kasirnya berakhir.', action: 'menghapus staf' },
     )
 
   return (

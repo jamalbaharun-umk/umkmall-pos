@@ -1,7 +1,8 @@
-import { Alert, Button, Select, TextField, Upload, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, Select, TextField, Upload } from '@umkmall/ui/primitives'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
 import { useCan } from '@/components/shell'
@@ -97,7 +98,7 @@ function ProfileForm({ profile }: { profile: Profile }) {
     setError(undefined)
     const found = storeProfileErrors(form)
     setErrors(found)
-    if (Object.keys(found).length) return toast('Periksa kembali isian kamu', { variant: 'danger' })
+    if (Object.keys(found).length) return showError({ status: 422, error: 'Beberapa isian belum benar. Periksa yang ditandai merah.' }, 'menyimpan pengaturan toko')
     setBusy(true)
     try {
       const saved = await saveProfile({
@@ -112,7 +113,7 @@ function ProfileForm({ profile }: { profile: Profile }) {
         const placed = placeErrors({ error: saved.error, errors: saved.errors }, Object.keys(form))
         setErrors(placed.byField)
         setError(placed.formError)
-        return toast(saved.error, { variant: 'danger' })
+        return showError(saved, 'menyimpan pengaturan toko')
       }
       if (logo) {
         const body = new FormData()
@@ -120,14 +121,14 @@ function ProfileForm({ profile }: { profile: Profile }) {
         const up = await uploadLogo({ data: body })
         if (up.error) {
           setErrors((all) => ({ ...all, file: up.errors?.file ?? up.error! }))
-          toast(`Profil disimpan, tapi logo belum: ${up.error}`, { variant: 'warning' })
+          showError(up, 'mengunggah logo (profil toko sudah tersimpan)')
         } else setLogo(null)
       }
-      toast('Pengaturan toko disimpan', { variant: 'success' })
+      notifySuccess('Pengaturan toko disimpan')
       await router.invalidate() // the shell shows the new store name
-    } catch {
+    } catch (e) {
       setError(GENERIC_ERROR)
-      toast(GENERIC_ERROR, { variant: 'danger' })
+      showError(e, 'menyimpan pengaturan toko')
     } finally {
       setBusy(false)
     }
@@ -210,10 +211,10 @@ function ProfileForm({ profile }: { profile: Profile }) {
                   onClick={() =>
                     confirm.ask('Hapus logo toko?', async () => {
                       const r = await deleteLogo()
-                      if (r.error) return r.error
-                      toast('Logo dihapus', { variant: 'success' })
+                      if (r.error) return r
+                      notifySuccess('Logo dihapus')
                       await router.invalidate()
-                    })
+                    }, { action: 'menghapus logo' })
                   }
                 >
                   Hapus logo
@@ -258,15 +259,15 @@ function QrisForm({ profile }: { profile: Profile }) {
       const up = await uploadQris({ data: body })
       if (up.error) {
         setError(up.errors?.file ?? up.error)
-        return toast(up.errors?.file ?? up.error, { variant: 'danger' })
+        return showError(up, 'mengunggah kode QRIS')
       }
       setFile(null)
       setBroken(false)
-      toast(saved ? 'Kode QRIS diganti' : 'Kode QRIS disimpan', { variant: 'success' })
+      notifySuccess(saved ? 'Kode QRIS diganti' : 'Kode QRIS disimpan')
       await router.invalidate()
     } catch {
       setError(GENERIC_ERROR)
-      toast(GENERIC_ERROR, { variant: 'danger' })
+      showError(undefined, 'mengunggah kode QRIS')
     } finally {
       setBusy(false)
     }
@@ -301,13 +302,14 @@ function QrisForm({ profile }: { profile: Profile }) {
               width="auto"
               onClick={() =>
                 confirm.ask(
-                  'Hapus kode QRIS toko? Kasir tidak bisa menampilkan QRIS sampai kamu mengunggah lagi.',
+                  'Hapus kode QRIS toko? Kasir tidak bisa menampilkan QRIS sampai Anda mengunggah lagi.',
                   async () => {
                     const r = await deleteQris()
-                    if (r.error) return r.error
-                    toast('Kode QRIS dihapus', { variant: 'success' })
+                    if (r.error) return r
+                    notifySuccess('Kode QRIS dihapus')
                     await router.invalidate()
                   },
+                  { action: 'menghapus kode QRIS' },
                 )
               }
             >
@@ -381,21 +383,21 @@ function AppForm({ taxBps, timezone }: { taxBps: number | null; timezone: string
     const parsed = taxToBps(tax)
     if ('error' in parsed) {
       setErrors({ tax: parsed.error })
-      return toast('Periksa kembali isian kamu', { variant: 'danger' })
+      return showError({ status: 422, error: 'Beberapa isian belum benar. Periksa yang ditandai merah.' }, 'menyimpan pengaturan aplikasi')
     }
     setErrors({})
     setBusy(true)
     const r = await saveAppSettings({
       data: { taxBps: parsed.bps, ...(timezone === null ? {} : { timezone: tz }) },
-    }).catch(() => ({ error: GENERIC_ERROR, errors: undefined }))
+    }).catch(() => ({ error: GENERIC_ERROR, errors: undefined, status: 0 }))
     setBusy(false)
     if (r.error) {
       const placed = placeErrors({ error: r.error, errors: r.errors }, ['tax', 'timezone'])
       setErrors(placed.byField)
       setError(placed.formError)
-      return toast(r.error, { variant: 'danger' })
+      return showError(r, 'menyimpan pengaturan aplikasi')
     }
-    toast('Pengaturan aplikasi disimpan', { variant: 'success' })
+    notifySuccess('Pengaturan aplikasi disimpan')
     await router.invalidate()
   }
 
