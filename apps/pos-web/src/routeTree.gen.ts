@@ -14,7 +14,9 @@ import { Route as KeluarRouteImport } from './routes/keluar'
 import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
 import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
 import { Route as KasTokoIndexRouteImport } from './routes/kas-toko/index'
+import { Route as KasTokoSetoranRouteImport } from './routes/kas-toko/setoran'
 import { Route as KasirIndexRouteImport } from './routes/kasir/index'
+import { Route as KasirKasLaciRouteImport } from './routes/kasir/kas-laci'
 import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
 import { Route as KasirTutupRouteImport } from './routes/kasir/tutup'
 import { Route as LaporanIndexRouteImport } from './routes/laporan/index'
@@ -86,9 +88,19 @@ const KasTokoIndexRoute = KasTokoIndexRouteImport.update({
   path: '/kas-toko/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KasTokoSetoranRoute = KasTokoSetoranRouteImport.update({
+  id: '/kas-toko/setoran',
+  path: '/kas-toko/setoran',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KasirIndexRoute = KasirIndexRouteImport.update({
   id: '/kasir/',
   path: '/kasir/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KasirKasLaciRoute = KasirKasLaciRouteImport.update({
+  id: '/kasir/kas-laci',
+  path: '/kasir/kas-laci',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KasirMasukRoute = KasirMasukRouteImport.update({
@@ -322,6 +334,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
+  '/kas-toko/setoran': typeof KasTokoSetoranRoute
+  '/kasir/kas-laci': typeof KasirKasLaciRoute
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
@@ -375,6 +389,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
+  '/kas-toko/setoran': typeof KasTokoSetoranRoute
+  '/kasir/kas-laci': typeof KasirKasLaciRoute
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
@@ -429,6 +445,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/keluar': typeof KeluarRoute
   '/catalog/categories': typeof CatalogCategoriesRoute
+  '/kas-toko/setoran': typeof KasTokoSetoranRoute
+  '/kasir/kas-laci': typeof KasirKasLaciRoute
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
@@ -484,6 +502,8 @@ export interface FileRouteTypes {
     | '/'
     | '/keluar'
     | '/catalog/categories'
+    | '/kas-toko/setoran'
+    | '/kasir/kas-laci'
     | '/kasir/masuk'
     | '/kasir/tutup'
     | '/laporan/$jenis'
@@ -537,6 +557,8 @@ export interface FileRouteTypes {
     | '/'
     | '/keluar'
     | '/catalog/categories'
+    | '/kas-toko/setoran'
+    | '/kasir/kas-laci'
     | '/kasir/masuk'
     | '/kasir/tutup'
     | '/laporan/$jenis'
@@ -590,6 +612,8 @@ export interface FileRouteTypes {
     | '/'
     | '/keluar'
     | '/catalog/categories'
+    | '/kas-toko/setoran'
+    | '/kasir/kas-laci'
     | '/kasir/masuk'
     | '/kasir/tutup'
     | '/laporan/$jenis'
@@ -644,6 +668,8 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   KeluarRoute: typeof KeluarRoute
   CatalogCategoriesRoute: typeof CatalogCategoriesRoute
+  KasTokoSetoranRoute: typeof KasTokoSetoranRoute
+  KasirKasLaciRoute: typeof KasirKasLaciRoute
   KasirMasukRoute: typeof KasirMasukRoute
   KasirTutupRoute: typeof KasirTutupRoute
   LaporanJenisRoute: typeof LaporanJenisRoute
@@ -731,11 +757,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KasTokoIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/kas-toko/setoran': {
+      id: '/kas-toko/setoran'
+      path: '/kas-toko/setoran'
+      fullPath: '/kas-toko/setoran'
+      preLoaderRoute: typeof KasTokoSetoranRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/kasir/': {
       id: '/kasir/'
       path: '/kasir'
       fullPath: '/kasir/'
       preLoaderRoute: typeof KasirIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kasir/kas-laci': {
+      id: '/kasir/kas-laci'
+      path: '/kasir/kas-laci'
+      fullPath: '/kasir/kas-laci'
+      preLoaderRoute: typeof KasirKasLaciRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/kasir/masuk': {
@@ -1060,6 +1100,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   KeluarRoute: KeluarRoute,
   CatalogCategoriesRoute: CatalogCategoriesRoute,
+  KasTokoSetoranRoute: KasTokoSetoranRoute,
+  KasirKasLaciRoute: KasirKasLaciRoute,
   KasirMasukRoute: KasirMasukRoute,
   KasirTutupRoute: KasirTutupRoute,
   LaporanJenisRoute: LaporanJenisRoute,

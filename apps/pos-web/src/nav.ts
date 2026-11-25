@@ -7,6 +7,7 @@ import {
   CreditCard,
   Database,
   FileText,
+  HandCoins,
   Layers,
   LayoutDashboard,
   ListChecks,
@@ -20,6 +21,7 @@ import {
   TicketPercent,
   Users,
   UsersRound,
+  Wallet,
   Zap,
 } from 'lucide-react'
 
@@ -39,7 +41,9 @@ export const NAV: NavGroup[] = [
       { to: '/kasir/riwayat', label: 'Riwayat penjualan', icon: Banknote },
       // UMK-1963: the shift cash ledger and the store's cash outside every drawer.
       { to: '/kasir/shift', label: 'Riwayat shift', icon: Clock, permission: 'sales.create' },
+      { to: '/kasir/kas-laci', label: 'Kas laci', icon: Wallet, permission: 'sales.create' },
       { to: '/kas-toko', label: 'Kas toko', icon: PiggyBank, permission: 'reports.view' },
+      { to: '/kas-toko/setoran', label: 'Setoran penagih', icon: HandCoins, permission: 'reports.view' },
       { to: '/pemasok', label: 'Pemasok', icon: ListOrdered, permission: 'purchasing.manage' },
       { to: '/pelanggan', label: 'Pelanggan', icon: UsersRound, permission: 'members.manage' },
       { to: '/metode-pembayaran', label: 'Metode pembayaran', icon: CreditCard, permission: 'catalog.manage' },

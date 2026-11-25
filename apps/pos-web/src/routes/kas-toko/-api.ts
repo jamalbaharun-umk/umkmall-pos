@@ -1,12 +1,13 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
+import type { CollectorCash } from './-deposit-helpers'
 
 // Server function for the store cash page (UMK-1963, GET /store-cash, `reports.view`). Read only: pos-api writes
 // every entry (a cash kasbon instalment taken outside a shift).
 
 export type StoreCashEntry = {
   id: string
-  direction: 'in' | 'out'
+  direction: 'in' | 'out' | 'transfer'
   kind: string
   amount: number
   refId: string | null
@@ -21,7 +22,9 @@ export type StoreCashPage = {
   total: number
   page: number
   perPage: number
-  summary: { cashIn: number; cashOut: number; balance: number }
+  /** `outstanding` / `handedOver`: of the balance, still with the collectors and already in the safe (U3). */
+  summary: { cashIn: number; cashOut: number; balance: number; outstanding: number; handedOver: number }
+  collectors: CollectorCash[]
 }
 
 export const loadStoreCash = createServerFn()
