@@ -589,7 +589,12 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           savings: 0,
           manualPrice: true,
         },
-        { unit: 'dus', unitPrice: 75_000, appliedTier: null, manualPrice: true },
+        {
+          unit: 'dus',
+          unitPrice: 75_000,
+          appliedTier: null,
+          manualPrice: true,
+        },
       ]);
 
       // Only the typed line is manual: the price sent for the pcs equals the server's tier price (so it
