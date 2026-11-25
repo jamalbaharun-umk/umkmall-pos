@@ -21,23 +21,24 @@ const optional = (max: number) =>
     .string()
     .trim()
     .max(max)
-    .nullish()
-    .transform((v) => v || null);
+    .transform((v) => v || null)
+    .nullable()
+    .optional();
 
-/** The short draft. Nothing else is accepted: no identity number, no document, no bank account. */
+/**
+ * The short draft. A field that is not sent is not handed on, so payment-api keeps what it has; `null` or an
+ * empty text clears it. Nothing else is accepted: no identity number, no document, no bank account.
+ */
 const Draft = z
   .object({
-    businessType: z
-      .enum(['individual', 'company'])
-      .nullish()
-      .transform((v) => v ?? null),
+    businessType: z.enum(['individual', 'company']).nullable().optional(),
     businessName: optional(120),
     email: optional(254).refine(
-      (v) => v === null || z.string().email().safeParse(v).success,
+      (v) => v == null || z.string().email().safeParse(v).success,
       'Format email tidak valid',
     ),
     phone: optional(20).refine(
-      (v) => v === null || /^\+?[0-9]{8,15}$/.test(v),
+      (v) => v == null || /^\+?[0-9]{8,15}$/.test(v),
       'Nomor HP tidak valid',
     ),
   })

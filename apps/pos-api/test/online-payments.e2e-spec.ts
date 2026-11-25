@@ -154,6 +154,12 @@ describe('online payments: onboarding through pos-api (UMK-2019)', () => {
       status: 'not_submitted',
       profile: DRAFT,
     });
+    // A save of one field keeps the others.
+    const part = await call('put', '/fake/draft', s.auth, {
+      phone: '+628111111111',
+    }).expect(200);
+    expect(part.body.profile).toEqual({ ...DRAFT, phone: '+628111111111' });
+    await call('put', '/fake/draft', s.auth, DRAFT).expect(200);
     const sub = await call('post', '/fake/submit', s.auth, {
       termsAccepted: true,
     }).expect(200);

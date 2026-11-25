@@ -286,7 +286,8 @@ export class PaymentsClient {
   async saveMerchantDraft(
     tenantId: string,
     provider: string,
-    draft: MerchantDraft,
+    // Only the fields the owner sent: payment-api keeps the others.
+    draft: Partial<MerchantDraft>,
   ): Promise<MerchantAccount> {
     return this.merchant(
       await this.call(
