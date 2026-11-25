@@ -23,7 +23,7 @@ export function FeedbackHost() {
   })()
 
   return (
-    <Dialog open onOpenChange={(open) => !open && dismissError()} title={state.title} size="small">
+    <Dialog open onOpenChange={(open) => !open && dismissError()} title={state.title} size="medium">
       <div role="alert" className="flex flex-col gap-4 px-6 pt-2 pb-6">
         <div className="flex gap-3">
           <Icon name="alert-circle" className="mt-0.5 size-5 shrink-0 text-default-error" />

@@ -13,9 +13,9 @@ import {
   TabsTrigger,
   Text,
   TextField,
-  toast,
 } from '@umkmall/ui'
 import { useEffect, useMemo, useState, useRef } from 'react'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
 import {
@@ -544,7 +544,7 @@ function Register({
               quoteState,
             })
           }
-          onClick={() => (discountBad ? toast(`Diskon: ${discountBad}`, { variant: 'danger' }) : setPaying(true))}
+          onClick={() => (discountBad ? showError({ status: 422, error: `Diskon: ${discountBad}` }, 'melanjutkan ke pembayaran') : setPaying(true))}
         >
           Lanjut ke pembayaran
         </Button>
@@ -836,11 +836,12 @@ function PayDialog({
       error: 'Tidak bisa terhubung. Coba lagi: penjualan tidak akan tercatat dua kali.',
       total: undefined,
       errors: undefined,
+      status: 0,
     }))
     lock.current = false
     setBusy(false)
     if (!res.ok) {
-      toast(res.error, { variant: 'danger' })
+      showError(res, 'menyimpan penjualan')
       if (res.total !== undefined && res.total !== due) {
         setServerTotal(res.total)
         void router.invalidate() // the grid shows the new prices too
@@ -848,7 +849,7 @@ function PayDialog({
       }
       return setError(res.error)
     }
-    toast('Pembayaran berhasil', { variant: 'success' })
+    notifySuccess('Pembayaran berhasil')
     onPaid({
       id: res.data.id,
       change: Math.max(res.data.change, 0),

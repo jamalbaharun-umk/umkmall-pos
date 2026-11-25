@@ -18,7 +18,7 @@ export type CashierSession = {
 }
 export type Result =
   | { ok: true }
-  | { ok: false; error: string; errors?: Record<string, string>; retryAfter?: number; status?: number }
+  | { ok: false; error: string; errors?: Record<string, string>; retryAfter?: number; status?: number; code?: string }
 
 export const PERMISSION_LABELS: Record<string, string> = {
   'sales.create': 'Membuat penjualan',
@@ -159,6 +159,6 @@ export const pinSignIn = createServerFn({ method: 'POST' })
       const retryAfter = Number(res.headers.get('retry-after')) || 30
       return { ok: false, status: 429, error: `Terlalu banyak PIN salah. Coba lagi dalam ${retryAfter} detik.`, retryAfter }
     }
-    if (res.status === 401) return { ok: false, status: 401, error: 'PIN salah.' }
+    if (res.status === 401) return { ok: false, code: 'PIN_INVALID', error: 'PIN salah.' }
     return { ok: false, status: res.status, error: 'Gagal masuk, coba lagi.' }
   })

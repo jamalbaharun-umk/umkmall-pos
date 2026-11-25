@@ -282,6 +282,14 @@ html, body {
   100% { background-position: -200% 0; }
 }
 
+/* Toast layout (guideline "Panduan Dasar UI POS", section 4): top-centre, full width minus the edges on a phone, at
+   most 380px on a desktop. The host's own class sets 1140px with !important, so this repeats the attribute to win. */
+@media (min-width: 768px) {
+  [data-sonner-toaster][data-sonner-toaster] {
+    width: min(380px, calc(100vw - 32px)) !important;
+  }
+}
+
 @layer utilities {
   .animate-gallery-shimmer {
     background-image: linear-gradient(

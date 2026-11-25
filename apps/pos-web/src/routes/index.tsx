@@ -1,9 +1,10 @@
-import { Alert, Button, toast } from '@umkmall/ui/primitives'
+import { Alert, Button } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Store } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
+import { notifySuccess } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
 import { getSessionToken, signedOut, umkmallSession } from '@/lib/session.server'
@@ -48,7 +49,7 @@ function Home() {
     if (!masuk && !keluar) return
     // Next tick: the Toaster renders after the page, so it subscribes after this effect runs.
     // Not cleared on re-run: stripping the flag below re-runs this effect before the timer fires.
-    setTimeout(() => toast(masuk ? 'Berhasil masuk' : 'Kamu sudah keluar', { variant: 'success' }))
+    setTimeout(() => notifySuccess(masuk ? 'Berhasil masuk' : 'Kamu sudah keluar'))
     void navigate({ search: ({ masuk: _m, keluar: _k, ...rest }) => rest, replace: true })
   }, [masuk, keluar, navigate])
   return home.signedIn ? (
