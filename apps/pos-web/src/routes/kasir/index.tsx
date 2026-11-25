@@ -50,6 +50,7 @@ import {
   type Quote,
   canProceedToPayment,
 } from './-helpers'
+import { confirmButtonLabel, isStaticQris, payStepOf, qrisScanHint, QRIS_NO_BANK_CHECK } from './-pay-step'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -287,42 +288,42 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
             {shown.map((p) => {
               const state = stockState(p.stock, p.lowStockThreshold)
               return (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  onClick={() => add(p)}
-                  aria-label={`Tambah ${p.name}`}
-                  className={`flex h-full min-h-32 w-full flex-col gap-1 rounded-2xl border border-default-primary bg-default-primary p-3 text-left transition active:scale-[0.98] hover:border-default-brand${state === 'out' ? ' opacity-55' : ''}`}
-                >
-                  <span className="text-sm text-default-brand">
-                    {rupiah(p.sellingPrice)}
-                    {needsUnitPicker(p) && <span className="text-default-secondary"> / {p.unit}</span>}
-                  </span>
-                  <span className="line-clamp-2 font-semibold text-default-primary">{p.name}</span>
-                  <span className="text-xs text-default-secondary">{p.category.name}</span>
-                  <span className="text-xs text-default-secondary">
-                    {state === 'out' ? (
-                      <Badge color="danger" size="small">
-                        Habis
-                      </Badge>
-                    ) : state === 'low' ? (
-                      <Badge color="warning" size="small">
-                        Sisa {p.stock}
-                      </Badge>
-                    ) : state === 'enough' ? (
-                      `Stok ${p.stock}`
-                    ) : (
-                      'Tanpa stok'
-                    )}
-                  </span>
-                  <span className="mt-auto flex items-center justify-between pt-2">
-                    <span className="inline-flex size-8 items-center justify-center rounded-lg bg-default-brand text-default-invert">
-                      <Icon name="plus" size="sm" />
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    onClick={() => add(p)}
+                    aria-label={`Tambah ${p.name}`}
+                    className={`flex h-full min-h-32 w-full flex-col gap-1 rounded-2xl border border-default-primary bg-default-primary p-3 text-left transition active:scale-[0.98] hover:border-default-brand${state === 'out' ? ' opacity-55' : ''}`}
+                  >
+                    <span className="text-sm text-default-brand">
+                      {rupiah(p.sellingPrice)}
+                      {needsUnitPicker(p) && <span className="text-default-secondary"> / {p.unit}</span>}
                     </span>
-                    {qtyOf(p.id) > 0 && <Badge size="small">{qtyOf(p.id)}</Badge>}
-                  </span>
-                </button>
-              </li>
+                    <span className="line-clamp-2 font-semibold text-default-primary">{p.name}</span>
+                    <span className="text-xs text-default-secondary">{p.category.name}</span>
+                    <span className="text-xs text-default-secondary">
+                      {state === 'out' ? (
+                        <Badge color="danger" size="small">
+                          Habis
+                        </Badge>
+                      ) : state === 'low' ? (
+                        <Badge color="warning" size="small">
+                          Sisa {p.stock}
+                        </Badge>
+                      ) : state === 'enough' ? (
+                        `Stok ${p.stock}`
+                      ) : (
+                        'Tanpa stok'
+                      )}
+                    </span>
+                    <span className="mt-auto flex items-center justify-between pt-2">
+                      <span className="inline-flex size-8 items-center justify-center rounded-lg bg-default-brand text-default-invert">
+                        <Icon name="plus" size="sm" />
+                      </span>
+                      {qtyOf(p.id) > 0 && <Badge size="small">{qtyOf(p.id)}</Badge>}
+                    </span>
+                  </button>
+                </li>
               )
             })}
           </ul>
@@ -504,8 +505,8 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
               </Button>
             }
           >
-            Harga satuan dan grosir belum bisa dicek ke server, jadi total ini hanya perkiraan dan bisa lebih tinggi dari
-            yang ditagihkan. Coba lagi sebelum lanjut ke pembayaran.
+            Harga satuan dan grosir belum bisa dicek ke server, jadi total ini hanya perkiraan dan bisa lebih tinggi
+            dari yang ditagihkan. Coba lagi sebelum lanjut ke pembayaran.
           </Alert>
         )}
         {over.length > 0 && (
@@ -516,7 +517,13 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
         <Button
           size="large"
           width="full"
-          disabled={!canProceedToPayment({ cartSize: cart.length, overCount: over.length, quoteState })}
+          disabled={
+            !canProceedToPayment({
+              cartSize: cart.length,
+              overCount: over.length,
+              quoteState,
+            })
+          }
           onClick={() => (discountBad ? toast(`Diskon: ${discountBad}`, { variant: 'danger' }) : setPaying(true))}
         >
           Lanjut ke pembayaran
@@ -632,7 +639,8 @@ function UnitPicker({
               value: o.unit ?? '',
               label: o.unitQty > 1 ? `${o.label} (isi ${o.unitQty})` : o.label,
               badge: rupiah(o.price),
-              description: o.saving > 0 ? `Hemat ${rupiah(o.saving)} dibanding ${o.unitQty} ${product.unit}` : undefined,
+              description:
+                o.saving > 0 ? `Hemat ${rupiah(o.saving)} dibanding ${o.unitQty} ${product.unit}` : undefined,
             }))}
             value={[picked.unit ?? '']}
             onValueChange={(v) => setChoice(v[0] ?? '')}
@@ -758,7 +766,8 @@ function PayDialog({
   const method = methods.find((m) => m.id === methodId)
   // Kasbon: paid may be 0 and the rest becomes the member's receivable; debit/wallet: exactly the total.
   const isCredit = method?.kind === 'credit'
-  const isExact = method?.kind === 'debit' || method?.kind === 'wallet'
+  const step = payStepOf(method?.kind)
+  const isExact = step === 'confirm'
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const lock = useRef(false) // state lags a burst of clicks; the ref does not
@@ -815,7 +824,11 @@ function PayDialog({
       return setError(res.error)
     }
     toast('Pembayaran berhasil', { variant: 'success' })
-    onPaid({ id: res.data.id, change: Math.max(res.data.change, 0), receivableRest: res.data.receivableRest ?? null })
+    onPaid({
+      id: res.data.id,
+      change: Math.max(res.data.change, 0),
+      receivableRest: res.data.receivableRest ?? null,
+    })
   }
 
   return (
@@ -880,73 +893,88 @@ function PayDialog({
               </>
             )}
           </dl>
-          <TextField
-            label="Uang diterima"
-            prefix="Rp"
-            inputMode="numeric"
-            value={paidText}
-            onChange={(e) => setPaidText(e.target.value)}
-            placeholder="0"
-            autoFocus
-          />
-          <p className="flex justify-between text-sm">
-            <span className="text-default-secondary">{isCredit ? 'Sisa kasbon' : 'Kembalian'}</span>
-            <span
-              className={`font-bold ${change !== null && change < 0 ? 'text-default-error' : 'text-default-success'}`}
-            >
-              {isCredit
-                ? rupiah(Math.max(due - (Number.isNaN(paid) ? 0 : paid), 0))
-                : change === null
-                  ? '—'
-                  : change < 0
-                    ? `Kurang ${rupiah(-change)}`
-                    : rupiah(change)}
-            </span>
-          </p>
-          <div className="grid grid-cols-3 gap-2" aria-label="Nominal cepat">
-            {quickAmounts(payable)
-              .filter((n) => n !== payable)
-              .map((n) => (
-                <Button
-                  width="auto"
-                  key={n}
-                  type={paid === n ? 'primary' : 'outline'}
-                  color={paid === n ? 'primary' : 'light'}
-                  disabled={busy}
-                  onClick={() => setPaidText(String(n))}
+          {isStaticQris(method?.kind) && (
+            <div className="space-y-3 text-center" aria-label="QRIS toko">
+              <Text variant="h4" weight="bold">
+                {rupiah(due)}
+              </Text>
+              <p className="text-sm text-default-secondary">{qrisScanHint(rupiah(due))}</p>
+              <Alert variant="warning" size="small">
+                {QRIS_NO_BANK_CHECK}
+              </Alert>
+            </div>
+          )}
+          {step !== 'confirm' && (
+            <>
+              <TextField
+                label="Uang diterima"
+                prefix="Rp"
+                inputMode="numeric"
+                value={paidText}
+                onChange={(e) => setPaidText(e.target.value)}
+                placeholder="0"
+                autoFocus
+              />
+              <p className="flex justify-between text-sm">
+                <span className="text-default-secondary">{isCredit ? 'Sisa kasbon' : 'Kembalian'}</span>
+                <span
+                  className={`font-bold ${change !== null && change < 0 ? 'text-default-error' : 'text-default-success'}`}
                 >
-                  {rupiah(n)}
-                </Button>
-              ))}
-          </div>
-          <Button
-            width="full"
-            type={paid === payable ? 'primary' : 'outline'}
-            color={paid === payable ? 'primary' : 'light'}
-            disabled={busy}
-            onClick={() => setPaidText(String(payable))}
-          >
-            Uang pas
-          </Button>
-          <div className="grid grid-cols-3 gap-2" aria-label="Papan angka">
-            {NUMPAD.map((k) => (
+                  {isCredit
+                    ? rupiah(Math.max(due - (Number.isNaN(paid) ? 0 : paid), 0))
+                    : change === null
+                      ? '—'
+                      : change < 0
+                        ? `Kurang ${rupiah(-change)}`
+                        : rupiah(change)}
+                </span>
+              </p>
+              <div className="grid grid-cols-3 gap-2" aria-label="Nominal cepat">
+                {quickAmounts(payable)
+                  .filter((n) => n !== payable)
+                  .map((n) => (
+                    <Button
+                      width="auto"
+                      key={n}
+                      type={paid === n ? 'primary' : 'outline'}
+                      color={paid === n ? 'primary' : 'light'}
+                      disabled={busy}
+                      onClick={() => setPaidText(String(n))}
+                    >
+                      {rupiah(n)}
+                    </Button>
+                  ))}
+              </div>
               <Button
-                width="auto"
-                key={k}
-                type="ghost"
-                color="light"
+                width="full"
+                type={paid === payable ? 'primary' : 'outline'}
+                color={paid === payable ? 'primary' : 'light'}
                 disabled={busy}
-                aria-label={k === 'hapus' ? 'Hapus angka' : undefined}
-                onClick={() => setPaidText((t) => numpadEdit(t, k))}
+                onClick={() => setPaidText(String(payable))}
               >
-                {k === 'hapus' ? '⌫' : k}
+                Uang pas
               </Button>
-            ))}
-          </div>
+              <div className="grid grid-cols-3 gap-2" aria-label="Papan angka">
+                {NUMPAD.map((k) => (
+                  <Button
+                    width="auto"
+                    key={k}
+                    type="ghost"
+                    color="light"
+                    disabled={busy}
+                    aria-label={k === 'hapus' ? 'Hapus angka' : undefined}
+                    onClick={() => setPaidText((t) => numpadEdit(t, k))}
+                  >
+                    {k === 'hapus' ? '⌫' : k}
+                  </Button>
+                ))}
+              </div>
+            </>
+          )}
           <ErrorText>{error}</ErrorText>
           <div className="grid grid-cols-2 gap-2">
             <Button width="auto" htmlType="submit" size="large" isLoading={busy}>
-              {isCredit ? 'Simpan kasbon' : 'Bayar'}
+              {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind)}
             </Button>
             <Button width="auto" size="large" type="outline" color="light" disabled={busy} onClick={onClose}>
               Tutup
