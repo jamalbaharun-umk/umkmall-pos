@@ -204,3 +204,12 @@ export const soldQtyText = (l: Pick<SoldLine, 'qty' | 'unit' | 'unitPrice'>) => 
 /** Receipt note of a wholesale line, null for any other: "Harga grosir (normal Rp3.500, hemat Rp2.400)". */
 export const soldWholesaleNote = (l: Pick<SoldLine, 'normalUnitPrice' | 'appliedTier' | 'savings'>) =>
   l.appliedTier ? `Harga grosir (normal ${rp(l.normalUnitPrice)}, hemat ${rp(l.savings)})` : null
+
+export type QuoteState = 'idle' | 'loading' | 'error'
+
+/**
+ * "Lanjut ke pembayaran" is allowed only with a priced cart: not empty, in stock, and the server quote neither
+ * pending nor failed (the no-tier estimate can show a higher total than the server charges).
+ */
+export const canProceedToPayment = (s: { cartSize: number; overCount: number; quoteState: QuoteState }) =>
+  s.cartSize > 0 && s.overCount === 0 && s.quoteState === 'idle'
