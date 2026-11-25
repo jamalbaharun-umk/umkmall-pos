@@ -735,7 +735,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
         { unit: 'dus', baseQty: 24, lineTotal: 78_000 },
       ]);
       // The product report nets to nothing.
-      const day = new Date().toISOString().slice(0, 10);
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
       const report = await get(
         store,
         `/reports/products?from=${day}&to=${day}`,
@@ -779,7 +779,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       expect(gone.body.errors).toEqual({
         'lines.0.unit': 'Satuan tidak ditemukan untuk produk ini',
       });
-      const day = new Date().toISOString().slice(0, 10);
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
       const products = await get(
         store,
         `/reports/products?from=${day}&to=${day}`,
