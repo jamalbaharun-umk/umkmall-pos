@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
+import { LocalFakeGateway } from '../src/adapters/fake/local-fake-gateway';
 import {
   CANCEL,
   createApp,
@@ -175,5 +176,19 @@ describe('service auth and tenant isolation', () => {
     await a
       .post(`/payments/${waiting.id}/cancel`, { actorRef: 'c' })
       .expect(200);
+  });
+
+  // PAYMENT_ADAPTERS is not set in this file: the local fake gateway (src/adapters/fake) must not exist.
+  it('without `fake` in PAYMENT_ADAPTERS there are no control routes and no fake gateway', async () => {
+    const store = createStore(h.app);
+    await store.get('/dev/fake-gateway/payments').expect(404);
+    await store.get('/dev/fake-gateway/settings').expect(404);
+    await store.post('/dev/fake-gateway/payments/FAKE-QR-0/pay').expect(404);
+    await store
+      .post(`/dev/fake-gateway/refunds/${randomUUID()}/succeed`)
+      .expect(404);
+    expect(h.app.get(LocalFakeGateway)).toBeNull();
+    // The harness's adapter list has no fake_va: the shipped default (no fake) is asserted in adapters.spec.
+    await store.chargeRaw({ method: 'fake_va' }).expect(422);
   });
 });

@@ -1,6 +1,8 @@
 import { Inject, Injectable, Module } from '@nestjs/common';
 import { PAYMENT_ADAPTERS, PaymentAdapter } from './adapter';
+import { Clock, loadEnv } from '../config';
 import { cashacAdapters } from './cashac.adapter';
+import { LocalFakeGateway } from './fake/local-fake-gateway';
 
 /** Method name → adapter, and PG name → adapter. Refuses to boot with two adapters for one method. */
 @Injectable()
@@ -31,9 +33,26 @@ export class AdapterRegistry {
 @Module({
   providers: [
     // A new PG adapter is added to this list (after the legal gate, UMK-1977). Nothing else changes.
-    { provide: PAYMENT_ADAPTERS, useFactory: cashacAdapters },
+    Clock,
+    // The local fake gateway: null unless PAYMENT_ADAPTERS lists `fake` (refused in production).
+    {
+      provide: LocalFakeGateway,
+      inject: [Clock],
+      useFactory: (clock: Clock) =>
+        loadEnv().PAYMENT_ADAPTERS.includes('fake')
+          ? new LocalFakeGateway(clock)
+          : null,
+    },
+    {
+      provide: PAYMENT_ADAPTERS,
+      inject: [LocalFakeGateway],
+      useFactory: (fake: LocalFakeGateway | null) => [
+        ...cashacAdapters(),
+        ...(fake?.adapters() ?? []),
+      ],
+    },
     AdapterRegistry,
   ],
-  exports: [AdapterRegistry],
+  exports: [AdapterRegistry, LocalFakeGateway],
 })
 export class AdaptersModule {}

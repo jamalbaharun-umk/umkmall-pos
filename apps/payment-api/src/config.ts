@@ -10,6 +10,23 @@ const flag = (fallback: boolean) =>
 const count = (fallback: number) =>
   z.coerce.number().int().nonnegative().default(fallback);
 
+/** Adapters a deploy can add to the CASHAC ones by naming them in PAYMENT_ADAPTERS. */
+export const OPTIONAL_ADAPTERS = ['fake'] as const;
+export type OptionalAdapter = (typeof OPTIONAL_ADAPTERS)[number];
+const names = (list: string | undefined) =>
+  (list ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+/**
+ * Is the adapter named in PAYMENT_ADAPTERS? Read where a module is defined, before `loadEnv` has run; the
+ * list itself is validated by `loadEnv` at boot.
+ */
+export const adapterListed = (
+  name: OptionalAdapter,
+  source: NodeJS.ProcessEnv = process.env,
+): boolean => names(source.PAYMENT_ADAPTERS).includes(name);
+
 // Config comes from the environment only, validated once at boot (fail fast on a bad deploy).
 const EnvSchema = z
   .object({
@@ -56,7 +73,20 @@ const EnvSchema = z
       .default(10),
     // A refused refund blocks the tenant purge for this many days, then no longer (owner decision, M19).
     PAYMENT_PURGE_FAILED_REFUND_BLOCK_DAYS: count(30),
+    // Extra adapters, comma separated. Only `fake`: the local fake gateway (src/adapters/fake), which adds the
+    // methods fake_qris and fake_va and the control routes under /dev/fake-gateway. Never in production.
+    PAYMENT_ADAPTERS: z
+      .string()
+      .default('')
+      .transform(names)
+      .pipe(z.array(z.enum(OPTIONAL_ADAPTERS))),
   })
+  // The fake gateway lets anyone with the service key mark a bill paid: it must not exist in production.
+  .refine(
+    (env) =>
+      !(env.NODE_ENV === 'production' && env.PAYMENT_ADAPTERS.includes('fake')),
+    { path: ['PAYMENT_ADAPTERS'] },
+  )
   // A bill becomes `expired` only at its expiry plus the grace. A sweep that ended before that would never
   // look at an expired bill for late money.
   .refine(
@@ -70,8 +100,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const parsed = EnvSchema.safeParse(source);
   if (!parsed.success) {
     // Name the variables, never print their values.
-    const names = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
-    throw new Error(`Invalid environment: ${names}`);
+    const invalid = [
+      ...new Set(parsed.error.issues.map((i) => String(i.path[0]))),
+    ].join(', ');
+    throw new Error(`Invalid environment: ${invalid}`);
   }
   return parsed.data;
 }

@@ -1,4 +1,4 @@
-import { loadEnv } from './config';
+import { adapterListed, loadEnv } from './config';
 
 const base = {
   DATABASE_URL: 'postgres://payment_app:x@localhost:5544/payment',
@@ -28,5 +28,36 @@ describe('environment', () => {
         PAYMENT_LATE_SWEEP_SECONDS: '600',
       }),
     ).not.toThrow();
+  });
+
+  describe('PAYMENT_ADAPTERS', () => {
+    it('is empty by default and reads a comma list', () => {
+      expect(loadEnv(base).PAYMENT_ADAPTERS).toEqual([]);
+      expect(
+        loadEnv({ ...base, PAYMENT_ADAPTERS: '' }).PAYMENT_ADAPTERS,
+      ).toEqual([]);
+      expect(
+        loadEnv({ ...base, PAYMENT_ADAPTERS: ' fake ,' }).PAYMENT_ADAPTERS,
+      ).toEqual(['fake']);
+      expect(adapterListed('fake', {})).toBe(false);
+      expect(adapterListed('fake', { PAYMENT_ADAPTERS: 'fake' })).toBe(true);
+    });
+
+    it('refuses a name that is not an adapter', () => {
+      expect(() =>
+        loadEnv({ ...base, PAYMENT_ADAPTERS: 'fake,xendit' }),
+      ).toThrow('Invalid environment: PAYMENT_ADAPTERS');
+    });
+
+    it('refuses the fake gateway in production, and only there', () => {
+      expect(() =>
+        loadEnv({ ...base, NODE_ENV: 'production', PAYMENT_ADAPTERS: 'fake' }),
+      ).toThrow('Invalid environment: PAYMENT_ADAPTERS');
+      expect(() => loadEnv({ ...base, NODE_ENV: 'production' })).not.toThrow();
+      for (const NODE_ENV of ['development', 'test'])
+        expect(() =>
+          loadEnv({ ...base, NODE_ENV, PAYMENT_ADAPTERS: 'fake' }),
+        ).not.toThrow();
+    });
   });
 });
