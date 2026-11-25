@@ -97,6 +97,8 @@ export const receivablePayments = pos
       seq: integer('seq'),
       // The payment in payment-api; null with a `seq` = not recorded there yet (the job repeats it).
       paymentId: uuid('payment_id'),
+      // payment-api's method, fixed when the payment was taken (set with `seq`).
+      paymentMethodCode: text('payment_method_code'),
       createdAt: createdAt(),
     },
     (t) => [

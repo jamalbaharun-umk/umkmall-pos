@@ -52,6 +52,33 @@ describe('payment-api client (UMK-1991)', () => {
       loadEnv({ ...BASE, ...ON, PAYMENT_SERVICE_KEY: 'short' }),
     ).toThrow('PAYMENT_SERVICE_KEY');
     expect(loadEnv({ ...BASE, ...ON }).PAYMENT_API_TIMEOUT_MS).toBe(5000);
+    // An empty value means off, not a broken deploy.
+    expect(
+      loadEnv({ ...BASE, PAYMENT_API_URL: '', PAYMENT_SERVICE_KEY: '' })
+        .PAYMENT_API_URL,
+    ).toBeUndefined();
+  });
+
+  it('env: production needs an https URL (or the explicit private-network switch); the waiting time is at least twice the timeout', () => {
+    const prod = { ...BASE, ...ON, NODE_ENV: 'production' };
+    expect(() => loadEnv(prod)).toThrow('PAYMENT_API_URL');
+    expect(
+      loadEnv({ ...prod, PAYMENT_API_URL: 'https://payment.umkmall.id' })
+        .PAYMENT_API_URL,
+    ).toBe('https://payment.umkmall.id');
+    expect(
+      loadEnv({ ...prod, PAYMENT_API_ALLOW_HTTP: 'true' }).PAYMENT_API_URL,
+    ).toBe(ON.PAYMENT_API_URL);
+    expect(() =>
+      loadEnv({ ...BASE, ...ON, POS_PAYMENT_RECONCILE_AFTER_SECONDS: '9' }),
+    ).toThrow('POS_PAYMENT_RECONCILE_AFTER_SECONDS');
+    expect(() =>
+      loadEnv({ ...BASE, ...ON, POS_PAYMENT_RECONCILE_AFTER_SECONDS: '0' }),
+    ).toThrow('POS_PAYMENT_RECONCILE_AFTER_SECONDS');
+    expect(
+      loadEnv({ ...BASE, ...ON, POS_PAYMENT_RECONCILE_AFTER_SECONDS: '10' })
+        .POS_PAYMENT_RECONCILE_AFTER_SECONDS,
+    ).toBe(10);
   });
 
   it('is off without a URL and then never calls out', async () => {
@@ -85,6 +112,8 @@ describe('payment-api client (UMK-1991)', () => {
       'Idempotency-Key': 'order-1:1',
     });
     expect(init.signal).toBeInstanceOf(AbortSignal);
+    // A redirect would carry the service key elsewhere.
+    expect(init.redirect).toBe('error');
     expect(JSON.parse(init.body as string)).toEqual({
       orderRef: 'order-1',
       attempt: 1,
@@ -133,6 +162,27 @@ describe('payment-api client (UMK-1991)', () => {
     );
     await expect(slow.get(TENANT, 'p1')).rejects.toMatchObject({
       kind: 'unavailable',
+    });
+  });
+
+  it('close sends the charge’s own key and body to /payments/close', async () => {
+    const http = jest.fn<ReturnType<PaymentFetch>, Parameters<PaymentFetch>>(
+      () => json(201, { ...PAYMENT, status: 'cancelled' }),
+    );
+    const client = clientWith(http, ON);
+    const closed = await client.close(TENANT, {
+      orderRef: 'order-1',
+      attempt: 1,
+      method: 'cash',
+      amount: 5200,
+      actorRef: 'cashier:c1',
+    });
+    expect(closed.status).toBe('cancelled');
+    const [url, init] = http.mock.calls[0];
+    expect(url).toBe('http://payment.internal:3001/payments/close');
+    expect(init.headers).toMatchObject({
+      'X-Tenant-Id': TENANT,
+      'Idempotency-Key': 'order-1:1',
     });
   });
 

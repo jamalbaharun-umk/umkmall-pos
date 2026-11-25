@@ -68,10 +68,6 @@ export class PurgeService {
       // First, so UMKMall's function takes the row lock (FOR SHARE) and holds it to our commit: a
       // reactivation waits for the purge, or the purge sees it and rolls back.
       await this.assertBeingDeleted(tx, userId);
-      // UMK-1991: the store's rows in payment-api, under that lock and before any pos row goes. The tenant
-      // id is our own row's. A failure (unreachable, or 409 payments_in_flight) throws: this transaction
-      // rolls back, UMKMall gets 503 and its retry finds the store again. payment-api's purge is idempotent.
-      if (this.payments.enabled) await this.payments.purge(tenant.id);
       const tables = (
         await tx.execute<{ name: string }>(sql`
           select c.relname as name from pg_class c
@@ -91,7 +87,24 @@ export class PurgeService {
         );
       }
       await tx.delete(tenants).where(eq(tenants.id, tenant.id));
+      // UMK-1991: the store's rows in payment-api go LAST, once every pos delete has succeeded and just
+      // before the commit, still under the "being deleted" lock. So a pos delete that fails never leaves a
+      // living store without its payments. A failure here (unreachable, or 409 payments_in_flight) rolls
+      // every pos delete back: UMKMall gets 503 and its retry finds the store again. The tenant id is our
+      // own row's. This is the one payment-api call made inside a transaction: a purge is rare and must
+      // not commit unless payment-api agreed.
+      if (this.payments.enabled) await this.payments.purge(tenant.id);
     });
+    // The job may have recorded a payment for this store between that call and the commit. Idempotent;
+    // a failure here is only logged: the pos store is gone, and UMKMall's next purge call answers false.
+    if (this.payments.enabled)
+      await this.payments
+        .purge(tenant.id)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `purge: second payment-api purge failed for tenant ${tenant.id}: ${(error as Error).name}`,
+          ),
+        );
     this.logger.log(`purged tenant ${tenant.id}`);
     return true;
   }

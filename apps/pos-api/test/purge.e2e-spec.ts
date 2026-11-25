@@ -208,6 +208,9 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       { reasonCode: 'customer_cancelled', approverId: s.userId, pin: '482913' },
       randomUUID(),
     ).expect(201);
+    // UMK-1991: a refusal payment-api gave for that sale (written by the job only with payment-api on).
+    await admin`insert into pos.payment_sync_issues (tenant_id, kind, ref_id, attempts, last_error)
+      values (${s.tenantId}, 'sale', ${voided.body.id}, 1, 'payment_mismatch')`;
     return s;
   }
 

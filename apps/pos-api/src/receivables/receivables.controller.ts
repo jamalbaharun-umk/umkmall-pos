@@ -49,6 +49,7 @@ import {
 import { isUniqueViolation, parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { PaymentSync } from '../payments-client/payment-sync.service';
+import { paymentMethodCode } from '../payments-client/payments.client';
 import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
 import { recordStoreCash } from '../store-cash/store-cash-ledger';
@@ -152,6 +153,8 @@ export async function createReceivable(
       actorId: s.actorId,
       actorKind: s.kind,
       seq: sale.recordInPaymentApi ? 1 : null,
+      // The down payment is taken as cash (the store's Tunai).
+      paymentMethodCode: sale.recordInPaymentApi ? 'cash' : null,
     })
     .returning({ id: receivablePayments.id });
   return sale.recordInPaymentApi ? down.id : null;
@@ -456,6 +459,9 @@ export class ReceivablesService {
           requestHash: hash,
           collectedOutsideShift: outsideShift,
           seq: this.payments.enabled ? next : null,
+          paymentMethodCode: this.payments.enabled
+            ? paymentMethodCode(method)
+            : null,
         });
         await tx
           .update(receivables)
@@ -474,7 +480,7 @@ export class ReceivablesService {
       });
     // The money is taken and committed; its record in payment-api follows (the job repeats a failure).
     if (recorded)
-      await this.payments.afterCommit('kasbon payment', () =>
+      await this.payments.afterCommit('receivable_payment', recorded, () =>
         this.payments.recordReceivablePayment(s.tenantId, recorded),
       );
     return this.get(s.tenantId, id);
@@ -491,6 +497,8 @@ export class ReceivablesService {
       .select({
         id: paymentMethods.id,
         isCash: paymentMethods.isCash,
+        isDebit: paymentMethods.isDebit,
+        isWallet: paymentMethods.isWallet,
         isCredit: paymentMethods.isCredit,
       })
       .from(paymentMethods)
@@ -508,7 +516,12 @@ export class ReceivablesService {
         'paymentMethodId',
         'Piutang tidak dapat dibayar dengan kasbon',
       );
-    return { id: m.id, isCash: m.isCash };
+    return {
+      id: m.id,
+      isCash: m.isCash,
+      isDebit: m.isDebit,
+      isWallet: m.isWallet,
+    };
   }
 }
 

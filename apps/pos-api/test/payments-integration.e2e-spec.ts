@@ -42,14 +42,25 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
   let app: INestApplication;
   let sync: PaymentSync;
   let client: PaymentsClient;
-  let link: 'ok' | 'down' | 'lost' = 'ok';
+  // `late`: a charge leaves pos-api, times out there, and reaches payment-api only when the test lets it.
+  let link: 'ok' | 'down' | 'lost' | 'late' = 'ok';
   let calls = 0;
+  let held: (() => Promise<Response>)[] = [];
+  const tenants: string[] = [];
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
   const http = () => request(app.getHttpServer());
 
   const fakeFetch = async (url: string, init: RequestInit) => {
     calls += 1;
     if (link === 'down') throw new TypeError('fetch failed');
+    if (
+      link === 'late' &&
+      init.method === 'POST' &&
+      url.endsWith('/payments')
+    ) {
+      held.push(() => fetch(url, { ...init, signal: undefined }));
+      throw new DOMException('The operation timed out', 'TimeoutError');
+    }
     const res = await fetch(url, init);
     if (link === 'lost') {
       await res.arrayBuffer();
@@ -69,7 +80,12 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
         .useValue(fakeFetch)
         .compile();
       const a = moduleRef.createNestApplication();
-      await a.init();
+      try {
+        await a.init();
+      } catch (error) {
+        await moduleRef.close(); // a refused boot must not leave its database pool open
+        throw error;
+      }
       return a;
     } finally {
       for (const [k, v] of Object.entries(saved))
@@ -85,17 +101,48 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       PAYMENT_SERVICE_KEY: pay.serviceKey,
       // No timer: each test runs the job itself, with the time it wants.
       POS_PAYMENT_RECONCILE_INTERVAL_SECONDS: '0',
+      POS_PAYMENT_SYNC_MAX_ATTEMPTS: '2',
     });
     sync = app.get(PaymentSync);
     client = app.get(PaymentsClient);
   }, 60_000);
   afterAll(async () => {
+    // The balance check over every store of this file: pos-api and payment-api agree on every sale.
+    link = 'ok';
+    await sync.tick(later());
+    const all = await admin<
+      { id: string; status: string; payment_id: string | null }[]
+    >`select id, status, payment_id from pos.sales where tenant_id in ${admin(tenants)}`;
+    const payments = await pay.sql<PaymentRow[]>`
+      select id, tenant_id, order_ref, idempotency_key, method, amount, status
+      from payment.payments where tenant_id in ${pay.sql(tenants)}`;
+    const statusOf = new Map(payments.map((p) => [p.id, p.status]));
+    const paidOrders = payments
+      .filter((p) => p.status === 'paid' && !p.order_ref.includes(':'))
+      .map((p) => p.order_ref)
+      .sort();
+    // No sale is left waiting (a later suite boots with payment-api off, which refuses that).
+    expect(all.filter((x) => x.status === 'awaiting_payment')).toEqual([]);
+    // Paid payments of sales = completed sales, one to one; a cancelled sale never has a paid payment.
+    expect(paidOrders).toEqual(
+      all
+        .filter((x) => x.status === 'completed' && x.payment_id)
+        .map((x) => x.id)
+        .sort(),
+    );
+    for (const x of all) {
+      const st = x.payment_id ? statusOf.get(x.payment_id) : undefined;
+      if (x.status === 'completed' && x.payment_id) expect(st).toBe('paid');
+      if (x.status === 'void' && x.payment_id) expect(st).toBe('voided');
+      if (x.status === 'cancelled') expect(st).not.toBe('paid');
+    }
     await app.close();
     await pay.close();
     await admin.end();
   });
   beforeEach(() => {
     link = 'ok';
+    held = [];
   });
 
   const post = (auth: string, url: string, body: object = {}, key?: string) => {
@@ -109,6 +156,7 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
   /** A store with one product (Rp5.123, so a cash total is rounded), stock 20, an open shift and the owner's void PIN. */
   async function shop(price = 5123) {
     const s = await createStore();
+    tenants.push(s.tenantId);
     const cat = await post(s.auth, '/catalog/categories', {
       name: 'Minuman',
     }).expect(201);
@@ -391,22 +439,36 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       await voidSale(s, saleId).expect(409);
 
       // While payment-api stays down the job concludes nothing, however long the sale has waited.
+      const before0 = calls;
       expect(await sync.tick(later())).toMatchObject({
         cancelled: 0,
         completed: 0,
-        failed: 1,
+        stopped: true,
       });
+      // The tick stops at the first unanswered call instead of waiting on every row.
+      expect(calls).toBe(before0 + 1);
       expect((await saleRow(saleId)).status).toBe('awaiting_payment');
 
-      // Back up, and no payment was ever made: the job cancels the sale and gives everything back.
+      // Back up, and no payment was ever made. A young sale is left alone (the cashier may still retry).
       link = 'ok';
-      expect(await sync.tick()).toMatchObject({ cancelled: 0, completed: 0 }); // too young to judge
+      expect(await sync.tick()).toMatchObject({ cancelled: 0, completed: 0 });
       expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+      expect(await paymentsOf(s.tenantId)).toEqual([]);
+      // After the waiting time the job closes the charge key at payment-api, and cancels on that answer.
       expect(await sync.tick(later())).toMatchObject({ cancelled: 1 });
-      expect((await saleRow(saleId)).status).toBe('cancelled');
+      const [closed, ...none] = await paymentsOf(s.tenantId);
+      expect(none).toEqual([]);
+      expect(closed).toMatchObject({
+        order_ref: saleId,
+        idempotency_key: `${saleId}:1`,
+        status: 'cancelled',
+      });
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'cancelled',
+        payment_id: closed.id,
+      });
       expect(await onHand(s)).toBe(20);
       expect(await quota()).toBe(5);
-      expect(await paymentsOf(s.tenantId)).toEqual([]);
 
       // M16: a cancelled sale is never completed, and a retry of its request charges nothing.
       const before = calls;
@@ -418,7 +480,9 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
         'cancelled',
       );
       expect(calls).toBe(before);
-      expect(await paymentsOf(s.tenantId)).toEqual([]);
+      expect((await paymentsOf(s.tenantId)).map((p) => p.status)).toEqual([
+        'cancelled',
+      ]);
       expect(await onHand(s)).toBe(20);
       await post(s.auth, '/shifts/current/close', {
         countedCash: 100_000,
@@ -479,6 +543,250 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       expect(await onHand(s)).toBe(19);
     });
 
+    it('B1 a charge that times out at pos-api and reaches payment-api AFTER the job gave the sale up is never paid: no paid payment for a cancelled sale', async () => {
+      const s = await shop();
+      const key = randomUUID();
+      link = 'late';
+      const res = await sell(s, {}, key).expect(503);
+      const saleId = res.body.saleId as string;
+      expect(held).toHaveLength(1);
+      link = 'ok';
+      expect(await paymentsOf(s.tenantId)).toEqual([]);
+
+      // The job runs first: it closes the key, then cancels the sale.
+      expect(await sync.tick(later())).toMatchObject({ cancelled: 1 });
+      expect((await saleRow(saleId)).status).toBe('cancelled');
+      expect(await onHand(s)).toBe(20);
+
+      // Now the charge that was on its way lands at payment-api.
+      const landed = await held[0]();
+      expect(landed.status).toBe(200);
+      expect(((await landed.json()) as { status: string }).status).toBe(
+        'cancelled',
+      );
+      expect(
+        (await paymentsOf(s.tenantId)).map((p) => [p.order_ref, p.status]),
+      ).toEqual([[saleId, 'cancelled']]);
+      // And the cashier's own retry is told the sale is cancelled; still nothing is paid.
+      await sell(s, {}, key).expect(409);
+      expect((await paymentsOf(s.tenantId)).map((p) => p.status)).toEqual([
+        'cancelled',
+      ]);
+      expect(await shift(s)).toMatchObject({ cashSales: 0, salesCount: 0 });
+    });
+
+    it('B1 the same charge landing BEFORE the job is found paid, and the job completes the sale instead', async () => {
+      const s = await shop();
+      link = 'late';
+      const res = await sell(s).expect(503);
+      link = 'ok';
+      expect((await held[0]()).status).toBe(201);
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 1,
+        cancelled: 0,
+      });
+      expect((await saleRow(res.body.saleId)).status).toBe('completed');
+      expect((await paymentsOf(s.tenantId)).map((p) => p.status)).toEqual([
+        'paid',
+      ]);
+    });
+
+    it('B1 the close itself is lost on the way back: nothing is cancelled on a guess, and the next tick cancels on the closed payment', async () => {
+      const s = await shop();
+      link = 'down';
+      const res = await sell(s).expect(503);
+      const saleId = res.body.saleId as string;
+      link = 'lost';
+      expect(await sync.tick(later())).toMatchObject({
+        cancelled: 0,
+        stopped: true,
+      });
+      expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+      expect(await onHand(s)).toBe(19);
+      link = 'ok';
+      expect(await sync.tick(later())).toMatchObject({ cancelled: 1 });
+      expect((await saleRow(saleId)).status).toBe('cancelled');
+      expect((await paymentsOf(s.tenantId)).map((p) => p.status)).toEqual([
+        'cancelled',
+      ]);
+    });
+
+    it('the cashier’s retry and the job at the same instant agree: one payment, and the sale is completed exactly when it is paid', async () => {
+      for (const first of ['down', 'lost'] as const) {
+        for (let i = 0; i < 4; i++) {
+          const s = await shop();
+          const key = randomUUID();
+          link = first;
+          const res = await sell(s, {}, key).expect(503);
+          const saleId = res.body.saleId as string;
+          link = 'ok';
+          const [retry] = await Promise.all([
+            sell(s, {}, key),
+            sync.tick(later()),
+            sync.settleSale(s.tenantId, saleId, 'reconcile', later()),
+          ]);
+          const [payment, ...more] = await paymentsOf(s.tenantId);
+          expect(more).toEqual([]);
+          const sale = await saleRow(saleId);
+          expect(sale.payment_id).toBe(payment.id);
+          if (payment.status === 'paid') {
+            expect(retry.status).toBe(201);
+            expect(sale.status).toBe('completed');
+            expect(await onHand(s)).toBe(19);
+          } else {
+            expect(payment.status).toBe('cancelled');
+            expect(retry.status).toBe(409);
+            expect(sale.status).toBe('cancelled');
+            expect(await onHand(s)).toBe(20);
+          }
+          // A lost answer means the payment was already paid: it can only complete.
+          if (first === 'lost') expect(payment.status).toBe('paid');
+        }
+      }
+    });
+
+    it('one tick handles each store’s rows under that store’s own tenant', async () => {
+      const a = await shop();
+      const b = await shop();
+      link = 'lost';
+      const sa = await sell(a).expect(503);
+      const sb = await sell(b).expect(503);
+      link = 'ok';
+      expect(await sync.tick(later())).toMatchObject({ completed: 2 });
+      for (const [store, saleId] of [
+        [a, sa.body.saleId],
+        [b, sb.body.saleId],
+      ] as const) {
+        const [payment, ...more] = await paymentsOf(store.tenantId);
+        expect(more).toEqual([]);
+        expect(payment).toMatchObject({
+          tenant_id: store.tenantId,
+          order_ref: saleId,
+          status: 'paid',
+        });
+        expect(await saleRow(saleId)).toMatchObject({
+          status: 'completed',
+          payment_id: payment.id,
+        });
+      }
+    });
+
+    it('M4 a payment that does not fit its sale is refused, counted with the row id, parked, shown to the owner, and released by a retry', async () => {
+      const s = await shop();
+      const other = await shop();
+      link = 'lost';
+      const res = await sell(s).expect(503);
+      const saleId = res.body.saleId as string;
+      link = 'ok';
+      const [payment] = await paymentsOf(s.tenantId);
+      // payment-api holds another amount than the sale owes (a restore, a bug): never completed on it.
+      await pay.sql`update payment.payments set amount = amount + 100 where id = ${payment.id}`;
+      const issues = async (auth = s.auth) =>
+        (await get(auth, '/payment-sync/issues').expect(200)).body.data as {
+          id: string;
+          kind: string;
+          refId: string;
+          attempts: number;
+          lastError: string;
+          parkedAt: string | null;
+        }[];
+
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 0,
+        failed: 1,
+      });
+      expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+      expect(await issues()).toMatchObject([
+        {
+          kind: 'sale',
+          refId: saleId,
+          attempts: 1,
+          lastError: 'payment_mismatch',
+          parkedAt: null,
+        },
+      ]);
+      // The cashier's retry is refused too, with its own message, and changes nothing.
+      const retry = await post(
+        s.auth,
+        '/sales',
+        { lines: [{ productId: s.productId, qty: 1 }], paid: 10_000 },
+        (
+          await admin<
+            { k: string }[]
+          >`select idempotency_key as k from pos.sales where id = ${saleId}`
+        )[0].k,
+      ).expect(503);
+      expect(retry.body.message).toContain('belum bisa dicatat');
+
+      // Second refusal (the limit in this suite): parked, and no longer swept.
+      expect(await sync.tick(later())).toMatchObject({ failed: 1 });
+      const [parked] = await issues();
+      expect(parked).toMatchObject({ attempts: 2 });
+      expect(parked.parkedAt).not.toBeNull();
+      const before = calls;
+      expect(await sync.tick(later())).toMatchObject({
+        failed: 0,
+        completed: 0,
+      });
+      expect(calls).toBe(before);
+
+      // Another store sees nothing of it and cannot release it.
+      expect(await issues(other.auth)).toEqual([]);
+      await post(other.auth, `/payment-sync/issues/${parked.id}/retry`).expect(
+        404,
+      );
+      expect(await issues()).toHaveLength(1);
+
+      // Put right, then released by the owner: the job completes the sale and the issue is gone.
+      await pay.sql`update payment.payments set amount = amount - 100 where id = ${payment.id}`;
+      await post(s.auth, `/payment-sync/issues/${parked.id}/retry`).expect(200);
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 1,
+        failed: 0,
+      });
+      expect((await saleRow(saleId)).status).toBe('completed');
+      expect(await issues()).toEqual([]);
+    });
+
+    it('M3 pos-api refuses to start with payment-api off while a sale still awaits payment', async () => {
+      const s = await shop();
+      link = 'down';
+      const res = await sell(s).expect(503);
+      await expect(posApp({ PAYMENT_API_URL: '' })).rejects.toThrow(
+        /still await payment/,
+      );
+      link = 'ok';
+      expect(await sync.tick(later())).toMatchObject({ cancelled: 1 });
+      expect((await saleRow(res.body.saleId)).status).toBe('cancelled');
+    });
+
+    it('M1 the timer runs the job, stops with the app, and a tick never rejects when the database is gone', async () => {
+      const timed = await posApp({
+        PAYMENT_API_URL: pay.url,
+        PAYMENT_SERVICE_KEY: pay.serviceKey,
+        PAYMENT_API_TIMEOUT_MS: '500',
+        POS_PAYMENT_RECONCILE_AFTER_SECONDS: '1',
+        POS_PAYMENT_RECONCILE_INTERVAL_SECONDS: '1',
+      });
+      const s = await shop();
+      link = 'lost';
+      const res = await sell(s).expect(503);
+      link = 'ok';
+      const saleId = res.body.saleId as string;
+      for (let i = 0; i < 40; i++) {
+        if ((await saleRow(saleId)).status === 'completed') break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      expect((await saleRow(saleId)).status).toBe('completed');
+      const timedSync = timed.get(PaymentSync);
+      await timed.close();
+      // Pool closed: every sweep fails, the tick still resolves.
+      await expect(timedSync.tick()).resolves.toMatchObject({
+        completed: 0,
+        failed: 3,
+      });
+    }, 30_000);
+
     it('the job fails a sale whose payment closed unpaid: cancelled, stock back, never completed (M16)', async () => {
       const s = await shop();
       link = 'lost';
@@ -538,7 +846,7 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       await voidSale(s, sale.body.id).expect(201);
       expect((await saleRow(sale.body.id)).status).toBe('void');
       expect((await paymentsOf(s.tenantId))[0].status).toBe('paid');
-      expect(await sync.tick()).toMatchObject({ voided: 0, failed: 1 });
+      expect(await sync.tick()).toMatchObject({ voided: 0, stopped: true });
       link = 'ok';
       expect(await sync.tick()).toMatchObject({ voided: 1, failed: 0 });
       expect((await paymentsOf(s.tenantId))[0].status).toBe('voided');
@@ -618,7 +926,7 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
         randomUUID(),
       ).expect(201);
       expect(await paymentsOf(s.tenantId)).toEqual([]);
-      expect(await sync.tick()).toMatchObject({ recorded: 0, failed: 1 });
+      expect(await sync.tick()).toMatchObject({ recorded: 0, stopped: true });
       link = 'ok';
       expect(await sync.tick()).toMatchObject({ recorded: 1, failed: 0 });
       expect(await pairs(s)).toEqual([

@@ -109,6 +109,36 @@ export class PaymentsClient {
     );
   }
 
+  /**
+   * Closes a charge key for good, with the charge's own input. payment-api answers the payment that has
+   * the key, unchanged (a `paid` one stays paid), or writes a `cancelled` one under it, so a charge of
+   * ours that is still on its way can never be paid. The only answer on which a sale may be cancelled
+   * for want of a payment.
+   */
+  async close(
+    tenantId: string,
+    input: {
+      orderRef: string;
+      attempt: number;
+      method: PaymentMethodCode;
+      amount: number;
+      actorRef: string;
+    },
+  ): Promise<Payment> {
+    return this.payment(
+      await this.call(
+        tenantId,
+        'POST',
+        '/payments/close',
+        'POST /payments/close',
+        {
+          body: input,
+          idempotencyKey: `${input.orderRef}:${input.attempt}`,
+        },
+      ),
+    );
+  }
+
   /** The payment a charge key made, or null when payment-api has none. */
   async findByKey(tenantId: string, key: string): Promise<Payment | null> {
     const page = (await this.call(
@@ -201,6 +231,8 @@ export class PaymentsClient {
         headers,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
         signal: AbortSignal.timeout(this.timeoutMs),
+        // A redirect would carry the service key to wherever it points.
+        redirect: 'error',
       });
       body = await res.json().catch(() => null);
     } catch (error) {
@@ -214,7 +246,8 @@ export class PaymentsClient {
         ? (body as { code: string }).code
         : null;
     const rejected = [404, 409, 422].includes(res.status);
-    this.logger.warn(`${route} → ${res.status}${code ? ` ${code}` : ''}`);
+    if (!rejected)
+      this.logger.warn(`${route} → ${res.status}${code ? ` ${code}` : ''}`);
     throw new PaymentApiError(
       rejected ? 'rejected' : 'unavailable',
       res.status,

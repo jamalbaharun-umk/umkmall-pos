@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { StockModule } from '../stock/stock.module';
+import { PaymentSyncController } from './payment-sync.controller';
 import { PaymentSync } from './payment-sync.service';
 import {
   PAYMENT_FETCH,
@@ -11,6 +12,7 @@ import {
 @Global()
 @Module({
   imports: [StockModule],
+  controllers: [PaymentSyncController],
   providers: [
     {
       provide: PAYMENT_FETCH,

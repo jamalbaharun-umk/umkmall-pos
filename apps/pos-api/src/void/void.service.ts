@@ -107,7 +107,7 @@ export class VoidService {
     }
     // UMK-1991: the sale is voided here; now its payments in payment-api (the job repeats a failure).
     const voidId = id;
-    await this.payments.afterCommit('void', () =>
+    await this.payments.afterCommit('void', voidId, () =>
       this.payments.syncVoid(s.tenantId, voidId),
     );
     return this.view(s, id);

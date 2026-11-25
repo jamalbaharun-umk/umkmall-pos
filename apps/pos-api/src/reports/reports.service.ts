@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { reportSettings } from '../db/schema';
+import { FINAL_SALE_STATUSES, reportSettings } from '../db/schema';
 import { fieldError } from '../common/validation';
 import {
   TIMEZONE_UNKNOWN,
@@ -58,7 +58,8 @@ function metrics(r: Row) {
  * tenant_id = session tenant; day boundaries are computed by Postgres in the store's timezone, half-open.
  */
 /** Receipts only: a sale awaiting payment or cancelled for want of one is in no report (UMK-1991). */
-const FINAL = sql`and status in ('completed', 'void')`;
+const FINAL_LIST = sql.raw(FINAL_SALE_STATUSES.map((s) => `'${s}'`).join(', '));
+const FINAL = sql`and status in (${FINAL_LIST})`;
 
 @Injectable()
 export class ReportsService {
@@ -175,7 +176,7 @@ export class ReportsService {
         from pos.sale_lines l
         join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
        where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
-         and s.status in ('completed', 'void')
+         and s.status in (${FINAL_LIST})
       union all
       select 'void', v.created_at, s.number, v.actor_kind, v.actor_id,
              l.id, l.product_id, l.name, -l.qty, l.unit_price, -l.line_total, -l.cost_total

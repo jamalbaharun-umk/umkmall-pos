@@ -163,6 +163,9 @@ export const sales = pos
       // UMK-1991: the payment in payment-api (another database, so no FK). Null for a kasbon sale (its
       // payments are on pos.receivable_payments) and for a sale made while payment-api was off.
       paymentId: uuid('payment_id'),
+      // payment-api's method for this sale, fixed when the sale was made: a later edit of the payment
+      // method's kind never changes what is charged. Null exactly when the sale takes no payment there.
+      paymentMethodCode: text('payment_method_code'),
       cancelledAt: ts('cancelled_at'),
       createdAt: createdAt(),
     },

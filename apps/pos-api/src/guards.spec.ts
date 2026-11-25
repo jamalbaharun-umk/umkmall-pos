@@ -134,4 +134,49 @@ describe('repo guards', () => {
       ),
     ).toEqual([]);
   });
+
+  it('never calls payment-api inside a database transaction (payment-sync: one transaction, with no client call in it)', () => {
+    const text = files.find(
+      ({ f }) => f === path.join('payments-client', 'payment-sync.service.ts'),
+    )!.text;
+    const parts = text.split('.transaction(');
+    expect(parts).toHaveLength(2);
+    // The transaction's body: up to the end of applyToSale.
+    const body = parts[1].slice(0, parts[1].indexOf('\n  }\n'));
+    expect(body.length).toBeGreaterThan(300);
+    expect(body).not.toMatch(/this\.client\./);
+    // Sales, receivables and void call payment-api only through PaymentSync, after their own commit.
+    const direct = files
+      .filter(
+        ({ f }) => !f.startsWith('payments-client') && !f.startsWith('purge'),
+      )
+      .filter(({ text: t }) => /\bPaymentsClient\b/.test(t))
+      .map(({ f }) => f);
+    expect(direct).toEqual([]);
+  });
+
+  it('counts only receipts: every aggregate over pos.sales filters FINAL_SALE_STATUSES, never its own list', () => {
+    for (const f of [
+      path.join('reports', 'reports.service.ts'),
+      path.join('shifts', 'shifts.service.ts'),
+      path.join('sales', 'sales.service.ts'),
+    ]) {
+      const text = files.find((x) => x.f === f)!.text;
+      expect(text).toContain('FINAL_SALE_STATUSES');
+      expect(text).not.toMatch(/'completed',\s*'void'/);
+    }
+    // And no other file reads pos.sales in bulk without knowing the statuses.
+    const readers = files
+      .filter(({ text }) => /\.from\(sales\)|\bpos\.sales\b/.test(text))
+      .filter(({ f }) => !f.startsWith(path.join('db', 'schema')))
+      .map(({ f }) => f)
+      .sort();
+    expect(readers).toEqual([
+      path.join('payments-client', 'payment-sync.service.ts'),
+      path.join('reports', 'reports.service.ts'),
+      path.join('sales', 'sales.service.ts'),
+      path.join('shifts', 'shifts.service.ts'),
+      path.join('void', 'void.service.ts'),
+    ]);
+  });
 });
