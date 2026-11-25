@@ -60,8 +60,27 @@ import {
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
-import { AwaitingList, OnlineWait, ResumeGate, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
-import { finishPlan, forgetPending, mustRenewKey, parsePayment, saleFailure, trackOwn, type OwnEvent, type SalePayment } from './-online'
+import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
+import { parsePayment, saleFailure, type ResumeDecision, type SalePayment } from './-online'
+import {
+  finishPlan,
+  gateOf,
+  HELD_SAME_TEXT,
+  HELD_STOCK_HINT,
+  holdsStock,
+  isOwn,
+  onlineBlocked,
+  orderNotice,
+  OWN_SALE_OPEN_TEXT,
+  RECORDED_TEXT,
+  recordedDescription,
+  resumePlan,
+  saleAnswerEvent,
+  toCheck,
+  type PendingEvent,
+  type SaleAnswer,
+} from './-pending'
+import { usePending, type PendingStore } from './-pending-store'
 import { useLost } from './-use-lost'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
@@ -165,23 +184,29 @@ function Register({
   const [paying, setPaying] = useState(false)
   const [soldOut, setSoldOut] = useState<string>()
   const [paid, setPaid] = useState<PaidSale>()
-  // UMK-1991: a PG sale waits for its payment on its own screen; a reload brings the screen back.
-  // `own`: the sale was made from the order in this cart; a sale picked from the list is somebody else's order.
-  const [waiting, setWaiting] = useState<{ payment: SalePayment; own: boolean } | null>(null)
-  const [ownSale, setOwnSale] = useState<string | null>(null)
-  const resume = useResumeOnlineSale()
+  // UMK-1991: a PG sale waits for its payment on its own screen; a reload brings the screen back. Which sales are
+  // remembered, which one is the cart's own and which Idempotency-Key the next sale sends is all in `-pending.ts`:
+  // this screen only dispatches what happened and reads the state. `payments` is what pos-api last said of each.
+  const pend = usePending()
+  const [payments, setPayments] = useState<Record<string, SalePayment>>({})
   const [listing, setListing] = useState(false)
-  const online = waiting ?? (resume.resumed ? { payment: resume.resumed, own: resume.own } : null)
+  const onScreen = pend.state.showing ? payments[pend.state.showing] : undefined
+  const online = onScreen ? { payment: onScreen, own: isOwn(pend.state, onScreen.saleId) } : null
+  /** One sale becomes known together with its payment: the screen can never show a sale it has no payment of. */
+  const track = (payment: SalePayment, ev: PendingEvent) => {
+    setPayments((p) => ({ ...p, [payment.saleId]: payment }))
+    pend.dispatch(ev)
+  }
+  // A sale that should be on screen but has no payment here (it cannot happen through `track`): ask pos-api again.
   useEffect(() => {
-    if (resume.resumed && resume.own) setOwnSale(resume.resumed.saleId)
-  }, [resume.resumed, resume.own])
+    const id = pend.state.showing
+    if (id && !payments[id]) pend.dispatch({ type: 'resume_answered', saleId: id, result: 'retry' })
+  }, [pend.state.showing, payments])
   // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
   const canDiscount = useCan('sales.price_override')
   const [discountText, setDiscountText] = useState('')
   const [member, setMember] = useState<MemberOption | null>(null)
   const [voucher, setVoucher] = useState<AppliedVoucher | null>(null)
-  // One key per request: a double tap or a retry of the same order sends the same key, so one sale. Any change to the
-  // cart, note, member or voucher is a new request and gets a new key (pos-api refuses a known key with another body).
   // The open bill is kept per tab while the cashier visits other pages; restored once on mount (after hydration).
   const [restored, setRestored] = useState(false)
   useEffect(() => {
@@ -193,19 +218,15 @@ function Register({
   useEffect(() => {
     if (restored) writeCart({ lines: savedLines(cart), note })
   }, [restored, cart, note])
-  const [key, setKey] = useState(() => crypto.randomUUID())
-  // The method of an ONLINE sale written under this key that pos-api could not charge (503 with a sale id): only then
-  // does another method need another key (`mustRenewKey`).
-  const [held, setHeld] = useState<string | null>(null)
-  const freshKey = () => {
-    const k = crypto.randomUUID()
-    setKey(k)
-    setHeld(null)
-    return k
-  }
-  useEffect(() => void freshKey(), [cart, note, member, voucher, discountText])
-  // The record of this cart's own sale is set and cleared only here.
-  const track = (ev: OwnEvent) => setOwnSale(trackOwn(ev))
+  // The cashier changed the order (not the first render, nor the restore after a reload): the reducer decides whether
+  // that is another sale. The Idempotency-Key is never made or kept here.
+  const orderSig = JSON.stringify([savedLines(cart), note, member?.id ?? null, voucher?.code ?? null, discountText])
+  const lastOrderSig = useRef<string | null>(null)
+  useEffect(() => {
+    if (!restored) return
+    if (lastOrderSig.current !== null && lastOrderSig.current !== orderSig) pend.dispatch({ type: 'cart_edited' })
+    lastOrderSig.current = orderSig
+  }, [restored, orderSig])
   const clearOrder = () => {
     setCart([])
     setNote('')
@@ -213,31 +234,29 @@ function Register({
     setVoucher(null)
     setDiscountText('')
   }
-  // A reload found the remembered sale already ended: a completed one is rung up (its order leaves the cart and its
-  // receipt is offered), a cancelled one only says so.
-  useEffect(() => {
-    const c = resume.completed
-    if (!c) return
-    if (c.own) clearOrder()
-    track({ type: 'ended' })
-    freshKey()
+  // The answers about the sales that had to be checked (after a reload, or put aside): a completed one is rung up (its
+  // order leaves the cart only when the cart is still its order, and its receipt is offered), an ended one only says so.
+  const onResume = (saleId: string, d: ResumeDecision) => {
+    const plan = resumePlan(pend.current(), saleId, d.do)
+    if (d.do === 'wait') return track(d.payment, { type: 'resume_answered', saleId, result: 'wait' })
+    pend.dispatch({ type: 'resume_answered', saleId, result: d.do })
+    if (!plan.known || d.do === 'retry') return
     void router.invalidate()
-    setPaid({ id: c.saleId, change: null, receivableRest: null })
-    resume.ack()
-  }, [resume.completed])
-  useEffect(() => {
-    const e = resume.ended
-    if (!e) return
-    track({ type: 'ended' })
-    freshKey()
-    void router.invalidate()
-    notifySuccess(
-      e.reversed
-        ? `Penjualan #${e.saleNumber} sudah dibatalkan dan dananya dikembalikan selagi kasir ini terputus. Lihat di Riwayat.`
-        : `Penjualan #${e.saleNumber} sudah ditutup tanpa pembayaran. Stok kembali.`,
-    )
-    resume.ack()
-  }, [resume.ended])
+    if (d.do === 'completed') {
+      if (plan.clearCart) {
+        clearOrder()
+        setPaying(false)
+      }
+      setPaid({ id: d.saleId, change: null, receivableRest: null })
+    }
+    if (d.do === 'ended')
+      notifySuccess(
+        d.reversed
+          ? `Penjualan #${d.saleNumber} sudah dibatalkan dan dananya dikembalikan selagi kasir ini terputus. Lihat di Riwayat.`
+          : `Penjualan #${d.saleNumber} sudah ditutup tanpa pembayaran. Stok kembali.`,
+      )
+  }
+  const checks = useResumeChecks(toCheck(pend.state), onResume)
 
   const categories = useMemo(
     () =>
@@ -448,12 +467,9 @@ function Register({
               size="compact"
               color="danger"
               onClick={() => {
-                setCart([])
-                setNote('')
-                setDiscountText('')
-                setVoucher(null)
-                setMember(null)
-                track({ type: 'ended' })
+                clearOrder()
+                // The order is given up, not the sales made from it: those stay remembered until pos-api ends them.
+                pend.dispatch({ type: 'order_cleared' })
               }}
             >
               Hapus semua
@@ -639,37 +655,24 @@ function Register({
           total={total}
           cart={cart}
           note={note}
-          idempotencyKey={key}
+          pend={pend}
           methods={methods}
-          chargeable={resume.unresolved ? [] : chargeable}
-          onlineBlocked={resume.unresolved}
+          chargeable={onlineBlocked(pend.state) ? [] : chargeable}
+          onlineBlocked={onlineBlocked(pend.state)}
           qris={qris}
           member={member}
           onMemberChange={setMember}
           voucher={voucher}
           onClose={() => setPaying(false)}
-          held={held}
-          onHold={(methodId, saleId) => {
-            setHeld(methodId)
-            track({ type: 'created', saleId })
-          }}
-          renewKey={freshKey}
-          onAwaiting={(payment) => {
+          onAwaiting={(payment, ev) => {
             setPaying(false)
-            track({ type: 'created', saleId: payment.saleId })
-            setWaiting({ payment, own: true })
+            track(payment, ev)
           }}
           onPaid={(sale) => {
             void router.invalidate() // fresh prices and products for the next order
             setPaying(false)
             setPaid(sale)
-            setCart([])
-            setNote('')
-            setMember(null)
-            setVoucher(null)
-            setDiscountText('')
-            track({ type: 'ended' })
-            freshKey()
+            clearOrder()
           }}
         />
       )}
@@ -677,27 +680,29 @@ function Register({
       <AwaitingList
         open={listing}
         onClose={() => setListing(false)}
-        onPick={(payment) => setWaiting({ payment, own: payment.saleId === ownSale })}
+        onPick={(payment) => track(payment, { type: 'sale_picked', saleId: payment.saleId })}
       />
-      <ResumeGate resume={resume} />
+      <ResumeGate gate={gateOf(pend.state)} onRetry={checks.retry} onAside={() => pend.dispatch({ type: 'set_aside' })} />
       {online && (
         <OnlineWait
           key={online.payment.saleId}
           initial={online.payment}
           own={online.own}
           onFinish={(r: OnlineFinish) => {
-            setWaiting(null)
-            resume.clear()
+            // What the end means for the cart depends on whose sale it was, read before the sale is forgotten (a
+            // picked sale, or one the order moved on from, never touches this cart). Only this sale is forgotten.
+            const plan = finishPlan(
+              pend.current(),
+              r.saleId,
+              r.kind === 'paid' ? { kind: 'paid' } : { kind: 'closed', again: r.again },
+            )
+            pend.dispatch({ type: 'sale_finished', saleId: r.saleId })
+            setPayments(({ [r.saleId]: _done, ...rest }) => rest)
             void router.invalidate() // stock is back (or sold): fresh products for the next order
-            // What the end means for the cart depends on whose sale it was (a picked sale never touches this cart).
-            const plan = finishPlan(r.kind === 'paid' ? { kind: 'paid' } : { kind: 'closed', again: r.again }, online.own)
-            // The cart's own sale ended: forget it. A picked sale ended: the record goes back to the cart's own sale, if any.
-            if (online.own) track({ type: 'ended' })
-            else if (ownSale) track({ type: 'created', saleId: ownSale })
-            else forgetPending()
-            // A new key: the same key would answer the finished sale again.
-            if (plan.renewKey) freshKey()
-            if (plan.clearCart) clearOrder()
+            if (plan.clearCart) {
+              clearOrder()
+              setPaying(false)
+            }
             // Expired or failed: straight to choosing another way to pay, the cart is still there.
             if (plan.openPay) setPaying(true)
           }}
@@ -872,7 +877,7 @@ function PayDialog({
   total,
   cart,
   note,
-  idempotencyKey,
+  pend,
   methods: allMethods,
   chargeable,
   qris,
@@ -882,9 +887,6 @@ function PayDialog({
   onClose,
   onPaid,
   onAwaiting,
-  renewKey,
-  held,
-  onHold,
   onlineBlocked,
 }: {
   subtotal: number
@@ -894,7 +896,8 @@ function PayDialog({
   total: number
   cart: CartLine[]
   note: string
-  idempotencyKey: string
+  /** The register's memory of unfinished sales: the key of each request is read from it when the request is sent. */
+  pend: PendingStore
   methods: PaymentMethod[]
   chargeable: string[]
   qris: Qris
@@ -903,14 +906,8 @@ function PayDialog({
   voucher: AppliedVoucher | null
   onClose: () => void
   onPaid: (sale: PaidSale) => void
-  /** UMK-1991: the sale was written and now waits for its QRIS or VA payment. */
-  onAwaiting: (payment: SalePayment) => void
-  /** The sale this key made is cancelled: the next attempt must not replay it. Answers the new key. */
-  renewKey: () => string
-  /** The method of an online sale written under this key that got no charge answer (503): see `mustRenewKey`. */
-  held: string | null
-  /** An online sale was written under this key but not charged: remember its method and sale. */
-  onHold: (methodId: string, saleId: string) => void
+  /** UMK-1991: the sale was written and now waits for its QRIS or VA payment (`ev` is that fact for the memory). */
+  onAwaiting: (payment: SalePayment, ev: PendingEvent) => void
   /** A sale remembered before a reload is still unchecked: online methods wait (cash is never blocked). */
   onlineBlocked: boolean
 }) {
@@ -953,8 +950,12 @@ function PayDialog({
     } else if (!paidText.trim()) return setError('Wajib diisi: masukkan uang diterima')
     else if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 50.000')
     else if (amount < payable) return setError('Uang dibayar kurang dari jumlah yang harus dibayar')
-    // The order's key; only another method after an online 503 that wrote a sale gets a new one.
-    const sendKey = mustRenewKey(held, methodId) ? renewKey() : idempotencyKey
+    // The key is read from the register's memory NOW, never from this render: the error dialog's "Coba lagi" runs an
+    // older closure of this function, and must still send the key of the sale that was last written.
+    const online = step === 'online'
+    const plan = pend.send(methodId)
+    if ('blocked' in plan) return setError(OWN_SALE_OPEN_TEXT)
+    const sendKey = plan.key
     lock.current = true
     setBusy(true)
     setError(undefined)
@@ -983,14 +984,25 @@ function PayDialog({
     })
     lock.current = false
     setBusy(false)
+    const paymentOf = res.ok && res.data.status === 'awaiting_payment' ? parsePayment(res.data.payment) : null
+    const answer: SaleAnswer = res.ok
+      ? res.data.status === 'awaiting_payment'
+        ? { ok: true, awaiting: true, saleId: res.data.id, readable: paymentOf !== null }
+        : { ok: true, awaiting: false }
+      : { ok: false, status: res.status ?? 0, saleId: res.saleId, error: res.error }
+    // What the answer means for the key and the remembered sales is decided in `-pending.ts` (a cancelled sale's key
+    // is spent, a sale written but not charged is kept, another body under a used key means a sale already exists).
+    const ev = saleAnswerEvent(pend.current(), { key: sendKey, methodId, online }, answer)
     if (!res.ok) {
-      // UMK-1991: a PG sale the gateway refused is cancelled for good: this key would only answer it again.
-      if (res.status === 409 && res.saleId) renewKey()
-      // The sale was written but not charged: remember it, so a reload or the Menunggu list still finds it.
-      if (res.status === 503 && res.saleId && step === 'online') onHold(methodId, res.saleId)
+      pend.dispatch(ev)
+      if (ev.type === 'sale_mismatch') {
+        // The first sale exists (or may): never a silent dead end. The dialog and the notice above the button say so.
+        showError(res, { action: 'menyimpan penjualan' }, () => recordedDescription(res.error))
+        return setError(RECORDED_TEXT)
+      }
       showError(
         res.status === 503 || (res.status === 409 && res.code)
-          ? { ...saleFailure(res.status, res.code, res.saleId, step === 'online'), error: res.error }
+          ? { ...saleFailure(res.status, res.code, res.saleId, online), error: res.error }
           : res,
         {
           action: 'menyimpan penjualan',
@@ -1003,13 +1015,18 @@ function PayDialog({
         void router.invalidate() // the grid shows the new prices too
         return setError(`Harga berubah: total terbaru ${rupiah(res.total)}. Periksa lalu bayar lagi.`)
       }
-      return setError(res.error)
+      // A sale written but never charged still holds its stock: say why a last unit is refused.
+      const stockHeld = res.status === 409 && !res.saleId && holdsStock(pend.current())
+      return setError(stockHeld ? `${res.error} ${HELD_STOCK_HINT}` : res.error)
     }
-    const awaiting = res.data.status === 'awaiting_payment' ? parsePayment(res.data.payment) : null
-    if (awaiting) {
+    if (res.data.status === 'awaiting_payment') {
       notifySuccess('Penjualan dibuat. Menunggu pembayaran pelanggan.')
-      return onAwaiting(awaiting)
+      if (paymentOf) return onAwaiting(paymentOf, ev)
+      // Written and waiting, but its payment could not be read: it is remembered and asked for again, never "paid".
+      pend.dispatch(ev)
+      return onClose()
     }
+    pend.dispatch(ev)
     notifySuccess('Pembayaran berhasil')
     onPaid({
       id: res.data.id,
@@ -1017,6 +1034,7 @@ function PayDialog({
       receivableRest: res.data.receivableRest ?? null,
     })
   }
+  const notice = orderNotice(pend.state)
 
   return (
     <Dialog
@@ -1196,6 +1214,31 @@ function PayDialog({
                 ))}
               </div>
             </>
+          )}
+          {notice && (
+            <Alert variant="warning" size="small" role="alert">
+              {notice === 'own_sale_open' ? OWN_SALE_OPEN_TEXT : notice === 'held_same' ? HELD_SAME_TEXT : RECORDED_TEXT}
+              {notice === 'recorded' && (
+                <span className="mt-2 flex flex-wrap gap-2">
+                  <Button asChild type="outline" color="light" size="small" width="auto">
+                    <Link to="/kasir/riwayat">Buka Riwayat</Link>
+                  </Button>
+                  <Button
+                    type="outline"
+                    color="light"
+                    size="small"
+                    width="auto"
+                    disabled={busy}
+                    onClick={() => {
+                      pend.dispatch({ type: 'recorded_acked' })
+                      setError(undefined)
+                    }}
+                  >
+                    Sudah saya cek: buat penjualan baru
+                  </Button>
+                </span>
+              )}
+            </Alert>
           )}
           <ErrorText>{error}</ErrorText>
           {busy && step === 'online' && (

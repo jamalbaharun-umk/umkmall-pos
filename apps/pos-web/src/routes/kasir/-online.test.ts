@@ -2,19 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   OPEN_PAST_CODE_TIME,
   cancelBody,
-  finishPlan,
   paidFigures,
   resumeDecision,
   saleFailure,
-  mustRenewKey,
   cashPaidToSend,
-  trackOwn,
   cashDue,
   cashSwitchError,
   clockText,
   closedText,
   countdown,
-  forgetPending,
   agoText,
   cashSwitchWarning,
   isLink,
@@ -27,8 +23,6 @@ import {
   paidLater,
   parsePayment,
   paymentFailure,
-  pendingSale,
-  rememberPending,
   type SalePayment,
 } from './-online'
 import { describeError } from '../../lib/describe-error'
@@ -198,48 +192,16 @@ describe('late money and cancel text', () => {
     expect(cancelBody(pay({ canCloseAtGateway: false }), rp)).toMatch(/masih bisa dibayar sampai habis waktu/)
     expect(cancelBody(pay({ canCloseAtGateway: false }), rp)).toContain('Rp5.123')
   })
+  it('says that cash already taken is recorded nowhere when a sale turned into cash is cancelled', () => {
+    expect(cancelBody(pay(), rp)).not.toMatch(/tunai/)
+    expect(cancelBody(pay({ method: 'cash' }), rp)).toMatch(/Uang tunai yang sudah Anda terima.*kembalikan ke pelanggan/)
+    expect(cancelBody(pay({ switchingToCash: true, canCloseAtGateway: false }), rp)).toMatch(/kembalikan ke pelanggan.*masih bisa dibayar/)
+  })
   it('paidLater shows the paid time only when it is another moment', () => {
     expect(paidLater('2026-11-25T10:00:00Z', null)).toBe(false)
     expect(paidLater('2026-11-25T10:00:00Z', '2026-11-25T10:00:30Z')).toBe(false)
     expect(paidLater('2026-11-25T10:00:00Z', '2026-11-25T10:09:00Z')).toBe(true)
     expect(paidLater('x', 'y')).toBe(false)
-  })
-})
-
-describe('resume memory', () => {
-  const store = () => {
-    const m = new Map<string, string>()
-    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }
-  }
-  it('remembers a sale id and forgets it', () => {
-    const s = store()
-    expect(pendingSale(s)).toBeNull()
-    rememberPending(ID, true, s)
-    expect(pendingSale(s)).toEqual({ id: ID, own: true })
-    rememberPending(ID, false, s)
-    expect(pendingSale(s)).toEqual({ id: ID, own: false })
-    forgetPending(s)
-    expect(pendingSale(s)).toBeNull()
-  })
-  it('accepts only a real UUID', () => {
-    const s = store()
-    s.setItem('pos.online-sale', '-'.repeat(36))
-    expect(pendingSale(s)).toBeNull()
-    s.setItem('pos.online-sale', JSON.stringify({ id: 'a'.repeat(36), own: true }))
-    expect(pendingSale(s)).toBeNull()
-  })
-  it('ignores a stored value that is no id, and never throws when storage does', () => {
-    const s = store()
-    s.setItem('pos.online-sale', '../../x')
-    expect(pendingSale(s)).toBeNull()
-    const broken = {
-      getItem: () => { throw new Error('blocked') },
-      setItem: () => { throw new Error('blocked') },
-      removeItem: () => { throw new Error('blocked') },
-    }
-    expect(() => rememberPending(ID, true, broken)).not.toThrow()
-    expect(pendingSale(broken)).toBeNull()
-    expect(() => forgetPending(broken)).not.toThrow()
   })
 })
 
@@ -347,35 +309,6 @@ describe('design 26 details', () => {
   })
 })
 
-describe('mustRenewKey: the key changes only for another method after an online 503 that wrote a sale', () => {
-  const online = '1b9d2a3e-aaaa-4bbb-8ccc-0123456789ab'
-  const cash = '2c9d2a3e-aaaa-4bbb-8ccc-0123456789cd'
-  it('keeps the key when no online sale is held, whatever the method or amount: a lost answer is replayed, never doubled', () => {
-    expect(mustRenewKey(null, cash)).toBe(false)
-    expect(mustRenewKey(null, online)).toBe(false)
-  })
-  it('keeps the key for a retry of the same online method', () => {
-    expect(mustRenewKey(online, online)).toBe(false)
-  })
-  it('renews the key for another method after an online 503 that returned a sale', () => {
-    expect(mustRenewKey(online, cash)).toBe(true)
-  })
-})
-
-describe('trackOwn: the record of the cart\'s own sale is set and cleared in one place', () => {
-  const store = () => {
-    const m = new Map<string, string>()
-    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) }
-  }
-  it('a created sale is remembered as own and an ended order forgets it, so a reload never resumes it against a new order', () => {
-    const s = store()
-    expect(trackOwn({ type: 'created', saleId: ID }, s)).toBe(ID)
-    expect(pendingSale(s)).toEqual({ id: ID, own: true })
-    expect(trackOwn({ type: 'ended' }, s)).toBeNull()
-    expect(pendingSale(s)).toBeNull()
-  })
-})
-
 describe('cashPaidToSend', () => {
   it('checks what was typed before the intent exists', () => {
     expect(cashPaidToSend(false, '', 5123)).toEqual({ error: expect.stringMatching(/Wajib diisi/) })
@@ -399,26 +332,13 @@ describe('saleFailure', () => {
   })
 })
 
-describe('finishPlan: whose cart a waiting screen ends', () => {
-  it('an own sale that was paid clears the order and starts a new key', () => {
-    expect(finishPlan({ kind: 'paid' }, true)).toEqual({ clearCart: true, openPay: false, renewKey: true })
-  })
-  it('an own sale that ended unpaid keeps the cart, and reopens payment only when asked', () => {
-    expect(finishPlan({ kind: 'closed', again: true }, true)).toEqual({ clearCart: false, openPay: true, renewKey: true })
-    expect(finishPlan({ kind: 'closed', again: false }, true).openPay).toBe(false)
-  })
-  it('a sale picked from the list touches neither the cart, the key nor the payment dialog', () => {
-    const none = { clearCart: false, openPay: false, renewKey: false }
-    expect(finishPlan({ kind: 'paid' }, false)).toEqual(none)
-    expect(finishPlan({ kind: 'closed', again: true }, false)).toEqual(none)
-  })
+describe('closedText: a picked sale', () => {
   it('a picked sale never says the order is still at the till', () => {
     expect(closedText('expired', false).body).not.toMatch(/masih ada di kasir/)
     expect(closedText('failed', false).body).not.toMatch(/keranjang/)
     expect(closedText('expired', true).body).toMatch(/masih ada di kasir/)
   })
 })
-
 describe('resumeDecision: what a reload does with the remembered sale', () => {
   const ok = (over: Record<string, unknown>) => ({ ok: true as const, data: pay(over) })
   it('an open sale shows the waiting screen again, also a paid payment whose sale is not complete yet', () => {

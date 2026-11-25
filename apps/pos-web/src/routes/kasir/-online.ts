@@ -253,11 +253,18 @@ export function lateReceiptText(r: LateReceipt, rupiah: (n: number) => string): 
   return `${what}. Belum dikembalikan: beri tahu pemilik.`
 }
 
-/** The cancel confirmation's body: a code that cannot be closed at the gateway stays payable until it expires. */
+/**
+ * The cancel confirmation's body: a code that cannot be closed at the gateway stays payable until it expires, and
+ * cash already taken for a sale that was turned into cash is recorded nowhere once it is cancelled.
+ */
 export function cancelBody(p: SalePayment, rupiah: (n: number) => string): string {
   const base = 'Stok dan voucher kembali dan pesanan tetap ada di kasir. Tidak perlu PIN.'
-  if (p.canCloseAtGateway) return base
-  return `${base} Kode ini tidak bisa ditutup di gateway dan masih bisa dibayar sampai habis waktu. Bila pelanggan tetap membayar, uang ${rupiah(p.amount)} dikembalikan otomatis.`
+  const cash =
+    p.method === 'cash' || p.switchingToCash
+      ? ' Uang tunai yang sudah Anda terima untuk penjualan ini tidak akan tercatat: kembalikan ke pelanggan.'
+      : ''
+  if (p.canCloseAtGateway) return base + cash
+  return `${base}${cash} Kode ini tidak bisa ditutup di gateway dan masih bisa dibayar sampai habis waktu. Bila pelanggan tetap membayar, uang ${rupiah(p.amount)} dikembalikan otomatis.`
 }
 
 /** Whether the time a sale was paid is worth showing next to the time it was rung up (more than a minute apart). */
@@ -314,18 +321,8 @@ export function paidFigures(raw: unknown): { paid: number; change: number } | nu
   return { paid, change }
 }
 
-// ---- The key of a sale request ----
-
-/**
- * Whether the next sale request needs a new Idempotency-Key. The order's key is kept for everything else, the amount
- * handed over included: a cash sale that committed whose answer was lost must be replayed by a corrected amount or
- * method, never written twice. The one exception: an ONLINE sale was written but pos-api got no clear answer from
- * payment-api (503 with a saleId, `held` = its method) and the cashier now picks another method; replaying the key
- * would only answer 422 (another body). `held` is null when no such sale exists for this key.
- */
-export function mustRenewKey(held: string | null, methodId: string): boolean {
-  return held !== null && held !== methodId
-}
+// ---- A refused sale request ----
+// (The Idempotency-Key and the memory of unfinished sales are decided in `-pending.ts`.)
 
 /** A refused sale request: what the error dialog is told. Only an ONLINE sale that was written but not charged is "sale_waiting". */
 export function saleFailure(
@@ -336,21 +333,6 @@ export function saleFailure(
 ): { status: number; code: string | undefined } {
   if (status === 503) return { status, code: saleId && online ? 'sale_waiting' : undefined }
   return { status, code }
-}
-
-// ---- What happens when a waiting screen ends ----
-
-export type FinishInfo = { kind: 'paid' } | { kind: 'closed'; again: boolean }
-export type FinishPlan = { clearCart: boolean; openPay: boolean; renewKey: boolean }
-
-/**
- * What the register does when a waiting screen ends. `own`: the sale was made from the order on this screen. A sale
- * picked from the list belongs to another order (or tablet): its end never wipes, nor reopens payment for, this cart.
- */
-export function finishPlan(r: FinishInfo, own: boolean): FinishPlan {
-  if (!own) return { clearCart: false, openPay: false, renewKey: false }
-  if (r.kind === 'paid') return { clearCart: true, openPay: false, renewKey: true }
-  return { clearCart: false, openPay: r.again, renewKey: true }
 }
 
 // ---- Resume after a reload ----
@@ -378,60 +360,6 @@ export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
   return p.saleStatus === 'completed'
     ? { do: 'completed', saleId: p.saleId, saleNumber: p.saleNumber }
     : { do: 'ended', saleNumber: p.saleNumber, reversed: p.saleStatus === 'void' || p.status === 'refunded' || p.status === 'refund_pending' || p.status === 'voided' }
-}
-
-// ---- Remembering the sale across a reload ----
-
-const PENDING_KEY = 'pos.online-sale'
-type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-/**
- * Remember (per tab, like the open bill) a sale that waits for its payment, so a reload shows the waiting screen again.
- * `own`: the order in the register's cart made this sale. Only the id and that flag are kept. Never throws.
- */
-export function rememberPending(saleId: string, own: boolean, storage?: StorageLike): void {
-  try {
-    ;(storage ?? sessionStorage).setItem(PENDING_KEY, JSON.stringify({ id: saleId, own }))
-  } catch {
-    // private window or blocked storage: the waiting screen just cannot be resumed
-  }
-}
-export function pendingSale(storage?: StorageLike): { id: string; own: boolean } | null {
-  try {
-    const raw = (storage ?? sessionStorage).getItem(PENDING_KEY)
-    if (!raw) return null
-    if (UUID.test(raw)) return { id: raw, own: true } // the first format: the id alone
-    const v: unknown = JSON.parse(raw)
-    return isObject(v) && typeof v.id === 'string' && UUID.test(v.id) ? { id: v.id, own: v.own !== false } : null
-  } catch {
-    return null
-  }
-}
-export function forgetPending(storage?: StorageLike): void {
-  try {
-    ;(storage ?? sessionStorage).removeItem(PENDING_KEY)
-  } catch {
-    // nothing to forget
-  }
-}
-
-/** Events that change which sale belongs to the order in the register's cart. */
-export type OwnEvent = { type: 'created'; saleId: string } | { type: 'ended' }
-
-/**
- * The one place the "this cart's sale" record is set and cleared: a sale written from the cart (also one that got 503
- * before its charge) is remembered as the cart's own; a paid, closed or cleared order forgets it. Returns the id the
- * register now treats as its own (null: none). A stale record would resume an old sale against a new order.
- */
-export function trackOwn(ev: OwnEvent, storage?: StorageLike): string | null {
-  if (ev.type === 'created') {
-    rememberPending(ev.saleId, true, storage)
-    return ev.saleId
-  }
-  forgetPending(storage)
-  return null
 }
 
 /**

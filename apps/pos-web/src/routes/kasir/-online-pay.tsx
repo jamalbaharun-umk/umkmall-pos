@@ -29,14 +29,11 @@ import {
   clockText,
   closedText,
   countdown,
-  forgetPending,
   gatewayLabel,
   isQris,
   keepPolling,
   lateReceiptText,
   outcomeOf,
-  pendingSale,
-  rememberPending,
   type SalePayment,
 } from './-online'
 import { parseRupiah, quickAmounts } from './-money'
@@ -127,10 +124,8 @@ export function OnlineWait({
     setPayment(p)
   }
 
-  useEffect(() => rememberPending(id, own), [id, own])
-  useEffect(() => {
-    if (outcome.kind === 'closed' || (outcome.kind === 'paid' && outcome.completed)) forgetPending()
-  }, [outcome.kind, outcome.kind === 'paid' && outcome.completed])
+  // The sale stays in the register's memory (`-pending.ts`) until this screen is closed after its end: nothing here
+  // remembers or forgets it.
 
   // The poll: one request at a time, none while an action is running, results of an older request dropped.
   useEffect(() => {
@@ -658,7 +653,7 @@ export function OnlineWait({
                     disabled={busy !== null}
                     onClick={askCancel}
                   >
-                    Batalkan penjualan
+                    Batalkan pembayaran
                   </Button>
                 )}
               </>
@@ -686,126 +681,93 @@ export function OnlineWait({
   )
 }
 
-/**
- * A sale that was waiting for its payment when the page was reloaded: read it again (reviewed in `resumeDecision`) so an
- * open QR is never lost (an awaiting sale is in no list).
- * - open: the waiting screen is shown;
- * - completed while the till was away: forgotten, and `completed` carries it so the register clears the order that
- *   made it and shows its receipt;
- * - no usable answer: `checking`/`failed` block the register (no new online sale while the previous one is unknown),
- *   asking again by itself and on `retry`.
- */
-export type Resume = {
-  resumed: SalePayment | null
-  /** Whether the resumed sale was made from the order in the cart. */
-  own: boolean
-  state: 'idle' | 'checking' | 'failed'
-  /** A remembered sale is still unchecked: online methods wait, cash never does. */
-  unresolved: boolean
-  /** The cashier chose to go on with cash only while the check keeps retrying. */
-  aside: boolean
-  setAside: () => void
-  /** Set once when the remembered sale turned out completed (own tells whether the cart is its order). */
-  completed: { saleId: string; saleNumber: number; own: boolean } | null
-  /** Set once when it ended unpaid: nothing to show but a note. */
-  ended: { saleNumber: number; reversed: boolean } | null
-  retry: () => void
-  clear: () => void
-  ack: () => void
-}
-
 const RESUME_RETRY_MS = 5000
+/** `api()` has no timeout of its own: a check that hangs counts as "no answer" and is asked again. */
+const RESUME_TIMEOUT_MS = 10_000
 
-export function useResumeOnlineSale(): Resume {
+const orNullAfter = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+  new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      () => {
+        clearTimeout(t)
+        resolve(null)
+      },
+    )
+  })
+
+/**
+ * Asks pos-api about every sale the register still has to check (`toCheck` of `-pending.ts`: after a reload, or after
+ * an answer that could not be used), one at a time, and hands each answer to `onDecision` (reviewed in
+ * `resumeDecision`). It keeps asking every 5 s while any is left, also while the cashier went on with cash. What an
+ * answer means for the memory and the cart is decided by the register, not here.
+ */
+export function useResumeChecks(ids: string[], onDecision: (saleId: string, d: ResumeDecision) => void): { retry: () => void } {
   const lost = useLost()
-  const [resumed, setResumed] = useState<SalePayment | null>(null)
-  const [own, setOwn] = useState(true)
-  const [state, setState] = useState<Resume['state']>(() => (pendingSale() ? 'checking' : 'idle'))
-  const [completed, setCompleted] = useState<Resume['completed']>(null)
-  const [ended, setEnded] = useState<Resume['ended']>(null)
   const [attempt, setAttempt] = useState(0)
-  const [aside, setAside] = useState(false)
+  const handler = useRef(onDecision)
+  handler.current = onDecision
+  const wanted = ids.join(',')
   useEffect(() => {
-    const mem = pendingSale()
-    if (!mem) return setState('idle')
+    if (!wanted) return
     let gone = false
     let timer: ReturnType<typeof setTimeout> | undefined
-    setState('checking')
-    getSalePayment({ data: mem.id })
-      .catch(lost)
-      .then((answer) => {
+    void (async () => {
+      for (const id of wanted.split(',')) {
+        const answer = await orNullAfter(getSalePayment({ data: id }).catch(lost), RESUME_TIMEOUT_MS)
         if (gone) return
-        const d: ResumeDecision = resumeDecision(answer)
-        if (d.do === 'retry') {
-          setState('failed')
-          timer = setTimeout(() => setAttempt((n) => n + 1), RESUME_RETRY_MS)
-          return
-        }
-        setState('idle')
-        if (d.do === 'wait') {
-          setOwn(mem.own)
-          return setResumed(d.payment)
-        }
-        forgetPending()
-        if (d.do === 'completed') setCompleted({ saleId: d.saleId, saleNumber: d.saleNumber, own: mem.own })
-        if (d.do === 'ended') setEnded({ saleNumber: d.saleNumber, reversed: d.reversed })
-      })
+        handler.current(id, resumeDecision(answer))
+        if (gone) return // the answer changed the list: the next run asks about the rest
+      }
+      timer = setTimeout(() => setAttempt((n) => n + 1), RESUME_RETRY_MS)
+    })()
     return () => {
       gone = true
       clearTimeout(timer)
     }
-  }, [attempt])
-  return {
-    resumed,
-    own,
-    state,
-    unresolved: state !== 'idle',
-    aside,
-    setAside: () => setAside(true),
-    completed,
-    ended,
-    retry: () => setAttempt((n) => n + 1),
-    clear: () => setResumed(null),
-    ack: () => {
-      setCompleted(null)
-      setEnded(null)
-    },
-  }
+  }, [wanted, attempt])
+  return { retry: () => setAttempt((n) => n + 1) }
 }
 
-/** Blocks the register while the sale remembered before a reload is unresolved: no new online sale can start until it is. */
-export function ResumeGate({ resume }: { resume: Resume }) {
-  if (resume.state === 'idle' || resume.aside) return null
+/**
+ * Blocks the register while a remembered sale is unchecked: no new online sale can start until it is. The buttons are
+ * there from the start (a check that hangs must not block cash), and "Lanjut tunai saja" only puts this dialog aside:
+ * the sale stays remembered and the check goes on.
+ */
+export function ResumeGate({ gate, onRetry, onAside }: { gate: 'none' | 'checking' | 'unreachable'; onRetry: () => void; onAside: () => void }) {
+  if (gate === 'none') return null
   return (
     <Dialog open onOpenChange={() => undefined} dismissible={false} size="small" label="Memeriksa pembayaran sebelumnya">
       <div className="flex flex-col gap-3 p-6" role="status">
         <Text as="h2" variant="h5" weight="bold">
           Memeriksa pembayaran sebelumnya
         </Text>
-        {resume.state === 'checking' ? (
+        {gate === 'checking' ? (
           <p className="flex items-center gap-2 text-sm text-default-secondary">
             <Spinner size="sm" /> Mencari penjualan yang masih menunggu pembayaran…
           </p>
         ) : (
-          <>
-            <Alert variant="warning" size="small" role="alert">
-              Penjualan sebelumnya belum bisa diperiksa (sambungan terputus). Kode bayarnya mungkin masih bisa dibayar,
-              jadi penjualan baru belum dibuka. Layar mencoba lagi sendiri.
-            </Alert>
-            <div className="flex flex-col gap-2 sm:flex-row-reverse">
-              <Button width="auto" className="w-full sm:w-auto" onClick={resume.retry}>
-                Coba lagi sekarang
-              </Button>
-              <Button width="auto" className="w-full sm:w-auto" type="outline" color="light" onClick={resume.setAside}>
-                Lanjut tunai saja
-              </Button>
-            </div>
-            <p className="text-xs text-default-secondary">
-              Lanjut tunai saja: penjualan online ditahan, penjualan sebelumnya tetap ada di Menunggu, dan layar ini terus
-              memeriksanya.
-            </p>
-          </>
+          <Alert variant="warning" size="small" role="alert">
+            Penjualan sebelumnya belum bisa diperiksa (sambungan terputus). Kode bayarnya mungkin masih bisa dibayar,
+            jadi penjualan online baru belum dibuka. Layar mencoba lagi sendiri.
+          </Alert>
         )}
+        <div className="flex flex-col gap-2 sm:flex-row-reverse">
+          <Button width="auto" className="w-full sm:w-auto" onClick={onRetry}>
+            Coba lagi sekarang
+          </Button>
+          <Button width="auto" className="w-full sm:w-auto" type="outline" color="light" onClick={onAside}>
+            Lanjut tunai saja
+          </Button>
+        </div>
+        <p className="text-xs text-default-secondary">
+          Lanjut tunai saja: penjualan online ditahan, penjualan sebelumnya tetap ada di Menunggu, dan layar ini terus
+          memeriksanya.
+        </p>
       </div>
     </Dialog>
   )
