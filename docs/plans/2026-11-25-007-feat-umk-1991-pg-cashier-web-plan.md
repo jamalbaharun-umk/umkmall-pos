@@ -127,3 +127,28 @@ Not exercised: no browser run and no component test. The reducer, its selectors 
 each guard was broken once and restored; the wiring in `index.tsx` / `-online-pay.tsx` (effects, the resume loop,
 batching of `track`) is typechecked and read only. A cash/EDC sale that answered 503 with a sale id is not listed
 (the job completes it); a `held` online sale is checked only after a reload.
+
+### Fourth review round: a kept key must not merge the next order into a lost sale
+
+Keeping the key through Hapus semua, a cart edit and a reload (round 3) had a hole: sale 1 written, its answer lost,
+then the next customer's identical order replayed sale 1 as a success (two customers paid, one sale).
+
+- **In doubt is stored before the request goes out** (`sending`, set by `sale_sending` and written by the store
+  before `send()` returns), so a reload in the middle of a request knows. Any answer for the key ends it; no answer
+  leaves `unanswered`.
+- **In doubt and the order no longer surely the same one** (Hapus semua, a cart edit, a reload or the register
+  opened again) sets `recorded`, as a held cash sale's Hapus semua and the 422 of a used key already did. **While
+  `recorded`, nothing is sent under the key** (`sendPlan` → `blocked: 'recorded'`): the pay dialog says to check
+  Riwayat, and only "Sudah saya cek: buat penjualan baru" (or the end of that key's sale) starts a new key. The same
+  order repeated at once, with nothing changed, still sends the same key.
+- **One store per tab** (`createPendingStore`, tested without React): a request that answers after the cashier left
+  the register and came back writes into the one state. Opening the register reads it as after a reload. A paid
+  answer also clears the stored bill, so a paid order does not come back after such a late answer.
+- Minors: the resume check forgets a sale on 404 and on a 4xx that can never be answered, and says so (`FORGOTTEN_NOTICE`);
+  403, 401, 408, 429 and 5xx ask again. An uncharged online sale the order moved on from is asked about in the
+  background (no gate, no code shown) and forgotten once it ended, so the stock hint does not linger. A cart changed
+  by hand after its own sale was written is not cleared when that sale completes (`edited`).
+
+Not exercised: still no browser run; `usePending` (`useSyncExternalStore`) and `pay()`'s wiring are typechecked and
+read only. Left open: a cashier who leaves the register mid-request and is back on it before a PAID answer arrives
+sees the paid order's items still on screen (the stored bill is cleared, the mounted screen is not told).
