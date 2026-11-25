@@ -387,10 +387,13 @@ describe('setoran penagih: a collector’s outside-shift cash into a shift drawe
     const none = await deposit(s.auth, body).expect(422);
     expect(none.body.code).toBe('SHIFT_REQUIRED');
     // The owner receives into Rina's drawer: the audit names the owner as receiver and Rina's shift.
-    const done = await deposit(s.auth, {
-      ...body,
-      shiftId: rinaShift.id.toUpperCase(),
-    }).expect(201);
+    const ownerKey = randomUUID();
+    const ownerBody = { ...body, shiftId: rinaShift.id.toUpperCase() };
+    const done = await deposit(s.auth, ownerBody, ownerKey).expect(201);
+    // A key answers only the actor who sent it: Rina replaying the owner's key and body is refused.
+    const borrowed = await deposit(rina.auth, ownerBody, ownerKey).expect(422);
+    expect(borrowed.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
+    expect(await written(s.tenantId)).toEqual(deposits(1));
     expect(done.body).toMatchObject({
       receivedById: s.userId,
       receivedByKind: 'owner',
@@ -439,6 +442,13 @@ describe('setoran penagih: a collector’s outside-shift cash into a shift drawe
       outstanding: 8000,
       handedOver: 2000,
     });
+    // The named shift closes: the owner's retry still answers the first deposit, and writes nothing.
+    await post(rina.auth, '/shifts/current/close', {
+      countedCash: 4000,
+    }).expect(200);
+    const late = await deposit(s.auth, ownerBody, ownerKey).expect(201);
+    expect(late.body).toEqual(done.body);
+    expect(await written(s.tenantId)).toEqual(deposits(2));
   });
 
   it('“Setoran saya”: a collector reads their own figures and deposits, and nobody else’s', async () => {

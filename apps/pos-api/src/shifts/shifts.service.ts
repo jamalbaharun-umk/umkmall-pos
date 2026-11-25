@@ -42,7 +42,7 @@ import {
   lockOpenShift,
   NO_CASH,
 } from './cash-ledger';
-import { shiftActorName, shiftNumber } from './shift-read';
+import { shiftActorName, shiftNumbers } from './shift-read';
 
 const shiftColumns = {
   id: shifts.id,
@@ -57,10 +57,9 @@ const shiftColumns = {
   salesCount: shifts.salesCount,
 };
 
-/** For a select (never a RETURNING): the stored columns plus what a screen calls the shift. */
+/** For a select: the stored columns plus whose shift it is. `numbered` adds the shift's number. */
 const shiftReadColumns = {
   ...shiftColumns,
-  number: shiftNumber,
   actorName: shiftActorName,
 };
 
@@ -130,9 +129,23 @@ export class ShiftsService {
     return expectedCash(shift.openingCash, t.cashSales, cash);
   }
 
+  /** Adds `number` (the store's n-th shift) to a page of shifts, with one query for the page. */
+  private async numbered<T extends { id: string }>(
+    db: Db | Tx,
+    tenantId: string,
+    rows: T[],
+  ): Promise<(T & { number: number })[]> {
+    const numbers = await shiftNumbers(
+      db,
+      tenantId,
+      rows.map((r) => r.id),
+    );
+    return rows.map((r) => ({ ...r, number: numbers.get(r.id) ?? 0 }));
+  }
+
   /** The actor's open shift with its running totals, or null. */
   async current(s: PosSession) {
-    const [shift] = await this.db
+    const [found] = await this.db
       .select(shiftReadColumns)
       .from(shifts)
       .where(
@@ -142,7 +155,8 @@ export class ShiftsService {
           isNull(shifts.closedAt),
         ),
       );
-    if (!shift) return null;
+    if (!found) return null;
+    const [shift] = await this.numbered(this.db, s.tenantId, [found]);
     const [t, cash] = await Promise.all([
       this.totals(this.db, shift.id),
       this.cashOf(this.db, s.tenantId, shift.id),
@@ -155,12 +169,16 @@ export class ShiftsService {
     };
   }
 
-  /** One shift of this store as a screen reads it (after a write: a RETURNING cannot number it). */
+  /** One shift of this store as a screen reads it (after a write). */
   private async read(db: Db | Tx, tenantId: string, id: string) {
-    const [row] = await db
-      .select(shiftReadColumns)
-      .from(shifts)
-      .where(and(eq(shifts.tenantId, tenantId), eq(shifts.id, id)));
+    const [row] = await this.numbered(
+      db,
+      tenantId,
+      await db
+        .select(shiftReadColumns)
+        .from(shifts)
+        .where(and(eq(shifts.tenantId, tenantId), eq(shifts.id, id))),
+    );
     return row;
   }
 
@@ -235,7 +253,7 @@ export class ShiftsService {
 
   async list(s: PosSession, page: number, perPage: number) {
     const where = this.scope(s);
-    const [rows, [{ total }]] = await Promise.all([
+    const [found, [{ total }]] = await Promise.all([
       this.db
         .select(shiftReadColumns)
         .from(shifts)
@@ -245,6 +263,7 @@ export class ShiftsService {
         .offset((page - 1) * perPage),
       this.db.select({ total: count() }).from(shifts).where(where),
     ]);
+    const rows = await this.numbered(this.db, s.tenantId, found);
     const cash = await cashTotals(
       this.db,
       s.tenantId,
@@ -260,10 +279,14 @@ export class ShiftsService {
   }
 
   async get(s: PosSession, id: string) {
-    const [row] = await this.db
-      .select(shiftReadColumns)
-      .from(shifts)
-      .where(and(this.scope(s), eq(shifts.id, id)));
+    const [row] = await this.numbered(
+      this.db,
+      s.tenantId,
+      await this.db
+        .select(shiftReadColumns)
+        .from(shifts)
+        .where(and(this.scope(s), eq(shifts.id, id))),
+    );
     if (!row) throw new NotFoundException();
     const e = shiftCashEntries;
     // Who recorded the entry, and for a collector's deposit who handed the cash over: names only.

@@ -113,7 +113,8 @@ newest first, each `{ id, amount, note, receivedByKind, receivedByName, shiftId,
 
 ### Shift reads
 - `GET /shifts/current`, `GET /shifts`, `GET /shifts/:id`, `POST /shifts/open`, `POST /shifts/current/close`:
-  each shift gains `number` (the store's n-th shift by opening time; derived on read, no column) and
+  each shift gains `number` (the store's n-th shift by opening time; derived on read with one query per
+  page, no column) and
   `actorName` ("Pemilik" for an owner, the staff name for a cashier), and the totals gain
   `collectorDeposits` (part of `cashIn`). `/reports/shifts` rows gain `collectorDeposits` (CSV unchanged).
 - `GET /shifts/:id` `cashEntries` rows gain:
@@ -196,6 +197,15 @@ newest first, each `{ id, amount, note, receivedByKind, receivedByName, shiftId,
   on tutup shift): follow-up change.
 - [manual] When the `agent` session kind exists (UMK-1983): e2e that an agent token gets 403 on both
   endpoints.
+
+## Review follow-up (PR 21)
+- A cash entry looks its `Idempotency-Key` up **before** the shift lock (and again under it): a retry that
+  names a `shiftId` still answers the first entry after that shift closed, instead of `SHIFT_NOT_YOURS`.
+- A key answers only the actor who first sent it (cash entries and deposits): another actor of the store
+  sending the same key gets 422 `IDEMPOTENCY_KEY_REUSED`, never the first actor's row. The unique index
+  stays per store, so the same key cannot hold two rows and nothing answers 500.
+- A shift's `number` is read with one window query per page (`shiftNumbers`), not one count per row.
+- [test] the three above; revert-red on the early key lookup and on the actor check of each service.
 
 ## Not built (the design names it; listed for the owner)
 1. **Reversing a manual cash entry or a deposit** ("Salah catat: dibatalkan dengan catatan pembalik di shift

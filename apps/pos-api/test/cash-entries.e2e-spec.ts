@@ -594,5 +594,29 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
     expect(await current(cashier.auth)).toMatchObject({
       expectedCash: 15_500,
     });
+
+    // A key answers only the actor who sent it: the cashier replaying the owner's key and body gets a
+    // refusal, never the owner's entry, and nothing is written.
+    const key = randomUUID();
+    const named = cashIn(700, { shiftId: cId });
+    const first = await entry(a.auth, named, key).expect(201);
+    const borrowed = await entry(cashier.auth, named, key).expect(422);
+    expect(borrowed.body).toMatchObject({
+      code: 'IDEMPOTENCY_KEY_REUSED',
+      errors: { idempotencyKey: expect.any(String) },
+    });
+    // The named shift closes; the owner's retry still answers the first entry (not SHIFT_NOT_YOURS:
+    // a retry is not judged against the shift's state now), and the closed shift is unchanged.
+    const closedShift = await close(cashier.auth, 16_200).expect(200);
+    expect(closedShift.body).toMatchObject({ expectedCash: 16_200 });
+    const counts = await written(a.tenantId);
+    const late = await entry(a.auth, named, key).expect(201);
+    expect(late.body).toEqual(first.body);
+    expect(await written(a.tenantId)).toEqual(counts);
+    // A new request for that closed shift is still refused.
+    const fresh = await entry(a.auth, named).expect(422);
+    expect(fresh.body.code).toBe('SHIFT_NOT_YOURS');
+    const kept = await get(a.auth, `/shifts/${cId}`).expect(200);
+    expect(kept.body).toMatchObject({ expectedCash: 16_200 });
   });
 });

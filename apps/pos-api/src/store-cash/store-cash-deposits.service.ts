@@ -13,7 +13,7 @@ import {
 import { type Db, InjectDb } from '../db/db.module';
 import { shifts, staff, storeCashDeposits } from '../db/schema';
 import { assertPersonAtTill, recordShiftCashAt } from '../shifts/cash-ledger';
-import { shiftActorName, shiftNumber } from '../shifts/shift-read';
+import { shiftActorName, shiftNumbers } from '../shifts/shift-read';
 import { isUniqueViolation } from '../staff/http';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
@@ -67,11 +67,9 @@ const columns = {
   receivedByKind: d.receivedByKind,
   receivedByName: sql<string>`case when ${d.receivedByKind} = 'owner' then 'Pemilik'
     else coalesce(${receiver.name}, 'Staf') end`,
-  // The drawer the cash went into; all three null on a handover from before the drawer rule.
+  // The drawer the cash went into; null (as its number, added by `numbered`) on a handover from before
+  // the drawer rule.
   shiftId: d.shiftId,
-  shiftNumber: sql<
-    number | null
-  >`case when shifts.id is not null then ${shiftNumber} end`,
   shiftActorName: sql<
     string | null
   >`case when shifts.id is not null then ${shiftActorName} end`,
@@ -130,9 +128,26 @@ export class StoreCashDepositsService {
       );
   }
 
+  /** Adds `shiftNumber` to a page of deposits, with one query for the page. */
+  private async numbered<T extends { shiftId: string | null }>(
+    tenantId: string,
+    rows: T[],
+  ): Promise<(T & { shiftNumber: number | null })[]> {
+    const numbers = await shiftNumbers(
+      this.db,
+      tenantId,
+      rows.map((r) => r.shiftId),
+    );
+    return rows.map((r) => ({
+      ...r,
+      shiftNumber: r.shiftId ? (numbers.get(r.shiftId) ?? null) : null,
+    }));
+  }
+
   private async get(tenantId: string, id: string) {
-    const [row] = await this.rows().where(
-      and(eq(d.tenantId, tenantId), eq(d.id, id)),
+    const [row] = await this.numbered(
+      tenantId,
+      await this.rows().where(and(eq(d.tenantId, tenantId), eq(d.id, id))),
     );
     if (!row) throw new NotFoundException();
     return present(row);
@@ -141,7 +156,7 @@ export class StoreCashDepositsService {
   /** The audit list, newest first. */
   async list(tenantId: string, q: z.infer<typeof DepositListQuery>) {
     const where = eq(d.tenantId, tenantId);
-    const [data, [{ total }]] = await Promise.all([
+    const [rows, [{ total }]] = await Promise.all([
       this.rows()
         .where(where)
         .orderBy(desc(d.createdAt), desc(d.id))
@@ -149,6 +164,7 @@ export class StoreCashDepositsService {
         .offset((q.page - 1) * q.perPage),
       this.db.select({ total: count() }).from(d).where(where),
     ]);
+    const data = await this.numbered(tenantId, rows);
     return { data: data.map(present), total, page: q.page, perPage: q.perPage };
   }
 
@@ -159,7 +175,7 @@ export class StoreCashDepositsService {
    */
   async mine(s: PosSession, q: z.infer<typeof DepositListQuery>) {
     const where = and(eq(d.tenantId, s.tenantId), eq(d.collectorId, s.actorId));
-    const [[cash], data, [{ total }]] = await Promise.all([
+    const [[cash], rows, [{ total }]] = await Promise.all([
       this.collectors(s.tenantId, this.db, s.actorId),
       this.rows()
         .where(where)
@@ -168,6 +184,7 @@ export class StoreCashDepositsService {
         .offset((q.page - 1) * q.perPage),
       this.db.select({ total: count() }).from(d).where(where),
     ]);
+    const data = await this.numbered(s.tenantId, rows);
     return {
       collectorId: s.actorId,
       collected: cash?.collected ?? 0,
@@ -242,7 +259,7 @@ export class StoreCashDepositsService {
 
   private async byKey(db: Db | Tx, tenantId: string, key: string) {
     const [prior] = await db
-      .select({ id: d.id, hash: d.requestHash })
+      .select({ id: d.id, hash: d.requestHash, actorId: d.receivedById })
       .from(d)
       .where(and(eq(d.tenantId, tenantId), eq(d.idempotencyKey, key)));
     return prior ?? null;
@@ -256,8 +273,10 @@ export class StoreCashDepositsService {
     // An agent never records a deposit: refused before any lock or lookup.
     assertPersonAtTill(s.kind);
     const hash = requestHash(input);
-    const replay = (prior: { id: string; hash: string }) => {
-      if (prior.hash !== hash)
+    // A key answers only the actor who first sent it: a colleague who sends the same key (and body) is
+    // refused like any other reuse, and never gets the first actor's deposit.
+    const replay = (prior: { id: string; hash: string; actorId: string }) => {
+      if (prior.hash !== hash || prior.actorId !== s.actorId)
         throw codedError(
           'IDEMPOTENCY_KEY_REUSED',
           'idempotencyKey',
