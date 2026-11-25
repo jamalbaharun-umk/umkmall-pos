@@ -27,6 +27,15 @@ describe('nav config', () => {
   })
 })
 
+describe('Pengeluaran entry (UMK-1984)', () => {
+  it('shows only with expenses.manage', () => {
+    const shown = (perms: string[]) =>
+      visibleNav(NAV, () => true, perms).flatMap((g) => g.items.map((i) => i.to)).includes('/pengeluaran')
+    expect(shown(['reports.view', 'sales.create'])).toBe(false)
+    expect(shown(['expenses.manage'])).toBe(true)
+  })
+})
+
 describe('U7 entries (QA sweep U7)', () => {
   it('a cashier with only sales.create sees none of the U7 screens; the owner sees all four', () => {
     const u7 = ['/pelanggan', '/metode-pembayaran', '/piutang', '/voucher']
