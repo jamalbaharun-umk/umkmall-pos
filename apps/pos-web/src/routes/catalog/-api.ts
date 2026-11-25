@@ -54,7 +54,7 @@ export type ProductInput = {
   units: UnitInput[]
   priceTiers: TierInput[]
 }
-type Result = { error?: string; errors?: Record<string, string>; id?: string; warnings?: SaveWarning[] }
+type Result = { error?: string; errors?: Record<string, string>; status?: number; id?: string; warnings?: SaveWarning[] }
 
 async function errorOf(res: Response): Promise<string> {
   return (await refusalOf(res)).error

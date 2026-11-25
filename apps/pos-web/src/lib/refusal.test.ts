@@ -9,12 +9,14 @@ describe('refusals', () => {
     expect(await refusalOf(res(422, { message: 'Periksa', errors: { name: 'Wajib diisi' } }))).toEqual({
       error: 'Periksa',
       errors: { name: 'Wajib diisi' },
+      status: 422,
     })
     expect(await refusalOf(res(409, { message: 'Kategori masih dipakai produk' }))).toEqual({
       error: 'Kategori masih dipakai produk',
+      status: 409,
     })
-    expect(await refusalOf(res(500, { message: 'stack trace' }))).toEqual({ error: GENERIC_ERROR })
-    expect(await refusalOf(res(502, '<html>'))).toEqual({ error: GENERIC_ERROR })
+    expect(await refusalOf(res(500, { message: 'stack trace' }))).toEqual({ error: GENERIC_ERROR, status: 500 })
+    expect(await refusalOf(res(502, '<html>'))).toEqual({ error: GENERIC_ERROR, status: 502 })
   })
 
   it('puts known fields on inputs and the rest in a form-level message', () => {

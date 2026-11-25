@@ -25,7 +25,7 @@ export type Profile = {
   updatedAt: string | null
 }
 export type ProfileInput = { name: string; businessType: string; otherBusinessType?: string; address: string }
-type Result = { error?: string; errors?: Record<string, string> }
+type Result = { error?: string; errors?: Record<string, string>; status?: number }
 
 async function read<T>(path: string): Promise<T | null> {
   const res = await api(path)

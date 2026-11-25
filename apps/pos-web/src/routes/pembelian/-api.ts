@@ -34,7 +34,7 @@ export type Opname = OpnameSummary & {
   }[]
 }
 export type StockProduct = { id: string; name: string; sku: string; costPrice: number }
-export type Result = { ok: true; id?: string } | { ok: false; error: string; errors?: Record<string, string> }
+export type Result = { ok: true; id?: string } | { ok: false; error: string; errors?: Record<string, string>; status?: number }
 
 const ERRORS: Record<number, string> = {
   403: 'Kamu tidak punya izin untuk ini.',
@@ -59,10 +59,11 @@ async function mutate(path: string, method: string, body?: unknown): Promise<Res
   if ((res.status === 409 || res.status === 422) && typeof err.message === 'string')
     return {
       ok: false,
+      status: res.status,
       error: err.message,
       errors: err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined,
     }
-  return { ok: false, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
+  return { ok: false, status: res.status, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
 }
 
 const enc = encodeURIComponent
