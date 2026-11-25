@@ -9,7 +9,6 @@ import {
   TableHeader,
   TableRow,
   TextField,
-  toast,
 } from '@umkmall/ui/primitives'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { Pencil, Search, Trash2 } from 'lucide-react'
@@ -17,6 +16,7 @@ import { useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
+import { notifySuccess, showError } from '@/lib/feedback'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { required } from '@/lib/validate'
 import { deleteCategory, listCategories, saveCategory, type Category } from './-api'
@@ -41,10 +41,10 @@ function CategoriesPage() {
   const remove = (c: Category) =>
     confirm.ask(`Hapus kategori ${c.name}?`, async () => {
       const r = await deleteCategory({ data: c.id })
-      if (r.error) return r.error
-      toast('Kategori dihapus', { variant: 'success' })
+      if (r.error) return r
+      notifySuccess(`Kategori ${c.name} dihapus`)
       await router.invalidate()
-    })
+    }, { action: 'menghapus kategori' })
 
   return (
     <Page
@@ -149,17 +149,17 @@ function CategoryDialog({ editing, onClose }: { editing: Category | 'new' | null
     setNameError(missing)
     if (missing) return
     setBusy(true)
-    const r: { error?: string; errors?: Record<string, string> } = await saveCategory({
+    const r: { error?: string; errors?: Record<string, string>; status?: number } = await saveCategory({
       data: { id: existing?.id, name: name.trim() },
-    }).catch(() => ({ error: GENERIC_ERROR }))
+    }).catch(() => ({ error: GENERIC_ERROR, status: 0 }))
     setBusy(false)
     if (r.error) {
       const placed = placeErrors({ error: r.error, errors: r.errors }, ['name'])
       setNameError(placed.byField.name)
       setError(placed.formError)
-      return toast(r.error, { variant: 'danger' })
+      return showError(r, existing ? 'menyimpan kategori' : 'membuat kategori')
     }
-    toast(existing ? 'Kategori disimpan' : 'Kategori dibuat', { variant: 'success' })
+    notifySuccess(existing ? `Kategori ${name.trim()} disimpan` : `Kategori ${name.trim()} dibuat`)
     await router.invalidate()
     if (again) setName('')
     else onClose()

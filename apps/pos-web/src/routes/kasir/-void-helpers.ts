@@ -1,3 +1,5 @@
+import type { FailureLike } from '@/lib/describe-error'
+
 // Pure logic of the void ("Batalkan transaksi", UMK-1962) dialog and the void PIN screen. No I/O, no PIN storage:
 // the PIN only ever lives in a component's state until the request is sent.
 
@@ -141,6 +143,27 @@ export function voidFailure(status: number, body: unknown): VoidFailure {
   if (status === 409) return { kind: 'done', error: message ?? 'Struk ini sudah dibatalkan', errors }
   if (status === 422 && message) return { kind: 'invalid', error: message, errors }
   return { kind: 'other', error: GENERIC, errors }
+}
+
+/** The failure as the shared error dialog reads it (status, safe text, wait): what `showError` takes. */
+export function failureOf(f: VoidFailure): FailureLike {
+  if (isWrongPin(f)) return { code: 'PIN_INVALID' }
+  switch (f.kind) {
+    case 'offline':
+      return { status: 0 }
+    case 'forbidden':
+      return { status: 403 }
+    case 'gone':
+      return { status: 404 }
+    case 'locked':
+      return { status: 429, retryAfter: f.retryAfter }
+    case 'done':
+      return { status: 409, error: f.error }
+    case 'invalid':
+      return { status: 422, error: f.error }
+    default:
+      return { status: 500 }
+  }
 }
 
 /** A wrong PIN is a 422 with `errors.pin`; the dialog shows it on the field and clears the PIN. */

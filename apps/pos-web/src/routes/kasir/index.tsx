@@ -91,7 +91,7 @@ function OpenShift() {
     lock.current = true
     setBusy(true)
     setError(undefined)
-    const r = await act(() => openShift({ data: amount }), 'Shift dibuka. Selamat berjualan!')
+    const r = await act(() => openShift({ data: amount }), 'Shift dibuka. Selamat berjualan!', 'membuka shift')
     lock.current = false
     setBusy(false)
     if (!r.ok) return setError(r.errors.openingCash ?? r.error)

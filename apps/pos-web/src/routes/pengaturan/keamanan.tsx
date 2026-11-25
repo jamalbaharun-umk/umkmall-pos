@@ -1,10 +1,11 @@
-import { Alert, Badge, Button, TextField, toast } from '@umkmall/ui/primitives'
+import { Alert, Badge, Button, TextField } from '@umkmall/ui/primitives'
 import { createFileRoute, getRouteApi, useRouter } from '@tanstack/react-router'
 import { useRef, useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { Empty, NoAccess, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { useCan, type Me } from '@/components/shell'
-import { pinDigits, pinSetErrors, lockText, type VoidFailure } from '../kasir/-void-helpers'
+import { notifySuccess, showError } from '@/lib/feedback'
+import { failureOf, pinDigits, pinSetErrors, lockText, type VoidFailure } from '../kasir/-void-helpers'
 import { loadSecurity, resetPin, setPin, unlockPin } from './-keamanan-api'
 
 export const Route = createFileRoute('/pengaturan/keamanan')({
@@ -45,7 +46,6 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
   const [pin, setPinText] = useState('')
   const [confirm, setConfirm] = useState('')
   const [errors, setErrors] = useState<Partial<Record<'currentPin' | 'pin' | 'confirm', string>>>({})
-  const [failure, setFailure] = useState<VoidFailure>()
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const locked = lockText(status.lockedUntil)
@@ -61,7 +61,6 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
     if (lock.current) return
     const bad = pinSetErrors({ pin, confirm, currentPin }, status.hasPin)
     setErrors(bad)
-    setFailure(undefined)
     if (Object.keys(bad).length > 0) return
     lock.current = true
     setBusy(true)
@@ -70,18 +69,18 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
     lock.current = false
     setBusy(false)
     if (!r) {
-      setFailure({ kind: 'offline', error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.', errors: {} })
+      showError({ status: 0 }, 'menyimpan PIN')
       return
     }
     if (r.ok) {
-      toast(status.hasPin ? 'PIN diganti' : 'PIN dibuat', { variant: 'success' })
+      notifySuccess(status.hasPin ? 'PIN diganti' : 'PIN dibuat')
       await router.invalidate()
       return
     }
     const f = r.failure
     const field = { currentPin: f.errors.currentPin, pin: f.errors.pin }
     setErrors(field)
-    if (f.kind !== 'invalid' || !(field.currentPin || field.pin)) setFailure(f)
+    showError(failureOf(f), 'menyimpan PIN')
     if (f.kind === 'locked') await router.invalidate()
   }
 
@@ -148,11 +147,6 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
         <Alert variant="info" size="small">
           Jangan pakai tanggal lahir atau angka berurutan. Jangan beritahu kasir. Salah 5 kali mengunci PIN 5 menit.
         </Alert>
-        {failure && (
-          <Alert variant="danger" size="small" role="alert">
-            {failure.error}
-          </Alert>
-        )}
         <div className="flex justify-end">
           <Button htmlType="submit" width="auto" isLoading={busy}>
             Simpan PIN
@@ -175,11 +169,11 @@ function ApproverList({ approvers, selfId, isOwner }: { approvers: ApproverRow[]
     const r = await run().catch(() => null)
     setBusyId(undefined)
     if (r?.ok) {
-      toast(done, { variant: 'success' })
+      notifySuccess(done)
       await router.invalidate()
       return undefined
     }
-    return r?.failure?.error ?? 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.'
+    return r?.failure ? failureOf(r.failure) : { status: 0 }
   }
 
   return (
@@ -218,7 +212,7 @@ function ApproverList({ approvers, selfId, isOwner }: { approvers: ApproverRow[]
                       disabled={busyId === a.id}
                       onClick={() =>
                         void act(a.id, () => unlockPin({ data: a.id }), 'Kunci dibuka').then(
-                          (error) => error && toast(error, { variant: 'danger' }),
+                          (failed) => failed && showError(failed, 'membuka kunci PIN'),
                         )
                       }
                     >
@@ -238,6 +232,7 @@ function ApproverList({ approvers, selfId, isOwner }: { approvers: ApproverRow[]
                           () => act(a.id, () => resetPin({ data: a.id }), 'PIN dihapus'),
                           {
                             label: 'Hapus PIN',
+                            action: 'menghapus PIN',
                             body: 'Admin ini tidak bisa menyetujui pembatalan sampai membuat PIN baru.',
                           },
                         )

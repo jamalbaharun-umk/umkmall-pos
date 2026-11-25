@@ -42,8 +42,8 @@ function OrderPage() {
     ask(
       title,
       async () => {
-        const r = await act(() => orderAction({ data: { id: order.id, action } }), done)
-        if (!r.ok) return r.error
+        const r = await act(() => orderAction({ data: { id: order.id, action } }), done, 'memproses pembelian')
+        if (!r.ok) return
         if (action === 'delete') await navigate({ to: '/pembelian' })
         else await router.invalidate()
       },

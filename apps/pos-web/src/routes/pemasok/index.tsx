@@ -52,8 +52,8 @@ function SuppliersPage() {
     ask(
       `Hapus ${sup.name}?`,
       async () => {
-        const r = await act(() => deleteSupplier({ data: sup.id }), `${sup.name} dihapus`)
-        if (!r.ok) return r.error
+        const r = await act(() => deleteSupplier({ data: sup.id }), `${sup.name} dihapus`, 'menghapus pemasok')
+        if (!r.ok) return
         await router.invalidate()
       },
       { body: 'Pembelian lamanya tetap tersimpan.' },
@@ -193,6 +193,7 @@ function SupplierForm({
           },
         }),
       supplier ? 'Pemasok diperbarui' : 'Pemasok ditambahkan',
+      supplier ? 'menyimpan pemasok' : 'menambah pemasok',
     )
     lock.current = false
     setBusy(false)

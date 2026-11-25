@@ -116,6 +116,7 @@ function NewOpnamePage() {
           },
         }),
       'Opname disimpan sebagai draf',
+      'menyimpan stok opname',
     )
     lock.current = false
     setBusy(false)

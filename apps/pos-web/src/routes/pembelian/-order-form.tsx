@@ -139,6 +139,7 @@ export function OrderForm({
           },
         }),
       order ? 'Draf pembelian diperbarui' : 'Pembelian disimpan sebagai draf',
+      'menyimpan pembelian',
     )
     lock.current = false
     setBusy(false)

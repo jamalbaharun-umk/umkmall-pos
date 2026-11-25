@@ -65,6 +65,12 @@ describe('describeError', () => {
     expect(describeError({ error: 'Gagal' }, FALLBACK).what).toBe(OFFLINE_TEXT)
   })
 
+  it('a wrong PIN has its own text and never shows the PIN', () => {
+    const d = describeError({ code: 'PIN_INVALID', error: 'PIN 123456 salah' }, FALLBACK)
+    expect(d.what).toBe('PIN yang dimasukkan tidak cocok.')
+    expect(d.code).toBe('PIN_INVALID')
+  })
+
   it('401 asks to sign in again', () => {
     expect(describeError({ status: 401 }, FALLBACK).primary).toBe('signin')
   })

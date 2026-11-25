@@ -40,13 +40,13 @@ function CloseShiftPage() {
       async () => {
         lock.current = true
         setBusy(true)
-        const r = await act(() => closeShift({ data: amount }), 'Shift ditutup')
+        const r = await act(() => closeShift({ data: amount }), 'Shift ditutup', 'menutup shift')
         lock.current = false
         setBusy(false)
         if (!r.ok) {
           setError(r.errors.countedCash)
           if (isPendingPaymentRefusal(r.error)) setBlocked(r.error)
-          return r.error
+          return // `act` already opened the error dialog
         }
         if (r.res.ok) setClosed(r.res.data)
       },

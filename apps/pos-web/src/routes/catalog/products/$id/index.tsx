@@ -1,8 +1,9 @@
-import { Badge, Button, Menu, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, toast } from '@umkmall/ui/primitives'
+import { Badge, Button, Menu, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@umkmall/ui/primitives'
 import { Card, Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { EllipsisVertical, Pencil, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel, dateTime, rupiah } from '@/components/page'
@@ -35,10 +36,10 @@ function ViewProduct() {
   const remove = () =>
     confirm.ask(`Hapus ${product.name}?`, async () => {
       const r = await deleteProduct({ data: product.id })
-      if (r.error) return r.error
-      toast('Produk dihapus', { variant: 'success' })
+      if (r.error) return r
+      notifySuccess(`${product.name} dihapus`)
       await navigate({ to: '/catalog/products' })
-    }, { body: 'Produk tidak tampil lagi di kasir. Riwayat penjualannya tetap tersimpan.' })
+    }, { body: 'Produk tidak tampil lagi di kasir. Riwayat penjualannya tetap tersimpan.', action: 'menghapus produk' })
 
   return (
     <Page

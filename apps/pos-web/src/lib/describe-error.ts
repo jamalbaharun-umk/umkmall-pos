@@ -97,6 +97,14 @@ export function describeError(error: unknown, fallback: string): ErrorDescriptio
       primary: 'retry',
     }
   }
+  if (f.code === 'PIN_INVALID') {
+    return {
+      what: 'PIN yang dimasukkan tidak cocok.',
+      todo: 'Periksa PIN lalu coba lagi, atau minta admin lain.',
+      code: 'PIN_INVALID',
+      primary: 'none',
+    }
+  }
   switch (status) {
     case 401:
       return {
