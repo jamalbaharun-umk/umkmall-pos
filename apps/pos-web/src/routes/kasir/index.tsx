@@ -64,6 +64,7 @@ import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinis
 import { parsePayment, saleFailure, type ResumeDecision, type SalePayment } from './-online'
 import {
   finishPlan,
+  FORGOTTEN_NOTICE,
   gateOf,
   HELD_SAME_TEXT,
   HELD_STOCK_HINT,
@@ -80,7 +81,7 @@ import {
   type PendingEvent,
   type SaleAnswer,
 } from './-pending'
-import { usePending, type PendingStore } from './-pending-store'
+import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
@@ -242,6 +243,8 @@ function Register({
     pend.dispatch({ type: 'resume_answered', saleId, result: d.do })
     if (!plan.known || d.do === 'retry') return
     void router.invalidate()
+    // Not this account's sale (pos-api hides another cashier's sale as 404), or gone: said once, never silently dropped.
+    if (d.do === 'forget') showError({ status: 404 }, { action: 'memeriksa penjualan sebelumnya' }, () => FORGOTTEN_NOTICE)
     if (d.do === 'completed') {
       if (plan.clearCart) {
         clearOrder()
@@ -673,6 +676,9 @@ function Register({
             setPaying(false)
             setPaid(sale)
             clearOrder()
+            // Also when this screen is gone by the time the answer came (the cashier left mid-request): the stored
+            // bill of a paid order must not come back to be rung again.
+            writeCart({ lines: [], note: '' })
           }}
         />
       )}
@@ -897,7 +903,7 @@ function PayDialog({
   cart: CartLine[]
   note: string
   /** The register's memory of unfinished sales: the key of each request is read from it when the request is sent. */
-  pend: PendingStore
+  pend: PendingHandle
   methods: PaymentMethod[]
   chargeable: string[]
   qris: Qris
@@ -954,7 +960,7 @@ function PayDialog({
     // older closure of this function, and must still send the key of the sale that was last written.
     const online = step === 'online'
     const plan = pend.send(methodId)
-    if ('blocked' in plan) return setError(OWN_SALE_OPEN_TEXT)
+    if ('blocked' in plan) return setError(plan.blocked === 'recorded' ? RECORDED_TEXT : OWN_SALE_OPEN_TEXT)
     const sendKey = plan.key
     lock.current = true
     setBusy(true)

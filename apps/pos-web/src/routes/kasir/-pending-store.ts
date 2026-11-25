@@ -1,76 +1,121 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { initialState, planSend, reduce, rehydrate, serialize, type PendingEvent, type PendingState, type SendPlan } from './-pending'
 
 // The register's memory of unfinished sales, kept per tab (like the open bill). Every decision is in `-pending.ts`;
 // this file only holds the state, hands it out and is the ONLY code that reads or writes its storage record (guard
 // test in `-pending.test.ts`).
+//
+// ONE store per tab, not one per mounted screen: a sale request that answers after the cashier left the register
+// (and came back to a new screen) still writes to the state everybody reads, never over it with an old copy.
 
 const STORAGE_KEY = 'pos.kasir.pending'
 /** The record of the first format (one sale id, `own`): read once, then removed. */
 const LEGACY_KEY = 'pos.online-sale'
 
-function read(key: string): string | null {
-  try {
-    return sessionStorage.getItem(key)
-  } catch {
-    return null // private window or blocked storage: nothing is remembered across a reload
-  }
-}
-function write(state: PendingState): void {
-  try {
-    sessionStorage.setItem(STORAGE_KEY, serialize(state))
-    sessionStorage.removeItem(LEGACY_KEY)
-  } catch {
-    // storage unavailable: the state lives for this page load only
-  }
-}
-
 export type PendingStore = {
-  /** The state of this render (for what a screen shows). */
-  state: PendingState
-  /** The state right now (for a decision taken in a handler or a retry: never the render's copy). */
+  /** The state right now (for a decision taken in a handler or a retry: never a render's copy). */
   current: () => PendingState
   dispatch: (ev: PendingEvent) => PendingState
-  /** A sale request is about to be sent with this method: the key to send, or why it must not be sent. */
+  /**
+   * A sale request is about to be sent with this method: the key to send, or why it must not be sent. The state that
+   * says "a request is out" is stored before this returns, so a reload in the middle of the request still knows.
+   */
   send: (methodId: string) => SendPlan
+  /**
+   * The register opened (a reload, or coming back from another page): the stored state is read as after a reload,
+   * because what the last screen knew of each sale (its payment, its waiting screen) is gone with it.
+   */
+  open: () => void
+  subscribe: (listener: () => void) => () => void
 }
 
-export function usePending(): PendingStore {
-  const ref = useRef<PendingState | null>(null)
-  if (ref.current === null) ref.current = initialState(crypto.randomUUID())
-  const loaded = useRef(false)
-  const [state, setState] = useState<PendingState>(ref.current)
+export type PendingIo = {
+  /** The stored text of a record, or null. May throw (private window): read as nothing. */
+  read: (key: string) => string | null
+  write: (key: string, text: string) => void
+  remove: (key: string) => void
+  /** An unused Idempotency-Key. */
+  fresh: () => string
+}
 
-  const apply = useCallback((next: PendingState) => {
-    if (next === ref.current) return next
-    ref.current = next
-    write(next)
-    setState(next)
+/** The store without React or a browser, so it is tested as it is. */
+export function createPendingStore(io: PendingIo): PendingStore {
+  let state: PendingState | null = null
+  const listeners = new Set<() => void>()
+  const read = (key: string) => {
+    try {
+      return io.read(key)
+    } catch {
+      return null // private window or blocked storage: nothing is remembered across a reload
+    }
+  }
+  const load = () => rehydrate(read(STORAGE_KEY), read(LEGACY_KEY), io.fresh())
+  const keep = (next: PendingState) => {
+    state = next
+    try {
+      io.write(STORAGE_KEY, serialize(next))
+      io.remove(LEGACY_KEY)
+    } catch {
+      // storage unavailable: the state lives for this page load only
+    }
     return next
-  }, [])
-  /** The stored state replaces the empty one once, in the browser, before anything is decided on it. */
-  const load = useCallback(() => {
-    if (loaded.current) return
-    loaded.current = true
-    apply(rehydrate(read(STORAGE_KEY), read(LEGACY_KEY), crypto.randomUUID()))
-  }, [apply])
-  useEffect(load, [load])
-
-  const current = useCallback(() => {
-    load()
-    return ref.current as PendingState
-  }, [load])
-  const dispatch = useCallback(
-    (ev: PendingEvent) => apply(reduce(current(), ev, crypto.randomUUID())),
-    [apply, current],
-  )
-  const send = useCallback(
-    (methodId: string) => {
-      const { state: next, plan } = planSend(current(), methodId, crypto.randomUUID())
+  }
+  const apply = (next: PendingState) => {
+    if (next === state) return next
+    keep(next)
+    listeners.forEach((l) => l())
+    return next
+  }
+  /** The stored state is read before anything is decided on it (no listener is told: a render may be the reader). */
+  const current = () => state ?? keep(load())
+  return {
+    current,
+    dispatch: (ev) => apply(reduce(current(), ev, io.fresh())),
+    send: (methodId) => {
+      const { state: next, plan } = planSend(current(), methodId, io.fresh())
       apply(next)
       return plan
     },
-    [apply, current],
+    // What is in memory is newer than (or equal to) what is stored, so it is the memory that is read "as after a reload".
+    open: () => void apply(state ? rehydrate(serialize(state), null, io.fresh()) : load()),
+    subscribe: (l) => {
+      listeners.add(l)
+      return () => void listeners.delete(l)
+    },
+  }
+}
+
+let tabStore: PendingStore | null = null
+/** The tab's one store. Only ever made in the browser: a server render holds no till state. */
+function store(): PendingStore {
+  tabStore ??= createPendingStore({
+    read: (key) => sessionStorage.getItem(key),
+    write: (key, text) => sessionStorage.setItem(key, text),
+    remove: (key) => sessionStorage.removeItem(key),
+    fresh: () => crypto.randomUUID(),
+  })
+  return tabStore
+}
+
+/** What a server render (and the first client render, before the stored state is read) sees: nothing remembered. */
+const NOTHING = initialState('')
+
+export type PendingHandle = Pick<PendingStore, 'current' | 'dispatch' | 'send'> & {
+  /** The state of this render (for what a screen shows). */
+  state: PendingState
+}
+
+export function usePending(): PendingHandle {
+  const state = useSyncExternalStore(
+    (l) => store().subscribe(l),
+    () => store().current(),
+    () => NOTHING,
   )
-  return { state, current, dispatch, send }
+  useEffect(() => store().open(), [])
+  return {
+    state,
+    current: () => store().current(),
+    dispatch: (ev) => store().dispatch(ev),
+    send: (methodId) => store().send(methodId),
+  }
 }

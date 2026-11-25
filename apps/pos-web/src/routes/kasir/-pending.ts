@@ -22,9 +22,9 @@ import type { ResumeDecision } from './-online'
 //
 //   event                         | condition                                  | change
 //   ------------------------------|--------------------------------------------|------------------------------------------
-//   sale_sending(method)          | own sale has a pay code shown               | none (sendPlan answers `blocked`)
+//   sale_sending(method)          | own sale has a pay code shown, or recorded  | none (sendPlan answers `blocked`)
 //                                 | H online, another method                    | new order (H's sale stays tracked)
-//                                 | else                                        | none: same K
+//                                 | every request that goes out                 | sending = true, STORED before it is sent
 //   sale_paid(k)                  | k = K                                       | drop sales under k; new order
 //   sale_awaiting(k, id)          |                                             | track id under k, code shown, open
 //                                 | answer unreadable                           | ... as `unchecked` (asked again)
@@ -33,24 +33,31 @@ import type { ResumeDecision } from './-online'
 //   sale_cancelled(k, id) [409]   |                                             | drop id; k = K: new order
 //   sale_mismatch(k) [422]        | k = K                                       | recorded = true (K kept until acked)
 //   sale_unanswered(k) [0, 5xx]   | k = K                                       | unanswered = true (K kept)
-//   sale_refused(k) [other 4xx]   |                                             | none
+//   sale_refused(k) [other 4xx]   | k = K                                       | sending = false (this request wrote nothing)
+//   (every answer for K ends `sending`; "in doubt" = sending or unanswered: a sale may exist under K)
 //   cart_edited                   | H online, its code never shown              | new order (sale stays tracked)
+//                                 | in doubt                                    | recorded = true (K kept until acked)
+//                                 | own tracked sale                            | edited = true (its end no longer clears the cart)
 //                                 | else                                        | none: K kept
 //   order_cleared (Hapus semua)   | own tracked sale, or H online               | new order (sale stays tracked)
-//                                 | H cash/EDC                                  | recorded = true (K kept until acked)
+//                                 | H cash/EDC, or in doubt                     | recorded = true (K kept until acked)
 //                                 | else                                        | none: K kept
+//   (recorded: NOTHING is sent under K any more; only recorded_acked, or the end of K's sale, starts a new order.
+//    So the next customer's identical order can never be answered with the lost sale.)
 //   recorded_acked                |                                             | new order
 //   sale_picked(id) (Menunggu)    | tracked                                     | open, code shown; its key (own) is kept
 //                                 | not tracked                                 | track id without a key (never own)
 //   sale_finished(id)             | own                                         | drop id; new order
 //                                 | not own                                     | drop id only
 //   resume_answered(id, wait)     |                                             | open, code shown
-//   resume_answered(id, retry)    | [503, offline, timeout]                     | `unreachable`: asked again, never dropped
+//   resume_answered(id, retry)    | [503, 403, 429, offline, timeout]           | `unreachable`: asked again, never dropped
+//   resume_answered(held id, wait | a `held` sale the order moved on from is    | none: it stays `held` (no code was shown, so
+//     / retry)                    |   asked in the background                   |   none is shown now), until it ends
 //   resume_answered(id, completed | own                                         | drop id; new order
 //     / ended / forget[404,403])  | not own                                     | drop id only
 //   resume_answered(unknown id)   |                                             | none (a late answer changes nothing)
 //   set_aside (Lanjut tunai saja) | a sale still needs its check                | aside = true; cleared when none needs one
-//   reload                        | `rehydrate`: validated; every sale becomes `unchecked`
+//   reload / the register opens   | `rehydrate`: validated; every sale becomes `unchecked`; in doubt => recorded = true
 
 export type TrackedPhase =
   /** Written in this page load, its charge got no answer (503 with a sale id): no pay code was shown, nothing to poll. */
@@ -78,10 +85,18 @@ export type PendingState = {
   key: string
   /** The sale written under `key` whose charge got no answer (503 with a sale id). */
   held: Held | null
+  /** A request under `key` went out and its answer is not here yet (stored BEFORE the request: a reload finds it). */
+  sending: boolean
   /** A request under `key` got no answer at all: a sale may exist under it. */
   unanswered: boolean
-  /** pos-api refused `key` for another body, or a held cash sale's order was cleared: a sale exists under it. */
+  /**
+   * A sale exists (or may exist) under `key` and the order is no longer surely the one that made it: pos-api refused
+   * the key for another body, or the order was cleared, edited or reloaded while in doubt. Nothing is sent until the
+   * cashier checked Riwayat and says so.
+   */
   recorded: boolean
+  /** The cart was changed after its own sale was written: that sale's end no longer clears the cart. */
+  edited: boolean
   /** Online sales that are not finished, in the order they were first seen. */
   sales: Tracked[]
   /** The sale on the waiting screen. */
@@ -110,8 +125,10 @@ export type PendingEvent =
 export const initialState = (fresh: string): PendingState => ({
   key: fresh,
   held: null,
+  sending: false,
   unanswered: false,
   recorded: false,
+  edited: false,
   sales: [],
   showing: null,
   aside: false,
@@ -127,8 +144,12 @@ export const isOwn = (s: PendingState, saleId: string): boolean => find(s, saleI
 export const isTracked = (s: PendingState, saleId: string): boolean => !!find(s, saleId)
 
 const needsCheck = (t: Tracked) => t.phase === 'unchecked' || t.phase === 'unreachable'
+/** A request under the key may have written a sale this screen never saw. */
+export const inDoubt = (s: PendingState): boolean => s.sending || s.unanswered
+/** A sale written but never charged that the order moved on from: asked in the background, never gating, never shown. */
+const leftBehind = (s: PendingState, t: Tracked) => t.phase === 'held' && t.key !== s.key
 /** The sales pos-api must be asked about, in order. */
-export const toCheck = (s: PendingState): string[] => s.sales.filter(needsCheck).map((t) => t.id)
+export const toCheck = (s: PendingState): string[] => s.sales.filter((t) => needsCheck(t) || leftBehind(s, t)).map((t) => t.id)
 /** While a remembered sale is unchecked no new online sale starts (its code may still be payable); cash never waits. */
 export const onlineBlocked = (s: PendingState): boolean => s.sales.some(needsCheck)
 /** The blocking "Memeriksa pembayaran sebelumnya" dialog: shown until every check answered, or it was put aside. */
@@ -139,7 +160,7 @@ export function gateOf(s: PendingState): 'none' | 'checking' | 'unreachable' {
 /** An online sale written but never charged still holds its stock until the job closes it. */
 export const holdsStock = (s: PendingState): boolean => s.sales.some((t) => t.phase === 'held')
 
-export type SendPlan = { key: string } | { blocked: 'own_sale_open'; saleId: string }
+export type SendPlan = { key: string } | { blocked: 'own_sale_open'; saleId: string } | { blocked: 'recorded' }
 
 /**
  * The key of a sale request, read when the request is sent (never kept in a closure). Refused while the order's own
@@ -148,6 +169,8 @@ export type SendPlan = { key: string } | { blocked: 'own_sale_open'; saleId: str
 export function sendPlan(s: PendingState): SendPlan {
   const own = ownSale(s)
   if (own?.shown) return { blocked: 'own_sale_open', saleId: own.id }
+  // A sale may exist under the key and this order may be another customer's: sending it could answer the old sale.
+  if (s.recorded) return { blocked: 'recorded' }
   return { key: s.key }
 }
 
@@ -172,7 +195,7 @@ export const OWN_SALE_OPEN_TEXT =
 export const HELD_SAME_TEXT =
   'Penjualan ini sudah tersimpan, tetapi pembayarannya belum tercatat. Tekan tombol bayar lagi dengan cara bayar dan jumlah yang sama: penjualan tidak akan tercatat dua kali.'
 export const RECORDED_TEXT =
-  'Penjualan sebelumnya mungkin sudah tercatat. Cek Riwayat (dan Menunggu) dulu sebelum membuat penjualan lagi. Bila sudah tercatat, jangan dibuat ulang.'
+  'Penjualan sebelumnya mungkin sudah tercatat. Cek Riwayat (dan Menunggu) dulu. Bila sudah tercatat, jangan dibuat ulang. Setelah Anda cek, tekan "Sudah saya cek: buat penjualan baru" untuk melanjutkan.'
 export const HELD_STOCK_HINT =
   'Stok mungkin masih ditahan penjualan online yang belum tertagih. Batalkan penjualan itu dari Menunggu, lalu coba lagi.'
 
@@ -188,6 +211,14 @@ export function recordedDescription(serverText: string | undefined): ErrorDescri
     code: 'SALE_MAY_EXIST',
     primary: 'none',
   }
+}
+
+/** The check of a remembered sale answered that it is not this account's sale, or is gone: said once, then forgotten. */
+export const FORGOTTEN_NOTICE: ErrorDescription = {
+  what: 'Penjualan yang diingat layar ini tidak bisa dibuka dengan akun Anda, atau sudah tidak ada.',
+  todo: 'Bila itu penjualan kasir lain, minta kasir tersebut memeriksanya. Cek Menunggu dan Riwayat untuk memastikan.',
+  code: 'SALE_NOT_FOUND',
+  primary: 'none',
 }
 
 // ---- The answer of POST /sales as an event ----
@@ -225,7 +256,8 @@ export type FinishInfo = { kind: 'paid' } | { kind: 'closed'; again: boolean }
  */
 export function finishPlan(s: PendingState, saleId: string, r: FinishInfo): { clearCart: boolean; openPay: boolean } {
   if (!isOwn(s, saleId)) return { clearCart: false, openPay: false }
-  return r.kind === 'paid' ? { clearCart: true, openPay: false } : { clearCart: false, openPay: r.again }
+  // a cart changed by hand since the sale was written is no longer that sale's order
+  return r.kind === 'paid' ? { clearCart: !s.edited, openPay: false } : { clearCart: false, openPay: r.again }
 }
 
 /**
@@ -234,12 +266,20 @@ export function finishPlan(s: PendingState, saleId: string, r: FinishInfo): { cl
  */
 export function resumePlan(s: PendingState, saleId: string, result: ResumeDecision['do']): { known: boolean; clearCart: boolean } {
   if (!isTracked(s, saleId)) return { known: false, clearCart: false }
-  return { known: true, clearCart: result === 'completed' && isOwn(s, saleId) }
+  return { known: true, clearCart: result === 'completed' && isOwn(s, saleId) && !s.edited }
 }
 
 // ---- The reducer ----
 
-const newOrder = (s: PendingState, fresh: string): PendingState => ({ ...s, key: fresh, held: null, unanswered: false, recorded: false })
+const newOrder = (s: PendingState, fresh: string): PendingState => ({
+  ...s,
+  key: fresh,
+  held: null,
+  sending: false,
+  unanswered: false,
+  recorded: false,
+  edited: false,
+})
 const without = (s: PendingState, id: string): Tracked[] => s.sales.filter((t) => t.id !== id)
 const upsert = (s: PendingState, t: Tracked): Tracked[] =>
   find(s, t.id) ? s.sales.map((x) => (x.id === t.id ? t : x)) : [...s.sales, t]
@@ -266,10 +306,11 @@ export function reduce(state: PendingState, ev: PendingEvent, fresh: string): Pe
 function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
   switch (ev.type) {
     case 'sale_sending': {
-      if (ownSale(s)?.shown) return s
+      if (ownSale(s)?.shown || s.recorded) return s // nothing goes out (`sendPlan`)
       // An online sale was written but never charged and no code was shown: another method is another sale.
-      if (s.held?.online && s.held.methodId !== ev.methodId) return newOrder(s, fresh)
-      return s
+      const next = s.held?.online && s.held.methodId !== ev.methodId ? newOrder(s, fresh) : s
+      // In doubt from now until an answer: stored before the request, so a reload in the middle still knows.
+      return { ...next, sending: true }
     }
     case 'sale_paid': {
       const next = { ...s, sales: s.sales.filter((t) => t.key !== ev.key) }
@@ -277,7 +318,7 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
     }
     case 'sale_awaiting': {
       const sales = upsert(s, { id: ev.saleId, key: ev.key, shown: true, phase: ev.readable ? 'open' : 'unchecked' })
-      return ev.key === s.key ? { ...s, sales, held: null, unanswered: false, recorded: false } : { ...s, sales }
+      return ev.key === s.key ? { ...s, sales, held: null, sending: false, unanswered: false, recorded: false } : { ...s, sales }
     }
     case 'sale_held': {
       const known = find(s, ev.saleId)
@@ -285,25 +326,29 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
         ? s.sales
         : upsert(s, known ? { ...known, key: ev.key } : { id: ev.saleId, key: ev.key, shown: false, phase: 'held' })
       if (ev.key !== s.key) return { ...s, sales }
-      return { ...s, sales, held: { saleId: ev.saleId, methodId: ev.methodId, online: ev.online }, unanswered: false, recorded: false }
+      return { ...s, sales, held: { saleId: ev.saleId, methodId: ev.methodId, online: ev.online }, sending: false, unanswered: false, recorded: false }
     }
     case 'sale_cancelled': {
       const next = { ...s, sales: without(s, ev.saleId) }
       return ev.key === s.key ? newOrder(next, fresh) : next
     }
     case 'sale_mismatch':
-      return ev.key === s.key ? { ...s, recorded: true, unanswered: false } : s
+      return ev.key === s.key ? { ...s, recorded: true, sending: false } : s
     case 'sale_unanswered':
-      return ev.key === s.key ? { ...s, unanswered: true } : s
+      return ev.key === s.key ? { ...s, unanswered: true, sending: false } : s
     case 'sale_refused':
-      return s
+      return ev.key === s.key && s.sending ? { ...s, sending: false } : s
     case 'cart_edited': {
       if (s.held?.online && !ownSale(s)?.shown) return newOrder(s, fresh)
+      // A sale may exist under the key and the order is now another one: an order that happens to equal the lost one
+      // must not be answered with it.
+      if (inDoubt(s) && !s.recorded) return { ...s, recorded: true }
+      if (ownSale(s) && !s.edited) return { ...s, edited: true }
       return s
     }
     case 'order_cleared': {
       if (ownSale(s) || s.held?.online) return newOrder(s, fresh)
-      if (s.held) return { ...s, recorded: true }
+      if ((s.held || inDoubt(s)) && !s.recorded) return { ...s, recorded: true }
       return s
     }
     case 'recorded_acked':
@@ -322,6 +367,8 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
     case 'resume_answered': {
       const t = find(s, ev.saleId)
       if (!t) return s
+      // never charged, no code shown, the order moved on: it is only watched until it ends
+      if (leftBehind(s, t) && (ev.result === 'wait' || ev.result === 'retry')) return s
       if (ev.result === 'wait') return { ...s, sales: upsert(s, { ...t, shown: true, phase: 'open' }) }
       if (ev.result === 'retry') return { ...s, sales: upsert(s, { ...t, phase: 'unreachable' }) }
       const next = { ...s, sales: without(s, ev.saleId) }
@@ -346,8 +393,10 @@ export function serialize(s: PendingState): string {
     v: 1,
     key: s.key,
     held: s.held,
+    sending: s.sending,
     unanswered: s.unanswered,
     recorded: s.recorded,
+    edited: s.edited,
     sales: s.sales.map(({ id, key, shown }) => ({ id, key, shown })),
   })
 }
@@ -382,7 +431,10 @@ export function rehydrate(text: string | null, legacyText: string | null, fresh:
       // unknown flags read as the careful value: a code may have been shown
       sales.push({ id: t.id, key: uuid(t.key) ? t.key : null, shown: t.shown !== false, phase: 'unchecked' })
     }
-    state = { ...state, key: raw.key, held, unanswered: raw.unanswered === true, recorded: raw.recorded === true, sales }
+    // A request that was out when the page went away, or one that was never answered: a sale may exist under the key
+    // and nobody can say the order on screen is still that one. The cashier checks before anything is sent.
+    const doubt = raw.sending === true || raw.unanswered === true
+    state = { ...state, key: raw.key, held, unanswered: doubt, recorded: raw.recorded === true || doubt, edited: raw.edited === true, sales }
   }
   const legacy = parse(legacyText)
   const old = uuid(legacy) ? { id: legacy, own: true } : isObject(legacy) && uuid(legacy.id) ? { id: legacy.id, own: legacy.own !== false } : null

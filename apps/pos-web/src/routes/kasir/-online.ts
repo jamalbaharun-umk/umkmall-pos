@@ -346,15 +346,20 @@ export type ResumeDecision =
   | { do: 'completed'; saleId: string; saleNumber: number }
   /** Ended unpaid (cancelled, expired, failed): forget it; the cart, if it is the sale's own, stays for another way to pay. */
   | { do: 'ended'; saleNumber: number; reversed: boolean }
-  /** pos-api says the sale is not ours or does not exist: forget it. */
+  /** pos-api says the sale does not exist for this actor (404), or the request can never be answered (other 4xx): forget it and say so. */
   | { do: 'forget' }
-  /** No usable answer (offline, 503, ...): keep the memory, block new online sales and ask again. */
+  /** No usable answer (offline, 5xx, a 403/408/429 that may pass): keep the memory, block new online sales and ask again. */
   | { do: 'retry' }
 
 /** Pure: what a reload does with the sale it remembered, given the one answer of `GET /sales/:id/payment`. */
 export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
   if (!answer) return { do: 'retry' }
-  if (!answer.ok) return answer.failure.status === 404 || answer.failure.status === 403 ? { do: 'forget' } : { do: 'retry' }
+  if (!answer.ok) {
+    // 404: pos-api hides another cashier's sale the same way as a missing one. A permission (403), a timeout or a
+    // rate limit (or a session that ended: the sign-in follows) may pass, so the sale is kept; any other 4xx will never answer, so asking again forever helps nobody.
+    const st = answer.failure.status ?? 0
+    return st >= 400 && st < 500 && ![401, 403, 408, 429].includes(st) ? { do: 'forget' } : { do: 'retry' }
+  }
   const p = answer.data
   if (keepPolling(p)) return { do: 'wait', payment: p }
   return p.saleStatus === 'completed'

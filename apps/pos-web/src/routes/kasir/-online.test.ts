@@ -358,17 +358,22 @@ describe('resumeDecision: what a reload does with the remembered sale', () => {
   it('a sale voided or refunded while the till was away is "ended" and says it was reversed', () => {
     expect(resumeDecision(ok({ saleStatus: 'void', status: 'refunded' }))).toEqual({ do: 'ended', saleNumber: 12, reversed: true })
   })
-  it('a deleted sale (404) and another store or cashier\'s sale (403), as the payment route really answers, are forgotten', () => {
-    const gone = paymentFailure('poll', 404, { message: 'x' })
-    const foreign = paymentFailure('poll', 403, { code: 'not_own_sale' })
-    expect(resumeDecision({ ok: false, failure: gone }).do).toBe('forget')
-    expect(resumeDecision({ ok: false, failure: foreign }).do).toBe('forget')
-    expect(resumeDecision({ ok: false, failure: paymentFailure('poll', 503, null) }).do).toBe('retry')
-  })
-  it('404 and 403 forget the sale; every other failure and no answer retry (never silently drop it)', () => {
+  it('404 (a deleted sale, or another cashier\'s: the payment route hides it the same way) forgets the sale', () => {
+    expect(resumeDecision({ ok: false, failure: paymentFailure('poll', 404, { message: 'x' }) }).do).toBe('forget')
     expect(resumeDecision({ ok: false, failure: { status: 404 } }).do).toBe('forget')
-    expect(resumeDecision({ ok: false, failure: { status: 403 } }).do).toBe('forget')
-    expect(resumeDecision({ ok: false, failure: { status: 503 } }).do).toBe('retry')
+  })
+  it('403 keeps the sale and asks again: a permission may come back, and a sale is never dropped on it', () => {
+    expect(resumeDecision({ ok: false, failure: paymentFailure('poll', 403, { code: 'not_own_sale' }) }).do).toBe('retry')
+    expect(resumeDecision({ ok: false, failure: { status: 403 } }).do).toBe('retry')
+  })
+  it('a 4xx that can never be answered (400, 422) forgets the sale instead of asking forever; 401, 408 and 429 ask again', () => {
+    expect(resumeDecision({ ok: false, failure: { status: 400 } }).do).toBe('forget')
+    expect(resumeDecision({ ok: false, failure: { status: 422 } }).do).toBe('forget')
+    for (const status of [401, 408, 429]) expect(resumeDecision({ ok: false, failure: { status } }).do).toBe('retry')
+  })
+  it('a 5xx, an unreadable answer and no answer ask again (never silently drop it)', () => {
+    expect(resumeDecision({ ok: false, failure: paymentFailure('poll', 503, null) }).do).toBe('retry')
+    expect(resumeDecision({ ok: false, failure: { status: 502 } }).do).toBe('retry')
     expect(resumeDecision({ ok: false, failure: { status: 0 } }).do).toBe('retry')
     expect(resumeDecision({ ok: false, failure: {} }).do).toBe('retry')
     expect(resumeDecision(null).do).toBe('retry')
