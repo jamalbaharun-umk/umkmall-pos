@@ -56,6 +56,12 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
     todo: 'Coba lagi sebentar. Jika berulang, hubungi pemilik.',
     primary: 'retry',
   },
+  // a cancel, a refund retry or a manual mark got no answer: the request may have reached payment-api
+  payment_unclear: {
+    what: 'Layanan pembayaran tidak menjawab. Permintaan Anda mungkin sudah sampai, jadi belum pasti apa yang berubah.',
+    todo: 'Periksa statusnya dulu (Cek status atau muat ulang halaman), baru ulangi bila perlu.',
+    primary: 'none',
+  },
   // the switch to cash got no answer: the bill may already be closed
   cash_switch_unanswered: {
     what: 'Layanan pembayaran tidak menjawab, jadi penjualan belum menjadi tunai.',
@@ -71,7 +77,7 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
   // the sale was written but the charge got no answer: the same key repeats it, never a second sale
   sale_waiting: {
     what: 'Sistem pembayaran online tidak menjawab. Stok ditahan untuk penjualan ini dan belum pasti ada tagihan.',
-    todo: 'Coba lagi dengan penjualan yang sama; tagihan tidak akan ganda. Cara bayar lain bisa dipilih setelah sistem memastikan percobaan ini berakhir.',
+    todo: 'Coba lagi dengan cara bayar yang sama; tagihan tidak akan ganda. Bila Anda memilih cara bayar lain, penjualan ini tetap tercatat di Menunggu sampai sistem menutupnya atau Anda membatalkannya di sana.',
     primary: 'retry',
     helpCode: 'PAYMENT_UNAVAILABLE',
   },

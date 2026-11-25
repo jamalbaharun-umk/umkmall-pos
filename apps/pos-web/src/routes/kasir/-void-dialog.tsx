@@ -4,6 +4,7 @@ import { rupiah } from '@/components/page'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { loadApprovers, voidSale, type SaleVoid } from './-void-api'
 import { refundSale } from './-online-api'
+import { useLost } from './-use-lost'
 import {
   NOTE_MAX,
   VOID_REASONS,
@@ -39,6 +40,7 @@ type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { st
  * submit and when the dialog closes, never put in a URL, storage or log.
  */
 export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online = false }: Props) {
+  const lost = useLost()
   const what = online ? 'refund struk' : 'membatalkan struk'
   const [approvers, setApprovers] = useState<Approvers>({ state: 'loading' })
   const [reasonCode, setReasonCode] = useState('')
@@ -83,7 +85,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
     setBusy(true)
     const input = { saleId: sale.id, key: key.current, ...voidBody(form) }
     // A paid QRIS or VA sale goes through the refund route; the answer has the void's own failure kinds either way.
-    const answer = await (online ? refundSale({ data: input }) : voidSale({ data: input })).catch(() => null)
+    const answer = await (online ? refundSale({ data: input }) : voidSale({ data: input })).catch(lost)
     setPin('') // cleared after every submit, whatever the answer
     lock.current = false
     setBusy(false)

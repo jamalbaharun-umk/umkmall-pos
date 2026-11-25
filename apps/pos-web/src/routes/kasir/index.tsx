@@ -60,8 +60,8 @@ import {
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
-import { AwaitingList, OnlineWait, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
-import { forgetPending, parsePayment, type SalePayment } from './-online'
+import { AwaitingList, OnlineWait, ResumeGate, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
+import { finishPlan, forgetPending, parsePayment, rememberPending, saleFailure, saleKey, type SalePayment } from './-online'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -165,10 +165,15 @@ function Register({
   const [soldOut, setSoldOut] = useState<string>()
   const [paid, setPaid] = useState<PaidSale>()
   // UMK-1991: a PG sale waits for its payment on its own screen; a reload brings the screen back.
-  const [waiting, setWaiting] = useState<SalePayment | null>(null)
+  // `own`: the sale was made from the order in this cart; a sale picked from the list is somebody else's order.
+  const [waiting, setWaiting] = useState<{ payment: SalePayment; own: boolean } | null>(null)
+  const [ownSale, setOwnSale] = useState<string | null>(null)
   const resume = useResumeOnlineSale()
   const [listing, setListing] = useState(false)
-  const online = waiting ?? resume.resumed
+  const online = waiting ?? (resume.resumed ? { payment: resume.resumed, own: resume.own } : null)
+  useEffect(() => {
+    if (resume.resumed && resume.own) setOwnSale(resume.resumed.saleId)
+  }, [resume.resumed, resume.own])
   // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
   const canDiscount = useCan('sales.price_override')
   const [discountText, setDiscountText] = useState('')
@@ -189,6 +194,34 @@ function Register({
   }, [restored, cart, note])
   const [key, setKey] = useState(() => crypto.randomUUID())
   useEffect(() => setKey(crypto.randomUUID()), [cart, note, member, voucher, discountText])
+  const clearOrder = () => {
+    setCart([])
+    setNote('')
+    setMember(null)
+    setVoucher(null)
+    setDiscountText('')
+  }
+  // A reload found the remembered sale already ended: a completed one is rung up (its order leaves the cart and its
+  // receipt is offered), a cancelled one only says so.
+  useEffect(() => {
+    const c = resume.completed
+    if (!c) return
+    if (c.own) clearOrder()
+    setOwnSale(null)
+    setKey(crypto.randomUUID())
+    void router.invalidate()
+    setPaid({ id: c.saleId, change: null, receivableRest: null })
+    resume.ack()
+  }, [resume.completed])
+  useEffect(() => {
+    const e = resume.ended
+    if (!e) return
+    setOwnSale(null)
+    setKey(crypto.randomUUID())
+    void router.invalidate()
+    notifySuccess(`Penjualan #${e.saleNumber} sudah ditutup tanpa pembayaran. Stok kembali.`)
+    resume.ack()
+  }, [resume.ended])
 
   const categories = useMemo(
     () =>
@@ -374,11 +407,9 @@ function Register({
             Rincian pesanan
           </Text>
           <div className="flex gap-1 whitespace-nowrap">
-            {chargeable.length > 0 && (
-              <Button width="auto" type="text" size="compact" onClick={() => setListing(true)}>
-                Menunggu
-              </Button>
-            )}
+            <Button width="auto" type="text" size="compact" onClick={() => setListing(true)}>
+              Menunggu
+            </Button>
             <Button width="auto" asChild type="text" size="compact">
               <Link to="/kasir/riwayat">Riwayat</Link>
             </Button>
@@ -602,7 +633,8 @@ function Register({
           renewKey={() => setKey(crypto.randomUUID())}
           onAwaiting={(payment) => {
             setPaying(false)
-            setWaiting(payment)
+            setOwnSale(payment.saleId)
+            setWaiting({ payment, own: true })
           }}
           onPaid={(sale) => {
             void router.invalidate() // fresh prices and products for the next order
@@ -618,27 +650,30 @@ function Register({
         />
       )}
       <SuccessDialog sale={paid} onClose={() => setPaid(undefined)} />
-      <AwaitingList open={listing} onClose={() => setListing(false)} onPick={setWaiting} />
+      <AwaitingList
+        open={listing}
+        onClose={() => setListing(false)}
+        onPick={(payment) => setWaiting({ payment, own: payment.saleId === ownSale })}
+      />
+      <ResumeGate resume={resume} />
       {online && (
         <OnlineWait
-          key={online.saleId}
-          initial={online}
+          key={online.payment.saleId}
+          initial={online.payment}
+          own={online.own}
           onFinish={(r: OnlineFinish) => {
             forgetPending()
             setWaiting(null)
             resume.clear()
             void router.invalidate() // stock is back (or sold): fresh products for the next order
-            // A new key either way: the same key would answer the finished sale again.
-            setKey(crypto.randomUUID())
+            // What the end means for the cart depends on whose sale it was (a picked sale never touches this cart).
+            const plan = finishPlan(r.kind === 'paid' ? { kind: 'paid' } : { kind: 'closed', again: r.again }, online.own)
+            if (online.own) setOwnSale(null)
+            // A new key: the same key would answer the finished sale again.
+            if (plan.renewKey) setKey(crypto.randomUUID())
+            if (plan.clearCart) clearOrder()
             // Expired or failed: straight to choosing another way to pay, the cart is still there.
-            if (r.kind === 'closed' && r.again) setPaying(true)
-            if (r.kind === 'paid') {
-              setCart([])
-              setNote('')
-              setMember(null)
-              setVoucher(null)
-              setDiscountText('')
-            }
+            if (plan.openPay) setPaying(true)
           }}
         />
       )}
@@ -887,7 +922,7 @@ function PayDialog({
     setError(undefined)
     const res = await createSale({
       data: {
-        key: idempotencyKey,
+        key: saleKey(idempotencyKey, methodId, amount),
         lines: requestLines(cart),
         paid: amount,
         discount: discount > 0 ? discount : undefined,
@@ -910,9 +945,11 @@ function PayDialog({
     if (!res.ok) {
       // UMK-1991: a PG sale the gateway refused is cancelled for good: this key would only answer it again.
       if (res.status === 409 && res.saleId) renewKey()
+      // The sale was written but not charged: remember it, so a reload or the Menunggu list still finds it.
+      if (res.status === 503 && res.saleId && step === 'online') rememberPending(res.saleId, true)
       showError(
         res.status === 503 || (res.status === 409 && res.code)
-          ? { status: res.status, code: res.status === 503 && res.saleId ? 'sale_waiting' : res.code, error: res.error }
+          ? { ...saleFailure(res.status, res.code, res.saleId, step === 'online'), error: res.error }
           : res,
         {
           action: 'menyimpan penjualan',
@@ -1149,7 +1186,8 @@ function PayDialog({
   )
 }
 
-type PaidSale = { id: string; change: number; receivableRest: number | null }
+/** `change` is null when it is not known here (a sale found paid after a reload): the receipt has it. */
+type PaidSale = { id: string; change: number | null; receivableRest: number | null }
 
 function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void }) {
   const navigate = useNavigate()
@@ -1164,7 +1202,9 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
           {/* A kasbon leaves a balance on the member's receivable, not change. */}
           {sale?.receivableRest
             ? `Sisa kasbon: ${rupiah(sale.receivableRest)}`
-            : `Kembalian: ${rupiah(sale?.change ?? 0)}`}
+            : sale?.change == null
+              ? 'Penjualan sudah dibayar'
+              : `Kembalian: ${rupiah(sale.change)}`}
         </Text>
         <div className="mt-4 grid w-full grid-cols-2 gap-2">
           <Button

@@ -6,6 +6,7 @@ import { useIsOwner } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { markRefundManual, retryRefund } from './-online-api'
 import type { SaleVoid } from './-void-api'
+import { useLost } from './-use-lost'
 import { MANUAL_NOTE_MAX, manualNoteError, refundStateText } from './-void-helpers'
 
 /**
@@ -22,13 +23,17 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
   const [note, setNote] = useState('')
   const [noteError, setNoteError] = useState<string>()
   const lock = useRef(false)
+  const lost = useLost()
   const amount = saleVoid.total + saleVoid.rounding
   const state = refundStateText(saleVoid.refundStatus, rupiah(amount))
   // A pending refund is followed by asking pos-api again (its job settles it), so the status moves by itself.
   const pending = saleVoid.refundStatus === 'pending'
   useEffect(() => {
     if (!pending) return
-    const t = setInterval(() => void router.invalidate(), 5000)
+    // The whole route is read again, so not every few seconds and not while the tab is hidden.
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void router.invalidate()
+    }, 10_000)
     return () => clearInterval(t)
   }, [pending, router])
   if (!state) return null
@@ -37,7 +42,7 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
     if (lock.current) return
     lock.current = true
     setBusy(true)
-    const r = await retryRefund({ data: saleVoid.saleId }).catch(() => null)
+    const r = await retryRefund({ data: saleVoid.saleId }).catch(lost)
     lock.current = false
     setBusy(false)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'mengajukan refund lagi', retry: () => void retry() })
@@ -53,7 +58,7 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
     if (error) return
     lock.current = true
     setBusy(true)
-    const r = await markRefundManual({ data: { saleId: saleVoid.saleId, note: note.trim() } }).catch(() => null)
+    const r = await markRefundManual({ data: { saleId: saleVoid.saleId, note: note.trim() } }).catch(lost)
     lock.current = false
     setBusy(false)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, 'menandai refund dikembalikan manual')

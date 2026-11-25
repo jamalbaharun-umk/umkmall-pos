@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  OPEN_PAST_CODE_TIME,
   cancelBody,
+  finishPlan,
+  paidFigures,
+  resumeDecision,
+  saleFailure,
+  saleKey,
   cashDue,
   cashSwitchError,
   clockText,
@@ -206,8 +212,10 @@ describe('resume memory', () => {
   it('remembers a sale id and forgets it', () => {
     const s = store()
     expect(pendingSale(s)).toBeNull()
-    rememberPending(ID, s)
-    expect(pendingSale(s)).toBe(ID)
+    rememberPending(ID, true, s)
+    expect(pendingSale(s)).toEqual({ id: ID, own: true })
+    rememberPending(ID, false, s)
+    expect(pendingSale(s)).toEqual({ id: ID, own: false })
     forgetPending(s)
     expect(pendingSale(s)).toBeNull()
   })
@@ -220,7 +228,7 @@ describe('resume memory', () => {
       setItem: () => { throw new Error('blocked') },
       removeItem: () => { throw new Error('blocked') },
     }
-    expect(() => rememberPending(ID, broken)).not.toThrow()
+    expect(() => rememberPending(ID, true, broken)).not.toThrow()
     expect(pendingSale(broken)).toBeNull()
     expect(() => forgetPending(broken)).not.toThrow()
   })
@@ -248,7 +256,16 @@ describe('paymentFailure and the error dialog', () => {
     const d = dialog('check', 503, { code: 'payment_unavailable' })
     expect(d.what).toMatch(/tidak ada yang berubah/)
     expect(d.primary).toBe('retry')
-    expect(dialog('cancel', 503, null).code).toBe('PAYMENT_UNAVAILABLE')
+    expect(dialog('poll', 503, null).code).toBe('PAYMENT_UNAVAILABLE')
+  })
+
+  it('503 on a cancel, refund retry or manual mark never says "nothing changed": the request may have arrived', () => {
+    for (const route of ['cancel', 'retry', 'manual', 'refund'] as const) {
+      const d = dialog(route, 503, { code: 'payment_unavailable' })
+      expect(d.code).toBe('PAYMENT_UNCLEAR')
+      expect(d.what).not.toMatch(/tidak ada yang berubah/)
+      expect(d.todo).toMatch(/Periksa statusnya dulu/)
+    }
   })
 
   it('503 on the sale itself says the sale waits and the same key repeats it', () => {
@@ -318,5 +335,98 @@ describe('design 26 details', () => {
     const now = new Date('2026-11-25T10:00:00Z').getTime()
     expect(countdown('2026-11-25T11:00:00Z', now)?.text).toBe('60:00')
     expect(countdown('2026-11-25T10:15:00Z', now)?.text).toBe('15:00')
+  })
+})
+
+describe('saleKey: one key per method and amount', () => {
+  const KEY = /^[A-Za-z0-9_-]{8,100}$/
+  const order = '6f1c2f0e-6d5c-4c58-9d0e-0c3c6b1a2b3c'
+  const online = '1b9d2a3e-aaaa-4bbb-8ccc-0123456789ab'
+  const cash = '2c9d2a3e-aaaa-4bbb-8ccc-0123456789cd'
+  it('is the same for a retry and different for another method or amount', () => {
+    expect(saleKey(order, online, 5000)).toBe(saleKey(order, online, 5000))
+    expect(saleKey(order, cash, 5000)).not.toBe(saleKey(order, online, 5000)) // online 503, then Tunai: not a replay
+    expect(saleKey(order, cash, 6000)).not.toBe(saleKey(order, cash, 5000))
+    expect(saleKey('other-order-key-0001', cash, 5000)).not.toBe(saleKey(order, cash, 5000))
+  })
+  it('is always a key pos-api accepts', () => {
+    expect(saleKey(order, online, 5000)).toMatch(KEY)
+    expect(saleKey(order, '', Number.NaN)).toMatch(KEY)
+    expect(saleKey(order, 'a b/c', 12)).toMatch(KEY)
+  })
+})
+
+describe('saleFailure', () => {
+  it('only an online sale that was written but not charged is "sale_waiting"', () => {
+    expect(saleFailure(503, undefined, ID, true).code).toBe('sale_waiting')
+    // a cash sale that got 503 has no bill: plain wording, not "pembayaran online"
+    expect(saleFailure(503, undefined, ID, false).code).toBeUndefined()
+    expect(saleFailure(503, undefined, undefined, true).code).toBeUndefined()
+    expect(saleFailure(409, 'method_disabled', ID, true)).toEqual({ status: 409, code: 'method_disabled' })
+  })
+})
+
+describe('finishPlan: whose cart a waiting screen ends', () => {
+  it('an own sale that was paid clears the order and starts a new key', () => {
+    expect(finishPlan({ kind: 'paid' }, true)).toEqual({ clearCart: true, openPay: false, renewKey: true })
+  })
+  it('an own sale that ended unpaid keeps the cart, and reopens payment only when asked', () => {
+    expect(finishPlan({ kind: 'closed', again: true }, true)).toEqual({ clearCart: false, openPay: true, renewKey: true })
+    expect(finishPlan({ kind: 'closed', again: false }, true).openPay).toBe(false)
+  })
+  it('a sale picked from the list touches neither the cart, the key nor the payment dialog', () => {
+    const none = { clearCart: false, openPay: false, renewKey: false }
+    expect(finishPlan({ kind: 'paid' }, false)).toEqual(none)
+    expect(finishPlan({ kind: 'closed', again: true }, false)).toEqual(none)
+  })
+  it('a picked sale never says the order is still at the till', () => {
+    expect(closedText('expired', false).body).not.toMatch(/masih ada di kasir/)
+    expect(closedText('failed', false).body).not.toMatch(/keranjang/)
+    expect(closedText('expired', true).body).toMatch(/masih ada di kasir/)
+  })
+})
+
+describe('resumeDecision: what a reload does with the remembered sale', () => {
+  const ok = (over: Record<string, unknown>) => ({ ok: true as const, data: pay(over) })
+  it('an open sale shows the waiting screen again, also a paid payment whose sale is not complete yet', () => {
+    expect(resumeDecision(ok({})).do).toBe('wait')
+    expect(resumeDecision(ok({ status: 'paid' })).do).toBe('wait')
+  })
+  it('a sale completed while the till was away is reported completed (the cart that made it is cleared)', () => {
+    expect(resumeDecision(ok({ saleStatus: 'completed', status: 'paid' }))).toEqual({
+      do: 'completed',
+      saleId: ID,
+      saleNumber: 12,
+    })
+  })
+  it('a cancelled sale is only "ended"', () => {
+    expect(resumeDecision(ok({ saleStatus: 'cancelled', status: 'expired' })).do).toBe('ended')
+  })
+  it('404 and 403 forget the sale; every other failure and no answer retry (never silently drop it)', () => {
+    expect(resumeDecision({ ok: false, failure: { status: 404 } }).do).toBe('forget')
+    expect(resumeDecision({ ok: false, failure: { status: 403 } }).do).toBe('forget')
+    expect(resumeDecision({ ok: false, failure: { status: 503 } }).do).toBe('retry')
+    expect(resumeDecision({ ok: false, failure: { status: 0 } }).do).toBe('retry')
+    expect(resumeDecision({ ok: false, failure: {} }).do).toBe('retry')
+    expect(resumeDecision(null).do).toBe('retry')
+  })
+})
+
+describe('an open payment past its code time', () => {
+  it('is never called expired and never promises a refund: only the server may close it', () => {
+    const text = `${OPEN_PAST_CODE_TIME.title} ${OPEN_PAST_CODE_TIME.body}`
+    expect(text).not.toMatch(/kedaluwarsa/i)
+    expect(text).not.toMatch(/dikembalikan/i)
+    expect(OPEN_PAST_CODE_TIME.body).toMatch(/tetap selesai/)
+  })
+})
+
+describe('paidFigures', () => {
+  it('reads the cash and change the sale recorded, in whole rupiah only', () => {
+    expect(paidFigures({ paid: 50000, change: 4900, number: 1 })).toEqual({ paid: 50000, change: 4900 })
+    expect(paidFigures({ paid: 50000 })).toBeNull()
+    expect(paidFigures({ paid: 1.5, change: 0 })).toBeNull()
+    expect(paidFigures({ paid: -1, change: 0 })).toBeNull()
+    expect(paidFigures(null)).toBeNull()
   })
 })

@@ -4,9 +4,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { rupiah } from '@/components/pos-page'
 import { notifySuccess, showError, type FailureLike } from '@/lib/feedback'
-import { loadAwaitingSales, type AwaitingSale, cancelSalePayment, checkSalePayment, getSalePayment, paySaleInCash } from './-online-api'
 import {
+  loadAwaitingSales,
+  loadPaidFigures,
+  type AwaitingSale,
+  cancelSalePayment,
+  checkSalePayment,
+  getSalePayment,
+  paySaleInCash,
+} from './-online-api'
+import {
+  OPEN_PAST_CODE_TIME,
   POLL_MS,
+  resumeDecision,
+  type ResumeDecision,
   agoText,
   cashSwitchWarning,
   isLink,
@@ -29,7 +40,8 @@ import {
   type SalePayment,
 } from './-online'
 import { parseRupiah, quickAmounts } from './-money'
-import { qrMatrix, qrPath } from './-qr'
+import { QUIET_ZONE, qrMatrix, qrPath } from './-qr'
+import { useLost } from './-use-lost'
 
 export type OnlineFinish =
   | { kind: 'paid'; saleId: string }
@@ -52,7 +64,7 @@ export function QrCode({ value }: { value: string }) {
         Kode QR tidak bisa ditampilkan. Batalkan penjualan ini lalu coba lagi.
       </Alert>
     )
-  const pad = 3
+  const pad = QUIET_ZONE
   const box = drawn.size + pad * 2
   return (
     <svg
@@ -73,18 +85,33 @@ export function QrCode({ value }: { value: string }) {
  * screen asks every 3 seconds and shows what it answers. It cannot be dismissed while the payment is open, because an
  * awaiting sale is in no list: it ends by payment, by cash, by cancel or by pos-api's own expiry.
  */
-export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFinish: (r: OnlineFinish) => void }) {
+export function OnlineWait({
+  initial,
+  own,
+  onFinish,
+}: {
+  initial: SalePayment
+  /** The sale was made from the order in the register's cart (false: picked from the list of waiting sales). */
+  own: boolean
+  onFinish: (r: OnlineFinish) => void
+}) {
   const navigate = useNavigate()
+  const lost = useLost()
   const id = initial.saleId
   const [payment, setPayment] = useState(initial)
   const [now, setNow] = useState(() => Date.now())
   const [busy, setBusy] = useState<null | 'check' | 'cancel' | 'cash'>(null)
-  const [mode, setMode] = useState<'wait' | 'cash'>('wait')
+  // A sale pos-api already turned into cash (reload after the intent) goes straight to the cash form.
+  const [mode, setMode] = useState<'wait' | 'cash'>(initial.method === 'cash' ? 'cash' : 'wait')
   const [cashText, setCashText] = useState('')
   const [cashError, setCashError] = useState<string>()
   // pos-api answered that the sale IS a cash sale and only its record is missing: the cashier repeats, never goes back.
-  const [cashPending, setCashPending] = useState(false)
-  const [change, setChange] = useState<number>()
+  const [cashPending, setCashPending] = useState(initial.method === 'cash')
+  // The cash and change the completed cash sale recorded: read from the server, never worked out from the typed text.
+  const [figures, setFigures] = useState<{ s: 'loading' } | { s: 'error' } | { s: 'ready'; paid: number; change: number }>({ s: 'loading' })
+  const [figuresTry, setFiguresTry] = useState(0)
+  // pos-api refused the cash switch because another cashier's sale cannot be taken in cash: the button goes away.
+  const [notMine, setNotMine] = useState(false)
   const [fails, setFails] = useState(0)
   const lock = useRef(false) // a double tap arrives before `busy` re-renders
   const seq = useRef(0) // an answer to an older request never overwrites a newer one
@@ -100,7 +127,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
     setPayment(p)
   }
 
-  useEffect(() => rememberPending(id), [id])
+  useEffect(() => rememberPending(id, own), [id, own])
   useEffect(() => {
     if (outcome.kind === 'closed' || (outcome.kind === 'paid' && outcome.completed)) forgetPending()
   }, [outcome.kind, outcome.kind === 'paid' && outcome.completed])
@@ -113,7 +140,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
     const tick = async () => {
       if (!lock.current) {
         const at = seq.current
-        const r = await getSalePayment({ data: id }).catch(() => null)
+        const r = await getSalePayment({ data: id }).catch(lost)
         if (stop) return
         if (r?.ok) {
           if (seq.current === at) setPayment(r.data)
@@ -135,15 +162,40 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
     return () => clearInterval(t)
   }, [waiting, payment.expiresAt])
 
-  // The customer paid: say so once, whichever call learned it.
+  // pos-api turned the sale into a cash sale (another screen, or the first request before a reload): follow it.
   useEffect(() => {
-    if (outcome.kind === 'paid' && !announced.current) {
+    if (waiting && payment.method === 'cash') {
+      setMode('cash')
+      setCashPending(true)
+    }
+  }, [waiting, payment.method])
+
+  // A cash sale that is complete: the paid amount and change come from the sale itself.
+  const cashDone = outcome.kind === 'paid' && outcome.cash && outcome.completed
+  useEffect(() => {
+    if (!cashDone) return
+    let gone = false
+    setFigures({ s: 'loading' })
+    loadPaidFigures({ data: id })
+      .then((r) => !gone && setFigures(r.ok ? { s: 'ready', ...r.data } : { s: 'error' }))
+      .catch((e) => {
+        lost(e)
+        if (!gone) setFigures({ s: 'error' })
+      })
+    return () => {
+      gone = true
+    }
+  }, [cashDone, id, figuresTry])
+
+  // The customer paid: say so once, when the sale is complete (not when only the payment is paid).
+  useEffect(() => {
+    if (outcome.kind === 'paid' && outcome.completed && !announced.current) {
       announced.current = true
       notifySuccess(
         `Pembayaran ${payment.paymentMethodName || gatewayLabel(payment.method)} ${rupiah(payment.amount)} diterima. Struk #${payment.saleNumber}`,
       )
     }
-  }, [outcome.kind, payment.amount])
+  }, [outcome.kind, outcome.kind === 'paid' && outcome.completed, payment.amount])
 
   const left = countdown(payment.expiresAt, now)
   const ago = agoText(payment.lastCheckedAt, now)
@@ -152,7 +204,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
     if (lock.current) return
     lock.current = true
     setBusy('check')
-    const r = await checkSalePayment({ data: id }).catch(() => null)
+    const r = await checkSalePayment({ data: id }).catch(lost)
     lock.current = false
     setBusy(null)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'memeriksa status pembayaran', retry: () => void check() })
@@ -162,7 +214,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
   }
 
   async function refetch() {
-    const r = await getSalePayment({ data: id }).catch(() => null)
+    const r = await getSalePayment({ data: id }).catch(lost)
     if (r?.ok) apply(r.data)
   }
 
@@ -173,7 +225,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
       async (): Promise<FailureLike | void> => {
         lock.current = true
         setBusy('cancel')
-        const r = await cancelSalePayment({ data: id }).catch(() => null)
+        const r = await cancelSalePayment({ data: id }).catch(lost)
         lock.current = false
         setBusy(null)
         if (!r) return { status: 0 }
@@ -201,12 +253,16 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
     const paid = parseRupiah(cashText)
     lock.current = true
     setBusy('cash')
-    const r = await paySaleInCash({ data: { id, paid } }).catch(() => null)
+    const r = await paySaleInCash({ data: { id, paid } }).catch(lost)
     lock.current = false
     setBusy(null)
     if (!r || !r.ok) {
       const failure = r?.failure ?? { status: 0 }
       if (failure.code === 'cash_payment_pending') setCashPending(true)
+      if (failure.code === 'not_own_sale') {
+        setNotMine(true)
+        setMode('wait')
+      }
       // The customer paid the QR first (the sale is complete as a QR sale), or the bill is gone: show the true state.
       if (failure.code === 'already_paid' || failure.code === 'not_awaiting') {
         setMode('wait')
@@ -217,7 +273,6 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
       return showError(failure, { action: 'mengganti ke tunai', retry: failure.status === 0 || failure.code === 'cash_payment_pending' ? () => void saveCash() : undefined })
     }
     announced.current = true
-    setChange(paid - cashDue(payment.amount))
     apply(r.data)
     notifySuccess('Penjualan dibayar tunai')
   }
@@ -226,7 +281,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
     onFinish(
       kind === 'paid'
         ? { kind, saleId: id }
-        : { kind, saleId: id, again: outcome.kind === 'closed' && outcome.why !== 'cancelled' },
+        : { kind, saleId: id, again: own && outcome.kind === 'closed' && outcome.why !== 'cancelled' },
     )
     if (print) void navigate({ to: '/kasir/struk/$id', params: { id } })
   }
@@ -239,9 +294,9 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
         ? 'Dibayar tunai'
         : 'Pembayaran diterima'
       : outcome.kind === 'closed'
-        ? closedText(outcome.why).title
+        ? closedText(outcome.why, own).title
         : expiredOpen
-          ? 'Kode kedaluwarsa'
+          ? OPEN_PAST_CODE_TIME.title
           : 'Menunggu pembayaran'
   const method = payment.paymentMethodName || gatewayLabel(payment.method)
 
@@ -254,7 +309,11 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
         size="medium"
         label={title}
       >
-        <div className="flex max-h-[88dvh] flex-col gap-4 overflow-y-auto p-6" aria-live="polite">
+        <div className="flex max-h-[88dvh] flex-col gap-4 overflow-y-auto p-6">
+          {/* Only the state changes are announced; the clock text ("Terakhir dicek") is outside any live region. */}
+          <p className="sr-only" role="status" aria-live="polite">
+            {outcome.kind === 'paid' ? (outcome.completed ? 'Pembayaran diterima' : 'Pembayaran masuk, menyelesaikan penjualan') : outcome.kind === 'closed' ? closedText(outcome.why, own).title : ''}
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             <Text as="h2" variant="h4" weight="bold">
               {title}
@@ -277,9 +336,33 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
                   <Spinner size="sm" /> Menyelesaikan penjualan…
                 </p>
               ) : outcome.cash ? (
-                <p className="text-default-secondary">
-                  Kembalian: <strong>{rupiah(Math.max(change ?? 0, 0))}</strong>
-                </p>
+                figures.s === 'ready' ? (
+                  <div className="text-default-secondary" role="status">
+                    <p>
+                      Uang diterima: <strong>{rupiah(figures.paid)}</strong>
+                    </p>
+                    <p>
+                      Kembalian: <strong>{rupiah(figures.change)}</strong>
+                    </p>
+                  </div>
+                ) : figures.s === 'loading' ? (
+                  <p className="flex items-center gap-2 text-sm text-default-secondary" role="status">
+                    <Spinner size="sm" /> Mengambil kembalian dari penjualan…
+                  </p>
+                ) : (
+                  <Alert
+                    variant="warning"
+                    size="small"
+                    role="alert"
+                    action={
+                      <Button type="outline" color="light" size="small" width="auto" onClick={() => setFiguresTry((n) => n + 1)}>
+                        Coba lagi
+                      </Button>
+                    }
+                  >
+                    Kembalian belum bisa dimuat. Lihat di struk sebelum menyerahkan uang kembali.
+                  </Alert>
+                )
               ) : (
                 <>
                   <p className="font-semibold">Lunas lewat {method}</p>
@@ -301,16 +384,15 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
 
           {outcome.kind === 'closed' && (
             <Alert variant={outcome.why === 'cancelled' ? 'warning' : 'danger'} size="small" role="status">
-              <span className="font-semibold">{closedText(outcome.why).title}.</span> {closedText(outcome.why).body}
+              <span className="font-semibold">{closedText(outcome.why, own).title}.</span> {closedText(outcome.why, own).body}
             </Alert>
           )}
 
           {waiting && mode === 'wait' && (
             <>
               {expiredOpen && (
-                <Alert variant="danger" size="small" role="status">
-                  <span className="font-semibold">Kode sudah kedaluwarsa.</span> Bila pelanggan tetap membayar, uangnya
-                  dikembalikan otomatis.
+                <Alert variant="warning" size="small" role="status">
+                  {OPEN_PAST_CODE_TIME.body}
                 </Alert>
               )}
               <div className="text-center">
@@ -410,7 +492,8 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
 
               {payment.switchingToCash && (
                 <Alert variant="info" size="small" role="status">
-                  Perpindahan ke tunai sedang diproses. Tunggu sebentar, lalu tekan Cek status.
+                  Perpindahan ke tunai belum selesai. Tekan Cek status. Bila tetap begini, Anda bisa mengulang Ganti ke
+                  tunai atau membatalkan pembayaran ini.
                 </Alert>
               )}
               {fails >= 3 && (
@@ -473,6 +556,8 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
                 }}
                 error={cashError}
                 placeholder="0"
+                // once the intent exists the server keeps the first amount: the field is no longer an input
+                disabled={cashPending}
                 autoFocus
               />
               <div className="flex flex-wrap gap-2" aria-label="Nominal cepat">
@@ -483,7 +568,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
                     size="small"
                     type={parseRupiah(cashText) === n ? 'primary' : 'outline'}
                     color={parseRupiah(cashText) === n ? 'primary' : 'light'}
-                    disabled={busy !== null}
+                    disabled={busy !== null || cashPending}
                     onClick={() => {
                       setCashText(String(n))
                       setCashError(undefined)
@@ -515,22 +600,24 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
                 <Button width="auto" className="w-full sm:w-auto" isLoading={busy === 'check'} disabled={busy !== null} onClick={() => void check()}>
                   Cek status pembayaran
                 </Button>
-                <Button
-                  width="auto"
-                  className="w-full sm:w-auto"
-                  type="outline"
-                  color="light"
-                  disabled={busy !== null || payment.switchingToCash}
-                  onClick={() => setMode('cash')}
-                >
-                  Ganti ke tunai
-                </Button>
+                {!notMine && (
+                  <Button
+                    width="auto"
+                    className="w-full sm:w-auto"
+                    type="outline"
+                    color="light"
+                    disabled={busy !== null}
+                    onClick={() => setMode('cash')}
+                  >
+                    Ganti ke tunai
+                  </Button>
+                )}
                 <Button
                   width="auto"
                   className="w-full sm:w-auto"
                   type="text"
                   color="danger"
-                  disabled={busy !== null || payment.switchingToCash}
+                  disabled={busy !== null}
                   onClick={askCancel}
                 >
                   {expiredOpen ? 'Batalkan penjualan' : 'Batalkan pembayaran'}
@@ -571,7 +658,7 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
             )}
             {outcome.kind === 'closed' && (
               <Button width="auto" className="w-full sm:w-auto" onClick={() => finish('closed')}>
-                {outcome.why === 'cancelled' ? 'Kembali ke keranjang' : 'Pilih cara bayar lain'}
+                {!own ? 'Tutup' : outcome.why === 'cancelled' ? 'Kembali ke keranjang' : 'Pilih cara bayar lain'}
               </Button>
             )}
           </div>
@@ -583,31 +670,110 @@ export function OnlineWait({ initial, onFinish }: { initial: SalePayment; onFini
 }
 
 /**
- * A sale that was waiting for its payment when the page was reloaded: read it again and show the waiting screen, so an
- * open QR is never lost (an awaiting sale is in no list). Nothing is shown for a sale that has ended or is not ours.
+ * A sale that was waiting for its payment when the page was reloaded: read it again (reviewed in `resumeDecision`) so an
+ * open QR is never lost (an awaiting sale is in no list).
+ * - open: the waiting screen is shown;
+ * - completed while the till was away: forgotten, and `completed` carries it so the register clears the order that
+ *   made it and shows its receipt;
+ * - no usable answer: `checking`/`failed` block the register (no new online sale while the previous one is unknown),
+ *   asking again by itself and on `retry`.
  */
-export function useResumeOnlineSale(): { resumed: SalePayment | null; clear: () => void } {
+export type Resume = {
+  resumed: SalePayment | null
+  /** Whether the resumed sale was made from the order in the cart. */
+  own: boolean
+  state: 'idle' | 'checking' | 'failed'
+  /** Set once when the remembered sale turned out completed (own tells whether the cart is its order). */
+  completed: { saleId: string; saleNumber: number; own: boolean } | null
+  /** Set once when it ended unpaid: nothing to show but a note. */
+  ended: { saleNumber: number } | null
+  retry: () => void
+  clear: () => void
+  ack: () => void
+}
+
+const RESUME_RETRY_MS = 5000
+
+export function useResumeOnlineSale(): Resume {
+  const lost = useLost()
   const [resumed, setResumed] = useState<SalePayment | null>(null)
+  const [own, setOwn] = useState(true)
+  const [state, setState] = useState<Resume['state']>(() => (pendingSale() ? 'checking' : 'idle'))
+  const [completed, setCompleted] = useState<Resume['completed']>(null)
+  const [ended, setEnded] = useState<Resume['ended']>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    const id = pendingSale()
-    if (!id) return
+    const mem = pendingSale()
+    if (!mem) return setState('idle')
     let gone = false
-    getSalePayment({ data: id })
-      .then((r) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    setState('checking')
+    getSalePayment({ data: mem.id })
+      .catch(lost)
+      .then((answer) => {
         if (gone) return
-        if (r.ok && keepPolling(r.data)) return setResumed(r.data)
-        if (r.ok) {
-          forgetPending()
-          if (r.data.saleStatus === 'completed') notifySuccess(`Penjualan #${r.data.saleNumber} sudah dibayar`)
-        } else if (r.failure.status === 404 || r.failure.status === 403) forgetPending()
-        // any other failure keeps the memory: a later reload tries again
+        const d: ResumeDecision = resumeDecision(answer)
+        if (d.do === 'retry') {
+          setState('failed')
+          timer = setTimeout(() => setAttempt((n) => n + 1), RESUME_RETRY_MS)
+          return
+        }
+        setState('idle')
+        if (d.do === 'wait') {
+          setOwn(mem.own)
+          return setResumed(d.payment)
+        }
+        forgetPending()
+        if (d.do === 'completed') setCompleted({ saleId: d.saleId, saleNumber: d.saleNumber, own: mem.own })
+        if (d.do === 'ended') setEnded({ saleNumber: d.saleNumber })
       })
-      .catch(() => undefined)
     return () => {
       gone = true
+      clearTimeout(timer)
     }
-  }, [])
-  return { resumed, clear: () => setResumed(null) }
+  }, [attempt])
+  return {
+    resumed,
+    own,
+    state,
+    completed,
+    ended,
+    retry: () => setAttempt((n) => n + 1),
+    clear: () => setResumed(null),
+    ack: () => {
+      setCompleted(null)
+      setEnded(null)
+    },
+  }
+}
+
+/** Blocks the register while the sale remembered before a reload is unresolved: no new online sale can start until it is. */
+export function ResumeGate({ resume }: { resume: Resume }) {
+  if (resume.state === 'idle') return null
+  return (
+    <Dialog open onOpenChange={() => undefined} dismissible={false} size="small" label="Memeriksa pembayaran sebelumnya">
+      <div className="flex flex-col gap-3 p-6" role="status">
+        <Text as="h2" variant="h5" weight="bold">
+          Memeriksa pembayaran sebelumnya
+        </Text>
+        {resume.state === 'checking' ? (
+          <p className="flex items-center gap-2 text-sm text-default-secondary">
+            <Spinner size="sm" /> Mencari penjualan yang masih menunggu pembayaran…
+          </p>
+        ) : (
+          <>
+            <Alert variant="warning" size="small" role="alert">
+              Penjualan sebelumnya belum bisa diperiksa (sambungan terputus). Kode bayarnya mungkin masih bisa dibayar,
+              jadi penjualan baru belum dibuka. Layar mencoba lagi sendiri.
+            </Alert>
+            <Button width="auto" onClick={resume.retry}>
+              Coba lagi sekarang
+            </Button>
+          </>
+        )}
+      </div>
+    </Dialog>
+  )
 }
 
 /**
@@ -616,13 +782,17 @@ export function useResumeOnlineSale(): { resumed: SalePayment | null; clear: () 
  * the till was off are in the sales history, not here.
  */
 export function AwaitingList({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (p: SalePayment) => void }) {
+  const lost = useLost()
   const [state, setState] = useState<{ s: 'loading' } | { s: 'error'; failure: FailureLike } | { s: 'ready'; rows: AwaitingSale[] }>({ s: 'loading' })
   const [opening, setOpening] = useState<string | null>(null)
   const load = () => {
     setState({ s: 'loading' })
     loadAwaitingSales().then(
       (r) => setState(r.ok ? { s: 'ready', rows: r.data } : { s: 'error', failure: r.failure }),
-      () => setState({ s: 'error', failure: { status: 0 } }),
+      (e) => {
+        lost(e)
+        setState({ s: 'error', failure: { status: 0 } })
+      },
     )
   }
   useEffect(() => {
@@ -631,7 +801,7 @@ export function AwaitingList({ open, onClose, onPick }: { open: boolean; onClose
   async function pick(id: string) {
     if (opening) return
     setOpening(id)
-    const r = await getSalePayment({ data: id }).catch(() => null)
+    const r = await getSalePayment({ data: id }).catch(lost)
     setOpening(null)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'membuka penjualan menunggu', retry: () => void pick(id) })
     if (!keepPolling(r.data)) {
@@ -663,12 +833,15 @@ export function AwaitingList({ open, onClose, onPick }: { open: boolean; onClose
         )}
         {state.s === 'ready' &&
           state.rows.map((r) => (
-            <button
+            <Button
               key={r.id}
-              type="button"
+              type="outline"
+              color="light"
+              width="auto"
+              className="h-auto w-full justify-between gap-3 py-3 text-left"
               disabled={opening !== null}
+              isLoading={opening === r.id}
               onClick={() => void pick(r.id)}
-              className="flex items-center justify-between gap-3 rounded-xl border border-default-primary p-3 text-left hover:bg-hover-primary"
             >
               <span>
                 <b>Menunggu #{r.number}</b>
@@ -677,9 +850,9 @@ export function AwaitingList({ open, onClose, onPick }: { open: boolean; onClose
                 </span>
               </span>
               <Badge color="warning" size="small">
-                {opening === r.id ? 'Membuka…' : 'Menunggu'}
+                Menunggu
               </Badge>
-            </button>
+            </Button>
           ))}
         <p className="text-xs text-default-secondary">Ketuk untuk melanjutkan atau mengecek pembayarannya.</p>
       </div>

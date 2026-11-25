@@ -206,7 +206,7 @@ export function refundStateText(
       return {
         label: 'Refund diproses',
         color: 'warning',
-        body: 'Gateway menerima permintaan refund; dana belum kembali ke pelanggan. Penjualan sudah dibatalkan dan stok sudah kembali. Status diperbarui otomatis saat gateway memastikan. Menekan Refund lagi hanya menampilkan refund yang sama.',
+        body: 'Refund sedang diproses: permintaannya dikirim ke gateway setelah penjualan dibatalkan, jadi dana belum kembali ke pelanggan. Penjualan sudah dibatalkan dan stok sudah kembali. Status diperbarui otomatis saat gateway memastikan. Menekan Refund lagi hanya menampilkan refund yang sama.',
       }
     case 'succeeded':
       return { label: 'Refund selesai', color: 'success', body: `Gateway memastikan ${amountText} kembali ke pelanggan.` }

@@ -165,17 +165,21 @@ export function keepPolling(p: SalePayment): boolean {
   return o.kind === 'waiting' || (o.kind === 'paid' && !o.completed)
 }
 
-export function closedText(why: 'expired' | 'failed' | 'cancelled'): { title: string; body: string } {
+/**
+ * What a closed sale says. `own` is false for a sale picked from the list of waiting sales: it is not the sale of the
+ * order on this screen, so it never says that this order is still at the till.
+ */
+export function closedText(why: 'expired' | 'failed' | 'cancelled', own = true): { title: string; body: string } {
   switch (why) {
     case 'expired':
       return {
         title: 'Kode kedaluwarsa',
-        body: 'Pelanggan belum membayar sampai batas waktu. Penjualan dibatalkan dan stok kembali. Pesanan masih ada di kasir: pilih cara bayar lain.',
+        body: `Pelanggan belum membayar sampai batas waktu. Penjualan dibatalkan dan stok kembali.${own ? ' Pesanan masih ada di kasir: pilih cara bayar lain.' : ''}`,
       }
     case 'failed':
       return {
         title: 'Pembayaran gagal',
-        body: 'Gateway menolak tagihan. Stok sudah dikembalikan dan tidak ada uang yang ditagih. Isi keranjang tetap ada.',
+        body: `Gateway menolak tagihan. Stok sudah dikembalikan dan tidak ada uang yang ditagih.${own ? ' Isi keranjang tetap ada.' : ''}`,
       }
     default:
       return {
@@ -184,6 +188,15 @@ export function closedText(why: 'expired' | 'failed' | 'cancelled'): { title: st
       }
   }
 }
+
+/**
+ * A code whose own time has passed while payment-api still has the payment open. This is NOT "expired": a payment the
+ * customer confirmed late still completes the sale. Only the server's closed answer may say expired.
+ */
+export const OPEN_PAST_CODE_TIME = {
+  title: 'Memeriksa pembayaran',
+  body: 'Kode ini sudah tidak berlaku untuk pembayaran baru. Status sedang diperiksa: bila pelanggan sudah membayar tepat waktu, penjualan tetap selesai.',
+} as const
 
 // ---- Countdown ----
 
@@ -290,23 +303,107 @@ export function cashSwitchWarning(p: SalePayment): string | null {
   return `Gateway ini tidak bisa menutup kode. Kode masih berlaku${until ? ` sampai ${until}` : ''}. Bila pelanggan tetap membayar, uangnya dikembalikan otomatis dan tampil sebagai pembayaran terlambat.`
 }
 
+// ---- Change and paid amount, read from the server's sale ----
+
+/** The money the sale itself recorded (`paid`, `change` of the receipt). null when the answer is not whole rupiah. */
+export function paidFigures(raw: unknown): { paid: number; change: number } | null {
+  if (!isObject(raw)) return null
+  const paid = int(raw.paid)
+  const change = int(raw.change)
+  if (paid === undefined || change === undefined || paid < 0 || change < 0) return null
+  return { paid, change }
+}
+
+// ---- The key of a sale request ----
+
+/**
+ * The Idempotency-Key of one sale request: the order's key joined with the payment method and the amount handed over.
+ * pos-api answers a known key with another body 422, so a different method (an online sale that got 503, then Tunai)
+ * or a different amount must be a different key; the same method and amount (a double tap, a retry) the same one.
+ */
+export function saleKey(orderKey: string, methodId: string, paid: number): string {
+  const part = (v: string) => v.replace(/[^A-Za-z0-9_-]/g, '')
+  return `${part(orderKey)}-${part(methodId) || 'm'}-${Number.isFinite(paid) ? Math.max(0, Math.trunc(paid)) : 0}`
+}
+
+/** A refused sale request: what the error dialog is told. Only an ONLINE sale that was written but not charged is "sale_waiting". */
+export function saleFailure(
+  status: number,
+  code: string | undefined,
+  saleId: string | undefined,
+  online: boolean,
+): { status: number; code: string | undefined } {
+  if (status === 503) return { status, code: saleId && online ? 'sale_waiting' : undefined }
+  return { status, code }
+}
+
+// ---- What happens when a waiting screen ends ----
+
+export type FinishInfo = { kind: 'paid' } | { kind: 'closed'; again: boolean }
+export type FinishPlan = { clearCart: boolean; openPay: boolean; renewKey: boolean }
+
+/**
+ * What the register does when a waiting screen ends. `own`: the sale was made from the order on this screen. A sale
+ * picked from the list belongs to another order (or tablet): its end never wipes, nor reopens payment for, this cart.
+ */
+export function finishPlan(r: FinishInfo, own: boolean): FinishPlan {
+  if (!own) return { clearCart: false, openPay: false, renewKey: false }
+  if (r.kind === 'paid') return { clearCart: true, openPay: false, renewKey: true }
+  return { clearCart: false, openPay: r.again, renewKey: true }
+}
+
 // ---- Resume after a reload ----
+
+export type ResumeAnswer = { ok: true; data: SalePayment } | { ok: false; failure: { status?: number } } | null
+
+export type ResumeDecision =
+  /** Still open (or paid and being completed): show the waiting screen. */
+  | { do: 'wait'; payment: SalePayment }
+  /** Completed while the till was away: forget it and show its receipt; the order is rung up, so an own cart is cleared. */
+  | { do: 'completed'; saleId: string; saleNumber: number }
+  /** Ended unpaid (cancelled, expired, failed): forget it; the cart, if it is the sale's own, stays for another way to pay. */
+  | { do: 'ended'; saleNumber: number }
+  /** pos-api says the sale is not ours or does not exist: forget it. */
+  | { do: 'forget' }
+  /** No usable answer (offline, 503, ...): keep the memory, block new online sales and ask again. */
+  | { do: 'retry' }
+
+/** Pure: what a reload does with the sale it remembered, given the one answer of `GET /sales/:id/payment`. */
+export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
+  if (!answer) return { do: 'retry' }
+  if (!answer.ok) return answer.failure.status === 404 || answer.failure.status === 403 ? { do: 'forget' } : { do: 'retry' }
+  const p = answer.data
+  if (keepPolling(p)) return { do: 'wait', payment: p }
+  return p.saleStatus === 'completed'
+    ? { do: 'completed', saleId: p.saleId, saleNumber: p.saleNumber }
+    : { do: 'ended', saleNumber: p.saleNumber }
+}
+
+// ---- Remembering the sale across a reload ----
 
 const PENDING_KEY = 'pos.online-sale'
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-/** Remember (per tab, like the open bill) a sale that waits for its payment, so a reload shows the waiting screen again. Never throws. */
-export function rememberPending(saleId: string, storage?: StorageLike): void {
+const UUID = /^[0-9a-f-]{36}$/i
+
+/**
+ * Remember (per tab, like the open bill) a sale that waits for its payment, so a reload shows the waiting screen again.
+ * `own`: the order in the register's cart made this sale. Only the id and that flag are kept. Never throws.
+ */
+export function rememberPending(saleId: string, own: boolean, storage?: StorageLike): void {
   try {
-    ;(storage ?? sessionStorage).setItem(PENDING_KEY, saleId)
+    ;(storage ?? sessionStorage).setItem(PENDING_KEY, JSON.stringify({ id: saleId, own }))
   } catch {
     // private window or blocked storage: the waiting screen just cannot be resumed
   }
 }
-export function pendingSale(storage?: StorageLike): string | null {
+export function pendingSale(storage?: StorageLike): { id: string; own: boolean } | null {
   try {
-    const v = (storage ?? sessionStorage).getItem(PENDING_KEY)
-    return v && /^[0-9a-f-]{36}$/i.test(v) ? v : null
+    const raw = (storage ?? sessionStorage).getItem(PENDING_KEY)
+    if (!raw) return null
+    if (UUID.test(raw)) return { id: raw, own: true } // the first format: the id alone
+    const v: unknown = JSON.parse(raw)
+    return isObject(v) && typeof v.id === 'string' && UUID.test(v.id) ? { id: v.id, own: v.own !== false } : null
   } catch {
     return null
   }
@@ -341,6 +438,8 @@ export function paymentFailure(
   if (status === 503) {
     if (route === 'cash' && (code === 'payment_unavailable' || !code)) code = 'cash_switch_unanswered'
     else if (route === 'sale' && (b.saleId || b.status === 'awaiting_payment')) code = 'sale_waiting'
+    // a cancel, a refund retry or a manual mark may have reached payment-api before the answer was lost: never "nothing changed"
+    else if (route === 'cancel' || route === 'retry' || route === 'manual' || route === 'refund') code = 'payment_unclear'
     else code ??= 'payment_unavailable'
     return { status, code }
   }
