@@ -342,6 +342,7 @@ export class MerchantsService {
    * An answer WITHOUT the gateway's time cannot be ordered by a clock of ours (the call that was sent first
    * may be answered last), so it is applied only when no other answer was applied since the row was read
    * (`sync_version`); otherwise the gateway is asked again, and that answer is newer than the one applied.
+   * The same goes for an answer whose time EQUALS the stored one.
    */
   async settle(
     id: string,
@@ -398,8 +399,12 @@ export class MerchantsService {
           observedAt.getTime() < locked.statusObservedAt.getTime())
       )
         return locked;
-      if (!observedAt && locked.syncVersion !== row.syncVersion)
-        return ASK_AGAIN;
+      // No order between this answer and the one applied meanwhile: it has no time of the gateway's, or the
+      // same time (two changes within the gateway's clock tick).
+      const unordered =
+        !observedAt ||
+        observedAt.getTime() === locked.statusObservedAt?.getTime();
+      if (unordered && locked.syncVersion !== row.syncVersion) return ASK_AGAIN;
       const applied = {
         lastSyncedAt: now,
         syncVersion: locked.syncVersion + 1,
@@ -447,9 +452,9 @@ export class MerchantsService {
    * whose draft it has not received) after the reconciliation threshold, and every other account it knows
    * slowly (`SLOW_RECONCILE_INTERVAL_MS`), so a lost webhook cannot leave a suspended account `active`.
    *
-   * Every account of a batch is stamped as tried before the gateway is asked, and the queue is ordered by
+   * Each account is stamped as tried just before the gateway is asked about it, and the queue is ordered by
    * that stamp too: an account the gateway keeps failing on waits its turn again and cannot keep the others
-   * out of the batch.
+   * out of the batch. An account the batch did not reach (the process stopped) keeps its place.
    */
   async reconcile(limit = 100): Promise<{ accounts: number; failed: number }> {
     const now = this.clock.now();
@@ -481,19 +486,13 @@ export class MerchantsService {
       )
       .orderBy(sql`${lastTried} asc`, asc(merchantAccounts.id))
       .limit(limit);
-    if (due.length)
-      await this.db
-        .update(merchantAccounts)
-        .set({ reconcileAttemptedAt: now })
-        .where(
-          inArray(
-            merchantAccounts.id,
-            due.map((d) => d.id),
-          ),
-        );
     let failed = 0;
     for (const { id } of due) {
       try {
+        await this.db
+          .update(merchantAccounts)
+          .set({ reconcileAttemptedAt: now })
+          .where(eq(merchantAccounts.id, id));
         await this.settle(id, 'reconciliation');
       } catch (error) {
         failed++;
