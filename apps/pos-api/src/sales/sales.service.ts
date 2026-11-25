@@ -226,7 +226,10 @@ export class SalesService {
         unitQty: q.unitQty,
         baseQty: q.baseQty,
         normalUnitPrice: q.normalUnitPrice,
-        appliedTierMinQty: q.appliedTier?.minQty ?? null,
+        // Owner ruling 2026-11-25: a manual price is not wholesale. The tier is not recorded on an
+        // overridden line (no "Harga grosir", no savings); `listPrice` stays the server's price and
+        // `normalUnitPrice` the unit's. The line's base quantity counted toward the product's total.
+        appliedTierMinQty: overridden ? null : (q.appliedTier?.minQty ?? null),
         listPrice: q.listPrice,
         unitPrice,
         lineTotal: unitPrice * l.qty,
@@ -750,7 +753,7 @@ export class SalesService {
       lines: lines.map(({ appliedTierMinQty, ...l }) => ({
         ...l,
         // UMK-1985: the wholesale tier that set the price ("Harga grosir"), and what it saved against the
-        // unit's normal price. An override changes `unitPrice`, never these.
+        // unit's normal price. A line with a manual price has neither (stored without a tier).
         appliedTier:
           appliedTierMinQty === null
             ? null
@@ -759,6 +762,8 @@ export class SalesService {
           appliedTierMinQty === null
             ? 0
             : (l.normalUnitPrice - l.listPrice) * l.qty,
+        // The price was typed by someone with sales.price_override ("Harga manual").
+        manualPrice: l.priceOverriddenBy !== null,
         costTotal: showCost ? l.costTotal : undefined,
       })),
     };
@@ -791,6 +796,7 @@ export class SalesService {
         normalUnitPrice: l.normalUnitPrice,
         appliedTier: l.appliedTier,
         savings: l.savings,
+        manualPrice: l.manualPrice,
       })),
       subtotal: sale.subtotal,
       discount: sale.discount,

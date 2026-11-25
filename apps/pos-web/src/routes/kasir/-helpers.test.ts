@@ -12,6 +12,7 @@ import {
   savingsNote,
   setEntryQty,
   soldQtyText,
+  soldPriceNote,
   soldWholesaleNote,
   stockLines,
   subtotalOf,
@@ -191,6 +192,13 @@ describe('sold lines (receipt and sale detail)', () => {
   })
   it('has no wholesale note without a tier', () => {
     expect(soldWholesaleNote({ ...tiered, appliedTier: null, savings: 0 })).toBeNull()
+  })
+  it('a manual price is noted as manual, never as wholesale; other lines keep their note', () => {
+    const manual = { ...tiered, unitPrice: 3000, appliedTier: null, savings: 0, manualPrice: true }
+    expect(soldPriceNote(manual)).toBe('Harga manual (normal Rp3.500)')
+    expect(soldPriceNote({ ...tiered, manualPrice: false })).toBe('Harga grosir (normal Rp3.500, hemat Rp2.400)')
+    expect(soldPriceNote(tiered)).toBe('Harga grosir (normal Rp3.500, hemat Rp2.400)')
+    expect(soldPriceNote({ ...tiered, appliedTier: null, savings: 0 })).toBeNull()
   })
 })
 

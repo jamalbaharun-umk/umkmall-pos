@@ -6,7 +6,7 @@ import { useCan } from '@/components/shell'
 import { loadSaleDetail } from './-void-api'
 import { VoidDialog } from './-void-dialog'
 import { reasonLabel } from './-void-helpers'
-import { soldWholesaleNote } from './-helpers'
+import { soldPriceNote } from './-helpers'
 import { hasRounding } from './-money'
 
 // Lakasir's "View selling": selling details, product table, totals, and the print-receipt action.
@@ -155,8 +155,8 @@ function SalePage() {
               <TableRow key={i}>
                 <TableCell>
                   {l.name}
-                  {soldWholesaleNote(l) && (
-                    <span className="block text-xs text-default-secondary">{soldWholesaleNote(l)}</span>
+                  {soldPriceNote(l) && (
+                    <span className="block text-xs text-default-secondary">{soldPriceNote(l)}</span>
                   )}
                 </TableCell>
                 <TableCell className="text-right">{rupiah(l.unitPrice)}</TableCell>

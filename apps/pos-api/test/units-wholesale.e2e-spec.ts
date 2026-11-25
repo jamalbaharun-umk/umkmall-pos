@@ -467,6 +467,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           normalUnitPrice: 3500,
           appliedTier: { minQty: 12, price: 3300 },
           savings: 2400,
+          manualPrice: false,
         },
         {
           name: 'Teh Botol 350ml',
@@ -479,6 +480,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           normalUnitPrice: 78_000,
           appliedTier: null,
           savings: 0,
+          manualPrice: false,
         },
       ]);
       // Tax after the discount: (117.600 − 10.000) × 11% = 11.836; total 119.436; rounding 64.
@@ -542,16 +544,74 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           unitPrice: 3000,
           lineTotal: 36_000,
           costTotal: 24_000,
-          appliedTier: { minQty: 12, price: 3300 },
+          // A manual price is not wholesale (owner ruling 2026-11-25): no tier, no savings.
+          normalUnitPrice: 3500,
+          appliedTier: null,
+          savings: 0,
+          manualPrice: true,
           priceOverriddenBy: senior.staffId,
         },
         {
           listPrice: 78_000,
+          normalUnitPrice: 78_000,
           unitPrice: 75_000,
           lineTotal: 75_000,
           costTotal: 48_000,
+          appliedTier: null,
+          savings: 0,
+          manualPrice: true,
           priceOverriddenBy: senior.staffId,
         },
+      ]);
+      const [stored] = await admin<
+        {
+          normal_unit_price: string;
+          list_price: string;
+          applied_tier_min_qty: number | null;
+        }[]
+      >`select normal_unit_price, list_price, applied_tier_min_qty from pos.sale_lines
+        where sale_id = ${overridden.body.id} and unit_qty = 1`;
+      expect(stored).toEqual({
+        normal_unit_price: '3500',
+        list_price: '3300',
+        applied_tier_min_qty: null,
+      });
+      const slip = await get(
+        senior,
+        `/sales/${overridden.body.id}/receipt`,
+      ).expect(200);
+      expect(slip.body.lines).toMatchObject([
+        {
+          unit: 'pcs',
+          unitPrice: 3000,
+          normalUnitPrice: 3500,
+          appliedTier: null,
+          savings: 0,
+          manualPrice: true,
+        },
+        { unit: 'dus', unitPrice: 75_000, appliedTier: null, manualPrice: true },
+      ]);
+
+      // Only the typed line is manual: the price sent for the pcs equals the server's tier price (so it
+      // is no override) and stays wholesale; the dus is manual, and its 24 pcs still count toward the
+      // product's total (6 + 24 = 30 pcs reach the 12+ tier).
+      const mixed = await sell(senior.auth, {
+        lines: [
+          { productId, qty: 6, price: 3300 },
+          { productId, qty: 1, unit: 'dus', price: 70_000 },
+        ],
+        paid: 89_800,
+      }).expect(201);
+      expect(mixed.body.subtotal).toBe(89_800);
+      expect(linesOf(mixed.body)).toMatchObject([
+        {
+          unitPrice: 3300,
+          appliedTier: { minQty: 12, price: 3300 },
+          savings: 1200,
+          manualPrice: false,
+          priceOverriddenBy: null,
+        },
+        { unitPrice: 70_000, appliedTier: null, savings: 0, manualPrice: true },
       ]);
     });
 

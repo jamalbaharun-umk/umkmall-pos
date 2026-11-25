@@ -62,6 +62,8 @@ export type ReceiptLine = {
   normalUnitPrice: number
   appliedTier: { minQty: number; price: number } | null
   savings: number
+  /** The price was typed with `sales.price_override`: no tier, no savings. */
+  manualPrice?: boolean
 }
 export type Receipt = {
   number: number
