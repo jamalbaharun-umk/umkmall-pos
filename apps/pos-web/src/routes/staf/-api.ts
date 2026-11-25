@@ -30,6 +30,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'members.manage': 'Mengelola pelanggan',
   'vouchers.manage': 'Mengelola voucher',
   'receivables.manage': 'Mengelola piutang',
+  'sales.void': 'Menyetujui pembatalan struk (dengan PIN)',
+  'expenses.manage': 'Mengelola pengeluaran',
 }
 
 async function load<T>(path: string): Promise<T> {

@@ -28,6 +28,7 @@ import { Route as PembelianIndexRouteImport } from './routes/pembelian/index'
 import { Route as PembelianIdRouteImport } from './routes/pembelian/$id'
 import { Route as PembelianBaruRouteImport } from './routes/pembelian/baru'
 import { Route as PengaturanIndexRouteImport } from './routes/pengaturan/index'
+import { Route as PengaturanKeamananRouteImport } from './routes/pengaturan/keamanan'
 import { Route as PengaturanLogoRouteImport } from './routes/pengaturan/logo'
 import { Route as PengeluaranIndexRouteImport } from './routes/pengeluaran/index'
 import { Route as PengeluaranIdRouteImport } from './routes/pengeluaran/$id'
@@ -149,6 +150,11 @@ const PembelianBaruRoute = PembelianBaruRouteImport.update({
 const PengaturanIndexRoute = PengaturanIndexRouteImport.update({
   id: '/pengaturan/',
   path: '/pengaturan/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PengaturanKeamananRoute = PengaturanKeamananRouteImport.update({
+  id: '/pengaturan/keamanan',
+  path: '/pengaturan/keamanan',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PengaturanLogoRoute = PengaturanLogoRouteImport.update({
@@ -299,6 +305,7 @@ export interface FileRoutesByFullPath {
   '/masuk/dev': typeof MasukDevRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
+  '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
@@ -347,6 +354,7 @@ export interface FileRoutesByTo {
   '/masuk/dev': typeof MasukDevRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
+  '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
@@ -396,6 +404,7 @@ export interface FileRoutesById {
   '/masuk/dev': typeof MasukDevRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
+  '/pengaturan/keamanan': typeof PengaturanKeamananRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
@@ -446,6 +455,7 @@ export interface FileRouteTypes {
     | '/masuk/dev'
     | '/pembelian/$id'
     | '/pembelian/baru'
+    | '/pengaturan/keamanan'
     | '/pengaturan/logo'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
@@ -494,6 +504,7 @@ export interface FileRouteTypes {
     | '/masuk/dev'
     | '/pembelian/$id'
     | '/pembelian/baru'
+    | '/pengaturan/keamanan'
     | '/pengaturan/logo'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
@@ -542,6 +553,7 @@ export interface FileRouteTypes {
     | '/masuk/dev'
     | '/pembelian/$id'
     | '/pembelian/baru'
+    | '/pengaturan/keamanan'
     | '/pengaturan/logo'
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
@@ -591,6 +603,7 @@ export interface RootRouteChildren {
   MasukDevRoute: typeof MasukDevRoute
   PembelianIdRoute: typeof PembelianIdRoute
   PembelianBaruRoute: typeof PembelianBaruRoute
+  PengaturanKeamananRoute: typeof PengaturanKeamananRoute
   PengaturanLogoRoute: typeof PengaturanLogoRoute
   PengeluaranIdRoute: typeof PengeluaranIdRoute
   PengeluaranBaruRoute: typeof PengeluaranBaruRoute
@@ -762,6 +775,13 @@ declare module '@tanstack/react-router' {
       path: '/pengaturan'
       fullPath: '/pengaturan/'
       preLoaderRoute: typeof PengaturanIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pengaturan/keamanan': {
+      id: '/pengaturan/keamanan'
+      path: '/pengaturan/keamanan'
+      fullPath: '/pengaturan/keamanan'
+      preLoaderRoute: typeof PengaturanKeamananRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pengaturan/logo': {
@@ -967,6 +987,7 @@ const rootRouteChildren: RootRouteChildren = {
   MasukDevRoute: MasukDevRoute,
   PembelianIdRoute: PembelianIdRoute,
   PembelianBaruRoute: PembelianBaruRoute,
+  PengaturanKeamananRoute: PengaturanKeamananRoute,
   PengaturanLogoRoute: PengaturanLogoRoute,
   PengeluaranIdRoute: PengeluaranIdRoute,
   PengeluaranBaruRoute: PengeluaranBaruRoute,

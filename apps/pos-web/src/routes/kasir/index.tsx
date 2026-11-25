@@ -48,6 +48,7 @@ import {
   wholesaleHints,
   type CartEntry,
   type Quote,
+  canProceedToPayment,
 } from './-helpers'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
@@ -173,6 +174,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
   // until it answers, lines show the unit's list price. A quote of an older cart is never used.
   const [quote, setQuote] = useState<{ sig: string; quote: Quote }>()
   const [quoteState, setQuoteState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [quoteTry, setQuoteTry] = useState(0) // bumped by "Coba lagi" to ask the server again
   const sig = cartSignature(cart)
   useEffect(() => {
     if (cart.length === 0) {
@@ -195,7 +197,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
       stale = true
       clearTimeout(t)
     }
-  }, [sig])
+  }, [sig, quoteTry])
   const current = quote?.sig === sig ? quote.quote : null
   const priced = priceEntries(cart, current)
   const hints = wholesaleHints(cart, current)
@@ -492,9 +494,18 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
           </div>
         </dl>
         {quoteState === 'error' && (
-          <Alert variant="warning" size="small" role="alert">
-            Harga satuan dan grosir belum bisa dicek ke server, jadi total ini perkiraan. Server tetap menghitung harga
-            saat pembayaran.
+          <Alert
+            variant="warning"
+            size="small"
+            role="alert"
+            action={
+              <Button type="outline" color="light" size="small" width="auto" onClick={() => setQuoteTry((n) => n + 1)}>
+                Coba lagi
+              </Button>
+            }
+          >
+            Harga satuan dan grosir belum bisa dicek ke server, jadi total ini hanya perkiraan dan bisa lebih tinggi dari
+            yang ditagihkan. Coba lagi sebelum lanjut ke pembayaran.
           </Alert>
         )}
         {over.length > 0 && (
@@ -505,7 +516,7 @@ function Register({ products, taxBps, methods }: { products: Product[]; taxBps: 
         <Button
           size="large"
           width="full"
-          disabled={cart.length === 0 || over.length > 0 || quoteState === 'loading'}
+          disabled={!canProceedToPayment({ cartSize: cart.length, overCount: over.length, quoteState })}
           onClick={() => (discountBad ? toast(`Diskon: ${discountBad}`, { variant: 'danger' }) : setPaying(true))}
         >
           Lanjut ke pembayaran

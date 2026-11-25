@@ -14,6 +14,7 @@ import {
   PackagePlus,
   Receipt,
   Settings,
+  ShieldCheck,
   TicketPercent,
   Users,
   UsersRound,
@@ -60,7 +61,13 @@ export const NAV: NavGroup[] = [
   },
   { items: [{ to: '/laporan', label: 'Laporan', icon: FileText, permission: 'reports.view' }] },
   { items: [{ to: '/voucher', label: 'Voucher', icon: TicketPercent, permission: 'vouchers.manage' }] },
-  { items: [{ to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'catalog.manage' }] },
+  {
+    items: [
+      { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'catalog.manage' },
+      // UMK-1962: each admin's own void PIN; owners hold every permission, so they always see it.
+      { to: '/pengaturan/keamanan', label: 'Keamanan', icon: ShieldCheck, permission: 'sales.void' },
+    ],
+  },
 ]
 
 /** Route ids that render full-screen, without the shell (Lakasir's POS page uses the bare layout too). */

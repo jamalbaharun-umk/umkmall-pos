@@ -47,3 +47,16 @@ describe('U7 entries (QA sweep U7)', () => {
     )
   })
 })
+
+describe('Keamanan entry (UMK-1962)', () => {
+  const shown = (perms: string[]) =>
+    visibleNav(NAV, () => true, perms).flatMap((g) => g.items.map((i) => i.to)).includes('/pengaturan/keamanan')
+  it('shows only with sales.void', () => {
+    expect(shown(['sales.create', 'catalog.manage'])).toBe(false)
+    expect(shown(['sales.void'])).toBe(true)
+  })
+  it('is the active entry of its own page, not Pengaturan', () => {
+    expect(activeNav(NAV, '/pengaturan/keamanan')).toBe('/pengaturan/keamanan')
+    expect(activeNav(NAV, '/pengaturan')).toBe('/pengaturan')
+  })
+})

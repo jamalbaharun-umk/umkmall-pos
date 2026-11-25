@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   addEntry,
   baseQtyInCart,
+  canProceedToPayment,
   cartSignature,
   entryKey,
   needsUnitPicker,
@@ -190,5 +191,18 @@ describe('sold lines (receipt and sale detail)', () => {
   })
   it('has no wholesale note without a tier', () => {
     expect(soldWholesaleNote({ ...tiered, appliedTier: null, savings: 0 })).toBeNull()
+  })
+})
+
+describe('canProceedToPayment', () => {
+  const ok = { cartSize: 2, overCount: 0, quoteState: 'idle' as const }
+  it('allows a priced, in-stock cart', () => {
+    expect(canProceedToPayment(ok)).toBe(true)
+  })
+  it('blocks an empty cart, over-stock lines, a pending quote and a failed quote', () => {
+    expect(canProceedToPayment({ ...ok, cartSize: 0 })).toBe(false)
+    expect(canProceedToPayment({ ...ok, overCount: 1 })).toBe(false)
+    expect(canProceedToPayment({ ...ok, quoteState: 'loading' })).toBe(false)
+    expect(canProceedToPayment({ ...ok, quoteState: 'error' })).toBe(false)
   })
 })
