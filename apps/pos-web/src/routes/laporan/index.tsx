@@ -33,6 +33,12 @@ function ReportIndex() {
             </Card>
           </Link>
         ))}
+        <Link to="/laporan/untung-rugi" search={{ period: 'today' }} className="block">
+          <Card variant="outlined" padding="medium" className="h-full hover:border-default-brand">
+            <h2 className="font-semibold text-default-primary">Untung rugi</h2>
+            <p className="mt-1 text-sm text-default-secondary">Hasil jualan, modal barang, pengeluaran, dan untung bersih.</p>
+          </Card>
+        </Link>
       </div>
       <TimezoneSetting current={settings.data.timezone} />
     </ReportLayout>
