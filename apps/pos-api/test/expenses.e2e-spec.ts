@@ -814,7 +814,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         category: 'gaji',
         source: 'outside',
       }).expect(201);
-      await get(keeper.auth, '/expenses').expect(200);
+      // Their own expense only: the owner's is not theirs to see (scope test below).
+      const seen = await get(keeper.auth, '/expenses').expect(200);
+      expect(seen.body.data).toMatchObject([{ id: mine.body.id }]);
+      expect(seen.body.data).toHaveLength(1);
+      await get(keeper.auth, `/expenses/${e.id}`).expect(404);
       await get(keeper.auth, '/expenses/csv').expect(200);
       await patch(keeper.auth, `/expenses/${mine.body.id}`, {
         note: 'x',
@@ -827,6 +831,174 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       const plain = await createCashier(app, s, ['sales.create']);
       await get(plain.auth, '/expenses').expect(403);
       await get(plain.auth, '/reports/profit-loss').expect(403);
+    });
+
+    it('expenses.manage alone works on the actor`s own expenses only; reports.view and the owner on all', async () => {
+      const s = await createStore();
+      const rina = await createCashier(app, s, [
+        'sales.create',
+        'expenses.manage',
+      ]);
+      const budi = await createCashier(app, s, ['expenses.manage']);
+      const boss = await createCashier(app, s, [
+        'expenses.manage',
+        'reports.view',
+      ]);
+      const out = async (auth: string, amount: number, category: string) =>
+        (await spend(auth, { amount, category, source: 'outside' }).expect(201))
+          .body as { id: string };
+      const o = await out(s.auth, 1000, 'sewa');
+      const rinaKey = randomUUID();
+      const r = (
+        await spend(
+          rina.auth,
+          { amount: 2000, category: 'gaji', source: 'outside' },
+          rinaKey,
+        ).expect(201)
+      ).body as { id: string };
+      await open(rina.auth, 10_000);
+      const rd = (
+        await spend(rina.auth, {
+          amount: 500,
+          category: 'transport',
+          source: 'drawer',
+        }).expect(201)
+      ).body as { id: string };
+      const b = await out(budi.auth, 4000, 'bayar_pemasok');
+      const b2 = await out(budi.auth, 300, 'lainnya');
+      const ids = (body: { data: { id: string }[] }) =>
+        body.data.map((x) => x.id).sort();
+      const sorted = (...xs: { id: string }[]) => xs.map((x) => x.id).sort();
+
+      // List and summary: each cashier's own rows and own totals.
+      type Listed = {
+        data: { id: string }[];
+        summary: { byCategory: { category: string }[] };
+      };
+      const rinaList = (await get(rina.auth, '/expenses').expect(200))
+        .body as Listed;
+      expect(ids(rinaList)).toEqual(sorted(r, rd));
+      expect(rinaList).toMatchObject({
+        total: 2,
+        summary: {
+          count: 2,
+          expenses: 2500,
+          supplierPayments: 0,
+          fromDrawer: 500,
+          outside: 2000,
+        },
+      });
+      expect(rinaList.summary.byCategory.map((c) => c.category)).toEqual([
+        'gaji',
+        'transport',
+      ]);
+      const budiList = (await get(budi.auth, '/expenses').expect(200)).body;
+      expect(ids(budiList)).toEqual(sorted(b, b2));
+      expect(budiList).toMatchObject({
+        total: 2,
+        summary: {
+          count: 2,
+          expenses: 300,
+          supplierPayments: 4000,
+          fromDrawer: 0,
+          outside: 4300,
+        },
+      });
+      // CSV: the same scope, rows and totals.
+      const csv = (await get(rina.auth, '/expenses/csv').expect(200)).text;
+      expect(csv.split('\r\n')).toEqual([
+        'Tanggal,Kategori,Sumber uang,Catatan,Dicatat oleh,Jumlah',
+        `${day()},Gaji,Di luar laci,,Sari,2000`,
+        `${day()},Transport,Laci kasir,,Sari,500`,
+        'Total pengeluaran,,,,,2500',
+        'Total bayar pemasok (bukan pengeluaran),,,,,0',
+        '',
+      ]);
+
+      // Someone else's expense (another cashier's, the owner's) is not found: read, update, void.
+      for (const other of [b, o]) {
+        await get(rina.auth, `/expenses/${other.id}`).expect(404);
+        await patch(rina.auth, `/expenses/${other.id}`, {
+          note: 'bukan punya saya',
+        }).expect(404);
+        await post(rina.auth, `/expenses/${other.id}/void`, {
+          reason: 'x',
+        }).expect(404);
+        expect(
+          (await get(s.auth, `/expenses/${other.id}`).expect(200)).body,
+        ).toMatchObject({ note: null, voidedAt: null, edits: [] });
+      }
+      await get(budi.auth, `/expenses/${rd.id}`).expect(404);
+      await post(budi.auth, `/expenses/${rd.id}/void`).expect(404);
+      expect(await current(rina.auth)).toMatchObject({
+        expectedCash: 9500,
+        expenseReversals: 0,
+      });
+      // Another actor's Idempotency-Key is not a replay that would show their expense.
+      const stolen = await spend(
+        budi.auth,
+        { amount: 2000, category: 'gaji', source: 'outside' },
+        rinaKey,
+      ).expect(422);
+      expect(stolen.body.errors).toEqual({
+        idempotencyKey: 'Kunci ini sudah dipakai untuk pengeluaran lain',
+      });
+      expect(await rowCount(s.tenantId)).toBe(5);
+
+      // Their own: read, update, void.
+      await get(rina.auth, `/expenses/${r.id}`).expect(200);
+      await patch(rina.auth, `/expenses/${r.id}`, { note: 'gaji Budi' }).expect(
+        200,
+      );
+      await post(rina.auth, `/expenses/${r.id}/void`).expect(200);
+      const all = (await get(rina.auth, '/expenses?status=all').expect(200))
+        .body;
+      expect(ids(all)).toEqual(sorted(r, rd));
+      expect(all.summary).toMatchObject({ count: 1, expenses: 500 });
+
+      // reports.view (a cashier) and the owner: the whole log, and they may change anyone's.
+      for (const viewer of [boss, s]) {
+        const list = (await get(viewer.auth, '/expenses').expect(200)).body;
+        expect(ids(list)).toEqual(sorted(o, rd, b, b2));
+        expect(list).toMatchObject({
+          total: 4,
+          summary: {
+            count: 4,
+            expenses: 1800,
+            supplierPayments: 4000,
+            fromDrawer: 500,
+            outside: 5300,
+          },
+        });
+        await get(viewer.auth, `/expenses/${r.id}`).expect(200);
+        expect(
+          (await get(viewer.auth, '/expenses/csv').expect(200)).text,
+        ).toContain('Total pengeluaran,,,,,1800');
+      }
+      const edited = await patch(boss.auth, `/expenses/${b2.id}`, {
+        note: 'kantong',
+      }).expect(200);
+      expect(edited.body.edits).toMatchObject([{ actorId: boss.staffId }]);
+      await post(boss.auth, `/expenses/${rd.id}/void`).expect(200);
+      await post(s.auth, `/expenses/${b.id}/void`).expect(200);
+      expect(await current(rina.auth)).toMatchObject({ expectedCash: 10_000 });
+      // The profit and loss report is the store's, whoever recorded the expense.
+      expect(
+        (await get(boss.auth, '/reports/profit-loss').expect(200)).body.current
+          .expenses,
+      ).toBe(1300);
+
+      // Another store's cashier with expenses.manage alone: 404 too, and an empty list.
+      const elsewhere = await createStore();
+      const stranger = await createCashier(app, elsewhere, ['expenses.manage']);
+      await get(stranger.auth, `/expenses/${b2.id}`).expect(404);
+      await patch(stranger.auth, `/expenses/${b2.id}`, { note: 'x' }).expect(
+        404,
+      );
+      await post(stranger.auth, `/expenses/${b2.id}/void`).expect(404);
+      expect(
+        (await get(stranger.auth, '/expenses').expect(200)).body,
+      ).toMatchObject({ total: 0, data: [], summary: { count: 0 } });
     });
 
     it('cross-tenant: store B gets 404 on read, update and void of store A`s expense and sees none of it', async () => {
@@ -871,7 +1043,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
   describe('edit history', () => {
     it('keeps before and after of every edit, who and when; an edit that changes nothing leaves no trace', async () => {
       const s = await createStore();
-      const keeper = await createCashier(app, s, ['expenses.manage']);
+      // reports.view: this cashier edits an expense the owner recorded (the whole log, not only their own).
+      const keeper = await createCashier(app, s, [
+        'expenses.manage',
+        'reports.view',
+      ]);
       const e = (
         await spend(s.auth, {
           amount: 5000,
