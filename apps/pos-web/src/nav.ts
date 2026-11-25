@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Archive,
   Banknote,
+  Globe,
   CalendarDays,
   Clock,
   CreditCard,
@@ -74,6 +75,8 @@ export const NAV: NavGroup[] = [
     items: [
       { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'catalog.manage' },
       // UMK-1962: each admin's own void PIN; owners hold every permission, so they always see it.
+      // UMK-2020: the store's account at a payment gateway; owner only (Admin lacks payments.manage).
+      { to: '/pengaturan/pembayaran-online', label: 'Pembayaran Online', icon: Globe, permission: 'payments.manage' },
       { to: '/pengaturan/keamanan', label: 'Keamanan', icon: ShieldCheck, permission: 'sales.void' },
     ],
   },

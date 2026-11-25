@@ -47,9 +47,14 @@ export function dismissError(): void {
  * and `error`, a thrown Error, a string); `context` names the action. Never pass a PIN, token or customer data in it.
  * A second failure replaces the first: one dialog at a time.
  */
-export function showError(error: unknown, context: ErrorContext): void {
+export function showError(
+  error: unknown,
+  context: ErrorContext,
+  /** A screen's own mapping of failures to text (for example `describeOnlineError`); the shared one by default. */
+  describe: (error: unknown, fallback: string) => ErrorDescription = describeError,
+): void {
   const { action, retry, fallback } = typeof context === 'string' ? { action: context } : context
-  const described = describeError(error, fallback ?? 'Aksi ini belum berhasil.')
+  const described = describe(error, fallback ?? 'Aksi ini belum berhasil.')
   current = { ...described, title: `Gagal ${action}`, retry }
   emit()
 }
