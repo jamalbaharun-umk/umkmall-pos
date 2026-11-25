@@ -20,6 +20,8 @@ import { useRef, useState, type FormEvent } from 'react'
 import { loadReceivable, payReceivable } from '../pelanggan/-api'
 import { parseRupiah } from '../pelanggan/-form'
 import { formatDay, formatMomentDay, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
+import { useCan } from '@/components/shell'
+import { cashRoute, cashRouteNotice, paymentPlace, restAfter } from '../kasir/-shift-helpers'
 
 // Lakasir ViewReceivable: details, the sale's items, the payment history and the "add payment" action.
 export const Route = createFileRoute('/piutang/$id')({
@@ -30,7 +32,8 @@ export const Route = createFileRoute('/piutang/$id')({
 })
 
 function ReceivablePage() {
-  const { receivable: r, methods } = Route.useLoaderData()
+  const { receivable: r, methods, shift } = Route.useLoaderData()
+  const canOpenShift = useCan('sales.create')
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
@@ -41,6 +44,15 @@ function ReceivablePage() {
   const [amountError, setAmountError] = useState<string>()
   // One key per opened dialog: a double tap or a network retry records one payment (pos-api Idempotency-Key).
   const [key, setKey] = useState(() => crypto.randomUUID())
+
+  // Where a cash instalment lands (pos-api decides again): the open shift, "open a shift first", or outside a shift.
+  const method = methods.find((m) => m.id === methodId)
+  const route = cashRoute({ isCash: method?.kind === 'cash', hasOpenShift: !!shift, canOpenShift })
+  const notice = cashRouteNotice(route, shift?.openedAt, (iso) =>
+    new Date(iso).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
+  )
+  const amountValue = parseRupiah(amount)
+  const showRestAfter = amount.trim() !== '' && !Number.isNaN(amountValue) && amountValue > 0 && amountValue <= r.rest
 
   function openDialog() {
     setKey(crypto.randomUUID())
@@ -166,19 +178,40 @@ function ReceivablePage() {
                 <TableRow>
                   <TableHead>Tanggal</TableHead>
                   <TableHead>Metode</TableHead>
+                  <TableHead>Dicatat oleh</TableHead>
+                  <TableHead>Uang masuk ke</TableHead>
                   <TableHead className="text-right">Sisa sebelumnya</TableHead>
                   <TableHead className="text-right">Jumlah</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {r.payments.map((p) => (
+                {r.payments.map((p) => {
+                  const place = paymentPlace(p)
+                  return (
                   <TableRow key={p.id}>
                     <TableCell>{formatMomentDay(p.createdAt)}</TableCell>
                     <TableCell>{p.paymentMethod}</TableCell>
+                    <TableCell>{p.actorName}</TableCell>
+                    <TableCell>
+                      {p.shiftId ? (
+                        <Link
+                          to="/kasir/shift/$id"
+                          params={{ id: p.shiftId }}
+                          className="font-medium text-brand-primary hover:underline"
+                        >
+                          {place.label}
+                        </Link>
+                      ) : place.tone === 'neutral' ? (
+                        <span className="text-default-secondary">{place.label}</span>
+                      ) : (
+                        <Badge color="warning">{place.label}</Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">{rupiah(p.restBefore)}</TableCell>
                     <TableCell className="text-right">{rupiah(p.amount)}</TableCell>
                   </TableRow>
-                ))}
+                  )
+                })}
               </TableBody>
             </Table>
           )}
@@ -206,6 +239,25 @@ function ReceivablePage() {
             value={methodId}
             onValueChange={setMethodId}
           />
+          {notice && (
+            <Alert variant={route.kind === 'needs-shift' ? 'warning' : 'info'} size="small">
+              {notice}
+              {route.kind === 'needs-shift' && (
+                <>
+                  {' '}
+                  <Link to="/kasir" className="font-medium underline">
+                    Buka shift
+                  </Link>
+                </>
+              )}
+            </Alert>
+          )}
+          {showRestAfter && (
+            <p className="flex justify-between text-sm text-default-secondary">
+              <span>Sisa setelah bayar</span>
+              <span className="font-semibold">{rupiah(restAfter(r.rest, amountValue))}</span>
+            </p>
+          )}
           {error && (
             <Alert variant="danger" size="small" role="alert">
               {error}
@@ -218,7 +270,7 @@ function ReceivablePage() {
               }}>
               Lunasi
             </Button>
-            <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
+            <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy || route.kind === 'needs-shift'}>
               Simpan
             </Button>
           </div>
