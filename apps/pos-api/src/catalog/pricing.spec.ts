@@ -143,23 +143,33 @@ describe('unit and wholesale pricing (UMK-1985)', () => {
     ).toEqual(['sellingPrice']);
   });
 
-  it('warns when a unit costs more than its content at the best price per base unit', () => {
-    // 24 × 3.200 = 76.800 < 78.000: the design example itself warns (two dus cost more than 48 loose pcs).
-    expect(pricingWarnings(teh)).toEqual([
+  it('warns when a unit costs more than its content at the price of the tier the unit itself reaches', () => {
+    // The design example: 24 pcs reach the 12+ tier, 24 × 3.300 = 79.200 ≥ 78.000: no warning. The 48+
+    // tier (3.200 → 76.800) is not what one dus is compared with (owner ruling 2026-11-25).
+    expect(pricingWarnings(teh)).toEqual([]);
+    const dus = (unitQty: number, price: number) =>
+      pricingWarnings({ ...teh, units: [{ name: 'Dus', unitQty, price }] });
+    expect(dus(24, 79_200)).toEqual([]);
+    expect(dus(24, 79_201)).toEqual([
       {
         code: 'unit_price_above_wholesale',
         field: 'units.0.price',
         message:
-          'Harga 1 Dus (Rp78.000) lebih mahal dari 24 pcs dengan harga grosir termurah (Rp76.800)',
+          'Harga 1 Dus (Rp79.201) lebih mahal dari 24 pcs dengan harga grosir (Rp79.200)',
       },
     ]);
-    expect(
-      pricingWarnings({
-        ...teh,
-        units: [{ name: 'Dus', unitQty: 24, price: 76_800 }],
-      }),
-    ).toEqual([]);
-    // Without tiers the best price is the base price: 24 × 3.500 = 84.000.
+    // A pack of 48 reaches the 48+ tier: 48 × 3.200 = 153.600; 47 is still in the 12+ tier.
+    expect(dus(48, 153_600)).toEqual([]);
+    expect(dus(48, 153_601).map((w) => w.message)).toEqual([
+      'Harga 1 Dus (Rp153.601) lebih mahal dari 48 pcs dengan harga grosir (Rp153.600)',
+    ]);
+    expect(dus(47, 47 * 3300)).toEqual([]);
+    expect(dus(47, 47 * 3300 + 1)).toHaveLength(1);
+    // A pack below the first tier, and a product without tiers: the base price.
+    expect(dus(6, 21_000)).toEqual([]);
+    expect(dus(6, 21_001).map((w) => w.message)).toEqual([
+      'Harga 1 Dus (Rp21.001) lebih mahal dari 6 pcs dengan harga satuan (Rp21.000)',
+    ]);
     expect(pricingWarnings({ ...teh, tiers: [] })).toEqual([]);
     expect(
       pricingWarnings({
@@ -168,7 +178,7 @@ describe('unit and wholesale pricing (UMK-1985)', () => {
         units: [{ name: 'Dus', unitQty: 24, price: 84_001 }],
       }).map((w) => w.message),
     ).toEqual([
-      'Harga 1 Dus (Rp84.001) lebih mahal dari 24 pcs dengan harga termurah (Rp84.000)',
+      'Harga 1 Dus (Rp84.001) lebih mahal dari 24 pcs dengan harga satuan (Rp84.000)',
     ]);
   });
 });
