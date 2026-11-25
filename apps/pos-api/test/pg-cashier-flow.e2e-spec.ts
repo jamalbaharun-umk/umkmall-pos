@@ -46,7 +46,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   let pay: PaymentApi;
   let app: INestApplication;
   let sync: PaymentSync;
-  let link: 'ok' | 'down' = 'ok';
+  // `no_charge`: only a charge (POST /payments) fails; everything else reaches payment-api.
+  let link: 'ok' | 'down' | 'no_charge' = 'ok';
   const tenants: string[] = [];
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
   const http = () => request(app.getHttpServer());
@@ -60,7 +61,13 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
         .overrideProvider(PAYMENT_FETCH)
         .useValue((url: string, init: RequestInit) => {
-          if (link === 'down') throw new TypeError('fetch failed');
+          if (
+            link === 'down' ||
+            (link === 'no_charge' &&
+              init.method === 'POST' &&
+              url.endsWith('/payments'))
+          )
+            throw new TypeError('fetch failed');
           return fetch(url, init);
         })
         .compile();
@@ -813,6 +820,40 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await shift(s.auth)).toMatchObject({
         cashSales: 10_400,
         salesCount: 2,
+      });
+    });
+
+    it('the bill was closed but the cash charge got no answer: the sale is a cash sale that still waits, and the job charges it, never cancels it', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      link = 'no_charge';
+      await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 5200,
+      }).expect(503);
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 2,
+        payment_method_code: 'cash',
+        switch_cash_paid: null,
+      });
+      expect((await paymentsOf(saleId)).map((p) => p.status)).toEqual([
+        'cancelled',
+      ]);
+      link = 'ok';
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 1,
+        cancelled: 0,
+      });
+      expect((await saleRow(saleId)).status).toBe('completed');
+      expect(
+        (await paymentsOf(saleId)).map((p) => [p.method, p.amount, p.status]),
+      ).toEqual([
+        ['fake_qris', String(PRICE), 'cancelled'],
+        ['cash', '5200', 'paid'],
+      ]);
+      expect(await shift(s.auth)).toMatchObject({
+        cashSales: 5200,
+        salesCount: 1,
       });
     });
 

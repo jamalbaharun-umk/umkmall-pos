@@ -222,7 +222,9 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         actorRef: actor,
       };
       let payment: Payment | null;
-      if (mode === 'charge' && !closing) {
+      // A sale past its first attempt was switched to cash: the cashier said the cash was received, so
+      // every worker charges it (as it finishes a switch), and none gives it up for want of a payment.
+      if (!closing && (mode === 'charge' || sale.attempt > 1)) {
         payment = await this.client.charge(tenantId, charge);
       } else {
         payment = await this.client.findByKey(

@@ -28,7 +28,8 @@ no onboarding, no sub-merchant.
   finds the attempt closed unpaid turns the sale into a cash sale (method Tunai, cash rounding, attempt + 1) instead
   of cancelling it, and charges it as `cash`. The PG says the bill was paid after all (D5) → the sale completes as
   the PG sale, the intent is dropped and the request answers 409 `already_paid`. A switch left unfinished therefore
-  completes as cash, because the cashier said the cash was received (the M15 reasoning).
+  completes as cash, because the cashier said the cash was received (the M15 reasoning): a sale past its first
+  attempt is charged by every worker and never given up for want of a payment.
 - **Late PG money** on the closed attempt is payment-api's business: an unmatched receipt, refunded automatically
   (M5, D13). pos-api only shows it (`lateReceipts`).
 - **Cancel** of an awaiting sale needs no PIN (V2) and happens only on payment-api's answer (M17): payment-api
