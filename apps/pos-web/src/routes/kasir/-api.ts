@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import type { Quote, SaleUnit } from './-helpers'
+import type { SalePayment } from './-online'
 import type { CashTotals } from './-shift-helpers'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
@@ -48,6 +49,8 @@ export type SaleRow = {
   change: number
   costTotal?: number
   createdAt: string
+  /** UMK-1991: when the sale counts (paid), which is what every day figure and the list use. Absent in old answers. */
+  paidAt?: string
 }
 export type SalesSummary = { count: number; revenue: number; discount: number; voucherDiscount: number; rounding: number }
 /** UMK-1985: `qty` is in the line's `unit`; `appliedTier` is set when the wholesale price was charged. */
@@ -90,24 +93,55 @@ export type Receipt = {
   voidedAt: string | null
 }
 export type Result<T = undefined> =
-  { ok: true; data: T } | { ok: false; error: string; errors?: Record<string, string>; total?: number; status?: number }
+  | { ok: true; data: T }
+  | {
+      ok: false
+      error: string
+      errors?: Record<string, string>
+      total?: number
+      status?: number
+      /** UMK-1991: pos-api's stable lower-case code of a 409/503 (merchant_not_active, payment_unavailable, ...). */
+      code?: string
+      /** UMK-1991: the sale a refused PG sale left behind (cancelled, or still waiting for its payment). */
+      saleId?: string
+    }
 
 const ERRORS: Record<number, string> = {
   403: 'Anda tidak punya izin untuk berjualan.',
   404: 'Data tidak ditemukan.',
 }
 
-type Refusal = { error: string; errors?: Record<string, string>; total?: number; status?: number }
+type Refusal = {
+  error: string
+  errors?: Record<string, string>
+  total?: number
+  status?: number
+  code?: string
+  saleId?: string
+}
 
 /** pos-api's 409/422 bodies are Indonesian and internals-free (`{ message, errors, total? }`): pass them on. */
 async function refusalOf(res: Response): Promise<Refusal> {
-  if (res.status === 409 || res.status === 422) {
-    const body = (await res.json().catch(() => null)) as { message?: unknown; errors?: unknown; total?: unknown } | null
+  if (res.status === 409 || res.status === 422 || res.status === 503) {
+    const body = (await res.json().catch(() => null)) as {
+      message?: unknown
+      errors?: unknown
+      total?: unknown
+      code?: unknown
+      saleId?: unknown
+    } | null
     return {
       status: res.status,
-      error: typeof body?.message === 'string' ? body.message : 'Data belum benar. Periksa isian Anda.',
+      error:
+        typeof body?.message === 'string' && res.status !== 503
+          ? body.message
+          : res.status === 503
+            ? 'Layanan pembayaran belum menjawab. Coba lagi.'
+            : 'Data belum benar. Periksa isian Anda.',
       errors: body?.errors && typeof body.errors === 'object' ? (body.errors as Record<string, string>) : undefined,
       total: typeof body?.total === 'number' ? body.total : undefined,
+      code: typeof body?.code === 'string' && /^[a-z][a-z_]{1,39}$/.test(body.code) ? body.code : undefined,
+      saleId: typeof body?.saleId === 'string' ? body.saleId : undefined,
     }
   }
   return { status: res.status, error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }
@@ -130,14 +164,17 @@ async function send<T>(path: string, body: unknown, headers: Record<string, stri
 export const loadCashier = createServerFn().handler(async () => {
   const { shift } = await load<{ shift: (Shift & { expectedCash: number }) | null }>('/shifts/current')
   const noQris = { configured: false, version: '' }
-  if (!shift) return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris }
+  if (!shift)
+    return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[] }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
-  const [page, settings, methods, profile] = await Promise.all([
+  const [page, settings, methods, profile, chargeable] = await Promise.all([
     load<{ data: Product[] }>('/catalog/products?perPage=100'),
     load<{ taxBps: number }>('/sales/settings'),
     load<{ data: PaymentMethod[] }>('/payment-methods'),
     // UMK-1992: any session reads the profile; only the QRIS flag and a cache-busting stamp are used here.
     load<{ qrisConfigured: boolean; updatedAt: string | null }>('/store/profile'),
+    // UMK-1991: the gateway methods the store may charge now. A failure hides the online methods, never the till.
+    chargeableMethods(),
   ])
   return {
     shift,
@@ -145,8 +182,16 @@ export const loadCashier = createServerFn().handler(async () => {
     taxBps: settings.taxBps,
     methods: methods.data,
     qris: { configured: profile.qrisConfigured, version: profile.updatedAt ?? '' },
+    chargeable,
   }
 })
+
+async function chargeableMethods(): Promise<string[]> {
+  const res = await api('/online-payments/methods').catch(() => null)
+  if (!res?.ok) return []
+  const body = (await res.json().catch(() => null)) as { methods?: unknown } | null
+  return Array.isArray(body?.methods) ? body.methods.filter((m): m is string => typeof m === 'string') : []
+}
 
 export const openShift = createServerFn({ method: 'POST' })
   .validator((openingCash: number) => openingCash)
@@ -171,7 +216,15 @@ type SaleInput = {
 export const createSale = createServerFn({ method: 'POST' })
   .validator((d: SaleInput) => d)
   .handler(({ data: { key, ...body } }) =>
-    send<{ id: string; change: number; receivableRest?: number | null }>('/sales', body, { 'idempotency-key': key }),
+    send<{
+      id: string
+      number?: number
+      change: number
+      receivableRest?: number | null
+      /** UMK-1991: `awaiting_payment` with `payment` for a QRIS or VA sale; read it again with `parsePayment`. */
+      status?: string
+      payment?: SalePayment
+    }>('/sales', body, { 'idempotency-key': key }),
   )
 
 /** The server's price of the cart (unit and wholesale tier), nothing written. Only pos-api prices a sale. */
@@ -179,9 +232,19 @@ export const quoteCart = createServerFn({ method: 'POST' })
   .validator((lines: { productId: string; qty: number; unit?: string }[]) => lines)
   .handler(({ data }) => send<Quote>('/sales/quote', { lines: data }))
 
+/** The receipt, dated by when the sale was paid (`paidAt`, UMK-1991) when `GET /sales/:id` says so; else by creation. */
 export const loadReceipt = createServerFn()
   .validator((id: string) => id)
-  .handler(({ data }) => load<Receipt>(`/sales/${encodeURIComponent(data)}/receipt`))
+  .handler(async ({ data }): Promise<Receipt & { paidAt: string | null }> => {
+    const id = encodeURIComponent(data)
+    const [receipt, meta] = await Promise.all([
+      load<Receipt>(`/sales/${id}/receipt`),
+      api(`/sales/${id}`)
+        .then((r) => (r.ok ? (r.json() as Promise<{ paidAt?: unknown }>) : null))
+        .catch(() => null),
+    ])
+    return { ...receipt, paidAt: typeof meta?.paidAt === 'string' ? meta.paidAt : null }
+  })
 
 export type HistoryQuery = { page: number; from?: string; to?: string }
 export const loadHistory = createServerFn()
@@ -201,7 +264,13 @@ export { rupiah } from '@/components/pos-page'
 
 // ---- U7: member picker, voucher check, payment methods ----
 
-export type PaymentMethod = { id: string; name: string; kind: 'cash' | 'debit' | 'credit' | 'wallet' }
+export type PaymentMethod = {
+  id: string
+  name: string
+  kind: 'cash' | 'debit' | 'credit' | 'wallet' | 'online'
+  /** UMK-1991: payment-api's method of an `online` method (fake_qris, fake_va); null for every other kind. */
+  gatewayMethod?: string | null
+}
 export type MemberOption = { id: string; name: string; code: string }
 
 /** Name and code only (GET /members/picker, sales.create): the till never loads phone or address. */

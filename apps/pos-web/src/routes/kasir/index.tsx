@@ -53,12 +53,15 @@ import {
 import {
   confirmButtonLabel,
   isStaticQris,
+  offeredMethods,
   payStepOf,
   qrisScanHint,
   qrisSrc,
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
+import { OnlineWait, useResumeOnlineSale, type OnlineFinish } from './-online-pay'
+import { forgetPending, parsePayment, type SalePayment } from './-online'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -72,8 +75,12 @@ export const Route = createFileRoute('/kasir/')({
 })
 
 function CashierPage() {
-  const { shift, products, taxBps, methods, qris } = Route.useLoaderData()
-  return shift ? <Register products={products} taxBps={taxBps} methods={methods} qris={qris} /> : <OpenShift />
+  const { shift, products, taxBps, methods, qris, chargeable } = Route.useLoaderData()
+  return shift ? (
+    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} />
+  ) : (
+    <OpenShift />
+  )
 }
 
 function OpenShift() {
@@ -138,11 +145,14 @@ function Register({
   taxBps,
   methods,
   qris,
+  chargeable,
 }: {
   products: Product[]
   taxBps: number
   methods: PaymentMethod[]
   qris: Qris
+  /** UMK-1991: the gateway methods the store may charge now; an online method not in it is not offered. */
+  chargeable: string[]
 }) {
   const router = useRouter()
   const [q, setQ] = useState('')
@@ -154,6 +164,10 @@ function Register({
   const [paying, setPaying] = useState(false)
   const [soldOut, setSoldOut] = useState<string>()
   const [paid, setPaid] = useState<PaidSale>()
+  // UMK-1991: a PG sale waits for its payment on its own screen; a reload brings the screen back.
+  const [waiting, setWaiting] = useState<SalePayment | null>(null)
+  const resume = useResumeOnlineSale()
+  const online = waiting ?? resume.resumed
   // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
   const canDiscount = useCan('sales.price_override')
   const [discountText, setDiscountText] = useState('')
@@ -573,11 +587,17 @@ function Register({
           note={note}
           idempotencyKey={key}
           methods={methods}
+          chargeable={chargeable}
           qris={qris}
           member={member}
           onMemberChange={setMember}
           voucher={voucher}
           onClose={() => setPaying(false)}
+          renewKey={() => setKey(crypto.randomUUID())}
+          onAwaiting={(payment) => {
+            setPaying(false)
+            setWaiting(payment)
+          }}
           onPaid={(sale) => {
             void router.invalidate() // fresh prices and products for the next order
             setPaying(false)
@@ -592,6 +612,27 @@ function Register({
         />
       )}
       <SuccessDialog sale={paid} onClose={() => setPaid(undefined)} />
+      {online && (
+        <OnlineWait
+          key={online.saleId}
+          initial={online}
+          onFinish={(r: OnlineFinish) => {
+            forgetPending()
+            setWaiting(null)
+            resume.clear()
+            void router.invalidate() // stock is back (or sold): fresh products for the next order
+            // A new key either way: the same key would answer the finished sale again.
+            setKey(crypto.randomUUID())
+            if (r.kind === 'paid') {
+              setCart([])
+              setNote('')
+              setMember(null)
+              setVoucher(null)
+              setDiscountText('')
+            }
+          }}
+        />
+      )}
     </main>
   )
 }
@@ -762,13 +803,16 @@ function PayDialog({
   cart,
   note,
   idempotencyKey,
-  methods,
+  methods: allMethods,
+  chargeable,
   qris,
   member,
   onMemberChange,
   voucher,
   onClose,
   onPaid,
+  onAwaiting,
+  renewKey,
 }: {
   subtotal: number
   discount: number
@@ -779,21 +823,30 @@ function PayDialog({
   note: string
   idempotencyKey: string
   methods: PaymentMethod[]
+  chargeable: string[]
   qris: Qris
   member: MemberOption | null
   onMemberChange: (m: MemberOption | null) => void
   voucher: AppliedVoucher | null
   onClose: () => void
   onPaid: (sale: PaidSale) => void
+  /** UMK-1991: the sale was written and now waits for its QRIS or VA payment. */
+  onAwaiting: (payment: SalePayment) => void
+  /** The sale this key made is cancelled: the next attempt must not replay it. */
+  renewKey: () => void
 }) {
   const router = useRouter()
+  const { offered: methods, hidden: hiddenOnline } = useMemo(
+    () => offeredMethods(allMethods, chargeable),
+    [allMethods, chargeable],
+  )
   const [paidText, setPaidText] = useState('')
   const [methodId, setMethodId] = useState(() => methods.find((m) => m.kind === 'cash')?.id ?? methods[0]?.id ?? '')
   const method = methods.find((m) => m.id === methodId)
   // Kasbon: paid may be 0 and the rest becomes the member's receivable; debit/wallet: exactly the total.
   const isCredit = method?.kind === 'credit'
   const step = payStepOf(method?.kind)
-  const isExact = step === 'confirm'
+  const isExact = step === 'confirm' || step === 'online'
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   // UMK-1992: the wallet method shows the store's static QRIS image (or says it is not set).
@@ -840,17 +893,35 @@ function PayDialog({
       total: undefined,
       errors: undefined,
       status: 0,
+      code: undefined,
+      saleId: undefined,
     }))
     lock.current = false
     setBusy(false)
     if (!res.ok) {
-      showError(res, 'menyimpan penjualan')
+      // UMK-1991: a PG sale the gateway refused is cancelled for good: this key would only answer it again.
+      if (res.status === 409 && res.saleId) renewKey()
+      showError(
+        res.status === 503 || (res.status === 409 && res.code)
+          ? { status: res.status, code: res.status === 503 && res.saleId ? 'sale_waiting' : res.code, error: res.error }
+          : res,
+        {
+          action: 'menyimpan penjualan',
+          // A sale that waits for its payment is repeated with the same key: it is never a second sale.
+          retry: res.status === 503 ? () => void pay(amount) : undefined,
+        },
+      )
       if (res.total !== undefined && res.total !== due) {
         setServerTotal(res.total)
         void router.invalidate() // the grid shows the new prices too
         return setError(`Harga berubah: total terbaru ${rupiah(res.total)}. Periksa lalu bayar lagi.`)
       }
       return setError(res.error)
+    }
+    const awaiting = res.data.status === 'awaiting_payment' ? parsePayment(res.data.payment) : null
+    if (awaiting) {
+      notifySuccess('Penjualan dibuat. Menunggu pembayaran pelanggan.')
+      return onAwaiting(awaiting)
     }
     notifySuccess('Pembayaran berhasil')
     onPaid({
@@ -955,7 +1026,18 @@ function PayDialog({
               </Alert>
             </div>
           )}
-          {step !== 'confirm' && (
+          {step === 'online' && (
+            <Alert variant="info" size="small">
+              Pelanggan membayar lewat {method?.gatewayMethod === 'fake_va' ? 'nomor Virtual Account' : 'kode QR'} di layar
+              berikutnya. Berlaku 15 menit. Stok dan voucher ditahan sampai dibayar atau dibatalkan.
+            </Alert>
+          )}
+          {hiddenOnline > 0 && (
+            <p className="text-xs text-default-secondary">
+              {hiddenOnline} metode online tidak tampil karena belum aktif di Pembayaran Online toko ini.
+            </p>
+          )}
+          {step !== 'confirm' && step !== 'online' && (
             <>
               <TextField
                 label="Uang diterima"
@@ -1025,7 +1107,7 @@ function PayDialog({
           <ErrorText>{error}</ErrorText>
           <div className="grid grid-cols-2 gap-2">
             <Button width="auto" htmlType="submit" size="large" isLoading={busy}>
-              {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind)}
+              {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind, method?.gatewayMethod)}
             </Button>
             <Button width="auto" size="large" type="outline" color="light" disabled={busy} onClick={onClose}>
               Tutup
