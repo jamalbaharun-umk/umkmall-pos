@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { rupiah } from '@/components/page'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { loadApprovers, voidSale, type SaleVoid } from './-void-api'
+import { refundSale } from './-online-api'
 import {
   NOTE_MAX,
   VOID_REASONS,
@@ -26,6 +27,8 @@ type Props = {
   /** `amountDue` is what was taken in (total plus cash rounding), which is what goes back. */
   sale: { id: string; number: number; amountDue: number }
   methodKind: MethodKind | null
+  /** UMK-1991: the sale was paid through a payment gateway (QRIS, VA): it is refunded, never voided. */
+  online?: boolean
 }
 
 type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ready'; list: Approver[] }
@@ -35,7 +38,8 @@ type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { st
  * approver types the PIN on the same device. The PIN lives only in this component's state: it is cleared after every
  * submit and when the dialog closes, never put in a URL, storage or log.
  */
-export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props) {
+export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online = false }: Props) {
+  const what = online ? 'refund struk' : 'membatalkan struk'
   const [approvers, setApprovers] = useState<Approvers>({ state: 'loading' })
   const [reasonCode, setReasonCode] = useState('')
   const [note, setNote] = useState('')
@@ -66,7 +70,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
     fetchApprovers()
   }, [open])
 
-  const guidance = refundGuidance(methodKind, sale.amountDue, rupiah)
+  const guidance = refundGuidance(online ? 'online' : methodKind, sale.amountDue, rupiah)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -77,18 +81,22 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
     if (Object.keys(bad).length > 0) return
     lock.current = true
     setBusy(true)
-    const answer = await voidSale({ data: { saleId: sale.id, key: key.current, ...voidBody(form) } }).catch(
-      () => null,
-    )
+    const input = { saleId: sale.id, key: key.current, ...voidBody(form) }
+    // A paid QRIS or VA sale goes through the refund route; the answer has the void's own failure kinds either way.
+    const answer = await (online ? refundSale({ data: input }) : voidSale({ data: input })).catch(() => null)
     setPin('') // cleared after every submit, whatever the answer
     lock.current = false
     setBusy(false)
     if (!answer) {
-      showError({ status: 0 }, 'membatalkan struk')
+      showError({ status: 0 }, what)
       return
     }
     if (answer.ok) {
-      notifySuccess(`Struk #${sale.number} dibatalkan`)
+      notifySuccess(
+        online
+          ? `Refund struk #${sale.number} diajukan. Gateway mengembalikan uang ke pelanggan.`
+          : `Struk #${sale.number} dibatalkan`,
+      )
       onChanged(answer.saleVoid)
       onClose()
       return
@@ -103,7 +111,8 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
       setErrors(field)
     }
     // Every refusal is also explained in the error dialog, so none is silent (the field message stays as well).
-    showError(failureOf(f), 'membatalkan struk')
+    const code = 'code' in answer ? answer.code : undefined
+    showError(code ? { ...failureOf(f), code } : failureOf(f), what)
     // A lock or a PIN count changed: show who can still approve.
     if (f.kind === 'locked' || isWrongPin(f)) fetchApprovers()
     if (f.kind === 'done') onChanged(null)
@@ -122,14 +131,15 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
           onClose()
         }
       }}
-      title={`Batalkan transaksi #${sale.number}?`}
+      title={online ? `Refund pembayaran online #${sale.number}?` : `Batalkan transaksi #${sale.number}?`}
       size="small"
       centered
     >
       <form noValidate onSubmit={submit} className="flex flex-col gap-4 px-6 pb-6">
         <p className="text-sm text-default-secondary">
-          Seluruh struk dibatalkan dan tidak bisa dikembalikan atau dibatalkan sebagian. Stok dan voucher kembali, struk
-          tetap ada dengan tanda VOID.
+          {online
+            ? 'Seluruh pembayaran dikembalikan lewat gateway dan tidak bisa dikembalikan sebagian. Stok dan voucher kembali sekarang, struk tetap ada dengan tanda VOID.'
+            : 'Seluruh struk dibatalkan dan tidak bisa dikembalikan atau dibatalkan sebagian. Stok dan voucher kembali, struk tetap ada dengan tanda VOID.'}
         </p>
         <Alert variant="info" size="small">
           {guidance.text}
@@ -234,7 +244,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind }: Props
             isLoading={busy}
             disabled={approvers.state !== 'ready' || !anyApprover}
           >
-            Batalkan transaksi
+            {online ? 'Refund pembayaran' : 'Batalkan transaksi'}
           </Button>
         </div>
       </form>

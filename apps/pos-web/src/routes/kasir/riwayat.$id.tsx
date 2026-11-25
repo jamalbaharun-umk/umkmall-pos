@@ -4,8 +4,10 @@ import { useState } from 'react'
 import { formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
 import { loadSaleDetail } from './-void-api'
+import { RefundPanel } from './-refund-panel'
 import { VoidDialog } from './-void-dialog'
 import { reasonLabel } from './-void-helpers'
+import { paidLater } from './-online'
 import { soldPriceNote } from './-helpers'
 import { hasRounding } from './-money'
 
@@ -18,7 +20,7 @@ export const Route = createFileRoute('/kasir/riwayat/$id')({
 })
 
 function SalePage() {
-  const { receipt: r, saleVoid, methodKind } = Route.useLoaderData()
+  const { receipt: r, saleVoid, methodKind, online, paidAt } = Route.useLoaderData()
   const { id } = Route.useParams()
   const router = useRouter()
   const canStart = useCan('sales.create')
@@ -32,7 +34,7 @@ function SalePage() {
         <>
           {r.status === 'completed' && canStart && (
             <Button width="auto" type="outline" color="danger" onClick={() => setVoiding(true)}>
-              Batalkan transaksi
+              {online ? 'Refund pembayaran online' : 'Batalkan transaksi'}
             </Button>
           )}
           <Button width="auto" asChild type="outline" color="light">
@@ -46,6 +48,16 @@ function SalePage() {
         </>
       }
     >
+      {r.status === 'awaiting_payment' && (
+        <Alert variant="warning" size="small" className="mb-4" role="status">
+          Penjualan ini masih menunggu pembayaran QRIS atau VA. Selesaikan atau batalkan di layar kasir.
+        </Alert>
+      )}
+      {r.status === 'cancelled' && (
+        <Alert variant="info" size="small" className="mb-4" role="status">
+          Penjualan ini dibatalkan sebelum dibayar. Stok dan voucher sudah kembali; tidak ada struk.
+        </Alert>
+      )}
       {voided && (
         <Card variant="outlined" padding="large" className="mb-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -92,11 +104,15 @@ function SalePage() {
                   </>
                 )}
               </dl>
-              {saleVoid.transferReturned > 0 && (
+              {saleVoid.refundStatus ? (
+                <RefundPanel saleVoid={saleVoid} onChanged={() => void router.invalidate()} />
+              ) : (
+                saleVoid.transferReturned > 0 && (
                 <Alert variant="info" size="small">
                   Uang {rupiah(saleVoid.transferReturned)} dikembalikan lewat transfer balik. Pastikan transfernya sudah
                   dilakukan; sistem hanya mencatat.
                 </Alert>
+                )
               )}
             </>
           ) : (
@@ -117,8 +133,14 @@ function SalePage() {
             <dd className="text-right">#{r.number}</dd>
             <dt className="font-medium">Kasir</dt>
             <dd className="text-right">{r.cashier}</dd>
-            <dt className="font-medium">Tanggal</dt>
-            <dd className="text-right">{formatDate(r.createdAt)}</dd>
+            <dt className="font-medium">{paidAt ? 'Tanggal bayar' : 'Tanggal'}</dt>
+            <dd className="text-right">{formatDate(paidAt ?? r.createdAt)}</dd>
+            {paidLater(r.createdAt, paidAt) && (
+              <>
+                <dt className="font-medium">Dibuat</dt>
+                <dd className="text-right">{formatDate(r.createdAt)}</dd>
+              </>
+            )}
             {r.memberName && (
               <>
                 <dt className="font-medium">Pelanggan</dt>
@@ -205,6 +227,7 @@ function SalePage() {
         onChanged={() => void router.invalidate()}
         sale={{ id, number: r.number, amountDue: r.amountDue }}
         methodKind={methodKind}
+        online={online}
       />
     </Page>
   )

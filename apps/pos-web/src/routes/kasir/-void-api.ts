@@ -23,6 +23,8 @@ export type SaleVoid = {
   initiatedBy: { id: string; kind: 'owner' | 'cashier'; name: string }
   approvedBy: { id: string; kind: 'owner' | 'cashier'; name: string }
   returns: { amount: number; paymentMethod: string; fromDrawer: boolean }[]
+  /** UMK-1991: null for a plain void; for a refund of a QRIS or VA sale, where the gateway's refund stands. */
+  refundStatus?: 'pending' | 'succeeded' | 'failed' | null
 }
 
 export type SaleDetail = {
@@ -31,6 +33,9 @@ export type SaleDetail = {
   saleVoid: SaleVoid | null
   /** The kind of the sale's payment method, for the refund guidance; null when it cannot be told. */
   methodKind: MethodKind | null
+  /** UMK-1991: from `GET /sales/:id`, when the actor may read it: the sale was paid through a gateway, and when it counts. */
+  online: boolean
+  paidAt: string | null
 }
 
 async function read<T>(path: string): Promise<T | null> {
@@ -46,12 +51,15 @@ export const loadSaleDetail = createServerFn()
     const res = await api(`/sales/${id}/receipt`)
     if (!res.ok) throw new Error((await refusalOf(res)).error)
     const receipt = (await res.json()) as Receipt
-    const [saleVoid, methods] = await Promise.all([
+    const [saleVoid, methods, meta] = await Promise.all([
       receipt.status === 'void' ? read<SaleVoid>(`/sales/${id}/void`) : null,
       receipt.status === 'completed' ? read<{ data: { name: string; kind: MethodKind }[] }>('/payment-methods') : null,
+      read<{ onlinePayment?: boolean; paidAt?: string | null }>(`/sales/${id}`),
     ])
-    const methodKind = methods?.data.find((m) => m.name === receipt.paymentMethod)?.kind ?? null
-    return { receipt, saleVoid, methodKind }
+    const online = meta?.onlinePayment === true
+    // A paid QRIS or VA sale is refunded by the gateway, so its kind is `online` whatever its method is called.
+    const methodKind = online ? 'online' : (methods?.data.find((m) => m.name === receipt.paymentMethod)?.kind ?? null)
+    return { receipt, saleVoid, methodKind, online, paidAt: typeof meta?.paidAt === 'string' ? meta.paidAt : null }
   })
 
 export type ApproversAnswer = { ok: true; approvers: Approver[] } | { ok: false; error: string }

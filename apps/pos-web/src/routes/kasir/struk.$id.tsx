@@ -23,7 +23,7 @@ function ReceiptPage() {
           <p className="mt-2 flex justify-between">
             <span>No. {r.number}</span>
             <span>
-              {new Date(r.createdAt).toLocaleString('id-ID', {
+              {new Date(r.paidAt ?? r.createdAt).toLocaleString('id-ID', {
                 dateStyle: 'short',
                 timeStyle: 'short',
               })}
