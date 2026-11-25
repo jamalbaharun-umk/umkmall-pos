@@ -248,6 +248,9 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **`awaiting_payment` and `cancelled` sales are not receipts:** every list, report and shift total filters
   `FINAL_SALE_STATUSES` (`db/schema/sales.ts`). A new query on `pos.sales` must too. A shift does not close while one
   of its sales awaits payment.
+- **A sale is dated by `sales.paid_at`, not `created_at`,** in every day-based figure and in the sales list (owner
+  ruling 2026-11-25): the time it was rung up, or for a sale that waited for a PG the time it was paid (or switched
+  to cash). A new report or list of sales by day filters `paid_at`.
 - **Kasbon payments and voids are recorded after the pos commit** (`receivable_payments.seq`/`payment_id`, order
   reference `<receivableId>:<seq>`; `sale_voids.payment_sync_pending`), and the job (`PaymentSync.tick`) repeats what
   failed. A void sends the void's reason, actor and PIN-verified approver.

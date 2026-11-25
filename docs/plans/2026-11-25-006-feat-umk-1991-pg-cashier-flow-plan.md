@@ -48,6 +48,13 @@ no onboarding, no sub-merchant.
   payment-api, then writes under the sale's row lock. That write is refused as stale when the sale has moved to
   another attempt, or when it would cancel a sale whose switch to cash is asked; the sale is then read again. So a
   poll, a check or the job that read the sale before a switch can never cancel it after.
+- **A sale counts from when it was paid** (owner ruling 2026-11-25, consistent with shift and drawer timing).
+  `sales.paid_at` is when the sale was rung up, except for a sale that waited for a payment gateway: payment-api's
+  paid time (never before the sale was rung up, never in the future: its clock is not ours), or the moment the
+  cashier took cash instead. Every day-based figure (`/reports/*`, the dashboard, profit and loss) and the sales
+  list's `from`/`to` and order use `paid_at`, not `created_at`; the sale answers `paidAt`. So a QR sale rung up at
+  23:58 and paid at 00:03 is in the new day, and no earlier day changes after the fact. A shift's figures are by
+  shift, as before. The migration dates every earlier sale at its `created_at`.
 - **No Idempotency-Key on refund, cancel and close.** Exactly-once rests on payment-api's state machine: a bill is
   closed only while it waits (a second close answers the closed payment), a refund is asked only for a payment
   that is `paid` (pos-api looks first, and payment-api answers the refund under way on a repeat), and the refund's
@@ -184,6 +191,9 @@ payment, also a cash one whose charge never got an answer.
 - [test] Two workers at once: cancel and switch, cancel and the customer's payment, checks and the job on a paid
   bill, refund retries and the job, a refund's request and the job: one outcome, nothing twice. A refund that
   succeeded is not overwritten by an older answer.
+- [test] Report day: a PG sale rung up yesterday and paid today is in today's report and list and not in
+  yesterday's; its refund reverses today; a sale switched to cash counts from the switch; a sale paid at once
+  counts from when it was rung up; the migration's backfill statement dates an earlier sale at `created_at`.
 - [test] Guard: every action route on a sale's payment and every refund route checks the session kind first
   (`assertPersonAtTill`; revert-red once).
 - [test] A PG sale answers `awaiting_payment` with `qrString` (QRIS) or `bank` + `vaNumber` (VA), `expiresAt` 15
@@ -215,7 +225,8 @@ payment, also a cash one whose charge never got an answer.
 ## Files
 
 - `apps/pos-api/src/db/schema/sales.ts`, `voids.ts`, `payment-sync.ts`, migrations `pg_cashier_flow` and
-  `pg_cashier_flow_review` (the gateway-method check; the job's index on `payment_attempt_at`).
+  `pg_cashier_flow_review` (the gateway-method check; the job's index on `payment_attempt_at`) and `sale_paid_at`.
+- `apps/pos-api/src/reports/reports.service.ts` (day figures by `paid_at`).
 - `apps/pos-api/src/payments-client/`: `payments.client.ts` (sync, cancel, refund, manual refund, list by order),
   `payment-sync.service.ts` (attempts, the switch, refunds, the job), new `sale-payment.service.ts` and
   `sale-payment.controller.ts`, `payments.module.ts`.
