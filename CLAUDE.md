@@ -57,6 +57,18 @@ silent, follow the monorepo's principles.
   under a row lock (`select … for update`) or an atomic `update … where qty >= n`.
 - **Money and state changes are idempotent:** sale creation takes an `Idempotency-Key`; a retry returns the
   first result.
+- **Default roles** (`DEFAULT_ROLES`): Pemilik (everything), Admin (everything but
+  `ADMIN_EXCLUDED_PERMISSIONS`: `staff.manage`, `payments.manage`), Kasir. Only Pemilik holds `payments.manage`.
+  Changing the Admin constant changes new stores only: existing ones got the role from migration `0030`.
+- **A cashier device is paired by code** (UMK-2022, `src/staff/device-pairing.ts`): the signed-out device asks for
+  a 6-digit code (`POST /auth/device/pairing`), and the code is accepted only inside a signed-in session with
+  `staff.manage` (`POST /staff/devices/pair`), which binds the device to that session's store. Only hashes are
+  stored; 10 minutes (`PAIRING_CODE_TTL_SECONDS`), single use, wrong codes lock the store like PIN sign-in
+  (`lockSeconds`). `device_pairings.tenant_id` is null until the claim. Never log a code or a pairing token.
+  Asking for a code needs no session, so open codes are capped in all (`MAX_LIVE_PAIRINGS`) and per network
+  address (`MAX_LIVE_PAIRINGS_PER_ADDRESS`), counted and inserted under one advisory lock; status polls are limited
+  per address in memory. The address is `req.ip`: set `POS_TRUSTED_PROXIES` to the proxies in front of pos-api, and
+  a relay (pos-web) must pass the device's address on in `X-Forwarded-For`, or every device shares one cap.
 - **Gate actions with `@RequirePermission('<key>')`** (`src/staff/require-permission.ts`; keys in
   `src/staff/permissions.ts`, add new ones there). Owners hold every permission; a cashier holds their roles'
   permissions, loaded per request by the session guard (`session.permissions`). Inline checks use
@@ -124,6 +136,30 @@ test per resource, idempotent money changes), with these differences:
   settings such as `refundMode` are process-global, not per tenant. Its controls (`/dev/fake-gateway/…`) sit
   behind the service key and the tenant header like every route, reach only that tenant's bills, change only the
   gateway's own state and notify through `WebhooksService.receive`: they never write a payment and never call out.
+- **A store is onboarded at a PG before it is charged there** (UMK-2019, plan
+  [2026-11-25-004](docs/plans/2026-11-25-004-feat-umk-1991-pg-onboarding-plan.md)). One `merchant_accounts` row per
+  `(tenant, provider)`; statuses `not_submitted`, `submitted`, `needs_fix`, `rejected`, `verified`, `active`,
+  `suspended`, changed only in `src/merchants/merchants.service.ts` under `select … for update`, by
+  `src/merchants/transitions.ts`. **A PG charge is refused (409 `merchant_not_active`, `method_disabled`,
+  `live_disabled`, `merchant_mode_mismatch`) unless the account is `active`, in the environment's mode, with the
+  method on**; a replay of a charge key still answers its payment; CASHAC is never gated. A test about payments
+  seeds an active account (`test/support/merchants.ts`; `createStore` does it), never a bypass in `src/`.
+- **The gateway's word about an account is applied only when it is news.** `settle` asks the gateway before it
+  locks the row, so under the lock it discards an answer older than `status_observed_at` (the gateway's
+  `updatedAt` of the account) and any answer while `draft_undelivered` is set. That marker is set by every submit
+  and cleared when the gateway took the draft (`createAccount`, or `updateAccount` for an account it already has);
+  never infer delivery from `provider_account_id`. The reconciliation asks about `submitted` accounts after the
+  usual threshold and about `needs_fix`, `verified`, `active` and `suspended` ones every
+  `SLOW_RECONCILE_INTERVAL_MS` (`transitions.ts`).
+- **Onboarding has its own adapter contract** (`src/adapters/onboarding.ts`, `ONBOARDING_ADAPTERS`): each adapter
+  declares `verification` (`hosted`, `platform`, `own_keys`), `modes` and `methods`. Only `hosted` is served: the
+  owner verifies on the PG's own page, and **no identity document, identity number or bank account ever reaches
+  the POS or payment-api** (the draft schemas are strict). `own_keys` is designed, not built
+  (`credentials_encrypted` is written and answered by nothing). The PG's account reference and every secret stay
+  in payment-api: no route answers them. `POST /webhooks/:provider/accounts` follows the webhook rule below (the
+  status is read again from the PG; the body is not stored).
+- **Modes:** `PAYMENT_GATEWAY_MODE` (`fake` default, `sandbox`, `live`), one per environment. `live` needs
+  `PAYMENT_LIVE_ENABLED` (default off; a boot error without it) and stays off until the legal gate (UMK-1977).
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;
   payment-api stores it, pos-api verifies it). Every status change writes a `payment_events` audit row and an `outbox`
   row in the same transaction.
@@ -186,6 +222,10 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **The purge calls payment-api's purge** inside its transaction, after every pos delete and just before the commit;
   a failure rolls the pos deletes back and answers 503.
 - The integration test starts the real payment-api app in-process on database `<PAYTEST_DB or payment_test>_pos`.
+- **"Pembayaran Online" (UMK-2019)** is `online-payments.controller.ts`: a thin pass to payment-api's
+  `/merchant-accounts`, every route behind `payments.manage` (the cashier's `GET /online-payments/methods` behind
+  `sales.create`). pos-api stores nothing of it; the client copies only the known fields of an account. A test
+  that needs payment-api's fake gateway imports `test/support/payment-fake-env.ts` first.
 
 ## Commands
 

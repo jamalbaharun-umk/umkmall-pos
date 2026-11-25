@@ -3,28 +3,41 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
+  HttpStatus,
   NotFoundException,
   Param,
   Post,
+  Res,
 } from '@nestjs/common';
 import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { devices, staff, staffSessions } from '../db/schema';
+import type { Response } from 'express';
+import { fieldError } from '../common/validation';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { parseBody, parseId } from './http';
 import { RequirePermission } from './require-permission';
 import { hashSecret, newDeviceSecret } from './secrets';
 import { StaffAccess } from './staff-access';
+import { DevicePairing } from './device-pairing';
 
-const BindDevice = z.object({
-  name: z
-    .string({ required_error: 'Nama perangkat wajib diisi' })
-    .trim()
-    .min(1, 'Nama perangkat wajib diisi')
-    .max(60, 'Maksimal 60 karakter'),
+const deviceName = z
+  .string({ required_error: 'Nama perangkat wajib diisi' })
+  .trim()
+  .min(1, 'Nama perangkat wajib diisi')
+  .max(60, 'Maksimal 60 karakter');
+
+const BindDevice = z.object({ name: deviceName });
+
+const PairDevice = z.object({
+  code: z
+    .string({ required_error: 'Kode pasang wajib diisi' })
+    .regex(/^[0-9]{6}$/, 'Kode pasang harus 6 angka'),
+  name: deviceName,
 });
 
 const deviceView = {
@@ -41,6 +54,7 @@ export class DevicesController {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly access: StaffAccess,
+    private readonly pairing: DevicePairing,
   ) {}
 
   @Get()
@@ -62,6 +76,35 @@ export class DevicesController {
       .values({ tenantId: s.tenantId, name, secretHash: hashSecret(secret) })
       .returning(deviceView);
     return { device, deviceToken: `${device.id}.${secret}` };
+  }
+
+  /**
+   * Binds the device that shows this pairing code (UMK-2022) to the store of THIS session. Only here, inside
+   * a signed-in session with `staff.manage`, is a code ever accepted. The device token is not answered: the
+   * device fetches it itself, so it never passes through the owner's device.
+   */
+  @Post('pair')
+  @HttpCode(201)
+  async pair(
+    @CurrentSession() s: PosSession,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { code, name } = parseBody(PairDevice, body);
+    const outcome = await this.pairing.claim(s.tenantId, code, name);
+    if (outcome.ok) return { device: outcome.device };
+    if (outcome.retryAfter) {
+      res.setHeader('Retry-After', String(outcome.retryAfter));
+      throw new HttpException(
+        {
+          message: 'Terlalu banyak kode salah, coba lagi nanti',
+          retryAfter: outcome.retryAfter,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    // One answer for a wrong, a used and an expired code.
+    throw fieldError('code', 'Kode pasang salah atau sudah tidak berlaku');
   }
 
   @Post(':id/revoke')

@@ -7,9 +7,12 @@ import { PAYMENT_ADAPTERS } from '../../src/adapters/adapter';
 import { cashacAdapters } from '../../src/adapters/cashac.adapter';
 import { AppModule } from '../../src/app.module';
 import { Clock, PaymentSettings } from '../../src/config';
+import { DB, Db } from '../../src/db/db.module';
+import { merchantAccounts } from '../../src/db/schema';
 import { ReconciliationService } from '../../src/payments/reconciliation.service';
 import { ADMIN_DATABASE_URL } from './env';
 import { FakeGateway } from './fake-gateway';
+import { merchantValues } from './merchants';
 
 export const SERVICE_KEY = () => process.env.PAYMENT_SERVICE_KEY!;
 export const MINUTE = 60_000;
@@ -84,14 +87,35 @@ export interface Payment {
 /**
  * A calling service acting for one store: every request carries the service key and that store's tenant id,
  * as pos-api will send them. A store is just a fresh uuid (the tenant lives in the caller's database).
+ *
+ * The store is seeded as onboarded at the `fake` gateway (active, every fake method on), so a test about
+ * payments can charge a PG method at once; `{ merchant: false }` gives a store that never onboarded. The seed
+ * is written while the store object is built, and every request of the store waits for it.
  */
-export function createStore(app: INestApplication) {
+export function createStore(
+  app: INestApplication,
+  options: { merchant?: boolean } = {},
+) {
   const tenantId = randomUUID();
   const http = () => request(app.getHttpServer());
-  const sign = (req: request.Test) =>
-    req
+  const seeded: Promise<unknown> =
+    options.merchant === false
+      ? Promise.resolve()
+      : // `.execute()` runs the insert once; the query builder itself would run again on every `then`.
+        app
+          .get<Db>(DB)
+          .insert(merchantAccounts)
+          .values(merchantValues({ tenantId }))
+          .execute();
+  const sign = (req: request.Test) => {
+    // A supertest request is sent when it is awaited: hold that until the seed is in.
+    const send = req.then.bind(req);
+    req.then = ((ok: never, ko: never) =>
+      seeded.then(() => send(ok, ko))) as typeof req.then;
+    return req
       .set('X-Payment-Service-Key', SERVICE_KEY())
       .set('X-Tenant-Id', tenantId);
+  };
   const post = (url: string, body: object = {}, idempotencyKey?: string) => {
     const req = sign(http().post(url));
     if (idempotencyKey) req.set('Idempotency-Key', idempotencyKey);

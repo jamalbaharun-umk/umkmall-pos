@@ -14,9 +14,17 @@ import {
   WebhookNotice,
   WebhookSignatureError,
 } from '../adapter';
+import type {
+  AccountNotice,
+  AccountStatusResult,
+  MerchantProfile,
+  MerchantRef,
+  OnboardingAdapter,
+  ProviderAccountStatus,
+} from '../onboarding';
 
 export const FAKE_PROVIDER = 'fake';
-export const FAKE_METHODS = ['fake_qris', 'fake_va'] as const;
+export const FAKE_METHODS = ['fake_qris', 'fake_va', 'fake_checkout'] as const;
 export type FakeMethod = (typeof FAKE_METHODS)[number];
 export const FAKE_SIGNATURE_HEADER = 'x-fake-signature';
 
@@ -47,6 +55,22 @@ export interface FakeBill {
   createdAt: Date;
 }
 
+/** A store's sub-account at the fake gateway. The gateway reviews it when a person uses the controls. */
+export interface FakeAccount {
+  /** The gateway's own id of the sub-account. */
+  accountId: string;
+  /** Our merchant account id: the reference the gateway was given, and what its notifications name. */
+  merchantId: string;
+  tenantId: string;
+  status: ProviderAccountStatus;
+  reason: string | null;
+  profile: MerchantProfile;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type FakeReview = 'approve' | 'needs_fix' | 'reject' | 'suspend';
+
 /** A notification as the gateway would POST it to `/webhooks/fake`, with its signature. */
 export interface FakeNotification {
   eventId: string;
@@ -63,6 +87,11 @@ export class FakeGatewayRefusal extends Error {
 }
 
 const CLOSED: readonly FakeBillStatus[] = ['failed', 'expired', 'cancelled'];
+const PREFIX: Record<FakeMethod, string> = {
+  fake_qris: 'QR',
+  fake_va: 'VA',
+  fake_checkout: 'CO',
+};
 
 /**
  * LOCAL USE ONLY. A payment gateway that lives inside the payment-api process, so every PG flow can be run on
@@ -84,6 +113,10 @@ export class LocalFakeGateway {
   private readonly run = randomBytes(4).toString('hex');
   private eventSeq = 0;
   refundMode: FakeRefundMode = 'pending';
+  /** By merchant account id. */
+  private readonly accounts = new Map<string, FakeAccount>();
+  /** While true the gateway cannot be reached for onboarding calls (a control sets it). */
+  accountsDown = false;
 
   constructor(private readonly clock: Clock) {
     // Fails closed: only an explicit development or test environment may hold it.
@@ -99,7 +132,13 @@ export class LocalFakeGateway {
       new FakeAdapter(this, 'fake_qris', true),
       // A virtual account takes a second transfer; a dynamic QR is used up by the first payment.
       new FakeAdapter(this, 'fake_va', false),
+      // A PG that takes the payment on its own page: the charge answers a payment URL, not a QR.
+      new FakeAdapter(this, 'fake_checkout', true),
     ];
+  }
+
+  onboarding(): OnboardingAdapter {
+    return new FakeOnboarding(this);
   }
 
   // ---- what payment-api asks (the adapter contract) ----------------------------------------------------
@@ -119,7 +158,7 @@ export class LocalFakeGateway {
     if (!bill) {
       const serial = randomBytes(6).toString('hex').toUpperCase();
       bill = {
-        providerRef: `FAKE-${method === 'fake_qris' ? 'QR' : 'VA'}-${serial}`,
+        providerRef: `FAKE-${PREFIX[method]}-${serial}`,
         paymentId: payment.id,
         tenantId: payment.tenantId,
         orderRef: payment.orderRef,
@@ -130,10 +169,12 @@ export class LocalFakeGateway {
         checkout:
           method === 'fake_qris'
             ? { qrString: `FAKEQRIS.${serial}.${payment.amount}` }
-            : {
-                bank: 'FAKE',
-                vaNumber: `8808${BigInt(`0x${serial}`).toString().padStart(15, '0').slice(-12)}`,
-              },
+            : method === 'fake_checkout'
+              ? { paymentUrl: `https://fake-gateway.invalid/pay/${serial}` }
+              : {
+                  bank: 'FAKE',
+                  vaNumber: `8808${BigInt(`0x${serial}`).toString().padStart(15, '0').slice(-12)}`,
+                },
         receipts: [],
         refunds: [],
         createdAt: this.clock.now(),
@@ -199,11 +240,7 @@ export class LocalFakeGateway {
 
   /** Constant-time signature check over the exact bytes, then the notification. */
   readWebhook(input: WebhookInput): WebhookNotice {
-    const given = input.headers[FAKE_SIGNATURE_HEADER];
-    const expected = Buffer.from(this.sign(input.rawBody));
-    const actual = Buffer.from(typeof given === 'string' ? given : '');
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected))
-      throw new WebhookSignatureError();
+    this.verify(input);
     const parsed = JSON.parse(input.rawBody.toString('utf8')) as {
       eventId: string;
       reference?: string;
@@ -242,7 +279,7 @@ export class LocalFakeGateway {
   pay(bill: FakeBill, amount?: number): void {
     if (CLOSED.includes(bill.status))
       throw new FakeGatewayRefusal('bill_closed');
-    if (bill.status === 'paid' && bill.method === 'fake_qris')
+    if (bill.status === 'paid' && bill.method !== 'fake_va')
       throw new FakeGatewayRefusal('already_paid');
     this.receive(bill, amount);
     bill.status = 'paid';
@@ -273,6 +310,132 @@ export class LocalFakeGateway {
     // As a PG's: our reference and nothing about the tenant or the status.
     const body = JSON.stringify({ eventId: id, reference: bill.paymentId });
     return { eventId: id, body, signature: this.sign(Buffer.from(body)) };
+  }
+
+  // ---- onboarding: what payment-api asks (the onboarding contract) ---------------------------------------
+
+  private reachable() {
+    if (this.accountsDown) throw new GatewayUnreachableError();
+  }
+
+  /** Creates the sub-account once per merchant id; a repeat answers the same sub-account, unchanged. */
+  createAccount(merchant: MerchantRef, profile: MerchantProfile) {
+    this.reachable();
+    const now = this.clock.now();
+    let account = this.accounts.get(merchant.id);
+    if (!account) {
+      account = {
+        accountId: `FAKE-ACCT-${randomBytes(6).toString('hex').toUpperCase()}`,
+        merchantId: merchant.id,
+        tenantId: merchant.tenantId,
+        status: 'pending',
+        reason: null,
+        profile,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.accounts.set(merchant.id, account);
+    }
+    return { providerAccountId: account.accountId };
+  }
+
+  /** Takes the corrected draft of a sub-account that exists; after `needs_fix` it is reviewed again. */
+  updateAccount(merchant: MerchantRef, profile: MerchantProfile) {
+    this.reachable();
+    const account = this.accounts.get(merchant.id);
+    if (!account) throw new Error('fake gateway: no such account');
+    account.profile = profile;
+    if (account.status === 'needs_fix') {
+      account.status = 'pending';
+      account.reason = null;
+    }
+    account.updatedAt = this.clock.now();
+  }
+
+  /** The page where the owner would verify. Nothing answers at this address: the controls stand in for it. */
+  verificationLink(merchant: MerchantRef) {
+    this.reachable();
+    if (!this.accounts.has(merchant.id))
+      throw new Error('fake gateway: no such account');
+    return {
+      url: `https://fake-gateway.invalid/verify/${randomBytes(16).toString('hex')}`,
+      expiresAt: new Date(this.clock.now().getTime() + 3_600_000),
+    };
+  }
+
+  getAccountStatus(merchant: MerchantRef): AccountStatusResult {
+    this.reachable();
+    const account = this.accounts.get(merchant.id);
+    if (!account) return { status: 'not_found' };
+    return {
+      status: account.status,
+      reason: account.reason ?? undefined,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  /** The same signature as a payment notification; the signed body says it is about an account. */
+  readAccountWebhook(input: WebhookInput): AccountNotice {
+    this.verify(input);
+    const parsed = JSON.parse(input.rawBody.toString('utf8')) as {
+      eventId: string;
+      type?: string;
+      account?: string;
+    };
+    if (parsed.type !== 'account' || typeof parsed.eventId !== 'string')
+      throw new Error('fake gateway: not an account notification');
+    return { eventId: parsed.eventId, reference: parsed.account ?? null };
+  }
+
+  // ---- onboarding: what the gateway's reviewer does (the control routes) ---------------------------------
+
+  /** The tenant's sub-account; undefined when it has none. */
+  accountOf(tenantId: string): FakeAccount | undefined {
+    return [...this.accounts.values()].find((a) => a.tenantId === tenantId);
+  }
+
+  review(account: FakeAccount, action: FakeReview, reason?: string): void {
+    const from: Record<FakeReview, readonly ProviderAccountStatus[]> = {
+      // Approving a suspended account reinstates it.
+      approve: ['pending', 'needs_fix', 'suspended'],
+      needs_fix: ['pending'],
+      reject: ['pending', 'needs_fix'],
+      suspend: ['pending', 'needs_fix', 'verified'],
+    };
+    if (!from[action].includes(account.status))
+      throw new FakeGatewayRefusal('account_not_reviewable');
+    const to: Record<FakeReview, ProviderAccountStatus> = {
+      approve: 'verified',
+      needs_fix: 'needs_fix',
+      reject: 'rejected',
+      suspend: 'suspended',
+    };
+    account.status = to[action];
+    account.reason = action === 'approve' ? null : (reason ?? null);
+    account.updatedAt = this.clock.now();
+  }
+
+  /** A signed account notification. Pass an earlier event id to build the same event again. */
+  accountNotification(
+    account: FakeAccount,
+    eventId?: string,
+  ): FakeNotification {
+    const id = eventId ?? `fake-acct-evt-${this.run}-${++this.eventSeq}`;
+    // As a PG's: our reference and nothing about the tenant or the status.
+    const body = JSON.stringify({
+      eventId: id,
+      type: 'account',
+      account: account.merchantId,
+    });
+    return { eventId: id, body, signature: this.sign(Buffer.from(body)) };
+  }
+
+  private verify(input: WebhookInput) {
+    const given = input.headers[FAKE_SIGNATURE_HEADER];
+    const expected = Buffer.from(this.sign(input.rawBody));
+    const actual = Buffer.from(typeof given === 'string' ? given : '');
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected))
+      throw new WebhookSignatureError();
   }
 
   private receive(bill: FakeBill, amount?: number) {
@@ -339,5 +502,39 @@ class FakeAdapter implements PaymentAdapter {
 
   async cancelPending(payment: PaymentRef): Promise<void> {
     return Promise.resolve(this.gateway.cancelPending(payment));
+  }
+}
+
+/**
+ * The fake gateway behind the onboarding contract: `hosted`, as the first real provider will be. The owner's
+ * step on the gateway's page is played by the control routes.
+ */
+class FakeOnboarding implements OnboardingAdapter {
+  readonly provider = FAKE_PROVIDER;
+  readonly modes = ['fake'] as const;
+  readonly verification = 'hosted' as const;
+  readonly methods = FAKE_METHODS;
+
+  constructor(private readonly gateway: LocalFakeGateway) {}
+
+  // Wrapped so that a throw is a rejected promise, as from a real PG client.
+  async createAccount(merchant: MerchantRef, profile: MerchantProfile) {
+    return Promise.resolve(this.gateway.createAccount(merchant, profile));
+  }
+
+  async updateAccount(merchant: MerchantRef, profile: MerchantProfile) {
+    return Promise.resolve(this.gateway.updateAccount(merchant, profile));
+  }
+
+  async verificationLink(merchant: MerchantRef) {
+    return Promise.resolve(this.gateway.verificationLink(merchant));
+  }
+
+  async getAccountStatus(merchant: MerchantRef) {
+    return Promise.resolve(this.gateway.getAccountStatus(merchant));
+  }
+
+  async handleAccountWebhook(input: WebhookInput) {
+    return Promise.resolve(this.gateway.readAccountWebhook(input));
   }
 }

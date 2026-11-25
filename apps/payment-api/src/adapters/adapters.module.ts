@@ -1,5 +1,6 @@
-import { Inject, Injectable, Module } from '@nestjs/common';
+import { Inject, Injectable, Module, Optional } from '@nestjs/common';
 import { PAYMENT_ADAPTERS, PaymentAdapter } from './adapter';
+import { ONBOARDING_ADAPTERS, OnboardingAdapter } from './onboarding';
 import { Clock, loadEnv } from '../config';
 import { cashacAdapters } from './cashac.adapter';
 import { LocalFakeGateway } from './fake/local-fake-gateway';
@@ -10,7 +11,19 @@ export class AdapterRegistry {
   private readonly byMethod = new Map<string, PaymentAdapter>();
   private readonly byProvider = new Map<string, PaymentAdapter>();
 
-  constructor(@Inject(PAYMENT_ADAPTERS) adapters: PaymentAdapter[]) {
+  private readonly onboardingByProvider = new Map<string, OnboardingAdapter>();
+
+  constructor(
+    @Inject(PAYMENT_ADAPTERS) adapters: PaymentAdapter[],
+    @Optional()
+    @Inject(ONBOARDING_ADAPTERS)
+    onboarding: OnboardingAdapter[] = [],
+  ) {
+    for (const adapter of onboarding) {
+      if (this.onboardingByProvider.has(adapter.provider))
+        throw new Error(`Duplicate onboarding adapter: ${adapter.provider}`);
+      this.onboardingByProvider.set(adapter.provider, adapter);
+    }
     for (const adapter of adapters) {
       if (this.byMethod.has(adapter.method))
         throw new Error(`Duplicate payment adapter: ${adapter.method}`);
@@ -27,6 +40,22 @@ export class AdapterRegistry {
 
   forProvider(provider: string): PaymentAdapter | undefined {
     return this.byProvider.get(provider);
+  }
+
+  /** The onboarding contract of a PG, when it has one. */
+  onboarding(provider: string): OnboardingAdapter | undefined {
+    return this.onboardingByProvider.get(provider);
+  }
+
+  onboardingAdapters(): OnboardingAdapter[] {
+    return [...this.onboardingByProvider.values()];
+  }
+
+  /** The methods a store can switch on at a PG: those its onboarding adapter declares and an adapter serves. */
+  methodsOf(provider: string): string[] {
+    return (this.onboardingByProvider.get(provider)?.methods ?? []).filter(
+      (method) => this.byMethod.get(method)?.provider === provider,
+    );
   }
 }
 
@@ -50,6 +79,12 @@ export class AdapterRegistry {
         ...cashacAdapters(),
         ...(fake?.adapters() ?? []),
       ],
+    },
+    {
+      provide: ONBOARDING_ADAPTERS,
+      inject: [LocalFakeGateway],
+      useFactory: (fake: LocalFakeGateway | null) =>
+        fake ? [fake.onboarding()] : [],
     },
     AdapterRegistry,
   ],

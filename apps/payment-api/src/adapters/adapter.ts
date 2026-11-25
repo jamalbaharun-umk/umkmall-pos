@@ -24,13 +24,22 @@ export interface PaymentRef {
   expiresAt: Date | null;
 }
 
+/**
+ * What the payer needs, as plain strings. The well-known keys every caller may rely on:
+ * - `qrString`: a QR to draw at the till (dynamic QRIS);
+ * - `paymentUrl`: the PG's own payment page to open or show as a link (a PG that offers a method for a
+ *   sub-account only through its hosted checkout);
+ * - `vaNumber` and `bank`: a virtual account.
+ * A charge answers at least one of `qrString`, `paymentUrl` or `vaNumber`; a caller shows what it finds.
+ */
+export type Checkout = Record<string, string>;
+
 export interface ChargeResult {
   /** `pending`: the bill exists and the payer has not paid yet. `failed`: the PG refused it. */
   status: 'paid' | 'pending' | 'failed';
   providerRef?: string;
   expiresAt?: Date;
-  /** What the payer needs (QR string, VA number). */
-  checkout?: Record<string, string>;
+  checkout?: Checkout;
 }
 
 /**

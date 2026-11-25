@@ -15,6 +15,13 @@
       "when": 1795501006371,
       "tag": "0001_refund_key",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795628414368,
+      "tag": "0002_merchant_accounts",
+      "breakpoints": true
     }
   ]
 }

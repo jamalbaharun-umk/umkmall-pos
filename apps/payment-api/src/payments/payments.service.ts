@@ -15,6 +15,7 @@ import { Clock, PaymentSettings } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { paymentEvents, payments, unmatchedReceipts } from '../db/schema';
+import { MerchantsService } from '../merchants/merchants.service';
 import type {
   AnyCancelInput,
   CancelInput,
@@ -95,6 +96,7 @@ export class PaymentsService {
     private readonly settlement: SettlementService,
     private readonly settings: PaymentSettings,
     private readonly clock: Clock,
+    private readonly merchants: MerchantsService,
   ) {}
 
   /**
@@ -112,6 +114,23 @@ export class PaymentsService {
           : 'Unknown payment method',
       );
     const requestHash = hashOf(input);
+
+    // A PG charge needs the store's gateway account to be active with this method on (UMK-2019). Only a NEW
+    // charge is refused: a key that already has a payment still answers it, whatever the account is now.
+    const gate = await this.merchants.chargeRefusal(tenantId, adapter);
+    if (gate) {
+      const [known] = await this.db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.tenantId, tenantId),
+            eq(payments.idempotencyKey, key),
+          ),
+        );
+      if (!known) throw gate;
+      return this.replay(tenantId, key, requestHash, input);
+    }
 
     const now = this.clock.now();
     const claimed = await this.db.transaction(async (tx) => {

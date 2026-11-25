@@ -91,6 +91,15 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     const put = (url: string, body: object) =>
       http().put(url).set('Authorization', s.auth).send(body);
 
+    // UMK-2022: a wrong pairing code (device_pairing_attempts), then a device paired by code (device_pairings).
+    const pairing = await http().post('/auth/device/pairing').expect(201);
+    const code = pairing.body.code as string;
+    await post('/staff/devices/pair', {
+      code: code === '000000' ? '000001' : '000000',
+      name: 'Tablet',
+    }).expect(422);
+    await post('/staff/devices/pair', { code, name: 'Tablet' }).expect(201);
+
     const cat = await post('/catalog/categories', { name: 'Minuman' }).expect(
       201,
     );

@@ -30,6 +30,45 @@ describe('environment', () => {
     ).not.toThrow();
   });
 
+  describe('gateway mode', () => {
+    it('is fake by default, with the live switch off', () => {
+      expect(loadEnv(base)).toMatchObject({
+        PAYMENT_GATEWAY_MODE: 'fake',
+        PAYMENT_LIVE_ENABLED: false,
+      });
+      expect(
+        loadEnv({ ...base, PAYMENT_GATEWAY_MODE: 'sandbox' })
+          .PAYMENT_GATEWAY_MODE,
+      ).toBe('sandbox');
+    });
+
+    it('refuses to boot in live mode unless PAYMENT_LIVE_ENABLED is on', () => {
+      expect(() => loadEnv({ ...base, PAYMENT_GATEWAY_MODE: 'live' })).toThrow(
+        'Invalid environment: PAYMENT_LIVE_ENABLED',
+      );
+      expect(() =>
+        loadEnv({
+          ...base,
+          PAYMENT_GATEWAY_MODE: 'live',
+          PAYMENT_LIVE_ENABLED: 'false',
+        }),
+      ).toThrow('Invalid environment: PAYMENT_LIVE_ENABLED');
+      expect(
+        loadEnv({
+          ...base,
+          PAYMENT_GATEWAY_MODE: 'live',
+          PAYMENT_LIVE_ENABLED: 'true',
+        }),
+      ).toMatchObject({
+        PAYMENT_GATEWAY_MODE: 'live',
+        PAYMENT_LIVE_ENABLED: true,
+      });
+      expect(() => loadEnv({ ...base, PAYMENT_GATEWAY_MODE: 'prod' })).toThrow(
+        'Invalid environment: PAYMENT_GATEWAY_MODE',
+      );
+    });
+  });
+
   describe('PAYMENT_ADAPTERS', () => {
     it('is empty by default and reads a comma list', () => {
       expect(loadEnv(base).PAYMENT_ADAPTERS).toEqual([]);

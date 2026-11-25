@@ -50,6 +50,10 @@ const EnvSchema = z
       .int()
       .nonnegative()
       .default(120),
+    // How many proxies in front of pos-api set X-Forwarded-For truthfully (0 = none: the peer address is the
+    // client). The per-address limits of device pairing count the address this yields, so it must be the
+    // cashier device's, not a relay's.
+    POS_TRUSTED_PROXIES: z.coerce.number().int().nonnegative().default(0),
     PORT: z.coerce.number().int().positive().default(3000),
     NODE_ENV: z
       .enum(['development', 'test', 'production'])

@@ -3,6 +3,7 @@ import {
   DevicesController,
   StaffSessionsController,
 } from './devices.controller';
+import { DevicePairing, DevicePairingController } from './device-pairing';
 import { PinAuthController } from './pin-auth.controller';
 import { PermissionGuard } from './require-permission';
 import { RolesController } from './roles.controller';
@@ -17,8 +18,9 @@ import { StaffController } from './staff.controller';
     StaffController,
     RolesController,
     PinAuthController,
+    DevicePairingController,
   ],
-  providers: [StaffAccess, PermissionGuard],
+  providers: [StaffAccess, PermissionGuard, DevicePairing],
   exports: [StaffAccess, PermissionGuard],
 })
 export class StaffModule {}
