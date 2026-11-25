@@ -5,7 +5,7 @@ import type { LedgerEntry } from './-shift-helpers'
 
 // Server functions for the shift history and the cash ledger screens (UMK-1963). pos-api computes every figure.
 
-export type ShiftRow = Shift
+export type ShiftRow = Shift & { actorId: string; actorKind: 'owner' | 'cashier' }
 export type ShiftDetail = Shift & { cashEntries: LedgerEntry[] }
 export type ShiftPage = { data: ShiftRow[]; total: number }
 
@@ -24,14 +24,3 @@ export const loadShifts = createServerFn()
 export const loadShift = createServerFn()
   .validator((id: string) => id)
   .handler(({ data }) => load<ShiftDetail>(`/shifts/${encodeURIComponent(data)}`))
-
-/**
- * The actor's open shift, or null. Staff without `sales.create` cannot open a shift and pos-api answers 403
- * for them: that is "no shift", not an error (a collector still pays a kasbon, outside a shift).
- */
-export const loadOpenShiftOrNone = createServerFn().handler(async () => {
-  const res = await api('/shifts/current')
-  if (res.status === 403) return { shift: null as Shift | null }
-  if (!res.ok) throw new Error('Gagal memuat shift.')
-  return (await res.json()) as { shift: Shift | null }
-})

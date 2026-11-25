@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as KeluarRouteImport } from './routes/keluar'
 import { Route as CatalogIndexRouteImport } from './routes/catalog/index'
 import { Route as CatalogCategoriesRouteImport } from './routes/catalog/categories'
+import { Route as KasTokoIndexRouteImport } from './routes/kas-toko/index'
 import { Route as KasirIndexRouteImport } from './routes/kasir/index'
 import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
 import { Route as KasirTutupRouteImport } from './routes/kasir/tutup'
@@ -47,6 +48,8 @@ import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/produ
 import { Route as CatalogProductsBaruRouteImport } from './routes/catalog/products/baru'
 import { Route as KasirRiwayatIndexRouteImport } from './routes/kasir/riwayat.index'
 import { Route as KasirRiwayatIdRouteImport } from './routes/kasir/riwayat.$id'
+import { Route as KasirShiftIndexRouteImport } from './routes/kasir/shift/index'
+import { Route as KasirShiftIdRouteImport } from './routes/kasir/shift/$id'
 import { Route as KasirStrukIdRouteImport } from './routes/kasir/struk.$id'
 import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis'
 import { Route as PembelianIdUbahRouteImport } from './routes/pembelian/$id_.ubah'
@@ -75,6 +78,11 @@ const CatalogIndexRoute = CatalogIndexRouteImport.update({
 const CatalogCategoriesRoute = CatalogCategoriesRouteImport.update({
   id: '/catalog/categories',
   path: '/catalog/categories',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KasTokoIndexRoute = KasTokoIndexRouteImport.update({
+  id: '/kas-toko/',
+  path: '/kas-toko/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KasirIndexRoute = KasirIndexRouteImport.update({
@@ -247,6 +255,16 @@ const KasirRiwayatIdRoute = KasirRiwayatIdRouteImport.update({
   path: '/kasir/riwayat/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KasirShiftIndexRoute = KasirShiftIndexRouteImport.update({
+  id: '/kasir/shift/',
+  path: '/kasir/shift/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KasirShiftIdRoute = KasirShiftIdRouteImport.update({
+  id: '/kasir/shift/$id',
+  path: '/kasir/shift/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KasirStrukIdRoute = KasirStrukIdRouteImport.update({
   id: '/kasir/struk/$id',
   path: '/kasir/struk/$id',
@@ -316,6 +334,7 @@ export interface FileRoutesByFullPath {
   '/stok-opname/$id': typeof StokOpnameIdRoute
   '/stok-opname/baru': typeof StokOpnameBaruRoute
   '/catalog/': typeof CatalogIndexRoute
+  '/kas-toko/': typeof KasTokoIndexRoute
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
   '/masuk/': typeof MasukIndexRoute
@@ -331,6 +350,7 @@ export interface FileRoutesByFullPath {
   '/voucher/': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
+  '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
@@ -338,6 +358,7 @@ export interface FileRoutesByFullPath {
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
   '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
+  '/kasir/shift/': typeof KasirShiftIndexRoute
   '/staf/peran/': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
@@ -365,6 +386,7 @@ export interface FileRoutesByTo {
   '/stok-opname/$id': typeof StokOpnameIdRoute
   '/stok-opname/baru': typeof StokOpnameBaruRoute
   '/catalog': typeof CatalogIndexRoute
+  '/kas-toko': typeof KasTokoIndexRoute
   '/kasir': typeof KasirIndexRoute
   '/laporan': typeof LaporanIndexRoute
   '/masuk': typeof MasukIndexRoute
@@ -380,6 +402,7 @@ export interface FileRoutesByTo {
   '/voucher': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
+  '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
@@ -387,6 +410,7 @@ export interface FileRoutesByTo {
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
   '/kasir/riwayat': typeof KasirRiwayatIndexRoute
+  '/kasir/shift': typeof KasirShiftIndexRoute
   '/staf/peran': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id': typeof CatalogProductsIdIndexRoute
@@ -415,6 +439,7 @@ export interface FileRoutesById {
   '/stok-opname/$id': typeof StokOpnameIdRoute
   '/stok-opname/baru': typeof StokOpnameBaruRoute
   '/catalog/': typeof CatalogIndexRoute
+  '/kas-toko/': typeof KasTokoIndexRoute
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
   '/masuk/': typeof MasukIndexRoute
@@ -430,6 +455,7 @@ export interface FileRoutesById {
   '/voucher/': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
+  '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/pembelian/$id_/ubah': typeof PembelianIdUbahRoute
@@ -437,6 +463,7 @@ export interface FileRoutesById {
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
   '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
+  '/kasir/shift/': typeof KasirShiftIndexRoute
   '/staf/peran/': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
@@ -466,6 +493,7 @@ export interface FileRouteTypes {
     | '/stok-opname/$id'
     | '/stok-opname/baru'
     | '/catalog/'
+    | '/kas-toko/'
     | '/kasir/'
     | '/laporan/'
     | '/masuk/'
@@ -481,6 +509,7 @@ export interface FileRouteTypes {
     | '/voucher/'
     | '/catalog/products/baru'
     | '/kasir/riwayat/$id'
+    | '/kasir/shift/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/pembelian/$id/ubah'
@@ -488,6 +517,7 @@ export interface FileRouteTypes {
     | '/staf/peran/baru'
     | '/catalog/products/'
     | '/kasir/riwayat/'
+    | '/kasir/shift/'
     | '/staf/peran/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
@@ -515,6 +545,7 @@ export interface FileRouteTypes {
     | '/stok-opname/$id'
     | '/stok-opname/baru'
     | '/catalog'
+    | '/kas-toko'
     | '/kasir'
     | '/laporan'
     | '/masuk'
@@ -530,6 +561,7 @@ export interface FileRouteTypes {
     | '/voucher'
     | '/catalog/products/baru'
     | '/kasir/riwayat/$id'
+    | '/kasir/shift/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/pembelian/$id/ubah'
@@ -537,6 +569,7 @@ export interface FileRouteTypes {
     | '/staf/peran/baru'
     | '/catalog/products'
     | '/kasir/riwayat'
+    | '/kasir/shift'
     | '/staf/peran'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id'
@@ -564,6 +597,7 @@ export interface FileRouteTypes {
     | '/stok-opname/$id'
     | '/stok-opname/baru'
     | '/catalog/'
+    | '/kas-toko/'
     | '/kasir/'
     | '/laporan/'
     | '/masuk/'
@@ -579,6 +613,7 @@ export interface FileRouteTypes {
     | '/voucher/'
     | '/catalog/products/baru'
     | '/kasir/riwayat/$id'
+    | '/kasir/shift/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
     | '/pembelian/$id_/ubah'
@@ -586,6 +621,7 @@ export interface FileRouteTypes {
     | '/staf/peran/baru'
     | '/catalog/products/'
     | '/kasir/riwayat/'
+    | '/kasir/shift/'
     | '/staf/peran/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
@@ -614,6 +650,7 @@ export interface RootRouteChildren {
   StokOpnameIdRoute: typeof StokOpnameIdRoute
   StokOpnameBaruRoute: typeof StokOpnameBaruRoute
   CatalogIndexRoute: typeof CatalogIndexRoute
+  KasTokoIndexRoute: typeof KasTokoIndexRoute
   KasirIndexRoute: typeof KasirIndexRoute
   LaporanIndexRoute: typeof LaporanIndexRoute
   MasukIndexRoute: typeof MasukIndexRoute
@@ -629,6 +666,7 @@ export interface RootRouteChildren {
   VoucherIndexRoute: typeof VoucherIndexRoute
   CatalogProductsBaruRoute: typeof CatalogProductsBaruRoute
   KasirRiwayatIdRoute: typeof KasirRiwayatIdRoute
+  KasirShiftIdRoute: typeof KasirShiftIdRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
   PembelianIdUbahRoute: typeof PembelianIdUbahRoute
@@ -636,6 +674,7 @@ export interface RootRouteChildren {
   StafPeranBaruRoute: typeof StafPeranBaruRoute
   CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
   KasirRiwayatIndexRoute: typeof KasirRiwayatIndexRoute
+  KasirShiftIndexRoute: typeof KasirShiftIndexRoute
   StafPeranIndexRoute: typeof StafPeranIndexRoute
   CatalogProductsIdUbahRoute: typeof CatalogProductsIdUbahRoute
   CatalogProductsIdIndexRoute: typeof CatalogProductsIdIndexRoute
@@ -670,6 +709,13 @@ declare module '@tanstack/react-router' {
       path: '/catalog/categories'
       fullPath: '/catalog/categories'
       preLoaderRoute: typeof CatalogCategoriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kas-toko/': {
+      id: '/kas-toko/'
+      path: '/kas-toko'
+      fullPath: '/kas-toko/'
+      preLoaderRoute: typeof KasTokoIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/kasir/': {
@@ -910,6 +956,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KasirRiwayatIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/kasir/shift/': {
+      id: '/kasir/shift/'
+      path: '/kasir/shift'
+      fullPath: '/kasir/shift/'
+      preLoaderRoute: typeof KasirShiftIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/kasir/shift/$id': {
+      id: '/kasir/shift/$id'
+      path: '/kasir/shift/$id'
+      fullPath: '/kasir/shift/$id'
+      preLoaderRoute: typeof KasirShiftIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/kasir/struk/$id': {
       id: '/kasir/struk/$id'
       path: '/kasir/struk/$id'
@@ -998,6 +1058,7 @@ const rootRouteChildren: RootRouteChildren = {
   StokOpnameIdRoute: StokOpnameIdRoute,
   StokOpnameBaruRoute: StokOpnameBaruRoute,
   CatalogIndexRoute: CatalogIndexRoute,
+  KasTokoIndexRoute: KasTokoIndexRoute,
   KasirIndexRoute: KasirIndexRoute,
   LaporanIndexRoute: LaporanIndexRoute,
   MasukIndexRoute: MasukIndexRoute,
@@ -1013,6 +1074,7 @@ const rootRouteChildren: RootRouteChildren = {
   VoucherIndexRoute: VoucherIndexRoute,
   CatalogProductsBaruRoute: CatalogProductsBaruRoute,
   KasirRiwayatIdRoute: KasirRiwayatIdRoute,
+  KasirShiftIdRoute: KasirShiftIdRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
   PembelianIdUbahRoute: PembelianIdUbahRoute,
@@ -1020,6 +1082,7 @@ const rootRouteChildren: RootRouteChildren = {
   StafPeranBaruRoute: StafPeranBaruRoute,
   CatalogProductsIndexRoute: CatalogProductsIndexRoute,
   KasirRiwayatIndexRoute: KasirRiwayatIndexRoute,
+  KasirShiftIndexRoute: KasirShiftIndexRoute,
   StafPeranIndexRoute: StafPeranIndexRoute,
   CatalogProductsIdUbahRoute: CatalogProductsIdUbahRoute,
   CatalogProductsIdIndexRoute: CatalogProductsIdIndexRoute,
