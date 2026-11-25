@@ -18,13 +18,14 @@ describe('LocalFakeGateway', () => {
     );
   });
 
-  it('is two online, refund-only adapters of one provider', () => {
+  it('is three online, refund-only adapters of one provider', () => {
     const adapters = new LocalFakeGateway(new Clock()).adapters();
     expect(
       adapters.map((a) => [a.method, a.kind, a.provider, a.singleUseQr]),
     ).toEqual([
       ['fake_qris', 'online', 'fake', true],
       ['fake_va', 'online', 'fake', false],
+      ['fake_checkout', 'online', 'fake', true],
     ]);
     for (const a of adapters)
       expect(a).toMatchObject({
@@ -32,6 +33,47 @@ describe('LocalFakeGateway', () => {
         supportsRefund: true,
         canCancel: true,
       });
+  });
+
+  it('onboards as a hosted provider of mode fake, with a toggle for each of its methods', () => {
+    const gateway = new LocalFakeGateway(new Clock());
+    const onboarding = gateway.onboarding();
+    expect(onboarding).toMatchObject({
+      provider: 'fake',
+      verification: 'hosted',
+      modes: ['fake'],
+    });
+    expect([...onboarding.methods]).toEqual(
+      gateway.adapters().map((a) => a.method),
+    );
+  });
+
+  it('reads an account notification only when its signature verifies and it is about an account', async () => {
+    const gateway = new LocalFakeGateway(new Clock());
+    const onboarding = gateway.onboarding();
+    const merchant = { id: 'm-1', tenantId: 't-1', providerAccountId: null };
+    await onboarding.createAccount(merchant, {
+      businessType: 'individual',
+      businessName: 'Warung',
+      email: 'a@example.test',
+      phone: '+628123456789',
+    });
+    const hook = gateway.accountNotification(gateway.accountOf('t-1')!);
+    const input = (body: string, signature: string) => ({
+      headers: { 'x-fake-signature': signature },
+      rawBody: Buffer.from(body),
+    });
+    await expect(
+      onboarding.handleAccountWebhook(input(hook.body, hook.signature)),
+    ).resolves.toEqual({ eventId: hook.eventId, reference: 'm-1' });
+    await expect(
+      onboarding.handleAccountWebhook(input(`${hook.body} `, hook.signature)),
+    ).rejects.toMatchObject({ name: 'WebhookSignatureError' });
+    // A signed payment notification is not an account notification.
+    const bill = gateway.notification({ paymentId: 'p' } as never);
+    await expect(
+      onboarding.handleAccountWebhook(input(bill.body, bill.signature)),
+    ).rejects.toThrow('not an account notification');
   });
 
   it('signs with a secret of its own: another instance does not verify its notifications', async () => {

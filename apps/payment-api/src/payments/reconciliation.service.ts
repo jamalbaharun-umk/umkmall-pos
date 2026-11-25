@@ -9,6 +9,8 @@ import { Clock, PaymentSettings } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { payments, unmatchedReceipts } from '../db/schema';
+import { MerchantWebhooksService } from '../merchants/merchant-webhooks.service';
+import { MerchantsService } from '../merchants/merchants.service';
 import { SettlementService } from './settlement.service';
 import { CLOSED_UNPAID, IN_FLIGHT } from './transitions';
 import { WebhooksService } from './webhooks.service';
@@ -33,6 +35,8 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
     private readonly webhooks: WebhooksService,
     private readonly settings: PaymentSettings,
     private readonly clock: Clock,
+    private readonly merchants: MerchantsService,
+    private readonly merchantWebhooks: MerchantWebhooksService,
   ) {}
 
   onModuleInit() {
@@ -55,7 +59,14 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
   }
 
   async tick(limit = 200) {
-    if (this.running) return { settled: 0, failed: 0, events: 0 };
+    if (this.running)
+      return {
+        settled: 0,
+        failed: 0,
+        events: 0,
+        accounts: { accounts: 0, failed: 0 },
+        accountEvents: 0,
+      };
     this.running = true;
     try {
       const cutoff = new Date(
@@ -126,7 +137,10 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
         }
       }
       const events = await this.webhooks.retryDue();
-      return { settled, failed, events };
+      // Merchant accounts waiting on the gateway (a lost verification webhook), then their inbox.
+      const accounts = await this.merchants.reconcile();
+      const accountEvents = await this.merchantWebhooks.retryDue();
+      return { settled, failed, events, accounts, accountEvents };
     } finally {
       this.running = false;
     }

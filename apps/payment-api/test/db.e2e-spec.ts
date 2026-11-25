@@ -27,6 +27,9 @@ describe('payment schema and role', () => {
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'payment' and c.relkind = 'r' and c.relname <> '__drizzle_migrations'`;
     expect(rows.map((r) => r.relname).sort()).toEqual([
+      'merchant_account_events',
+      'merchant_accounts',
+      'merchant_webhook_events',
       'outbox',
       'payment_events',
       'payments',
@@ -100,6 +103,38 @@ describe('payment schema and role', () => {
       /payments_tenant_order_attempt/,
     );
     await app`delete from payment.payments where tenant_id = ${tenant}`;
+  });
+
+  it('keeps one merchant account per tenant and provider, one event per provider event, and only known statuses and modes', async () => {
+    const tenant = randomUUID();
+    const insert = (
+      status = 'not_submitted',
+      mode = 'fake',
+      provider = 'fake',
+    ) =>
+      app`insert into payment.merchant_accounts (tenant_id, provider, mode, status)
+          values (${tenant}, ${provider}, ${mode}, ${status})`;
+    await insert();
+    await expect(insert()).rejects.toThrow(/merchant_accounts_tenant_provider/);
+    await expect(insert('approved', 'fake', 'other')).rejects.toThrow(
+      /merchant_accounts_status/,
+    );
+    await expect(insert('active', 'prod', 'other')).rejects.toThrow(
+      /merchant_accounts_mode/,
+    );
+    const event = () =>
+      app`insert into payment.merchant_webhook_events (provider, event_id) values ('fake', ${`m-${tenant}`})`;
+    await event();
+    await expect(event()).rejects.toThrow(
+      /merchant_webhook_events_provider_event/,
+    );
+    // The inbox keeps no body: there is no column for one.
+    const cols = await admin<{ column_name: string }[]>`
+      select column_name from information_schema.columns
+      where table_schema = 'payment' and table_name = 'merchant_webhook_events'`;
+    expect(cols.map((c) => c.column_name)).not.toContain('body');
+    await app`delete from payment.merchant_accounts where tenant_id = ${tenant}`;
+    await app`delete from payment.merchant_webhook_events where event_id = ${`m-${tenant}`}`;
   });
 
   it('records unmatched money and webhook events once each, at the database', async () => {

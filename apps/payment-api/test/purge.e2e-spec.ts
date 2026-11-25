@@ -62,6 +62,17 @@ describe('tenant purge', () => {
     h.pg.pay(qr.id, undefined, { force: true });
     await h.deliver(qr.id).expect(200);
     await s.post(`/payments/${qr.id}/refund`, CANCEL).expect(200);
+    // The store's gateway account (seeded with the store), with its audit trail and a webhook of its own.
+    const [account] = await h.sql<{ id: string }[]>`
+      select id from payment.merchant_accounts where tenant_id = ${s.tenantId}`;
+    await h.sql`
+      insert into payment.merchant_account_events
+        (tenant_id, merchant_account_id, from_status, to_status, source, actor_ref)
+      values (${s.tenantId}, ${account.id}, 'verified', 'active', 'toggle', 'owner-1')`;
+    await h.sql`
+      insert into payment.merchant_webhook_events
+        (tenant_id, provider, event_id, reference, merchant_account_id, state)
+      values (${s.tenantId}, 'fake', ${`evt-${s.tenantId}`}, ${account.id}, ${account.id}, 'processed')`;
     return s;
   }
 
@@ -86,6 +97,9 @@ describe('tenant purge', () => {
 
     const before = await rowCounts(a.tenantId);
     expect(Object.keys(before).sort()).toEqual([
+      'merchant_account_events',
+      'merchant_accounts',
+      'merchant_webhook_events',
       'outbox',
       'payment_events',
       'payments',
@@ -111,9 +125,15 @@ describe('tenant purge', () => {
 
     // A retry finds nothing; so does a tenant that never had a payment.
     await a.post('/internal/tenants/purge').expect(200, { purged: false });
-    await createStore(h.app)
+    await createStore(h.app, { merchant: false })
       .post('/internal/tenants/purge')
       .expect(200, { purged: false });
+    // A store that only ever onboarded is erased too: its gateway account is personal data.
+    const onboarded = createStore(h.app);
+    await onboarded
+      .post('/internal/tenants/purge')
+      .expect(200, { purged: true });
+    expect((await rowCounts(onboarded.tenantId)).merchant_accounts).toBe(0);
   });
 
   it('ignores a tenant id in the body: only the header’s tenant is purged', async () => {

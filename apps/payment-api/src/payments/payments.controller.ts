@@ -16,7 +16,7 @@ import type { Request, Response } from 'express';
 import { AdaptersModule } from '../adapters/adapters.module';
 import { Public, TenantId } from '../auth/service.guard';
 import { fieldError, validate } from '../common/validation';
-import { Clock, PaymentSettings } from '../config';
+import { MerchantsModule } from '../merchants/merchants.controller';
 import {
   AnyCancelBody,
   CancelBody,
@@ -176,20 +176,19 @@ export class WebhooksController {
 }
 
 @Module({
-  imports: [AdaptersModule],
+  // MerchantsModule provides the settings and the clock, and the charge gate.
+  imports: [AdaptersModule, MerchantsModule],
   controllers: [
     PaymentsController,
     UnmatchedReceiptsController,
     WebhooksController,
   ],
   providers: [
-    PaymentSettings,
-    Clock,
     SettlementService,
     PaymentsService,
     WebhooksService,
     ReconciliationService,
   ],
-  exports: [PaymentSettings, Clock, WebhooksService],
+  exports: [MerchantsModule, WebhooksService],
 })
 export class PaymentsModule {}
