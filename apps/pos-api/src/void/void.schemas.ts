@@ -35,6 +35,17 @@ export const VoidInput = z
   });
 export type VoidInput = z.infer<typeof VoidInput>;
 
+/** UMK-1991: a refund the gateway refused, returned by the store itself. The note says how. */
+export const ManualRefundInput = z
+  .object({
+    note: z
+      .string({ required_error: 'Tulis cara uang dikembalikan' })
+      .trim()
+      .min(1, 'Tulis cara uang dikembalikan')
+      .max(200),
+  })
+  .strict();
+
 export const SetPinInput = z
   .object({
     pin: VoidPin,

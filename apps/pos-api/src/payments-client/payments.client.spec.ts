@@ -103,7 +103,7 @@ describe('payment-api client (UMK-1991)', () => {
       amount: 5200,
       actorRef: 'cashier:c1',
     });
-    expect(payment).toEqual(PAYMENT);
+    expect(payment).toMatchObject(PAYMENT);
     const [url, init] = http.mock.calls[0];
     expect(url).toBe('http://payment.internal:3001/payments');
     expect(init.headers).toMatchObject({
@@ -188,7 +188,7 @@ describe('payment-api client (UMK-1991)', () => {
 
   it('findByKey answers the payment of a key, or null', async () => {
     const found = clientWith(() => json(200, { items: [PAYMENT] }), ON);
-    expect(await found.findByKey(TENANT, 'order-1:1')).toEqual(PAYMENT);
+    expect(await found.findByKey(TENANT, 'order-1:1')).toMatchObject(PAYMENT);
     const none = clientWith(() => json(200, { items: [] }), ON);
     expect(await none.findByKey(TENANT, 'order-1:1')).toBeNull();
   });
@@ -204,5 +204,110 @@ describe('payment-api client (UMK-1991)', () => {
     expect(kind('isDebit')).toBe('edc_debit');
     expect(kind('isWallet')).toBe('static_qris');
     expect(kind(null)).toBeNull();
+    // An online method is charged as its gateway method, and only as one this build knows.
+    const online = (gatewayMethod: string | null) =>
+      paymentMethodCode({
+        isCash: false,
+        isDebit: false,
+        isWallet: false,
+        isOnline: true,
+        gatewayMethod,
+      });
+    expect(online('fake_qris')).toBe('fake_qris');
+    expect(online('fake_va')).toBe('fake_va');
+    expect(online('some_gateway')).toBeNull();
+    expect(online(null)).toBeNull();
+  });
+
+  it('reads what a PG payment adds: checkout, expiry, last check, paid time, whether the bill can be closed, late money', async () => {
+    const pg = {
+      ...PAYMENT,
+      method: 'fake_qris',
+      status: 'pending',
+      attempt: 2,
+      checkout: { qrString: 'QR', n: 5 },
+      expiresAt: '2026-11-25T10:15:00.000Z',
+      lastSyncedAt: null,
+      paidAt: '2026-11-25T10:03:00.000Z',
+      capabilities: { canCancel: false },
+      unmatchedReceipts: [
+        {
+          id: 'r1',
+          kind: 'late_payment',
+          grossAmount: 5200,
+          needsReview: true,
+          refundStatus: 'pending',
+          refundActor: 'system',
+        },
+        { id: 'r2', grossAmount: 1.5 },
+      ],
+    };
+    const client = clientWith(() => json(200, pg), ON);
+    expect(await client.sync(TENANT, 'p1')).toEqual({
+      ...PAYMENT,
+      method: 'fake_qris',
+      status: 'pending',
+      attempt: 2,
+      checkout: { qrString: 'QR' },
+      expiresAt: '2026-11-25T10:15:00.000Z',
+      lastSyncedAt: null,
+      paidAt: '2026-11-25T10:03:00.000Z',
+      canCancel: false,
+      unmatchedReceipts: [
+        {
+          id: 'r1',
+          kind: 'late_payment',
+          grossAmount: 5200,
+          needsReview: true,
+          refundStatus: 'pending',
+        },
+      ],
+    });
+    // A payment taken at the cashier has none of it.
+    const plain = clientWith(() => json(200, PAYMENT), ON);
+    expect(await plain.get(TENANT, 'p1')).toEqual({
+      ...PAYMENT,
+      attempt: 1,
+      checkout: null,
+      expiresAt: null,
+      lastSyncedAt: null,
+      paidAt: null,
+      canCancel: true,
+      unmatchedReceipts: [],
+    });
+  });
+
+  it('closes an unpaid bill with the actor only, and sends a refund with its reason and approver', async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const client = clientWith((url, init) => {
+      seen.push({ url, body: JSON.parse(init.body as string) as unknown });
+      return json(200, PAYMENT);
+    }, ON);
+    await client.cancelPending(TENANT, 'p1', 'cashier:c1');
+    await client.refund(TENANT, 'p1', {
+      reasonCode: 'customer_cancelled',
+      actorRef: 'cashier:c1',
+      approvedBy: 'owner:o1',
+    });
+    await client.markRefundedManually(TENANT, 'p1', {
+      note: 'tunai',
+      actorRef: 'owner:o1',
+      approvedBy: 'owner:o1',
+    });
+    expect(seen.map((x) => [new URL(x.url).pathname, x.body])).toEqual([
+      ['/payments/p1/cancel', { actorRef: 'cashier:c1' }],
+      [
+        '/payments/p1/refund',
+        {
+          reasonCode: 'customer_cancelled',
+          actorRef: 'cashier:c1',
+          approvedBy: 'owner:o1',
+        },
+      ],
+      [
+        '/payments/p1/refund/manual',
+        { note: 'tunai', actorRef: 'owner:o1', approvedBy: 'owner:o1' },
+      ],
+    ]);
   });
 });

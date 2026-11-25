@@ -14,11 +14,15 @@ import { tenants } from './tenants';
 // cannot crowd out newer work, and the owner sees it (GET /payment-sync/issues) and can release it.
 // A row is deleted when its work succeeds or the owner asks for a retry.
 
-/** What the work is about; `ref_id` is that row's id (pos.sales, pos.receivable_payments, pos.sale_voids). */
+/**
+ * What the work is about; `ref_id` is that row's id (pos.sales, pos.receivable_payments, pos.sale_voids).
+ * `refund` is a pos.sale_voids row whose PG refund is still pending and is being followed.
+ */
 export const PAYMENT_SYNC_KINDS = [
   'sale',
   'receivable_payment',
   'void',
+  'refund',
 ] as const;
 export type PaymentSyncKind = (typeof PAYMENT_SYNC_KINDS)[number];
 

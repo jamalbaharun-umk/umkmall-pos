@@ -163,7 +163,7 @@ describe('reports and dashboard (U5)', () => {
       lines: [{ productId: teh, qty: 2 }],
       paid: 10_000,
     });
-    await admin`update pos.sales set created_at = created_at - interval '1 week' where id = ${old.id}`;
+    await admin`update pos.sales set created_at = created_at - interval '1 week', paid_at = paid_at - interval '1 week' where id = ${old.id}`;
     const res = await get(store, '/reports/dashboard?period=week').expect(200);
     expect(res.body.current).toMatchObject({
       salesCount: 1,
@@ -186,7 +186,7 @@ describe('reports and dashboard (U5)', () => {
       paid: 5000,
     });
     // 00:30 WIB on 11 Nov = 17:30 UTC on 10 Nov.
-    await admin`update pos.sales set created_at = '2026-11-10T17:30:00Z' where id = ${s.id}`;
+    await admin`update pos.sales set created_at = '2026-11-10T17:30:00Z', paid_at = '2026-11-10T17:30:00Z' where id = ${s.id}`;
     const day = (d: string) =>
       get(store, `/reports/sales?from=${d}&to=${d}`).expect(200);
 

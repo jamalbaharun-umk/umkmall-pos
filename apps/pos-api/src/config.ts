@@ -78,7 +78,14 @@ const EnvSchema = z
     { path: ['POS_PAYMENT_RECONCILE_AFTER_SECONDS'] },
   );
 
-export type Env = z.infer<typeof EnvSchema>;
+export type Env = z.infer<typeof EnvSchema> & {
+  /**
+   * UMK-1991: online payment methods exist only for the local fake gateway until the legal gate (UMK-1977).
+   * True only where NODE_ENV is EXPLICITLY `development` or `test`: an unset NODE_ENV (read as development
+   * everywhere else) and production both refuse them. Fails closed.
+   */
+  onlinePaymentsAllowed: boolean;
+};
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const parsed = EnvSchema.safeParse(source);
@@ -87,5 +94,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     const names = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
     throw new Error(`Invalid environment: ${names}`);
   }
-  return parsed.data;
+  return {
+    ...parsed.data,
+    onlinePaymentsAllowed:
+      source.NODE_ENV === 'development' || source.NODE_ENV === 'test',
+  };
 }

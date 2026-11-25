@@ -1328,7 +1328,7 @@ describe('void a full sale (UMK-1962)', () => {
         paid: 16_500,
       });
       await close(s.auth, 116_500);
-      await admin`update pos.sales set created_at = created_at - interval '1 day' where id = ${old.body.id}`;
+      await admin`update pos.sales set created_at = created_at - interval '1 day', paid_at = paid_at - interval '1 day' where id = ${old.body.id}`;
       await admin`update pos.shifts set opened_at = opened_at - interval '1 day',
         closed_at = closed_at - interval '1 day' where id = ${oldShift.body.id}`;
 

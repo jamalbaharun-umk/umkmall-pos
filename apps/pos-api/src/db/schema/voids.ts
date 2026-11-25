@@ -39,6 +39,10 @@ export const VOID_REASONS = [
 ] as const;
 export type VoidReason = (typeof VOID_REASONS)[number];
 
+/** Where the PG refund of a sale paid through a gateway stands (UMK-1991). */
+export const REFUND_STATUSES = ['pending', 'succeeded', 'failed'] as const;
+export type RefundStatus = (typeof REFUND_STATUSES)[number];
+
 /**
  * The 6-digit PIN an approver (a staff member or the owner, so no FK to pos.staff) types to approve a
  * void, with its lockout state. Read and written only in src/void/void-pin.ts (guard test).
@@ -111,6 +115,9 @@ export const saleVoids = pos
       paymentSyncPending: boolean('payment_sync_pending')
         .notNull()
         .default(false),
+      // UMK-1991: set exactly when the sale was paid through a PG: its money goes back by a refund at the
+      // gateway, which can be pending or refused. Null = a plain void (the store returned the money itself).
+      refundStatus: text('refund_status', { enum: REFUND_STATUSES }),
       createdAt: createdAt(),
     },
     (t) => [
@@ -138,6 +145,14 @@ export const saleVoids = pos
           and (${t.cashReturned} = 0 or ${t.shiftId} is not null)
           and (${t.reasonCode} <> 'other' or ${t.note} is not null)`,
       ),
+      check(
+        'sale_voids_refund_ck',
+        sql`${t.refundStatus} is null or ${t.refundStatus} in ('pending', 'succeeded', 'failed')`,
+      ),
+      // The job's sweep of refunds the gateway has not settled yet.
+      index('sale_voids_refund_pending_idx')
+        .on(t.createdAt)
+        .where(sql`${t.refundStatus} = 'pending'`),
     ],
   )
   .enableRLS();

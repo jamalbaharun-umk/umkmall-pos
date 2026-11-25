@@ -783,7 +783,7 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       // Pool closed: every sweep fails, the tick still resolves.
       await expect(timedSync.tick()).resolves.toMatchObject({
         completed: 0,
-        failed: 3,
+        failed: 4, // one per sweep: sales, kasbon payments, voids, pending refunds
       });
     }, 30_000);
 

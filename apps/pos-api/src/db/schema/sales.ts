@@ -61,6 +61,12 @@ export const shifts = pos
   )
   .enableRLS();
 
+/**
+ * payment-api's methods an online payment method may carry (UMK-1991). Only the local fake gateway's until
+ * the legal gate (UMK-1977); a real provider adds its methods here, with a migration for the check below.
+ */
+export const GATEWAY_METHODS = ['fake_qris', 'fake_va'] as const;
+
 export const paymentMethods = pos
   .table(
     'payment_methods',
@@ -73,6 +79,10 @@ export const paymentMethods = pos
       isDebit: boolean('is_debit').notNull().default(false),
       isCredit: boolean('is_credit').notNull().default(false),
       isWallet: boolean('is_wallet').notNull().default(false),
+      // UMK-1991: paid through a payment gateway (dynamic QRIS, VA). `gateway_method` is payment-api's method
+      // for it (`fake_qris`, `fake_va`), set exactly when the kind is online.
+      isOnline: boolean('is_online').notNull().default(false),
+      gatewayMethod: text('gateway_method'),
       deletedAt: timestamp('deleted_at', { withTimezone: true }),
       createdAt: createdAt(),
     },
@@ -84,7 +94,18 @@ export const paymentMethods = pos
       unique().on(t.tenantId, t.id),
       check(
         'payment_methods_kind_ck',
-        sql`${t.isCash}::int + ${t.isDebit}::int + ${t.isCredit}::int + ${t.isWallet}::int = 1`,
+        sql`${t.isCash}::int + ${t.isDebit}::int + ${t.isCredit}::int + ${t.isWallet}::int + ${t.isOnline}::int = 1`,
+      ),
+      check(
+        'payment_methods_online_ck',
+        sql`${t.isOnline} = (${t.gatewayMethod} is not null)`,
+      ),
+      // Only a method this version can charge: a sale with any other would wait for a payment for ever.
+      check(
+        'payment_methods_gateway_method_ck',
+        sql`${t.gatewayMethod} is null or ${t.gatewayMethod} in (${sql.raw(
+          GATEWAY_METHODS.map((m) => `'${m}'`).join(', '),
+        )})`,
       ),
     ],
   )
@@ -166,7 +187,19 @@ export const sales = pos
       // payment-api's method for this sale, fixed when the sale was made: a later edit of the payment
       // method's kind never changes what is charged. Null exactly when the sale takes no payment there.
       paymentMethodCode: text('payment_method_code'),
+      // Which try at paying this sale: the charge key at payment-api is `<sale id>:<attempt>`. Only the switch
+      // from a PG method to cash starts a new one, and `payment_attempt_at` is when it started (the job waits
+      // from then before it gives an unanswered charge up).
+      paymentAttempt: integer('payment_attempt').notNull().default(1),
+      paymentAttemptAt: ts('payment_attempt_at').notNull().defaultNow(),
+      // The cashier asked to take cash instead of the PG payment: the cash tendered. While it is set, the PG
+      // attempt closing unpaid turns the sale into a cash sale instead of cancelling it.
+      switchCashPaid: rupiah('switch_cash_paid'),
       cancelledAt: ts('cancelled_at'),
+      // The moment the sale counts from in every report and list (owner ruling 2026-11-25): when it was
+      // PAID. That is when it was rung up, except for a sale that waited for a payment gateway: the
+      // gateway's paid time, or the moment the cashier took cash instead.
+      paidAt: ts('paid_at').notNull().defaultNow(),
       createdAt: createdAt(),
     },
     (t) => [
@@ -177,9 +210,13 @@ export const sales = pos
           and (${t.status} = 'void') = (${t.voidedAt} is not null)
           and (${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`,
       ),
+      check(
+        'sales_attempt_ck',
+        sql`${t.paymentAttempt} >= 1 and (${t.switchCashPaid} is null or ${t.status} = 'awaiting_payment')`,
+      ),
       // The job's sweep of sales still waiting for their payment.
       index('sales_awaiting_idx')
-        .on(t.createdAt)
+        .on(t.paymentAttemptAt)
         .where(sql`${t.status} = 'awaiting_payment'`),
       uniqueIndex('sales_tenant_idempotency_uq').on(
         t.tenantId,
@@ -187,6 +224,7 @@ export const sales = pos
       ),
       uniqueIndex('sales_tenant_number_uq').on(t.tenantId, t.number),
       index('sales_tenant_created_idx').on(t.tenantId, t.createdAt),
+      index('sales_tenant_paid_idx').on(t.tenantId, t.paidAt),
       index('sales_shift_idx').on(t.shiftId),
       foreignKey({
         columns: [t.tenantId, t.shiftId],

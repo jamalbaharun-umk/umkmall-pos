@@ -135,6 +135,28 @@ describe('repo guards', () => {
       );
   });
 
+  it('lets only a person at the till act on a sale’s PG payment: every action route checks the session kind first (UMK-1991)', () => {
+    // The switch to cash puts cash in a drawer; an agent session moves no payment and asks no refund.
+    const text = (f: string) => files.find((x) => x.f === f)!.text;
+    const actions = text(
+      path.join('payments-client', 'sale-payment.controller.ts'),
+    )
+      .split(/\n {2}@Post\(/)
+      .slice(1);
+    expect(actions.length).toBe(3);
+    const refunds = text(path.join('void', 'void.controller.ts'))
+      .split(/\n {2}@Post\(/)
+      .slice(1)
+      .filter((route) => route.startsWith("':id/refund"));
+    expect(refunds.length).toBe(3);
+    for (const route of [...actions, ...refunds]) {
+      const check = route.indexOf('assertPersonAtTill(s.kind);');
+      expect(check).toBeGreaterThan(-1);
+      // Before the route does anything else.
+      expect(check).toBeLessThan(route.indexOf('this.'));
+    }
+  });
+
   it('writes pos.store_cash_deposits and the kind collector_deposit (store and shift ledger) only in store-cash/store-cash-deposits.service.ts', () => {
     const own = path.join('store-cash', 'store-cash-deposits.service.ts');
     const offenders = files
@@ -223,16 +245,30 @@ describe('repo guards', () => {
     ).toEqual([]);
   });
 
-  it('never calls payment-api inside a database transaction (payment-sync: one transaction, with no client call in it)', () => {
-    const text = files.find(
-      ({ f }) => f === path.join('payments-client', 'payment-sync.service.ts'),
-    )!.text;
-    const parts = text.split('.transaction(');
-    expect(parts).toHaveLength(2);
-    // The transaction's body: up to the end of applyToSale.
-    const body = parts[1].slice(0, parts[1].indexOf('\n  }\n'));
-    expect(body.length).toBeGreaterThan(300);
-    expect(body).not.toMatch(/this\.client\./);
+  it('never calls payment-api inside a database transaction (payments-client: no client call in any transaction)', () => {
+    const inClient = (name: string) =>
+      files.find(({ f }) => f === path.join('payments-client', name))!.text;
+    const text = inClient('payment-sync.service.ts');
+    // Every transaction of the file is written `this.db.transaction(async (tx) => { … \n    });`: the
+    // write of a sale's step 2, the request of a switch to cash, and the turn of a sale into a cash sale.
+    const bodies = text
+      .split('.transaction(')
+      .slice(1)
+      .map((part) => part.slice(0, part.indexOf('\n    });\n')));
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies) {
+      expect(body.length).toBeGreaterThan(300);
+      // Neither the client nor anything of this class that calls it.
+      expect(body).not.toMatch(
+        /this\.client\b|this\.(settle|closeBill|syncVoid|recordKasbon|\w*Refund)\w*\(/,
+      );
+    }
+    // The cashier's routes (status, cash, cancel) open no transaction at all: they only call PaymentSync.
+    for (const name of [
+      'sale-payment.service.ts',
+      'sale-payment.controller.ts',
+    ])
+      expect(inClient(name)).not.toMatch(/\.transaction\(|\.for\('update'\)/);
     // Sales, receivables and void call payment-api only through PaymentSync, after their own commit.
     const direct = files
       .filter(
@@ -261,6 +297,8 @@ describe('repo guards', () => {
       .sort();
     expect(readers).toEqual([
       path.join('payments-client', 'payment-sync.service.ts'),
+      // One sale by id, of any status: the payment screen of a sale that still waits.
+      path.join('payments-client', 'sale-payment.service.ts'),
       path.join('reports', 'reports.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('shifts', 'shifts.service.ts'),

@@ -16,34 +16,68 @@ import { z } from 'zod';
 import { fieldError, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { paymentMethods } from '../db/schema';
+import { PaymentSync } from '../payments-client/payment-sync.service';
+import { ONLINE_METHODS } from '../payments-client/payments.client';
 import { isUniqueViolation, parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
-export const PAYMENT_KINDS = ['cash', 'debit', 'credit', 'wallet'] as const;
+// `online` (UMK-1991): paid through a payment gateway (dynamic QRIS, VA), as payment-api's `gatewayMethod`.
+export const PAYMENT_KINDS = [
+  'cash',
+  'debit',
+  'credit',
+  'wallet',
+  'online',
+] as const;
 export type PaymentKind = (typeof PAYMENT_KINDS)[number];
 
-const Input = z
+const Fields = z
   .object({
     name: z.string().trim().min(1).max(60),
     kind: z.enum(PAYMENT_KINDS),
+    gatewayMethod: z.enum(ONLINE_METHODS).optional(),
   })
   .strict();
+type Fields = z.infer<typeof Fields>;
 
-const flags = (kind: PaymentKind) => ({
+/** An online method names its gateway method; no other kind may. The kind decides, so both come together. */
+const gatewayRule = (v: Partial<Fields>, ctx: z.RefinementCtx) => {
+  if (v.kind === 'online' && !v.gatewayMethod)
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['gatewayMethod'],
+      message: 'Pilih jenis pembayaran online',
+    });
+  if (v.kind !== 'online' && v.gatewayMethod)
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['gatewayMethod'],
+      message: 'Hanya untuk metode pembayaran online',
+    });
+};
+const Input = Fields.superRefine(gatewayRule);
+const PatchInput = Fields.partial()
+  .refine((o) => Object.keys(o).length > 0, 'Tidak ada yang diubah')
+  .superRefine(gatewayRule);
+
+const flags = (kind: PaymentKind, gatewayMethod?: string) => ({
   isCash: kind === 'cash',
   isDebit: kind === 'debit',
   isCredit: kind === 'credit',
   isWallet: kind === 'wallet',
+  isOnline: kind === 'online',
+  gatewayMethod: kind === 'online' ? (gatewayMethod ?? null) : null,
 });
 
-export const paymentKind = sql<PaymentKind>`case when ${paymentMethods.isCash} then 'cash' when ${paymentMethods.isDebit} then 'debit' when ${paymentMethods.isCredit} then 'credit' else 'wallet' end`;
+export const paymentKind = sql<PaymentKind>`case when ${paymentMethods.isCash} then 'cash' when ${paymentMethods.isDebit} then 'debit' when ${paymentMethods.isCredit} then 'credit' when ${paymentMethods.isOnline} then 'online' else 'wallet' end`;
 
 const columns = {
   id: paymentMethods.id,
   name: paymentMethods.name,
   kind: paymentKind,
+  gatewayMethod: paymentMethods.gatewayMethod,
 };
 
 const live = (tenantId: string, id?: string) =>
@@ -56,7 +90,20 @@ const live = (tenantId: string, id?: string) =>
 /** Payment methods (Lakasir PaymentMethodResource). "Tunai" is U3's seeded cash method and stays fixed. */
 @Injectable()
 export class PaymentMethodsService {
-  constructor(@InjectDb() private readonly db: Db) {}
+  constructor(
+    @InjectDb() private readonly db: Db,
+    private readonly payments: PaymentSync,
+  ) {}
+
+  /**
+   * UMK-1991: an online method works only through payment-api, and until the legal gate (UMK-1977) its
+   * only gateway is the local fake one: refused unless NODE_ENV is explicitly development or test.
+   */
+  private assertOnlineAllowed(kind?: PaymentKind) {
+    if (kind !== 'online') return;
+    if (!this.payments.onlineEnabled)
+      throw fieldError('kind', 'Pembayaran online belum tersedia');
+  }
 
   // The store's Tunai exists before any other method, so no one can claim the name with another kind.
   private seedCash(tenantId: string) {
@@ -94,12 +141,17 @@ export class PaymentMethodsService {
     }
   }
 
-  create(tenantId: string, input: z.infer<typeof Input>) {
+  create(tenantId: string, input: Fields) {
+    this.assertOnlineAllowed(input.kind);
     return this.write(async () => {
       await this.seedCash(tenantId);
       const [row] = await this.db
         .insert(paymentMethods)
-        .values({ tenantId, name: input.name, ...flags(input.kind) })
+        .values({
+          tenantId,
+          name: input.name,
+          ...flags(input.kind, input.gatewayMethod),
+        })
         .returning(columns);
       return row;
     });
@@ -111,11 +163,8 @@ export class PaymentMethodsService {
       throw fieldError('_', 'Metode Tunai tidak dapat diubah atau dihapus');
   }
 
-  async update(
-    tenantId: string,
-    id: string,
-    input: Partial<z.infer<typeof Input>>,
-  ) {
+  async update(tenantId: string, id: string, input: Partial<Fields>) {
+    this.assertOnlineAllowed(input.kind);
     await this.assertEditable(tenantId, id);
     if (input.name?.toLowerCase() === 'tunai')
       throw fieldError('name', 'Nama metode pembayaran sudah dipakai', 409);
@@ -124,7 +173,7 @@ export class PaymentMethodsService {
         .update(paymentMethods)
         .set({
           name: input.name,
-          ...(input.kind ? flags(input.kind) : {}),
+          ...(input.kind ? flags(input.kind, input.gatewayMethod) : {}),
         })
         .where(live(tenantId, id))
         .returning(columns);
@@ -173,13 +222,7 @@ export class PaymentMethodsController {
     return this.methods.update(
       s.tenantId,
       parseId(id),
-      validate(
-        Input.partial().refine(
-          (o) => Object.keys(o).length > 0,
-          'Tidak ada yang diubah',
-        ),
-        body,
-      ),
+      validate(PatchInput, body),
     );
   }
 

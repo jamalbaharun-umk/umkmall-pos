@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { fieldError } from '../common/validation';
@@ -19,7 +20,12 @@ import {
   staff,
 } from '../db/schema';
 import { cancelReceivable } from '../receivables/receivables.controller';
-import { PaymentSync } from '../payments-client/payment-sync.service';
+import { actorRef, PaymentSync } from '../payments-client/payment-sync.service';
+import { isOnlineMethod } from '../payments-client/payments.client';
+import {
+  paymentHttpError,
+  refusal,
+} from '../payments-client/sale-payment.service';
 import { lockOpenShift, recordShiftCash } from '../shifts/cash-ledger';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -35,6 +41,19 @@ const KEY_REUSED = 'Kunci ini sudah dipakai untuk pembatalan lain';
 // UMK-1991: only a receipt is voided. A sale awaiting payment is finished or cancelled by its payment.
 const AWAITING = 'Penjualan ini masih menunggu pembayaran';
 const NOT_A_RECEIPT = 'Penjualan ini dibatalkan sebelum dibayar';
+// UMK-1991 (V5): a payment taken at the cashier is voided, a payment through a gateway is refunded.
+const USE_REFUND =
+  'Penjualan ini dibayar lewat pembayaran online: batalkan dengan refund';
+const USE_VOID = 'Penjualan ini tidak dibayar lewat pembayaran online';
+
+/** `void`: the store returns the money itself. `refund`: the payment gateway returns it. */
+export type CancelMode = 'void' | 'refund';
+
+const wrongMode = (mode: CancelMode) =>
+  new ConflictException({
+    message: mode === 'void' ? USE_REFUND : USE_VOID,
+    code: mode === 'void' ? 'use_refund' : 'use_void',
+  });
 
 /** The request's fingerprint for a replay. The PIN is not part of it and is stored nowhere. */
 const requestHash = (saleId: string, input: VoidInput) =>
@@ -70,6 +89,10 @@ type Return = {
  *
  * Checks run cheapest and safest first: validation, replay, sale state, open shift, then the approver's
  * PIN. A request that cannot succeed never costs a PIN attempt.
+ *
+ * UMK-1991: a sale paid through a payment gateway is cancelled by REFUND (`mode`), never by void. It is the
+ * same record with `refund_status` set: the sale is reversed at once, the money counts as returned by
+ * transfer (no drawer), and the refund is asked at payment-api after the commit like a void's payments.
  */
 @Injectable()
 export class VoidService {
@@ -80,12 +103,18 @@ export class VoidService {
     private readonly payments: PaymentSync,
   ) {}
 
-  async void(s: PosSession, saleId: string, key: string, input: VoidInput) {
+  async void(
+    s: PosSession,
+    saleId: string,
+    key: string,
+    input: VoidInput,
+    mode: CancelMode = 'void',
+  ) {
     const hash = requestHash(saleId, input);
     const prior = await this.replay(s, saleId, key, hash);
     if (prior) return prior;
 
-    await this.precheck(s, saleId);
+    await this.precheck(s, saleId, mode);
     const approver = await this.pins.verify(
       s.tenantId,
       input.approverId,
@@ -95,7 +124,7 @@ export class VoidService {
     let id: string;
     try {
       id = await this.db.transaction((tx) =>
-        this.apply(tx, s, saleId, key, hash, input, approver),
+        this.apply(tx, s, saleId, key, hash, input, approver, mode),
       );
     } catch (e) {
       // The same key raced in on another sale: the unique index refused this one.
@@ -143,10 +172,11 @@ export class VoidService {
    * Refusals that need no PIN, read without locks (the transaction decides again under its locks):
    * unknown sale 404, already voided 409, cash to give back but no open shift 422.
    */
-  private async precheck(s: PosSession, saleId: string) {
+  private async precheck(s: PosSession, saleId: string, mode: CancelMode) {
     const [sale] = await this.db
       .select({
         status: sales.status,
+        code: sales.paymentMethodCode,
         total: sales.total,
         rounding: sales.rounding,
         isCash: paymentMethods.isCash,
@@ -166,6 +196,14 @@ export class VoidService {
     if (sale.status === 'awaiting_payment')
       throw new ConflictException(AWAITING);
     if (sale.status === 'cancelled') throw new ConflictException(NOT_A_RECEIPT);
+    if (isOnlineMethod(sale.code) !== (mode === 'refund'))
+      throw wrongMode(mode);
+    // A refund can only go through payment-api.
+    if (mode === 'refund' && !this.payments.enabled)
+      throw new ServiceUnavailableException({
+        message: 'Layanan pembayaran tidak aktif',
+        code: 'payment_unavailable',
+      });
 
     let cashDue = sale.isCash ? sale.total + sale.rounding : 0;
     if (sale.isCredit) {
@@ -217,6 +255,7 @@ export class VoidService {
     hash: string,
     input: VoidInput,
     approver: Approver,
+    mode: CancelMode,
   ): Promise<string> {
     // The sale's row lock: two voids of one sale run one after the other, and the second finds it voided.
     const [sale] = await tx
@@ -243,6 +282,8 @@ export class VoidService {
     if (sale.status === 'awaiting_payment')
       throw new ConflictException(AWAITING);
     if (sale.status === 'cancelled') throw new ConflictException(NOT_A_RECEIPT);
+    const online = isOnlineMethod(sale.paymentMethodCode);
+    if (online !== (mode === 'refund')) throw wrongMode(mode);
 
     const [method] = await tx
       .select({
@@ -340,6 +381,8 @@ export class VoidService {
       rounding: sale.rounding,
       costTotal: sale.costTotal,
       paymentSyncPending: this.payments.enabled,
+      // The gateway has the money: the refund is asked after this commit and can still be refused (V4).
+      refundStatus: online ? 'pending' : null,
     });
     if (returns.length)
       await tx
@@ -352,6 +395,50 @@ export class VoidService {
       .set({ status: 'void', voidedAt: sql`now()` })
       .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, saleId)));
     return id;
+  }
+
+  /** The refund of a sale the store may act on, as `view` answers it; 404 when the sale has none. */
+  private async refundView(s: PosSession, saleId: string) {
+    const [row] = await this.db
+      .select({ id: saleVoids.id, refundStatus: saleVoids.refundStatus })
+      .from(saleVoids)
+      .where(
+        and(eq(saleVoids.tenantId, s.tenantId), eq(saleVoids.saleId, saleId)),
+      );
+    if (!row || row.refundStatus === null) throw new NotFoundException();
+    return this.view(s, row.id);
+  }
+
+  /** `POST /sales/:id/refund/retry`: asks a refund the gateway refused again (V4). */
+  async retryRefund(s: PosSession, saleId: string) {
+    await this.refundView(s, saleId);
+    await this.payments
+      .retryRefund(s.tenantId, saleId, actorRef(s.kind, s.actorId))
+      .catch((error: unknown) => {
+        throw paymentHttpError(error);
+      });
+    return this.refundView(s, saleId);
+  }
+
+  /** `POST /sales/:id/refund/manual`: the store returned the money of a refused refund by hand (V4). */
+  async markRefundManual(s: PosSession, saleId: string, note: string) {
+    await this.refundView(s, saleId);
+    // What is stored may be old (the gateway refused the refund and nothing has asked since): ask first.
+    await this.payments
+      .followRefund(s.tenantId, saleId)
+      .catch((error: unknown) => {
+        throw paymentHttpError(error);
+      });
+    const refund = await this.refundView(s, saleId);
+    // Only a refund the gateway refused; one already marked answers as it stands.
+    if (refund.refundStatus === 'succeeded') return refund;
+    if (refund.refundStatus !== 'failed') throw refusal('not_refund_failed');
+    await this.payments
+      .markRefundManual(s.tenantId, saleId, note, actorRef(s.kind, s.actorId))
+      .catch((error: unknown) => {
+        throw paymentHttpError(error);
+      });
+    return this.refundView(s, saleId);
   }
 
   /** `GET /sales/:id/void`: the void of a sale the actor may see (theirs, one they voided, or `reports.view`). */
@@ -409,6 +496,8 @@ export class VoidService {
         total: saleVoids.total,
         rounding: saleVoids.rounding,
         costTotal: saleVoids.costTotal,
+        // UMK-1991: null = a void; otherwise where the gateway's refund stands.
+        refundStatus: saleVoids.refundStatus,
         createdAt: saleVoids.createdAt,
       })
       .from(saleVoids)

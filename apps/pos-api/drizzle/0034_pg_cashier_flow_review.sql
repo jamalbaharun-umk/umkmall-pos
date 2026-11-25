@@ -1,0 +1,3 @@
+DROP INDEX "pos"."sales_awaiting_idx";--> statement-breakpoint
+CREATE INDEX "sales_awaiting_idx" ON "pos"."sales" USING btree ("payment_attempt_at") WHERE "pos"."sales"."status" = 'awaiting_payment';--> statement-breakpoint
+ALTER TABLE "pos"."payment_methods" ADD CONSTRAINT "payment_methods_gateway_method_ck" CHECK ("pos"."payment_methods"."gateway_method" is null or "pos"."payment_methods"."gateway_method" in ('fake_qris', 'fake_va'));

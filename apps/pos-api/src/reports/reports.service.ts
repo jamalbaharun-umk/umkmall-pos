@@ -106,27 +106,29 @@ export class ReportsService {
   }
 
   /**
-   * Sales rung up in `[start, end)` minus the voids DONE in `[start, end)` (UMK-1962, owner ruling on
-   * G-09): a sale stays in the figures of its own day for ever, and its void is a reversal in the figures
+   * Sales PAID in `[start, end)` (`paid_at`: when the sale was rung up, or for a sale that waited for a
+   * payment gateway the moment it was paid, owner ruling 2026-11-25) minus the voids DONE in `[start, end)`
+   * (UMK-1962, owner ruling on G-09): a sale stays in the figures of its own day for ever, and its void is a reversal in the figures
    * of the day the void was done. A same-day void nets to zero; a void of an older receipt makes that
    * day's figures lower (even negative) and never changes an earlier day. The reversal uses the figures
    * stored on pos.sale_voids (the sale's own, cost as stored at the sale).
    */
   private async salesMetrics(tenantId: string, start: SQL, end: SQL) {
-    const sums = (table: SQL, only: SQL = sql``) => sql`
+    const sums = (table: SQL, at: SQL, only: SQL = sql``) => sql`
       (select count(*) as n, coalesce(sum(subtotal), 0) as gross_sales,
               coalesce(sum(discount), 0) as discount,
               coalesce(sum(voucher_discount), 0) as voucher, coalesce(sum(tax), 0) as tax,
               coalesce(sum(total), 0) as revenue, coalesce(sum(cost_total), 0) as cost,
               coalesce(sum(rounding), 0) as rounding
          from ${table}
-        where tenant_id = ${tenantId} and created_at >= ${start} and created_at < ${end} ${only})`;
+        where tenant_id = ${tenantId} and ${at} >= ${start} and ${at} < ${end} ${only})`;
     const [r] = await this.rows(sql`
       select s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
              s.rounding - v.rounding as rounding, v.n as void_count
-        from ${sums(sql`pos.sales`, FINAL)} s, ${sums(sql`pos.sale_voids`)} v`);
+        from ${sums(sql`pos.sales`, sql`paid_at`, FINAL)} s,
+             ${sums(sql`pos.sale_voids`, sql`created_at`)} v`);
     return { ...metrics(r), voidCount: n(r.void_count) };
   }
 
@@ -185,17 +187,17 @@ export class ReportsService {
   }
 
   /**
-   * The lines behind `salesMetrics`: every line of a sale rung up in the range, plus, for every void done
+   * The lines behind `salesMetrics`: every line of a sale paid in the range, plus, for every void done
    * in the range, the voided sale's lines again with negative quantity, amount and cost, dated at the void
    * and attributed to whoever started it.
    */
   private lineRows(tenantId: string, start: SQL, end: SQL) {
     return sql`(
-      select 'sale' as kind, s.created_at as at, s.number, s.actor_kind, s.actor_id,
+      select 'sale' as kind, s.paid_at as at, s.number, s.actor_kind, s.actor_id,
              l.id as line_id, l.product_id, l.name, l.qty, l.unit, l.base_qty, l.unit_price, l.line_total, l.cost_total
         from pos.sale_lines l
         join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
-       where s.tenant_id = ${tenantId} and s.created_at >= ${start} and s.created_at < ${end}
+       where s.tenant_id = ${tenantId} and s.paid_at >= ${start} and s.paid_at < ${end}
          and s.status in (${FINAL_LIST})
       union all
       select 'void', v.created_at, s.number, v.actor_kind, v.actor_id,
