@@ -1,27 +1,40 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
+import { Alert, Badge, Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
+import { useState } from 'react'
 import { formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
-import { loadReceipt } from './-api'
+import { useCan } from '@/components/shell'
+import { loadSaleDetail } from './-void-api'
+import { VoidDialog } from './-void-dialog'
+import { reasonLabel } from './-void-helpers'
 import { soldWholesaleNote } from './-helpers'
 import { hasRounding } from './-money'
 
 // Lakasir's "View selling": selling details, product table, totals, and the print-receipt action.
 export const Route = createFileRoute('/kasir/riwayat/$id')({
-  loader: ({ params }) => loadReceipt({ data: params.id }),
+  loader: ({ params }) => loadSaleDetail({ data: params.id }),
   component: SalePage,
   pendingComponent: Pending,
   errorComponent: LoadError,
 })
 
 function SalePage() {
-  const r = Route.useLoaderData()
+  const { receipt: r, saleVoid, methodKind } = Route.useLoaderData()
   const { id } = Route.useParams()
+  const router = useRouter()
+  const canStart = useCan('sales.create')
+  const [voiding, setVoiding] = useState(false)
+  const voided = r.status === 'void'
   return (
     <Page
       crumbs={[{ label: 'Riwayat penjualan', to: '/kasir/riwayat' }, { label: 'Detail' }]}
       title={`Penjualan #${r.number}`}
       actions={
         <>
+          {r.status === 'completed' && canStart && (
+            <Button width="auto" type="outline" color="danger" onClick={() => setVoiding(true)}>
+              Batalkan transaksi
+            </Button>
+          )}
           <Button width="auto" asChild type="outline" color="light">
             <Link to="/kasir/riwayat">Kembali</Link>
           </Button>
@@ -33,6 +46,67 @@ function SalePage() {
         </>
       }
     >
+      {voided && (
+        <Card variant="outlined" padding="large" className="mb-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Text as="h2" variant="h5" weight="bold">
+              Struk dibatalkan
+            </Text>
+            <Badge color="danger" size="small">
+              VOID
+            </Badge>
+          </div>
+          {saleVoid ? (
+            <>
+              <dl className="grid max-w-md grid-cols-2 gap-y-1 text-sm">
+                <dt className="font-medium">Waktu</dt>
+                <dd className="text-right">{formatDate(saleVoid.createdAt)}</dd>
+                <dt className="font-medium">Dimulai oleh</dt>
+                <dd className="text-right">{saleVoid.initiatedBy.name}</dd>
+                <dt className="font-medium">Disetujui oleh</dt>
+                <dd className="text-right">{saleVoid.approvedBy.name}</dd>
+                <dt className="font-medium">Alasan</dt>
+                <dd className="text-right">{reasonLabel(saleVoid.reasonCode)}</dd>
+                {saleVoid.note && (
+                  <>
+                    <dt className="font-medium">Catatan</dt>
+                    <dd className="text-right">{saleVoid.note}</dd>
+                  </>
+                )}
+                {saleVoid.cashReturned > 0 && (
+                  <>
+                    <dt className="font-medium">Uang keluar dari laci</dt>
+                    <dd className="text-right">{rupiah(saleVoid.cashReturned)}</dd>
+                  </>
+                )}
+                {saleVoid.transferReturned > 0 && (
+                  <>
+                    <dt className="font-medium">Dikembalikan lewat transfer</dt>
+                    <dd className="text-right">{rupiah(saleVoid.transferReturned)}</dd>
+                  </>
+                )}
+                {saleVoid.receivableCancelled > 0 && (
+                  <>
+                    <dt className="font-medium">Sisa kasbon dihapus</dt>
+                    <dd className="text-right">{rupiah(saleVoid.receivableCancelled)}</dd>
+                  </>
+                )}
+              </dl>
+              {saleVoid.transferReturned > 0 && (
+                <Alert variant="info" size="small">
+                  Uang {rupiah(saleVoid.transferReturned)} dikembalikan lewat transfer balik. Pastikan transfernya sudah
+                  dilakukan; sistem hanya mencatat.
+                </Alert>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-default-secondary">
+              Dibatalkan {r.voidedAt ? formatDate(r.voidedAt) : ''}. Rincian pembatalan hanya terlihat oleh kasir
+              yang menjual, yang memulai atau menyetujui, dan pengguna dengan izin laporan.
+            </p>
+          )}
+        </Card>
+      )}
       <Card variant="outlined" padding="large" className="space-y-6">
         <section>
           <Text as="h2" variant="h5" weight="bold">
@@ -125,6 +199,13 @@ function SalePage() {
           <dd className="text-right">{rupiah(r.change)}</dd>
         </dl>
       </Card>
+      <VoidDialog
+        open={voiding}
+        onClose={() => setVoiding(false)}
+        onChanged={() => void router.invalidate()}
+        sale={{ id, number: r.number, amountDue: r.amountDue }}
+        methodKind={methodKind}
+      />
     </Page>
   )
 }

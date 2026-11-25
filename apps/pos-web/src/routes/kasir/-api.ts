@@ -82,6 +82,9 @@ export type Receipt = {
   voucherDiscount: number
   memberName: string | null
   receivableRest: number | null
+  // UMK-1962: a voided receipt says so
+  status: 'completed' | 'void' | 'awaiting_payment' | 'cancelled'
+  voidedAt: string | null
 }
 export type Result<T = undefined> =
   { ok: true; data: T } | { ok: false; error: string; errors?: Record<string, string>; total?: number }
