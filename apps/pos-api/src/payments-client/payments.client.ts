@@ -61,7 +61,7 @@ export type Payment = {
   expiresAt: string | null;
   /** ISO time payment-api last asked the PG. */
   lastSyncedAt: string | null;
-  /** ISO time the payment became `paid`, by payment-api's clock. */
+  /** ISO time the payment became `paid`, by payment-api's clock; null when it gave none or one that is no time. */
   paidAt: string | null;
   /** False: the PG cannot close an unpaid bill, which stays payable until it expires (D13). */
   canCancel: boolean;
@@ -157,6 +157,16 @@ export class PaymentApiError extends Error {
     this.name = 'PaymentApiError';
   }
 }
+
+/**
+ * A time payment-api answered, as an ISO string, or null when it is missing or not a time. What comes back
+ * is safe to hand to the database: a value that is no time must never make a write throw.
+ */
+export const isoTime = (v: unknown): string | null => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(v)) return null;
+  const at = new Date(v);
+  return Number.isNaN(at.getTime()) ? null : at.toISOString();
+};
 
 const isPayment = (v: unknown): v is Payment => {
   const p = v as Partial<Payment> | null;
@@ -525,7 +535,7 @@ export class PaymentsClient {
       checkout,
       expiresAt: text(raw.expiresAt),
       lastSyncedAt: text(raw.lastSyncedAt),
-      paidAt: text(raw.paidAt),
+      paidAt: isoTime(raw.paidAt),
       canCancel: capabilities?.canCancel !== false,
       unmatchedReceipts: unmatched
         .filter(

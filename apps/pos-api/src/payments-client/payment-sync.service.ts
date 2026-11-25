@@ -293,6 +293,12 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             (mode === 'reconcile' &&
               now.getTime() - sale.attemptAt.getTime() >= this.afterMs);
           if (!giveUp) return { outcome: 'awaiting_payment', payment: null };
+          // The job gives the sale up. It closes nothing FOR a switch to cash: one that was asked and
+          // never got as far as a bill is taken back first, so the sale is cancelled, not made a cash sale.
+          if (mode === 'reconcile' && switching) {
+            await this.dropCashSwitch(tenantId, saleId);
+            continue;
+          }
           payment = await this.client.close(tenantId, charge);
         }
       }
@@ -311,7 +317,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           'completed',
           payment.id,
           sale.attempt,
-          // A sale that waited for a PG payment counts from when the payer paid.
+          // A sale that waited for a PG payment counts from when the payer paid; any other from now.
           isOnlineMethod(payment.method) ? payment.paidAt : null,
         );
         if (outcome === 'stale') continue;
@@ -332,13 +338,18 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         return { outcome, payment, refusedCode };
       }
       // The PG attempt is closed unpaid and the cashier took cash. Their own request turns the sale into a
-      // cash sale, and so does the job when the bill was closed for the switch (the request died after
-      // it). Anyone else leaves the sale as it is: the switch is not theirs to do, and the sale is not
+      // cash sale, and so does the job when the bill was closed for the switch (`cancelled`: only the
+      // cashier's request closes a bill of a sale that has an intent; that request died after it).
+      if (mode === 'reconcile' && payment.status !== 'cancelled') {
+        // The bill ended by itself (expired, failed) and the request that asked for cash is gone: the
+        // intent would keep the sale waiting for ever. The job takes it back and the next round cancels
+        // the sale. A request that is still at work asks again (see above) or finds the sale cancelled.
+        await this.dropCashSwitch(tenantId, saleId);
+        continue;
+      }
+      // A poll or a check leaves the sale as it is: the switch is not theirs to do, and the sale is not
       // cancelled under a cashier who holds the customer's cash.
-      if (
-        mode !== 'cash' &&
-        !(mode === 'reconcile' && payment.status === 'cancelled')
-      )
+      if (mode !== 'cash' && mode !== 'reconcile')
         return { outcome: 'awaiting_payment', payment };
       // The next round charges the cash attempt.
       await this.turnToCash(tenantId, saleId, sale.attempt);
@@ -504,7 +515,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * still what the caller read before it asked payment-api. `attempt` is the attempt the payment belongs to:
    * a sale that moved on to another attempt (it was switched to cash) is not touched by the old attempt's
    * answer, and a sale is never cancelled while a switch to cash is asked. Both answer `stale`.
-   * `paidAt` (a PG payment's paid time) becomes the sale's `paid_at`, the moment it is reported at.
+   *
+   * A sale that is completed here is reported from the moment it was paid (`paid_at`): `paidAt`, a PG
+   * payment's own paid time, kept between the sale's creation and now (payment-api's clock is not ours);
+   * without one (a payment taken at the cashier, or a PG payment that came with no usable time) it is now.
    */
   private async applyToSale(
     tenantId: string,
@@ -538,12 +552,9 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             status: 'completed',
             paymentId,
             switchCashPaid: null,
-            // payment-api's clock is not ours: never before the sale was rung up, never in the future.
-            ...(paidAt
-              ? {
-                  paidAt: sql`greatest(${sales.createdAt}, least(${paidAt}::timestamptz, now()))`,
-                }
-              : {}),
+            paidAt: paidAt
+              ? sql`greatest(${sales.createdAt}, least(${paidAt}::timestamptz, now()))`
+              : sql`now()`,
           })
           .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
         return 'completed';

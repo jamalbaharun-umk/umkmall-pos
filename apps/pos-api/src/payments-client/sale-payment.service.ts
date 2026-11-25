@@ -58,6 +58,8 @@ const MESSAGES: Record<string, string> = {
   not_refund_failed: 'Hanya refund yang ditolak yang bisa ditandai manual',
   payment_refused:
     'Layanan pembayaran menolak permintaan ini. Coba lagi atau hubungi pemilik.',
+  cash_switch_unanswered:
+    'Layanan pembayaran tidak menjawab, jadi penjualan belum menjadi tunai. Cek status pembayaran dulu sebelum menerima uang atau meminta pelanggan membayar: bila tagihan sudah tertutup, penjualan ini dibatalkan dan harus dibuat ulang.',
   cash_payment_pending:
     'Penjualan ini sudah menjadi penjualan tunai, tetapi pembayarannya belum tercatat. Coba lagi.',
 };
@@ -202,15 +204,20 @@ export class SalePayments {
         paid,
       ));
     } catch (error) {
-      if (!(error instanceof PaymentApiError)) throw error;
+      // Whatever went wrong, the request ends here: the intent goes with it.
       await this.sync.abandonCashSwitch(s.tenantId, saleId);
+      if (!(error instanceof PaymentApiError)) throw error;
       if (await this.isCashNow(s, saleId))
         throw error.kind === 'unavailable'
           ? cashPending()
           : refusal('payment_refused');
       // payment-api would not close the bill: the sale still waits for the PG payment.
       if (error.kind === 'rejected') throw refusal('cancel_refused');
-      throw paymentHttpError(error);
+      // No answer: the close may or may not have reached payment-api. The cashier must look before acting.
+      throw new ServiceUnavailableException({
+        message: MESSAGES.cash_switch_unanswered,
+        code: 'payment_unavailable',
+      });
     }
     const view = await this.view(s, saleId, payment, true);
     if (view.saleStatus === 'awaiting_payment') {
