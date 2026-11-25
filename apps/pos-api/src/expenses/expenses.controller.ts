@@ -34,6 +34,8 @@ import { ProfitLossService } from './profit-loss.service';
 const CSV = 'text/csv; charset=utf-8';
 const SOURCE_LABELS = { drawer: 'Laci kasir', outside: 'Di luar laci' };
 
+// `expenses.manage` opens the log; whose rows it shows is `ownScope` in the service: the actor's own,
+// or everyone's with `reports.view` (owner ruling 2026-11-25).
 @Controller('expenses')
 @RequirePermission('expenses.manage')
 export class ExpensesController {
@@ -58,7 +60,7 @@ export class ExpensesController {
 
   @Get()
   list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return this.expenses.list(s.tenantId, validate(ExpenseListQuery, query));
+    return this.expenses.list(s, validate(ExpenseListQuery, query));
   }
 
   @Get('categories')
@@ -70,10 +72,7 @@ export class ExpensesController {
   @Header('Content-Type', CSV)
   @Header('Content-Disposition', 'attachment; filename="pengeluaran.csv"')
   async csv(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    const r = await this.expenses.export(
-      s.tenantId,
-      validate(PeriodQuery, query),
-    );
+    const r = await this.expenses.export(s, validate(PeriodQuery, query));
     return toCsv(
       [
         'Tanggal',
@@ -107,7 +106,7 @@ export class ExpensesController {
 
   @Get(':id')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {
-    return this.expenses.get(s.tenantId, parseId(id));
+    return this.expenses.get(s, parseId(id));
   }
 
   @Patch(':id')

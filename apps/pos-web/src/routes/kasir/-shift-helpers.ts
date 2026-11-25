@@ -162,5 +162,6 @@ export function paymentPlace(p: { collectedOutsideShift: boolean; shiftId: strin
 
 const STORE_KIND_LABELS: Record<string, string> = {
   receivable_payment: 'Kasbon dibayar tunai di luar shift',
+  expense_void: 'Pengeluaran laci dibatalkan setelah shift ditutup',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'

@@ -8,25 +8,23 @@ import { ExpensesService, resolvePeriod } from './expenses.service';
  * The simple profit and loss report (UMK-1984), in the design's words:
  *   revenue ("Hasil jualan") − cost ("Modal barang terjual") = grossProfit ("Untung kotor");
  *   grossProfit − expenses ("Pengeluaran") = netProfit ("Untung bersih").
- * revenue and cost are the reports' own figures (`ReportsService.salesTotals`): Σ sale totals, tax
- * included, kasbon sales included, voids as reversals on the day of the void, cost as stored on the
- * sale lines; cash rounding is its own line, in neither revenue nor profit. `expenses` are the live
- * expense rows dated in the span, WITHOUT supplier payments (their goods are in `cost` when sold).
+ * The figures come from the reports' own (`ReportsService.salesTotals`): kasbon sales included, voids
+ * as reversals on the day of the void, cost as stored on the sale lines. `expenses` are the live expense
+ * rows dated in the span, WITHOUT supplier payments (their goods are in `cost` when sold).
  *
- * Unlike the other reports' `grossProfit` (revenue − tax − cost), tax stays inside revenue here, as the
- * owner-approved screen shows the sum; `tax` is returned so a screen can name it.
+ * Owner ruling 2026-11-25: tax is money held for remittance, never earned, so it is in no profit
+ * anywhere. `revenue` HERE is Σ sale totals − tax (the other reports' `revenue` is Σ sale totals, tax
+ * inside, and their `grossProfit` takes it out): `grossProfit` is the same number as the dashboard's and
+ * the sales reports'. `tax` and cash `rounding` are their own lines, outside the sum.
  */
-/**
- * What each figure is called on a screen and in the CSV. Gross and net profit say that tax is inside
- * them: the dashboard's and the sales reports' gross profit take tax out (open owner question).
- */
+/** What each figure is called on a screen and in the CSV: revenue and both profits say tax is not in them. */
 export const PROFIT_LOSS_LABELS = {
-  revenue: 'Hasil jualan (termasuk pajak)',
+  revenue: 'Hasil jualan (tanpa pajak)',
   cost: 'Modal barang terjual',
-  grossProfit: 'Untung kotor (termasuk pajak)',
+  grossProfit: 'Untung kotor (tanpa pajak)',
   expenses: 'Pengeluaran',
-  netProfit: 'Untung bersih (termasuk pajak)',
-  tax: 'Pajak (termasuk dalam hasil jualan)',
+  netProfit: 'Untung bersih (tanpa pajak)',
+  tax: 'Pajak (titipan, di luar hasil jualan)',
   rounding: 'Pembulatan tunai (di luar hasil jualan)',
   supplierPayments: 'Bayar pemasok (bukan pengeluaran)',
 } as const;
@@ -53,20 +51,21 @@ export class ProfitLossService {
         this.reports.salesTotals(tenantId, tz, { from, to }, until),
         this.expenses.totals(tenantId, from, to),
       ]);
-      const grossProfit = sales.revenue - sales.cost;
+      // `sales.grossProfit` is revenue − tax − cost, the one definition (reports.service `metrics`).
+      const { grossProfit } = sales;
       return {
         figures: {
           from,
           to,
           salesCount: sales.salesCount,
           voidCount: sales.voidCount,
-          revenue: sales.revenue,
+          revenue: sales.revenue - sales.tax,
           tax: sales.tax,
           cost: sales.cost,
           grossProfit,
           expenses: spent.expenses,
           netProfit: grossProfit - spent.expenses,
-          // Outside the sum: cash rounding kept by the drawer, and money paid to suppliers.
+          // Outside the sum: tax held for remittance, cash rounding, and money paid to suppliers.
           rounding: sales.rounding,
           supplierPayments: spent.supplierPayments,
         },
@@ -82,8 +81,8 @@ export class ProfitLossService {
       timezone: tz,
       from: range.from,
       to: range.to,
-      // Tax is inside revenue, gross profit and net profit; `labels` says so.
-      taxIncluded: true,
+      // Tax is in neither revenue nor gross or net profit; `labels` says so.
+      taxIncluded: false,
       labels: PROFIT_LOSS_LABELS,
       current: current.figures,
       previous: previous.figures,

@@ -41,7 +41,7 @@ function NetProfit({ r, period }: { r: ProfitLoss; period: 'today' | 'week' | 'm
   const loss = r.current.netProfit < 0
   return (
     <Card variant="outlined" padding="medium" className={loss ? 'bg-weak-error' : 'bg-weak-success'}>
-      <p className="text-sm text-default-secondary">Untung bersih {periodNoun(period)} (termasuk pajak)</p>
+      <p className="text-sm text-default-secondary">Untung bersih {periodNoun(period)} (tanpa pajak)</p>
       <p className={`text-3xl font-bold ${loss ? 'text-default-error' : 'text-default-success'}`}>{money(r.current.netProfit)}</p>
       <p className="text-sm text-default-secondary">{profitChangeText(r.netProfitChange, period)}</p>
     </Card>
@@ -71,7 +71,7 @@ function Formula({ r }: { r: ProfitLoss }) {
       <hr className="border-default-primary" />
       {line(l.netProfit, c.netProfit, { bold: true })}
       <p className="mt-2 text-xs text-default-secondary">
-        Hasil jualan sudah termasuk pajak ({money(c.tax)}), jadi untung kotor dan untung bersih di sini juga termasuk pajak.
+        Pajak ({money(c.tax)}) adalah uang titipan untuk disetor, jadi tidak dihitung sebagai hasil jualan maupun untung.
         Pembulatan tunai ({money(c.rounding)}) dan bayar pemasok ({money(c.supplierPayments)}) tidak dihitung di atas: modal barang
         sudah mencakup barang dari pemasok.
       </p>

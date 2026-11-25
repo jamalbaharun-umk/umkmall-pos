@@ -14,6 +14,7 @@ import {
   lte,
   sql,
   type AnyColumn,
+  type SQL,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { createHash, randomUUID } from 'node:crypto';
@@ -28,12 +29,15 @@ import {
   expenseEdits,
   expenses,
   staff,
+  storeCashEntries,
   SUPPLIER_PAYMENT_CATEGORY,
 } from '../db/schema';
 import { ROW_CAP } from '../reports/reports.service';
+import { recordStoreCash } from '../store-cash/store-cash-ledger';
 import { recordShiftCash, recordShiftCashInShift } from '../shifts/cash-ledger';
 import { ShiftsService } from '../shifts/shifts.service';
 import { isUniqueViolation } from '../staff/http';
+import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
 import type {
@@ -62,6 +66,16 @@ const requestHash = (i: ExpenseInput) =>
     .digest('hex');
 
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk pengeluaran lain';
+
+/**
+ * Whose expenses the actor works on (owner ruling 2026-11-25). With `reports.view` (owners hold every
+ * permission) the store's whole log: no filter. With `expenses.manage` alone only the rows the actor
+ * recorded; anyone else's id is not found (404), and lists and totals leave them out.
+ */
+export const ownScope = (s: PosSession): SQL | undefined =>
+  hasPermission(s, 'reports.view')
+    ? undefined
+    : and(eq(expenses.actorId, s.actorId), eq(expenses.actorKind, s.kind));
 
 // ---- Store-day arithmetic on 'YYYY-MM-DD' strings (UTC maths, no clock, no timezone) ----
 const DAY = 86_400_000;
@@ -157,6 +171,16 @@ const columns = {
     when ${expenses.voidedByKind} = 'owner' then 'Pemilik' else coalesce(${voider.name}, 'Staf') end`,
   voidReason: expenses.voidReason,
   drawerReversed: expenses.drawerReversed,
+  // Where the cash of a voided drawer expense went: back into its shift's drawer (still open), or
+  // into the store cash (shift closed). Read from the ledgers; null when nothing was returned.
+  cashReturnedTo: sql<'drawer' | 'store_cash' | null>`case
+    when ${expenses.voidedAt} is null or ${expenses.source} <> 'drawer' then null
+    when ${expenses.drawerReversed} then 'drawer'
+    when exists (select 1 from ${storeCashEntries}
+                  where ${storeCashEntries.tenantId} = ${expenses.tenantId}
+                    and ${storeCashEntries.kind} = 'expense_void'
+                    and ${storeCashEntries.refId} = ${expenses.id}) then 'store_cash'
+    end`,
 };
 
 type Selected = {
@@ -175,7 +199,8 @@ const present = <T extends Selected>(r: T) => ({
 /**
  * The expense log (UMK-1984). This file is the only writer of `pos.expenses` and of the shift ledger
  * kinds `expense` / `expense_reversal` (guard in src/guards.spec.ts); the ledger rows themselves are
- * inserted by shifts/cash-ledger.ts under the shift's row lock. Every query filters the session's tenant.
+ * inserted by shifts/cash-ledger.ts under the shift's row lock. Every query filters the session's tenant,
+ * and every route's read or write of a row also `ownScope` (the profit and loss report covers the store).
  */
 @Injectable()
 export class ExpensesService {
@@ -220,10 +245,14 @@ export class ExpensesService {
       );
   }
 
-  /** One expense with its edit history, oldest edit first. */
-  async get(tenantId: string, id: string) {
+  /** One expense the actor may see (`ownScope`), with its edit history, oldest edit first. */
+  get(s: PosSession, id: string) {
+    return this.read(s.tenantId, id, ownScope(s));
+  }
+
+  private async read(tenantId: string, id: string, scope?: SQL) {
     const [row] = await this.rows().where(
-      and(eq(expenses.tenantId, tenantId), eq(expenses.id, id)),
+      and(eq(expenses.tenantId, tenantId), eq(expenses.id, id), scope),
     );
     if (!row) throw new NotFoundException();
     const edits = await this.db
@@ -255,7 +284,11 @@ export class ExpensesService {
 
   private async byKey(db: Db | Tx, tenantId: string, key: string) {
     const [prior] = await db
-      .select({ id: expenses.id, hash: expenses.requestHash })
+      .select({
+        id: expenses.id,
+        hash: expenses.requestHash,
+        actorId: expenses.actorId,
+      })
       .from(expenses)
       .where(
         and(eq(expenses.tenantId, tenantId), eq(expenses.idempotencyKey, key)),
@@ -265,8 +298,11 @@ export class ExpensesService {
 
   async create(s: PosSession, key: string, input: ExpenseInput) {
     const hash = requestHash(input);
-    const replay = (prior: { id: string; hash: string }) => {
-      if (prior.hash !== hash) throw fieldError('idempotencyKey', KEY_REUSED);
+    const scoped = ownScope(s) !== undefined;
+    const replay = (prior: { id: string; hash: string; actorId: string }) => {
+      // Another actor's key is never a replay for someone who may not see that expense.
+      if (prior.hash !== hash || (scoped && prior.actorId !== s.actorId))
+        throw fieldError('idempotencyKey', KEY_REUSED);
       return prior.id;
     };
     let id: string;
@@ -331,7 +367,7 @@ export class ExpensesService {
       if (!prior) throw e;
       id = replay(prior);
     }
-    return this.get(s.tenantId, id);
+    return this.read(s.tenantId, id);
   }
 
   async update(s: PosSession, id: string, input: ExpenseUpdate) {
@@ -346,7 +382,13 @@ export class ExpensesService {
           voidedAt: expenses.voidedAt,
         })
         .from(expenses)
-        .where(and(eq(expenses.tenantId, s.tenantId), eq(expenses.id, id)))
+        .where(
+          and(
+            eq(expenses.tenantId, s.tenantId),
+            eq(expenses.id, id),
+            ownScope(s),
+          ),
+        )
         .for('update');
       if (!row) throw new NotFoundException();
       if (row.voidedAt)
@@ -403,13 +445,14 @@ export class ExpensesService {
         })
         .where(and(eq(expenses.tenantId, s.tenantId), eq(expenses.id, id)));
     });
-    return this.get(s.tenantId, id);
+    return this.read(s.tenantId, id);
   }
 
   /**
    * The soft delete. A drawer expense whose shift is still open gets one cash-in entry in that shift
-   * (its expected cash is back where it was); a closed shift was counted with the expense in it and
-   * never changes, so nothing is written for it. Repeating the void changes nothing.
+   * (its expected cash is back where it was). A closed shift was counted with the expense in it and
+   * never changes: the cash given back goes into the store cash ("kas toko"), one `expense_void`
+   * entry by whoever voids (owner ruling 2026-11-25). Repeating the void changes nothing.
    */
   async voidExpense(s: PosSession, id: string, reason?: string) {
     await this.db.transaction(async (tx) => {
@@ -422,7 +465,13 @@ export class ExpensesService {
           voidedAt: expenses.voidedAt,
         })
         .from(expenses)
-        .where(and(eq(expenses.tenantId, s.tenantId), eq(expenses.id, id)))
+        .where(
+          and(
+            eq(expenses.tenantId, s.tenantId),
+            eq(expenses.id, id),
+            ownScope(s),
+          ),
+        )
         .for('update');
       if (!row) throw new NotFoundException();
       if (row.voidedAt) return;
@@ -435,6 +484,16 @@ export class ExpensesService {
               refId: id,
             })
           : null;
+      // Shift closed: the money is back in the store, outside every drawer. One entry per expense
+      // (this row's lock, and the ledger's unique index on its source).
+      if (drawerReversed === false)
+        await recordStoreCash(tx, s, {
+          direction: 'in',
+          kind: 'expense_void',
+          amount: row.amount,
+          refId: id,
+          note: reason || undefined,
+        });
       await tx
         .update(expenses)
         .set({
@@ -446,7 +505,7 @@ export class ExpensesService {
         })
         .where(and(eq(expenses.tenantId, s.tenantId), eq(expenses.id, id)));
     });
-    return this.get(s.tenantId, id);
+    return this.read(s.tenantId, id);
   }
 
   private inRange(tenantId: string, from: string, to: string) {
@@ -460,8 +519,9 @@ export class ExpensesService {
   /**
    * Totals of the live (not voided) rows dated `[from, to]`. `expenses` is what the profit and loss
    * report subtracts: supplier payments are NOT in it (their goods are cost of goods sold already).
+   * `scope` narrows them to one actor's rows (the list's summary); the report passes none.
    */
-  async totals(tenantId: string, from: string, to: string) {
+  async totals(tenantId: string, from: string, to: string, scope?: SQL) {
     const rows = await this.db
       .select({
         category: expenses.category,
@@ -470,7 +530,9 @@ export class ExpensesService {
         n: count(),
       })
       .from(expenses)
-      .where(and(this.inRange(tenantId, from, to), isNull(expenses.voidedAt)))
+      .where(
+        and(this.inRange(tenantId, from, to), isNull(expenses.voidedAt), scope),
+      )
       .groupBy(expenses.category);
     const byCategory = rows
       .map((r) => ({
@@ -520,12 +582,18 @@ export class ExpensesService {
         : undefined;
   }
 
-  /** One page, newest first, plus the totals of the whole range (live rows, not of the page). */
-  async list(tenantId: string, q: ExpenseListQuery) {
+  /**
+   * One page, newest first, plus the totals of the whole range (live rows, not of the page). Rows and
+   * totals are the actor's own unless they hold `reports.view` (`ownScope`).
+   */
+  async list(s: PosSession, q: ExpenseListQuery) {
+    const tenantId = s.tenantId;
+    const scope = ownScope(s);
     const range = resolvePeriod(q, await this.today(tenantId));
     const where = and(
       this.inRange(tenantId, range.from, range.to),
       this.statusFilter(q.status),
+      scope,
     );
     const [data, [{ total }], summary] = await Promise.all([
       this.rows()
@@ -538,7 +606,7 @@ export class ExpensesService {
         .limit(q.perPage)
         .offset((q.page - 1) * q.perPage),
       this.db.select({ total: count() }).from(expenses).where(where),
-      this.totals(tenantId, range.from, range.to),
+      this.totals(tenantId, range.from, range.to, scope),
     ]);
     return {
       period: range.period,
@@ -553,7 +621,9 @@ export class ExpensesService {
   }
 
   /** The live rows of the range for the CSV, oldest first, capped like every line report. */
-  async export(tenantId: string, q: PeriodQuery) {
+  async export(s: PosSession, q: PeriodQuery) {
+    const tenantId = s.tenantId;
+    const scope = ownScope(s);
     const range = resolvePeriod(q, await this.today(tenantId));
     const [rows, summary] = await Promise.all([
       this.rows()
@@ -561,11 +631,12 @@ export class ExpensesService {
           and(
             this.inRange(tenantId, range.from, range.to),
             isNull(expenses.voidedAt),
+            scope,
           ),
         )
         .orderBy(expenses.expenseDate, expenses.createdAt, expenses.id)
         .limit(ROW_CAP + 1),
-      this.totals(tenantId, range.from, range.to),
+      this.totals(tenantId, range.from, range.to, scope),
     ]);
     return {
       from: range.from,

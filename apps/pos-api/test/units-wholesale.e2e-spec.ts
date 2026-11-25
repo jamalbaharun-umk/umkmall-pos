@@ -95,21 +95,15 @@ describe('units and wholesale pricing (UMK-1985)', () => {
   const linesOf = (body: { lines: Line[] }) => body.lines;
 
   describe('product units and tiers', () => {
-    it('saves a dus and two tiers, reads them back on get and list, and warns (the dus is above 24 × best tier)', async () => {
+    it('saves a dus and two tiers, reads them back on get and list; the design example does not warn', async () => {
       const { store, productId, product } = await tehStore(0);
       expect(product.units).toEqual([
         { id: expect.any(String), name: 'dus', unitQty: 24, price: 78_000 },
       ]);
       expect(product.priceTiers).toEqual(TIERS);
-      // 24 × 3.200 = 76.800 < 78.000: allowed, with a warning on the unit's price.
-      expect(product.warnings).toEqual([
-        {
-          code: 'unit_price_above_wholesale',
-          field: 'units.0.price',
-          message:
-            'Harga 1 dus (Rp78.000) lebih mahal dari 24 pcs dengan harga grosir termurah (Rp76.800)',
-        },
-      ]);
+      // One dus is 24 pcs, which reach the 12+ tier: 24 × 3.300 = 79.200 ≥ 78.000, so no warning. The
+      // 48+ tier (76.800) is not the measure (owner ruling 2026-11-25).
+      expect(product.warnings).toEqual([]);
       const one = await get(store, `/catalog/products/${productId}`).expect(
         200,
       );
@@ -124,7 +118,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       });
     });
 
-    it('no warning when the unit is not above pack × best price; a product without units answers empty lists', async () => {
+    it('warns only when the unit is above pack × the price of the tier the pack reaches; a product without units answers empty lists', async () => {
       const store = await createStore();
       const categoryId = await category(store);
       const fair = await post(store, '/catalog/products', {
@@ -132,7 +126,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
         name: 'Teh Botol',
         unit: 'pcs',
         sellingPrice: 3500,
-        units: [{ name: 'dus', unitQty: 24, price: 76_800 }],
+        units: [{ name: 'dus', unitQty: 24, price: 79_200 }],
         priceTiers: TIERS,
       }).expect(201);
       expect(fair.body.warnings).toEqual([]);
@@ -148,10 +142,16 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       });
       // An update that makes the unit dearer than its content warns too.
       const dearer = await patch(store, `/catalog/products/${fair.body.id}`, {
-        units: [{ name: 'dus', unitQty: 24, price: 80_000 }],
+        units: [{ name: 'dus', unitQty: 24, price: 79_201 }],
       }).expect(200);
-      expect(dearer.body.warnings).toHaveLength(1);
-      expect(dearer.body.warnings[0].field).toBe('units.0.price');
+      expect(dearer.body.warnings).toEqual([
+        {
+          code: 'unit_price_above_wholesale',
+          field: 'units.0.price',
+          message:
+            'Harga 1 dus (Rp79.201) lebih mahal dari 24 pcs dengan harga grosir (Rp79.200)',
+        },
+      ]);
     });
 
     it('update replaces units and tiers; lists left out stay; an empty list removes them', async () => {
@@ -467,6 +467,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           normalUnitPrice: 3500,
           appliedTier: { minQty: 12, price: 3300 },
           savings: 2400,
+          manualPrice: false,
         },
         {
           name: 'Teh Botol 350ml',
@@ -479,6 +480,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           normalUnitPrice: 78_000,
           appliedTier: null,
           savings: 0,
+          manualPrice: false,
         },
       ]);
       // Tax after the discount: (117.600 − 10.000) × 11% = 11.836; total 119.436; rounding 64.
@@ -542,16 +544,79 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           unitPrice: 3000,
           lineTotal: 36_000,
           costTotal: 24_000,
-          appliedTier: { minQty: 12, price: 3300 },
+          // A manual price is not wholesale (owner ruling 2026-11-25): no tier, no savings.
+          normalUnitPrice: 3500,
+          appliedTier: null,
+          savings: 0,
+          manualPrice: true,
           priceOverriddenBy: senior.staffId,
         },
         {
           listPrice: 78_000,
+          normalUnitPrice: 78_000,
           unitPrice: 75_000,
           lineTotal: 75_000,
           costTotal: 48_000,
+          appliedTier: null,
+          savings: 0,
+          manualPrice: true,
           priceOverriddenBy: senior.staffId,
         },
+      ]);
+      const [stored] = await admin<
+        {
+          normal_unit_price: string;
+          list_price: string;
+          applied_tier_min_qty: number | null;
+        }[]
+      >`select normal_unit_price, list_price, applied_tier_min_qty from pos.sale_lines
+        where sale_id = ${overridden.body.id} and unit_qty = 1`;
+      expect(stored).toEqual({
+        normal_unit_price: '3500',
+        list_price: '3300',
+        applied_tier_min_qty: null,
+      });
+      const slip = await get(
+        senior,
+        `/sales/${overridden.body.id}/receipt`,
+      ).expect(200);
+      expect(slip.body.lines).toMatchObject([
+        {
+          unit: 'pcs',
+          unitPrice: 3000,
+          normalUnitPrice: 3500,
+          appliedTier: null,
+          savings: 0,
+          manualPrice: true,
+        },
+        {
+          unit: 'dus',
+          unitPrice: 75_000,
+          appliedTier: null,
+          manualPrice: true,
+        },
+      ]);
+
+      // Only the typed line is manual: the price sent for the pcs equals the server's tier price (so it
+      // is no override) and stays wholesale; the dus is manual, and its 24 pcs still count toward the
+      // product's total (6 + 24 = 30 pcs reach the 12+ tier).
+      const mixed = await sell(senior.auth, {
+        lines: [
+          { productId, qty: 6, price: 3300 },
+          { productId, qty: 1, unit: 'dus', price: 70_000 },
+        ],
+        paid: 89_800,
+      }).expect(201);
+      expect(mixed.body.subtotal).toBe(89_800);
+      expect(linesOf(mixed.body)).toMatchObject([
+        {
+          unitPrice: 3300,
+          appliedTier: { minQty: 12, price: 3300 },
+          savings: 1200,
+          manualPrice: false,
+          priceOverriddenBy: null,
+        },
+        { unitPrice: 70_000, appliedTier: null, savings: 0, manualPrice: true },
       ]);
     });
 

@@ -77,19 +77,20 @@ export function pricingIssues(
 }
 
 /**
- * Allowed, but worth telling the owner: a unit that costs more than its content bought loose at the best
- * price per base unit (the lowest tier price, or the base price without tiers).
+ * Allowed, but worth telling the owner: a unit that costs more than its content bought loose in one go,
+ * `unitQty ×` the price per base unit of the tier that `unitQty` itself reaches (the base price when it
+ * reaches none). Owner ruling 2026-11-25: not the cheapest tier, which a single unit may never reach.
  */
 export function pricingWarnings(p: ProductPricing): PricingWarning[] {
-  const best = Math.min(p.sellingPrice, ...p.tiers.map((t) => t.price));
   return p.units.flatMap((u, i) => {
-    const loose = u.unitQty * best;
+    const tier = tierFor(p.tiers, u.unitQty);
+    const loose = u.unitQty * (tier ? tier.price : p.sellingPrice);
     if (u.price <= loose) return [];
     return [
       {
         code: 'unit_price_above_wholesale',
         field: `units.${i}.price`,
-        message: `Harga 1 ${u.name} (${formatRupiah(u.price)}) lebih mahal dari ${u.unitQty} ${p.unit} dengan harga ${p.tiers.length ? 'grosir ' : ''}termurah (${formatRupiah(loose)})`,
+        message: `Harga 1 ${u.name} (${formatRupiah(u.price)}) lebih mahal dari ${u.unitQty} ${p.unit} dengan harga ${tier ? 'grosir' : 'satuan'} (${formatRupiah(loose)})`,
       },
     ];
   });

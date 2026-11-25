@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Badge, Button, SegmentedControl } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
+import { useCan } from '@/components/shell'
 import { loadExpenses } from './-api'
 import { asPeriod, dayLabel, groupByDate, PERIODS, periodNoun, rupiah, sourceLabel, timeLabel } from './-helpers'
 
@@ -19,6 +20,8 @@ function ExpenseList() {
   const { period } = Route.useSearch()
   const navigate = useNavigate()
   const groups = groupByDate(list.data)
+  // Without reports.view pos-api lists and totals only the expenses the actor recorded.
+  const seesAll = useCan('reports.view')
   const add = (
     <Button type="primary" color="primary" width="auto" onClick={() => void navigate({ to: '/pengeluaran/baru' })}>
       + Catat pengeluaran
@@ -36,6 +39,7 @@ function ExpenseList() {
       <Card variant="outlined" padding="medium">
         <p className="text-sm text-default-secondary">Total pengeluaran {periodNoun(period)}</p>
         <p className="text-3xl font-bold text-default-primary">{rupiah(list.summary.expenses)}</p>
+        {!seesAll && <p className="mt-1 text-sm text-default-secondary">Hanya pengeluaran yang Anda catat sendiri.</p>}
         {list.summary.supplierPayments > 0 && (
           <p className="mt-1 text-sm text-default-secondary">
             Bayar pemasok {rupiah(list.summary.supplierPayments)} dicatat terpisah, tidak dihitung di total ini.

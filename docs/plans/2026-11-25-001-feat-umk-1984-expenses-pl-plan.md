@@ -21,9 +21,12 @@ report in everyday words: sales − cost of goods = gross profit; gross profit �
   allowed and flagged (`exceedsDrawerCash`), as the design warns and does not block.
 - Source `outside` ("Di luar laci"): no drawer effect; the date defaults to today, may be in the past,
   never in the future.
-- Revenue is the existing report definition (Σ sale totals, tax included; owner confirmed). Kasbon sales
-  are revenue. Cash rounding stays outside revenue and profit. A void is a reversal dated at the void.
-- Permission `expenses.manage` for every expense route. The profit and loss report and its CSV need
+- Revenue: superseded by the owner ruling of 2026-11-25 (plan `2026-11-25-003`): tax is held for
+  remittance, so this report's revenue is Σ sale totals − tax and no profit holds tax. (Before: Σ sale
+  totals, tax included.) Kasbon sales are revenue. Cash rounding stays outside revenue and profit. A void
+  is a reversal dated at the void.
+- Permission `expenses.manage` for every expense route; alone it covers only the actor's own expenses,
+  with `reports.view` the whole log (ruling of 2026-11-25). The profit and loss report and its CSV need
   `reports.view`, like every other margin figure (review of PR 7): `expenses.manage` alone records
   expenses and sees no profit; `reports.view` alone sees the report and not the log.
 
@@ -56,23 +59,21 @@ kind `supplier_payment` through the same service, or add its own ledger kind; no
   expense's cash already moved: void it and record it again). A voided expense is not edited (409).
 - `POST /expenses/:id/void` `{ reason? }`: the soft delete. Repeating it changes nothing.
 - `GET /reports/profit-loss?period=…|from&to` and `/csv` (`reports.view`). The response carries
-  `taxIncluded: true` and `labels`; gross and net profit are labelled "(termasuk pajak)" on screen and in
-  the CSV, so the tax-inclusive basis is explicit.
+  `taxIncluded: false` and `labels`; revenue, gross and net profit are labelled "(tanpa pajak)" on screen
+  and in the CSV (ruling of 2026-11-25; before: `true`, "(termasuk pajak)").
 
 ## Decisions (documented, tested)
 - **Void of a drawer expense.** The expense row is locked, then its shift. Shift still open → one
   `expense_reversal` cash-in entry in THAT shift (whoever voids), so its expected cash is back where it was:
-  `drawerReversed: true`. Shift already closed → no ledger entry anywhere: that shift was counted with the
-  expense in it and never changes, and no other drawer received money: `drawerReversed: false`. The expense
-  leaves the totals and the profit and loss report either way. (The alternative, a cash-in in the voiding
-  actor's current shift, would raise a drawer that holds no such cash; open owner question below.)
+  `drawerReversed: true`. Shift already closed → that shift was counted with the expense in it and never
+  changes, and no drawer receives money: `drawerReversed: false`; the cash goes into the store cash, one
+  `expense_void` entry by whoever voids (ruling of 2026-11-25; before: nothing was written). The expense
+  leaves the totals and the profit and loss report either way.
 - **A voided expense is removed, not reversed by date.** An expense's day is the date the user chose, so a
   past period can already change by backdating; a void takes the row out of every total of its date.
-- **Gross profit in this report = revenue − cost**, revenue including tax, as the approved design shows
-  ("Hasil jualan − Modal barang terjual = Untung kotor"). The other reports' `grossProfit` is
-  revenue − tax − cost. The response carries `tax` so a screen can show it; with tax 0 both agree. Whether
-  the two should be aligned is an OPEN OWNER QUESTION (below); until it is answered this report stays as
-  built and its labels say "termasuk pajak".
+- **Gross profit in this report = revenue − cost**, as the approved design shows ("Hasil jualan − Modal
+  barang terjual = Untung kotor"), with revenue WITHOUT tax (ruling of 2026-11-25): the same number as the
+  other reports' `grossProfit` (their revenue − tax − cost). The response carries `tax` as its own line.
 - **Previous period.** `period` mode compares like the dashboard: sales up to the same moment one period
   earlier (yesterday / 7 days / 1 month back), expenses through the same date. `from`/`to` mode compares
   whole days with the span of the same length just before `from`.
@@ -147,11 +148,8 @@ kind `supplier_payment` through the same service, or add its own ledger kind; no
 - Expenses paid from the store cash ("kas toko", UMK-1963 follow-up): a third source.
 - Shift close screen line "Pengeluaran dari laci" = `expenses − expenseReversals` (UI).
 
-## Open owner questions (not decided here)
-1. Gross profit and tax: this report keeps tax inside revenue, gross and net profit (the owner's settled
-   decision is that P&L revenue includes tax), and labels them so; the dashboard and sales reports subtract
-   tax. Should the dashboard and sales reports match this report, or the other way round?
-2. Void of a drawer expense whose shift is closed: stays as built (no drawer changes, the closed shift
-   keeps its count). Or should the cash be entered into the drawer open now?
-3. Own-rows scope: should a holder of `expenses.manage` who is not the owner see, edit and void only the
-   expenses they recorded? Not built: `expenses.manage` covers the store's whole log.
+## Owner questions: answered 2026-11-25 (built in plan `2026-11-25-003`)
+1. Gross profit and tax: gross profit excludes tax everywhere; this report follows the dashboard.
+2. Void of a drawer expense whose shift is closed: the cash goes into the store cash; the closed shift
+   keeps its count.
+3. Own-rows scope: `expenses.manage` alone covers the actor's own expenses; `reports.view` the whole log.

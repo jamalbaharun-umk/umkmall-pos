@@ -51,9 +51,11 @@ function ExpensePage() {
               Dibatalkan oleh {e.voidedByName ?? 'staf'}, {dateTime(e.voidedAt!)}.
               {e.voidReason ? ` Alasan: ${e.voidReason}.` : ''}
               {e.source === 'drawer' &&
-                (e.drawerReversed
+                (e.cashReturnedTo === 'drawer'
                   ? ' Uang dikembalikan ke hitungan laci shift itu.'
-                  : ' Shift itu sudah ditutup, hitungannya tidak berubah.')}
+                  : e.cashReturnedTo === 'store_cash'
+                    ? ' Shift itu sudah ditutup, jadi uangnya dicatat masuk ke kas toko.'
+                    : ' Shift itu sudah ditutup, hitungannya tidak berubah.')}
             </Alert>
           )}
           {!voided && <VoidAction expense={e} />}

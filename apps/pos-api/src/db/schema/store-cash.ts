@@ -26,10 +26,13 @@ export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
  *   a deposit hands it over.
  * - collector_deposit (transfer): ref_id = pos.store_cash_deposits.id, a collector's cash handed over
  *   to the store safe (UMK-1924 U3). Written only by src/store-cash/store-cash-deposits.service.ts.
+ * - expense_void (in): ref_id = pos.expenses.id, a voided drawer expense whose shift was already closed:
+ *   the cash given back goes to the store, the closed shift never changes (owner ruling 2026-11-25).
  */
 export const STORE_CASH_KINDS = [
   'receivable_payment',
   'collector_deposit',
+  'expense_void',
 ] as const;
 
 export const storeCashEntries = pos

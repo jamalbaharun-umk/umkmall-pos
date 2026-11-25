@@ -23,16 +23,20 @@ computes a price: the server picks the unit price and the tier.
   line, as today. A void (and a cancelled unpaid sale) puts back exactly the movements the sale drew, so it
   restores base quantities with no change to the void code.
 - A client price counts only with `sales.price_override` (unchanged); the override replaces the price of
-  that line's unit. Tax after discounts and cash rounding are unchanged.
+  that line's unit. Owner ruling 2026-11-25: an overridden line is a manual price, not wholesale
+  (`appliedTier` null, `savings` 0, `manualPrice` true; `normalUnitPrice` and `listPrice` stay the
+  server's); its base quantity still counts toward the product's total. Tax after discounts and cash
+  rounding are unchanged.
 - **Validation at product save (422):** tier `minQty` integer ≥ 2 and strictly increasing; tier prices
   strictly decreasing and never above the base price; unit `unitQty` integer 2..10.000; unit price integer
   > 0; unit names unique per product ignoring case, and different from the base unit name. The rules are
   checked against the stored product on a partial update (lowering `sellingPrice` below a stored tier is
   refused on `sellingPrice`).
-- **Warning, not error:** a unit whose price is above `unitQty × best price per base unit` (the lowest tier
-  price, or the base price when there are no tiers). Create and update answer `warnings: [{ code, field,
-  message }]` (empty when none). Note: the design example itself warns (78.000 > 24 × 3.200 = 76.800): two
-  dus cost more than 48 loose pcs (QA gap G-13). The rule is the owner's wording, taken literally.
+- **Warning, not error** (owner ruling 2026-11-25, replacing "the cheapest tier"): a unit whose price is
+  above `unitQty × the price per base unit of the tier that unitQty itself reaches` (the tier for a total of
+  `unitQty` base units; the base price when it reaches none). Create and update answer `warnings: [{ code,
+  field, message }]` (empty when none). The design example does not warn: 24 pcs reach the 12+ tier,
+  24 × 3.300 = 79.200 ≥ 78.000. That two dus cost more than 48 loose pcs (QA gap G-13) is accepted.
 - Purchases, stock opname and opening stock stay in base units.
 
 ## Schema (migration `0026_units_wholesale`)
@@ -74,7 +78,8 @@ computes a price: the server picks the unit price and the tier.
 - [test] Validation 422 with a field: pack size 0, 1, negative, decimal; duplicate unit name (any case);
   unit named like the base unit; tiers with the same or descending `minQty`; tier price not decreasing;
   tier price above the base price; lowering `sellingPrice` below a stored tier.
-- [test] `warnings` on create and update when a unit price is above pack × best price; none otherwise.
+- [test] `warnings` on create and update when a unit price is above pack × the price of the tier the pack
+  reaches; none otherwise (none for the design example).
 - [test] Tier boundaries: 11 pcs → 3.500, 12 → 3.300, 47 → 3.300, 48 → 3.200 (pure pricing spec and e2e).
 - [test] Owner example: 1 dus + 6 pcs → 19.800 + 78.000 = 97.800; 6 pcs alone → 21.000; 11 pcs + 1 dus →
   114.300; a dus line is never tiered (2 dus = 156.000).

@@ -91,6 +91,19 @@ describe('expense log and profit and loss (UMK-1984)', () => {
     >`
       select direction, kind, amount, ref_id from pos.shift_cash_entries
       where tenant_id = ${tenantId} order by created_at, id`;
+  const storeCash = (tenantId: string) =>
+    admin<
+      {
+        direction: string;
+        kind: string;
+        amount: string;
+        ref_id: string;
+        actor_id: string;
+        note: string | null;
+      }[]
+    >`
+      select direction, kind, amount, ref_id, actor_id, note from pos.store_cash_entries
+      where tenant_id = ${tenantId} order by created_at, id`;
   const rowCount = async (tenantId: string) =>
     (
       await admin<{ n: number }[]>`
@@ -613,6 +626,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         voidedByName: 'Pemilik',
         voidReason: 'Salah catat',
         drawerReversed: true,
+        cashReturnedTo: 'drawer',
       });
       expect(voided.body.voidedAt).toEqual(expect.any(String));
       expect(await current(rina.auth)).toMatchObject({
@@ -640,15 +654,36 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           ref_id: e.id,
         },
       ]);
+      // The drawer got it back, so the store cash did not.
+      expect(await storeCash(s.tenantId)).toEqual([]);
       expect((await get(s.auth, '/expenses').expect(200)).body).toMatchObject({
         total: 0,
         summary: { count: 0, expenses: 0, fromDrawer: 0 },
       });
       await post(s.auth, `/expenses/${e.id}/void`, { foo: 1 }).expect(422);
+      // An expense paid outside the drawer returns no cash anywhere.
+      const out = await spend(s.auth, {
+        amount: 700,
+        category: 'lainnya',
+        source: 'outside',
+      }).expect(201);
+      const gone = await post(s.auth, `/expenses/${out.body.id}/void`).expect(
+        200,
+      );
+      expect(gone.body).toMatchObject({
+        drawerReversed: null,
+        cashReturnedTo: null,
+      });
+      expect(await storeCash(s.tenantId)).toEqual([]);
     });
 
-    it('void of a drawer expense of a closed shift changes no drawer: the closed shift stays as counted', async () => {
+    it('void of a drawer expense of a closed shift: the cash goes into the store cash, by whoever voids, once; no drawer changes', async () => {
       const s = await createStore();
+      const other = await createStore();
+      const keeper = await createCashier(app, s, [
+        'expenses.manage',
+        'reports.view',
+      ]);
       const first = (await open(s.auth, 100_000)).body;
       const e = (
         await spend(s.auth, {
@@ -662,11 +697,53 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         select * from pos.shifts where id = ${first.id}`;
       await open(s.auth, 70_000);
 
-      const voided = await post(s.auth, `/expenses/${e.id}/void`).expect(200);
+      // Another store cannot void it and gets no cash for it.
+      await post(other.auth, `/expenses/${e.id}/void`).expect(404);
+      expect(await storeCash(s.tenantId)).toEqual([]);
+      const voided = await post(keeper.auth, `/expenses/${e.id}/void`, {
+        reason: 'Salah catat',
+      }).expect(200);
       expect(voided.body).toMatchObject({
         drawerReversed: false,
-        voidReason: null,
+        cashReturnedTo: 'store_cash',
+        voidReason: 'Salah catat',
+        voidedById: keeper.staffId,
+        voidedByName: 'Sari',
       });
+      // One cash-in of the store, for the expense, by the cashier who voided.
+      const entry = {
+        direction: 'in',
+        kind: 'expense_void',
+        amount: '30000',
+        ref_id: e.id,
+        actor_id: keeper.staffId,
+        note: 'Salah catat',
+      };
+      expect(await storeCash(s.tenantId)).toEqual([entry]);
+      // Again, by anyone: the same answer, nothing more written.
+      const again = await post(s.auth, `/expenses/${e.id}/void`).expect(200);
+      expect(again.body).toEqual(voided.body);
+      expect(await storeCash(s.tenantId)).toEqual([entry]);
+      const kas = await get(s.auth, '/store-cash').expect(200);
+      expect(kas.body).toMatchObject({
+        total: 1,
+        summary: { cashIn: 30_000, cashOut: 0, balance: 30_000 },
+        data: [
+          {
+            direction: 'in',
+            kind: 'expense_void',
+            amount: 30_000,
+            refId: e.id,
+            actorId: keeper.staffId,
+            actorName: 'Sari',
+          },
+        ],
+      });
+      // The other store's cash holds nothing of it.
+      expect(await storeCash(other.tenantId)).toEqual([]);
+      expect(
+        (await get(other.auth, '/store-cash').expect(200)).body,
+      ).toMatchObject({ total: 0, summary: { balance: 0 } });
       expect(
         await admin`select * from pos.shifts where id = ${first.id}`,
       ).toEqual(before);
@@ -737,7 +814,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         category: 'gaji',
         source: 'outside',
       }).expect(201);
-      await get(keeper.auth, '/expenses').expect(200);
+      // Their own expense only: the owner's is not theirs to see (scope test below).
+      const seen = await get(keeper.auth, '/expenses').expect(200);
+      expect(seen.body.data).toMatchObject([{ id: mine.body.id }]);
+      expect(seen.body.data).toHaveLength(1);
+      await get(keeper.auth, `/expenses/${e.id}`).expect(404);
       await get(keeper.auth, '/expenses/csv').expect(200);
       await patch(keeper.auth, `/expenses/${mine.body.id}`, {
         note: 'x',
@@ -750,6 +831,174 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       const plain = await createCashier(app, s, ['sales.create']);
       await get(plain.auth, '/expenses').expect(403);
       await get(plain.auth, '/reports/profit-loss').expect(403);
+    });
+
+    it('expenses.manage alone works on the actor`s own expenses only; reports.view and the owner on all', async () => {
+      const s = await createStore();
+      const rina = await createCashier(app, s, [
+        'sales.create',
+        'expenses.manage',
+      ]);
+      const budi = await createCashier(app, s, ['expenses.manage']);
+      const boss = await createCashier(app, s, [
+        'expenses.manage',
+        'reports.view',
+      ]);
+      const out = async (auth: string, amount: number, category: string) =>
+        (await spend(auth, { amount, category, source: 'outside' }).expect(201))
+          .body as { id: string };
+      const o = await out(s.auth, 1000, 'sewa');
+      const rinaKey = randomUUID();
+      const r = (
+        await spend(
+          rina.auth,
+          { amount: 2000, category: 'gaji', source: 'outside' },
+          rinaKey,
+        ).expect(201)
+      ).body as { id: string };
+      await open(rina.auth, 10_000);
+      const rd = (
+        await spend(rina.auth, {
+          amount: 500,
+          category: 'transport',
+          source: 'drawer',
+        }).expect(201)
+      ).body as { id: string };
+      const b = await out(budi.auth, 4000, 'bayar_pemasok');
+      const b2 = await out(budi.auth, 300, 'lainnya');
+      const ids = (body: { data: { id: string }[] }) =>
+        body.data.map((x) => x.id).sort();
+      const sorted = (...xs: { id: string }[]) => xs.map((x) => x.id).sort();
+
+      // List and summary: each cashier's own rows and own totals.
+      type Listed = {
+        data: { id: string }[];
+        summary: { byCategory: { category: string }[] };
+      };
+      const rinaList = (await get(rina.auth, '/expenses').expect(200))
+        .body as Listed;
+      expect(ids(rinaList)).toEqual(sorted(r, rd));
+      expect(rinaList).toMatchObject({
+        total: 2,
+        summary: {
+          count: 2,
+          expenses: 2500,
+          supplierPayments: 0,
+          fromDrawer: 500,
+          outside: 2000,
+        },
+      });
+      expect(rinaList.summary.byCategory.map((c) => c.category)).toEqual([
+        'gaji',
+        'transport',
+      ]);
+      const budiList = (await get(budi.auth, '/expenses').expect(200)).body;
+      expect(ids(budiList)).toEqual(sorted(b, b2));
+      expect(budiList).toMatchObject({
+        total: 2,
+        summary: {
+          count: 2,
+          expenses: 300,
+          supplierPayments: 4000,
+          fromDrawer: 0,
+          outside: 4300,
+        },
+      });
+      // CSV: the same scope, rows and totals.
+      const csv = (await get(rina.auth, '/expenses/csv').expect(200)).text;
+      expect(csv.split('\r\n')).toEqual([
+        'Tanggal,Kategori,Sumber uang,Catatan,Dicatat oleh,Jumlah',
+        `${day()},Gaji,Di luar laci,,Sari,2000`,
+        `${day()},Transport,Laci kasir,,Sari,500`,
+        'Total pengeluaran,,,,,2500',
+        'Total bayar pemasok (bukan pengeluaran),,,,,0',
+        '',
+      ]);
+
+      // Someone else's expense (another cashier's, the owner's) is not found: read, update, void.
+      for (const other of [b, o]) {
+        await get(rina.auth, `/expenses/${other.id}`).expect(404);
+        await patch(rina.auth, `/expenses/${other.id}`, {
+          note: 'bukan punya saya',
+        }).expect(404);
+        await post(rina.auth, `/expenses/${other.id}/void`, {
+          reason: 'x',
+        }).expect(404);
+        expect(
+          (await get(s.auth, `/expenses/${other.id}`).expect(200)).body,
+        ).toMatchObject({ note: null, voidedAt: null, edits: [] });
+      }
+      await get(budi.auth, `/expenses/${rd.id}`).expect(404);
+      await post(budi.auth, `/expenses/${rd.id}/void`).expect(404);
+      expect(await current(rina.auth)).toMatchObject({
+        expectedCash: 9500,
+        expenseReversals: 0,
+      });
+      // Another actor's Idempotency-Key is not a replay that would show their expense.
+      const stolen = await spend(
+        budi.auth,
+        { amount: 2000, category: 'gaji', source: 'outside' },
+        rinaKey,
+      ).expect(422);
+      expect(stolen.body.errors).toEqual({
+        idempotencyKey: 'Kunci ini sudah dipakai untuk pengeluaran lain',
+      });
+      expect(await rowCount(s.tenantId)).toBe(5);
+
+      // Their own: read, update, void.
+      await get(rina.auth, `/expenses/${r.id}`).expect(200);
+      await patch(rina.auth, `/expenses/${r.id}`, { note: 'gaji Budi' }).expect(
+        200,
+      );
+      await post(rina.auth, `/expenses/${r.id}/void`).expect(200);
+      const all = (await get(rina.auth, '/expenses?status=all').expect(200))
+        .body;
+      expect(ids(all)).toEqual(sorted(r, rd));
+      expect(all.summary).toMatchObject({ count: 1, expenses: 500 });
+
+      // reports.view (a cashier) and the owner: the whole log, and they may change anyone's.
+      for (const viewer of [boss, s]) {
+        const list = (await get(viewer.auth, '/expenses').expect(200)).body;
+        expect(ids(list)).toEqual(sorted(o, rd, b, b2));
+        expect(list).toMatchObject({
+          total: 4,
+          summary: {
+            count: 4,
+            expenses: 1800,
+            supplierPayments: 4000,
+            fromDrawer: 500,
+            outside: 5300,
+          },
+        });
+        await get(viewer.auth, `/expenses/${r.id}`).expect(200);
+        expect(
+          (await get(viewer.auth, '/expenses/csv').expect(200)).text,
+        ).toContain('Total pengeluaran,,,,,1800');
+      }
+      const edited = await patch(boss.auth, `/expenses/${b2.id}`, {
+        note: 'kantong',
+      }).expect(200);
+      expect(edited.body.edits).toMatchObject([{ actorId: boss.staffId }]);
+      await post(boss.auth, `/expenses/${rd.id}/void`).expect(200);
+      await post(s.auth, `/expenses/${b.id}/void`).expect(200);
+      expect(await current(rina.auth)).toMatchObject({ expectedCash: 10_000 });
+      // The profit and loss report is the store's, whoever recorded the expense.
+      expect(
+        (await get(boss.auth, '/reports/profit-loss').expect(200)).body.current
+          .expenses,
+      ).toBe(1300);
+
+      // Another store's cashier with expenses.manage alone: 404 too, and an empty list.
+      const elsewhere = await createStore();
+      const stranger = await createCashier(app, elsewhere, ['expenses.manage']);
+      await get(stranger.auth, `/expenses/${b2.id}`).expect(404);
+      await patch(stranger.auth, `/expenses/${b2.id}`, { note: 'x' }).expect(
+        404,
+      );
+      await post(stranger.auth, `/expenses/${b2.id}/void`).expect(404);
+      expect(
+        (await get(stranger.auth, '/expenses').expect(200)).body,
+      ).toMatchObject({ total: 0, data: [], summary: { count: 0 } });
     });
 
     it('cross-tenant: store B gets 404 on read, update and void of store A`s expense and sees none of it', async () => {
@@ -794,7 +1043,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
   describe('edit history', () => {
     it('keeps before and after of every edit, who and when; an edit that changes nothing leaves no trace', async () => {
       const s = await createStore();
-      const keeper = await createCashier(app, s, ['expenses.manage']);
+      // reports.view: this cashier edits an expense the owner recorded (the whole log, not only their own).
+      const keeper = await createCashier(app, s, [
+        'expenses.manage',
+        'reports.view',
+      ]);
       const e = (
         await spend(s.auth, {
           amount: 5000,
@@ -968,8 +1221,20 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         expectedCash: 70_000,
         difference: 0,
       });
-      expect(voided.body.drawerReversed).toBe(false);
+      expect(voided.body).toMatchObject({
+        drawerReversed: false,
+        cashReturnedTo: 'store_cash',
+      });
       expect(await ledger(s.tenantId)).toHaveLength(1);
+      // The shift was counted without it, so the cash is the store's.
+      expect(await storeCash(s.tenantId)).toMatchObject([
+        {
+          direction: 'in',
+          kind: 'expense_void',
+          amount: '30000',
+          ref_id: e.id,
+        },
+      ]);
       const after = await get(s.auth, `/shifts/${e.shiftId}`).expect(200);
       expect(after.body).toMatchObject({
         expectedCash: 70_000,
@@ -1126,10 +1391,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
      *   C Permen 1.250 (cost 700) + tax, cash      total  1.375  cost    700  tax   125  rounding 25
      *   D Kopi on kasbon + tax                     total  8.800  cost  4.000  tax   800
      *   E 2 × Kopi + tax, voided the same day      nets to nothing (one void)
-     * revenue 39.475, tax 2.225, cost 20.700, gross profit 18.775, rounding 25.
+     * Sale totals 39.475, of which tax 2.225 (held for remittance, in no profit: owner ruling
+     * 2026-11-25) → revenue 37.250, cost 20.700, gross profit 16.550, rounding 25.
      * Expenses: listrik 12.000 (drawer) + transport 3.000 + sewa 2.000 = 17.000; a supplier payment of
-     * 4.000 and a voided 9.999 are not counted. Net profit 1.775.
-     * Yesterday: sale F (Teh + tax: 5.500, cost 3.000) and gaji 1.000 → net 1.500.
+     * 4.000 and a voided 9.999 are not counted. Net profit −450.
+     * Yesterday: sale F (Teh + tax: 5.500, cost 3.000) → revenue 5.000, gross 2.000; gaji 1.000 → net 1.000.
      */
     async function knownStore() {
       const s = await createStore();
@@ -1211,12 +1477,12 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       to: day(),
       salesCount: 4,
       voidCount: 1,
-      revenue: 39_475,
+      revenue: 37_250,
       tax: 2225,
       cost: 20_700,
-      grossProfit: 18_775,
+      grossProfit: 16_550,
       expenses: 17_000,
-      netProfit: 1775,
+      netProfit: -450,
       rounding: 25,
       supplierPayments: 4000,
     };
@@ -1225,17 +1491,17 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       to: day(-1),
       salesCount: 1,
       voidCount: 0,
-      revenue: 5500,
+      revenue: 5000,
       tax: 500,
       cost: 3000,
-      grossProfit: 2500,
+      grossProfit: 2000,
       expenses: 1000,
-      netProfit: 1500,
+      netProfit: 1000,
       rounding: 0,
       supplierPayments: 0,
     };
 
-    it('today against yesterday: revenue with tax, stored cost, void reversed, rounding outside, supplier payments out', async () => {
+    it('today against yesterday: revenue and profit without tax, stored cost, void reversed, rounding outside, supplier payments out', async () => {
       const { s } = await knownStore();
       const res = await get(s.auth, '/reports/profit-loss').expect(200);
       expect(res.body).toEqual({
@@ -1243,21 +1509,21 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         timezone: 'Asia/Jakarta',
         from: day(),
         to: day(),
-        // The tax-inclusive basis is said out loud (the dashboard's gross profit takes tax out).
-        taxIncluded: true,
+        // Tax is in no profit, and the labels say so (owner ruling 2026-11-25).
+        taxIncluded: false,
         labels: {
-          revenue: 'Hasil jualan (termasuk pajak)',
+          revenue: 'Hasil jualan (tanpa pajak)',
           cost: 'Modal barang terjual',
-          grossProfit: 'Untung kotor (termasuk pajak)',
+          grossProfit: 'Untung kotor (tanpa pajak)',
           expenses: 'Pengeluaran',
-          netProfit: 'Untung bersih (termasuk pajak)',
-          tax: 'Pajak (termasuk dalam hasil jualan)',
+          netProfit: 'Untung bersih (tanpa pajak)',
+          tax: 'Pajak (titipan, di luar hasil jualan)',
           rounding: 'Pembulatan tunai (di luar hasil jualan)',
           supplierPayments: 'Bayar pemasok (bukan pengeluaran)',
         },
         current: TODAY,
         previous: YESTERDAY,
-        netProfitChange: 275,
+        netProfitChange: -1450,
         topExpenses: [
           {
             category: 'listrik_air',
@@ -1269,17 +1535,31 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           { category: 'sewa', label: 'Sewa', total: 2000, count: 1 },
         ],
       });
-      // The same sales as the dashboard, which takes tax out of its gross profit.
+      // One gross profit everywhere: the dashboard's and the sales report's are this report's. Their
+      // `revenue` is Σ sale totals (tax inside); this report's is that minus tax.
       const dash = await get(s.auth, '/reports/dashboard?period=today').expect(
         200,
       );
       expect(dash.body.current).toMatchObject({
-        revenue: TODAY.revenue,
+        revenue: TODAY.revenue + TODAY.tax,
         cost: TODAY.cost,
         tax: TODAY.tax,
-        grossProfit: TODAY.grossProfit - TODAY.tax,
+        grossProfit: TODAY.grossProfit,
         rounding: 25,
       });
+      const salesReport = await get(
+        s.auth,
+        `/reports/sales?from=${day()}&to=${day()}`,
+      ).expect(200);
+      expect(salesReport.body.totals).toMatchObject({
+        revenue: 39_475,
+        tax: 2225,
+        grossProfit: TODAY.grossProfit,
+      });
+      // The sum on the screen holds without tax.
+      const c = res.body.current;
+      expect(c.revenue - c.cost).toBe(c.grossProfit);
+      expect(c.grossProfit - c.expenses).toBe(c.netProfit);
       // The drawer: 100.000 + cash sales (15.000 + 14.300 + 1.400 + 17.600 + 5.500) − void 17.600 − 16.000.
       expect(await current(s.auth)).toMatchObject({
         expectedCash: 120_200,
@@ -1292,12 +1572,12 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       const both = {
         salesCount: 5,
         voidCount: 1,
-        revenue: 44_975,
+        revenue: 42_250,
         tax: 2725,
         cost: 23_700,
-        grossProfit: 21_275,
+        grossProfit: 18_550,
         expenses: 18_000,
-        netProfit: 3275,
+        netProfit: 550,
         rounding: 25,
         supplierPayments: 4000,
       };
@@ -1318,7 +1598,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           expenses: 0,
           netProfit: 0,
         },
-        netProfitChange: 3275,
+        netProfitChange: 550,
       });
       const only = await get(
         s.auth,
@@ -1415,12 +1695,12 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       );
       expect(pl.text.split('\r\n')).toEqual([
         `Keterangan,${day()} s.d. ${day()},${day(-1)} s.d. ${day(-1)}`,
-        'Hasil jualan (termasuk pajak),39475,5500',
+        'Hasil jualan (tanpa pajak),37250,5000',
         'Modal barang terjual,20700,3000',
-        'Untung kotor (termasuk pajak),18775,2500',
+        'Untung kotor (tanpa pajak),16550,2000',
         'Pengeluaran,17100,1000',
-        'Untung bersih (termasuk pajak),1675,1500',
-        'Pajak (termasuk dalam hasil jualan),2225,500',
+        'Untung bersih (tanpa pajak),-550,1000',
+        '"Pajak (titipan, di luar hasil jualan)",2225,500',
         'Pembulatan tunai (di luar hasil jualan),25,0',
         'Bayar pemasok (bukan pengeluaran),4000,0',
         'Pengeluaran: Listrik & air,12000,',

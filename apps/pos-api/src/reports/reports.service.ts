@@ -32,7 +32,8 @@ const cashierName = (r: Row) =>
 /**
  * The one place a metric is defined (Lakasir swapped revenue and profit, flaw 5).
  * revenue = Σ sale totals = grossSales − discount − voucher + tax (paid by customers);
- * grossProfit = revenue − tax − cost (tax is owed, not earned; equals revenue − cost at tax 0).
+ * grossProfit = revenue − tax − cost (tax is owed, not earned; equals revenue − cost at tax 0). Owner
+ * ruling 2026-11-25: this holds everywhere, the profit and loss report included.
  * rounding = Σ cash rounding (UMK-1993): its own line, outside revenue and gross profit;
  * revenue + rounding is what customers owed.
  */

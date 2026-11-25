@@ -205,6 +205,13 @@ export const soldQtyText = (l: Pick<SoldLine, 'qty' | 'unit' | 'unitPrice'>) => 
 export const soldWholesaleNote = (l: Pick<SoldLine, 'normalUnitPrice' | 'appliedTier' | 'savings'>) =>
   l.appliedTier ? `Harga grosir (normal ${rp(l.normalUnitPrice)}, hemat ${rp(l.savings)})` : null
 
+/**
+ * The note under a sold line: the wholesale note, or "Harga manual" when the price was typed by someone
+ * allowed to (owner ruling 2026-11-25: a manual price is never shown as wholesale); null for a plain line.
+ */
+export const soldPriceNote = (l: Pick<SoldLine, 'normalUnitPrice' | 'appliedTier' | 'savings'> & { manualPrice?: boolean }) =>
+  l.manualPrice ? `Harga manual (normal ${rp(l.normalUnitPrice)})` : soldWholesaleNote(l)
+
 export type QuoteState = 'idle' | 'loading' | 'error'
 
 /**
