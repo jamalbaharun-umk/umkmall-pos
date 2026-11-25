@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
@@ -19,7 +20,31 @@ import type { PosSession } from '../tenancy/session';
  * lands before the count or is refused, and a closed shift never changes. The shift is the actor's own
  * (`recordShiftCash`, `recordShiftCashIfOpen`) or, for a correction of one of its entries, the shift
  * that entry is in (`recordShiftCashInShift`, UMK-1984).
+ *
+ * Cash leaves a drawer only for a session kind on `DRAWER_CASH_OUT_ACTOR_KINDS` (owner ruling: an agent
+ * never takes cash out of a drawer). Every writer below checks it before its first query.
  */
+
+/**
+ * The session kinds that may take cash OUT of a drawer: people at the till. An allow-list, so a kind
+ * added to tenancy/session.ts later (an agent session, UMK-1983) is refused until it is added here on
+ * purpose. Never add an agent kind.
+ */
+export const DRAWER_CASH_OUT_ACTOR_KINDS: readonly string[] = [
+  'owner',
+  'cashier',
+];
+
+/** 403 when `kind` may not move cash in `direction`; cash in is open to every session kind. */
+export function assertMayMoveDrawerCash(
+  kind: string,
+  direction: (typeof CASH_DIRECTIONS)[number],
+): void {
+  if (direction === 'out' && !DRAWER_CASH_OUT_ACTOR_KINDS.includes(kind))
+    throw new ForbiddenException(
+      'Uang keluar dari laci hanya bisa dicatat dari POS oleh kasir atau pemilik',
+    );
+}
 
 export type CashEntry = {
   direction: (typeof CASH_DIRECTIONS)[number];
@@ -42,6 +67,10 @@ export type CashTotals = {
   expenses: number;
   /** Voided drawer expenses put back while the shift was open (part of cashIn). */
   expenseReversals: number;
+  /** Cash put into the drawer by hand (part of cashIn, UMK-1924 U3). */
+  manualIn: number;
+  /** Cash taken out of the drawer by hand (part of cashOut). */
+  manualOut: number;
 };
 
 export const NO_CASH: CashTotals = {
@@ -51,6 +80,8 @@ export const NO_CASH: CashTotals = {
   voidRefunds: 0,
   expenses: 0,
   expenseReversals: 0,
+  manualIn: 0,
+  manualOut: 0,
 };
 
 /** The actor's open shift, row-locked until the transaction ends; null when none is open. */
@@ -101,6 +132,7 @@ export async function recordShiftCashIfOpen(
   s: PosSession,
   entry: CashEntry,
 ): Promise<string | null> {
+  assertMayMoveDrawerCash(s.kind, entry.direction);
   const shift = await lockOpenShift(tx, s);
   if (!shift) return null;
   await insertEntry(tx, s, shift.id, entry);
@@ -131,6 +163,7 @@ export async function recordShiftCashInShift(
   shiftId: string,
   entry: CashEntry,
 ): Promise<boolean> {
+  assertMayMoveDrawerCash(s.kind, entry.direction);
   const [shift] = await tx
     .select({ id: shifts.id })
     .from(shifts)
@@ -172,6 +205,8 @@ export async function cashTotals(
       expenseReversals: sum(
         sql`${e.direction} = 'in' and ${e.kind} = 'expense_reversal'`,
       ),
+      manualIn: sum(sql`${e.direction} = 'in' and ${e.kind} = 'manual_in'`),
+      manualOut: sum(sql`${e.direction} = 'out' and ${e.kind} = 'manual_out'`),
     })
     .from(e)
     .where(and(eq(e.tenantId, tenantId), inArray(e.shiftId, shiftIds)))
@@ -186,6 +221,8 @@ export async function cashTotals(
         voidRefunds: Number(r.voidRefunds),
         expenses: Number(r.expenses),
         expenseReversals: Number(r.expenseReversals),
+        manualIn: Number(r.manualIn),
+        manualOut: Number(r.manualOut),
       },
     ]),
   );

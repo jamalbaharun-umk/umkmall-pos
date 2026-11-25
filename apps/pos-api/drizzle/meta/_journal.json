@@ -190,6 +190,13 @@
       "when": 1795593282140,
       "tag": "0026_units_wholesale",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795597418784,
+      "tag": "0027_manual_cash_entries",
+      "breakpoints": true
     }
   ]
 }

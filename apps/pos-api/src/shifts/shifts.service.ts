@@ -18,6 +18,8 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
   FINAL_SALE_STATUSES,
+  MANUAL_CASH_REASON_LABELS,
+  manualCashEntries,
   paymentMethods,
   sales,
   shiftCashEntries,
@@ -249,12 +251,29 @@ export class ShiftsService {
           amount: e.amount,
           refId: e.refId,
           note: e.note,
+          // Manual cash in/out only (UMK-1924 U3): why the cash moved.
+          reason: manualCashEntries.reason,
           createdAt: e.createdAt,
         })
         .from(e)
+        .leftJoin(
+          manualCashEntries,
+          and(
+            eq(manualCashEntries.tenantId, e.tenantId),
+            eq(manualCashEntries.id, e.refId),
+            inArray(e.kind, ['manual_in', 'manual_out']),
+          ),
+        )
         .where(and(eq(e.tenantId, s.tenantId), eq(e.shiftId, id)))
         .orderBy(asc(e.createdAt), asc(e.id)),
     ]);
-    return { ...withDifference(row), ...cash, cashEntries };
+    return {
+      ...withDifference(row),
+      ...cash,
+      cashEntries: cashEntries.map((c) => ({
+        ...c,
+        reasonLabel: c.reason ? MANUAL_CASH_REASON_LABELS[c.reason] : null,
+      })),
+    };
   }
 }
