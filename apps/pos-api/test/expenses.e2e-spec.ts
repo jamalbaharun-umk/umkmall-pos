@@ -1126,10 +1126,11 @@ describe('expense log and profit and loss (UMK-1984)', () => {
      *   C Permen 1.250 (cost 700) + tax, cash      total  1.375  cost    700  tax   125  rounding 25
      *   D Kopi on kasbon + tax                     total  8.800  cost  4.000  tax   800
      *   E 2 × Kopi + tax, voided the same day      nets to nothing (one void)
-     * revenue 39.475, tax 2.225, cost 20.700, gross profit 18.775, rounding 25.
+     * Sale totals 39.475, of which tax 2.225 (held for remittance, in no profit: owner ruling
+     * 2026-11-25) → revenue 37.250, cost 20.700, gross profit 16.550, rounding 25.
      * Expenses: listrik 12.000 (drawer) + transport 3.000 + sewa 2.000 = 17.000; a supplier payment of
-     * 4.000 and a voided 9.999 are not counted. Net profit 1.775.
-     * Yesterday: sale F (Teh + tax: 5.500, cost 3.000) and gaji 1.000 → net 1.500.
+     * 4.000 and a voided 9.999 are not counted. Net profit −450.
+     * Yesterday: sale F (Teh + tax: 5.500, cost 3.000) → revenue 5.000, gross 2.000; gaji 1.000 → net 1.000.
      */
     async function knownStore() {
       const s = await createStore();
@@ -1211,12 +1212,12 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       to: day(),
       salesCount: 4,
       voidCount: 1,
-      revenue: 39_475,
+      revenue: 37_250,
       tax: 2225,
       cost: 20_700,
-      grossProfit: 18_775,
+      grossProfit: 16_550,
       expenses: 17_000,
-      netProfit: 1775,
+      netProfit: -450,
       rounding: 25,
       supplierPayments: 4000,
     };
@@ -1225,17 +1226,17 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       to: day(-1),
       salesCount: 1,
       voidCount: 0,
-      revenue: 5500,
+      revenue: 5000,
       tax: 500,
       cost: 3000,
-      grossProfit: 2500,
+      grossProfit: 2000,
       expenses: 1000,
-      netProfit: 1500,
+      netProfit: 1000,
       rounding: 0,
       supplierPayments: 0,
     };
 
-    it('today against yesterday: revenue with tax, stored cost, void reversed, rounding outside, supplier payments out', async () => {
+    it('today against yesterday: revenue and profit without tax, stored cost, void reversed, rounding outside, supplier payments out', async () => {
       const { s } = await knownStore();
       const res = await get(s.auth, '/reports/profit-loss').expect(200);
       expect(res.body).toEqual({
@@ -1243,21 +1244,21 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         timezone: 'Asia/Jakarta',
         from: day(),
         to: day(),
-        // The tax-inclusive basis is said out loud (the dashboard's gross profit takes tax out).
-        taxIncluded: true,
+        // Tax is in no profit, and the labels say so (owner ruling 2026-11-25).
+        taxIncluded: false,
         labels: {
-          revenue: 'Hasil jualan (termasuk pajak)',
+          revenue: 'Hasil jualan (tanpa pajak)',
           cost: 'Modal barang terjual',
-          grossProfit: 'Untung kotor (termasuk pajak)',
+          grossProfit: 'Untung kotor (tanpa pajak)',
           expenses: 'Pengeluaran',
-          netProfit: 'Untung bersih (termasuk pajak)',
-          tax: 'Pajak (termasuk dalam hasil jualan)',
+          netProfit: 'Untung bersih (tanpa pajak)',
+          tax: 'Pajak (titipan, di luar hasil jualan)',
           rounding: 'Pembulatan tunai (di luar hasil jualan)',
           supplierPayments: 'Bayar pemasok (bukan pengeluaran)',
         },
         current: TODAY,
         previous: YESTERDAY,
-        netProfitChange: 275,
+        netProfitChange: -1450,
         topExpenses: [
           {
             category: 'listrik_air',
@@ -1269,17 +1270,31 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           { category: 'sewa', label: 'Sewa', total: 2000, count: 1 },
         ],
       });
-      // The same sales as the dashboard, which takes tax out of its gross profit.
+      // One gross profit everywhere: the dashboard's and the sales report's are this report's. Their
+      // `revenue` is Σ sale totals (tax inside); this report's is that minus tax.
       const dash = await get(s.auth, '/reports/dashboard?period=today').expect(
         200,
       );
       expect(dash.body.current).toMatchObject({
-        revenue: TODAY.revenue,
+        revenue: TODAY.revenue + TODAY.tax,
         cost: TODAY.cost,
         tax: TODAY.tax,
-        grossProfit: TODAY.grossProfit - TODAY.tax,
+        grossProfit: TODAY.grossProfit,
         rounding: 25,
       });
+      const salesReport = await get(
+        s.auth,
+        `/reports/sales?from=${day()}&to=${day()}`,
+      ).expect(200);
+      expect(salesReport.body.totals).toMatchObject({
+        revenue: 39_475,
+        tax: 2225,
+        grossProfit: TODAY.grossProfit,
+      });
+      // The sum on the screen holds without tax.
+      const c = res.body.current;
+      expect(c.revenue - c.cost).toBe(c.grossProfit);
+      expect(c.grossProfit - c.expenses).toBe(c.netProfit);
       // The drawer: 100.000 + cash sales (15.000 + 14.300 + 1.400 + 17.600 + 5.500) − void 17.600 − 16.000.
       expect(await current(s.auth)).toMatchObject({
         expectedCash: 120_200,
@@ -1292,12 +1307,12 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       const both = {
         salesCount: 5,
         voidCount: 1,
-        revenue: 44_975,
+        revenue: 42_250,
         tax: 2725,
         cost: 23_700,
-        grossProfit: 21_275,
+        grossProfit: 18_550,
         expenses: 18_000,
-        netProfit: 3275,
+        netProfit: 550,
         rounding: 25,
         supplierPayments: 4000,
       };
@@ -1318,7 +1333,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           expenses: 0,
           netProfit: 0,
         },
-        netProfitChange: 3275,
+        netProfitChange: 550,
       });
       const only = await get(
         s.auth,
@@ -1415,12 +1430,12 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       );
       expect(pl.text.split('\r\n')).toEqual([
         `Keterangan,${day()} s.d. ${day()},${day(-1)} s.d. ${day(-1)}`,
-        'Hasil jualan (termasuk pajak),39475,5500',
+        'Hasil jualan (tanpa pajak),37250,5000',
         'Modal barang terjual,20700,3000',
-        'Untung kotor (termasuk pajak),18775,2500',
+        'Untung kotor (tanpa pajak),16550,2000',
         'Pengeluaran,17100,1000',
-        'Untung bersih (termasuk pajak),1675,1500',
-        'Pajak (termasuk dalam hasil jualan),2225,500',
+        'Untung bersih (tanpa pajak),-550,1000',
+        '"Pajak (titipan, di luar hasil jualan)",2225,500',
         'Pembulatan tunai (di luar hasil jualan),25,0',
         'Bayar pemasok (bukan pengeluaran),4000,0',
         'Pengeluaran: Listrik & air,12000,',
