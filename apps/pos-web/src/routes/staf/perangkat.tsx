@@ -17,6 +17,7 @@ import { useConfirm } from '@/components/confirm'
 import { Empty, Page, PageError, PageLoading, Panel, dateTime } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { required } from '@/lib/validate'
+import { PairDialog } from './-pair-dialog'
 import { bindThisDevice, loadDevicesPage, revokeDevice, revokeSession, type Result } from './-api'
 
 export const Route = createFileRoute('/staf/perangkat')({
@@ -35,6 +36,7 @@ function DevicesPage() {
   const [error, setError] = useState<string>()
   const [nameError, setNameError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [pairOpen, setPairOpen] = useState(false)
   const thisBound = devices.some((d) => d.id === thisDeviceId && !d.revokedAt)
 
   async function bind(e: FormEvent) {
@@ -71,10 +73,19 @@ function DevicesPage() {
     )
 
   return (
-    <Page title="Perangkat kasir" crumbs={[{ label: 'Perangkat', to: '/staf/perangkat' }, { label: 'Daftar' }]}>
+    <Page
+      title="Perangkat kasir"
+      crumbs={[{ label: 'Perangkat', to: '/staf/perangkat' }, { label: 'Daftar' }]}
+      actions={
+        <Button type="primary" color="primary" size="medium" width="auto" onClick={() => setPairOpen(true)}>
+          Hubungkan perangkat
+        </Button>
+      }
+    >
+      <PairDialog open={pairOpen} onClose={() => setPairOpen(false)} />
       <Panel className="flex flex-col gap-4 p-6">
         <div>
-          <h2 className="font-semibold text-default-primary">Hubungkan perangkat ini</h2>
+          <h2 className="font-semibold text-default-primary">Jadikan browser ini perangkat kasir</h2>
           <p className="mt-1 text-sm text-default-secondary">
             Buka halaman ini di perangkat yang dipakai kasir, lalu hubungkan. Kasir hanya bisa masuk dengan PIN di
             perangkat yang terhubung.
@@ -115,7 +126,9 @@ function DevicesPage() {
       <Panel>
         <h2 className="border-b border-border-light p-4 font-semibold text-default-primary">Perangkat terhubung</h2>
         {devices.length === 0 ? (
-          <Empty title="Belum ada perangkat">Hubungkan perangkat kasir pertama di atas.</Empty>
+          <Empty title="Belum ada perangkat">
+            Buka <b>/kasir/masuk</b> di tablet atau HP kasir untuk melihat kode, lalu hubungkan di sini.
+          </Empty>
         ) : (
           <Table density="comfortable" containerClassName="border-0" className="whitespace-nowrap">
             <TableHeader>
