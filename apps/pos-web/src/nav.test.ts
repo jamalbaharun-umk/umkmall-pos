@@ -48,6 +48,20 @@ describe('U7 entries (QA sweep U7)', () => {
   })
 })
 
+describe('Cash drawer and deposit entries (UMK-1924 U3)', () => {
+  const shown = (perms: string[]) => visibleNav(NAV, () => true, perms).flatMap((g) => g.items.map((i) => i.to))
+  it('Kas laci needs sales.create; Setoran penagih needs reports.view', () => {
+    expect(shown(['sales.create'])).toContain('/kasir/kas-laci')
+    expect(shown(['sales.create'])).not.toContain('/kas-toko/setoran')
+    expect(shown(['reports.view'])).toContain('/kas-toko/setoran')
+    expect(shown(['reports.view'])).not.toContain('/kasir/kas-laci')
+  })
+  it('the deposit history does not light up the store cash entry', () => {
+    expect(activeNav(NAV, '/kas-toko/setoran')).toBe('/kas-toko/setoran')
+    expect(activeNav(NAV, '/kas-toko')).toBe('/kas-toko')
+  })
+})
+
 describe('Keamanan entry (UMK-1962)', () => {
   const shown = (perms: string[]) =>
     visibleNav(NAV, () => true, perms).flatMap((g) => g.items.map((i) => i.to)).includes('/pengaturan/keamanan')

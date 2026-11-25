@@ -362,6 +362,9 @@ function Register({
             <Button width="auto" asChild type="text" size="compact">
               <Link to="/kasir/riwayat">Riwayat</Link>
             </Button>
+            <Button width="auto" asChild type="text" size="compact">
+              <Link to="/kasir/kas-laci">Kas laci</Link>
+            </Button>
             <Button width="auto" asChild type="text" size="compact" color="danger">
               <Link to="/kasir/tutup">Tutup shift</Link>
             </Button>

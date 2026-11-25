@@ -1,8 +1,10 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { Alert, Badge, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@umkmall/ui'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { Alert, Badge, Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@umkmall/ui'
 import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { ListFooter } from '../pelanggan/-ui'
-import { directionLabel, signedAmount, storeKindLabel } from '../kasir/-shift-helpers'
+import { storeKindLabel } from '../kasir/-shift-helpers'
+import { CollectorsPanel, ReceiveDepositButton } from './-collectors'
+import { storeLine, totalHeld } from './-deposit-helpers'
 import { loadStoreCash } from './-api'
 
 // The store's cash ("kas toko"): cash held outside every shift drawer, e.g. a kasbon instalment taken by staff
@@ -22,7 +24,18 @@ function StoreCashPage() {
   const list = Route.useLoaderData()
   const navigate = useNavigate({ from: '/kas-toko/' })
   return (
-    <Page title="Kas toko" crumbs={[{ label: 'Laporan' }, { label: 'Kas toko' }]}>
+    <Page
+      title="Kas toko"
+      crumbs={[{ label: 'Laporan' }, { label: 'Kas toko' }]}
+      actions={
+        <>
+          <Button width="auto" type="outline" asChild>
+            <Link to="/kas-toko/setoran">Riwayat setoran</Link>
+          </Button>
+          <ReceiveDepositButton collectors={list.collectors} />
+        </>
+      }
+    >
       <Card variant="outlined" padding="large" className="flex flex-wrap gap-8">
         <div>
           <p className="text-sm text-default-secondary">Saldo kas toko</p>
@@ -36,11 +49,16 @@ function StoreCashPage() {
           <p className="text-sm text-default-secondary">Total keluar</p>
           <p className="text-2xl font-bold text-default-primary">{rupiah(list.summary.cashOut)}</p>
         </div>
+        <div>
+          <p className="text-sm text-default-secondary">Dipegang penagih</p>
+          <p className="text-2xl font-bold text-default-primary">{rupiah(totalHeld(list.collectors))}</p>
+        </div>
       </Card>
       <Alert variant="info" size="small">
-        Ini uang tunai yang dipegang di luar laci kasir, misalnya kasbon tunai dari staf tanpa shift. Saldo belum
-        menunjukkan siapa yang memegang uangnya; penyerahan ke pemilik atau laci belum bisa dicatat di sini.
+        Ini uang tunai yang dipegang di luar laci kasir, misalnya kasbon tunai dari staf tanpa shift. Uang itu dihitung
+        dipegang penagih sampai setorannya diterima; setoran memindahkan uang ke kas toko tanpa mengubah saldo.
       </Alert>
+      <CollectorsPanel collectors={list.collectors} />
       <Card variant="outlined" padding="none" className="overflow-hidden">
         {list.data.length === 0 ? (
           <Empty
@@ -60,18 +78,21 @@ function StoreCashPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {list.data.map((e) => (
+              {list.data.map((e) => {
+                const line = storeLine(e)
+                return (
                 <TableRow key={e.id}>
                   <TableCell>{formatDate(e.createdAt)}</TableCell>
-                  <TableCell>{storeKindLabel(e.kind)}</TableCell>
+                  <TableCell>{line.kind ?? storeKindLabel(e.kind)}</TableCell>
                   <TableCell>
-                    <Badge color={e.direction === 'in' ? 'success' : 'warning'}>{directionLabel(e.direction)}</Badge>
+                    <Badge color={line.color}>{line.label}</Badge>
                   </TableCell>
                   <TableCell>{e.actorName}</TableCell>
                   <TableCell>{e.note ?? '–'}</TableCell>
-                  <TableCell className="text-right">{signedAmount(e, rupiah)}</TableCell>
+                  <TableCell className="text-right">{line.amount}</TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         )}
