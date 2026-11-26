@@ -239,7 +239,10 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **A paid PG sale is refunded, never voided** (`POST /sales/:id/refund`; a void answers 409 `use_refund`, a refund
   of a CASHAC sale 409 `use_void`, both before the PIN is checked). The refund is the void record with
   `sale_voids.refund_status` (`pending`, `succeeded`, `failed`): same reasons, same PIN approver, the sale reversed at
-  once, the refund asked after the commit and followed by the job. Retry needs `sales.void`; "dikembalikan manual" is the owner's alone.
+  once, the refund asked after the commit and followed by the job. Retry (`POST /sales/:id/refund/retry`) and
+  "dikembalikan manual" are the owner's alone (403 for anyone else); a retry is approved again by a PIN
+  (`{ approverId, pin }`, a `sales.void` holder, the void's lockout: wrong PIN 422, locked 429), checked before
+  payment-api is asked (UMK-2040).
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
   exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
   answer only while it still awaits payment. Every transaction of `payments-client/` is in `payment-sync.service.ts`.

@@ -834,13 +834,15 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Asks a refused refund again (V4), with the refund's own reason and PIN-verified approver; `actor` is who
-   * retries. A refund not sent yet is sent; one that is pending or done is answered as it stands.
+   * Asks a refused refund again (V4), with the refund's own reason; `actor` is who retries (the owner) and
+   * `approvedBy` whose PIN approved this retry (UMK-2040). A refund not sent yet is sent as it was approved;
+   * one that is pending or done is answered as it stands.
    */
   async retryRefund(
     tenantId: string,
     saleId: string,
     actor: string,
+    approvedBy: string,
   ): Promise<RefundStatus | null> {
     const refund = await this.refundOf(tenantId, saleId);
     if (!refund) return null;
@@ -854,7 +856,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       reasonCode: refund.reasonCode,
       note: refund.note ?? undefined,
       actorRef: actor,
-      approvedBy: actorRef(refund.approvedByKind, refund.approvedBy),
+      approvedBy,
     });
     return this.setRefundStatus(tenantId, refund.id, payment);
   }

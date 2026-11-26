@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Headers,
   HttpCode,
@@ -23,7 +24,12 @@ import { StockModule } from '../stock/stock.module';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { VoidPins } from './void-pin';
-import { ManualRefundInput, SetPinInput, VoidInput } from './void.schemas';
+import {
+  ManualRefundInput,
+  RefundRetryInput,
+  SetPinInput,
+  VoidInput,
+} from './void.schemas';
 import { VoidService } from './void.service';
 
 /** A locked approver answers 429 with `retryAfter` in the body; mirror it in the Retry-After header. */
@@ -97,13 +103,25 @@ export class SaleVoidController {
     );
   }
 
-  /** Asks a refund the gateway refused again. By someone who could have approved it. */
+  /**
+   * Asks a refund the gateway refused again (UMK-2040). The owner only, and approved again by a PIN like the
+   * refund itself: `approverId` holds `sales.void` and their PIN is in the body, with the void's lockout.
+   */
   @Post(':id/refund/retry')
   @HttpCode(200)
   @RequirePermission('sales.void')
-  retryRefund(@CurrentSession() s: PosSession, @Param('id') id: string) {
+  retryRefund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     assertPersonAtTill(s.kind);
-    return this.voids.retryRefund(s, parseId(id));
+    // Before the body is read: anyone but the owner learns nothing about it.
+    if (s.kind !== 'owner') throw new ForbiddenException();
+    const saleId = parseId(id);
+    const input = validate(RefundRetryInput, body);
+    return withRetryAfter(res, () => this.voids.retryRefund(s, saleId, input));
   }
 
   /** The store returned the money of a refused refund by hand; the note says how. The owner only. */
