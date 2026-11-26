@@ -18,11 +18,13 @@ export type ErrorContext =
       action: string
       /** Runs when the person presses the main "Coba lagi" button. Without it the dialog offers only "Tutup". */
       retry?: () => void
+      /** The main button's words when "Coba lagi" is not what it does ("Perbaiki nomor", "Buka pelanggan"). */
+      retryLabel?: string
       /** Indonesian sentence for "Apa yang terjadi" when the failure says nothing usable. */
       fallback?: string
     }
 
-export type ErrorDialogState = ErrorDescription & { title: string; retry?: () => void }
+export type ErrorDialogState = ErrorDescription & { title: string; retry?: () => void; retryLabel?: string }
 
 type Listener = () => void
 let current: ErrorDialogState | null = null
@@ -53,8 +55,8 @@ export function showError(
   /** A screen's own mapping of failures to text (for example `describeOnlineError`); the shared one by default. */
   describe: (error: unknown, fallback: string) => ErrorDescription = describeError,
 ): void {
-  const { action, retry, fallback } = typeof context === 'string' ? { action: context } : context
+  const { action, retry, retryLabel, fallback } = typeof context === 'string' ? { action: context } : context
   const described = describe(error, fallback ?? 'Aksi ini belum berhasil.')
-  current = { ...described, title: `Gagal ${action}`, retry }
+  current = { ...described, title: `Gagal ${action}`, retry, retryLabel }
   emit()
 }
