@@ -13,6 +13,7 @@ import { seedMerchant } from '../../payment-api/test/support/merchants';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
+import { syncWorkLeft } from './support/sync-work';
 import { PaymentApi, startPaymentApi } from './support/payment-api';
 
 type Store = Awaited<ReturnType<typeof createStore>>;
@@ -84,10 +85,9 @@ describe('hold number and receipt number (UMK-2038)', () => {
   afterAll(async () => {
     link = 'ok';
     try {
-      // No sale is left waiting (a later suite boots with payment-api off, which refuses that).
-      const waiting = await admin`
-        select id from pos.sales where status = 'awaiting_payment' and tenant_id in ${admin(tenants)}`;
-      expect(waiting).toEqual([]);
+      // No sale is left waiting (a later suite boots with payment-api off, which refuses that), and nothing
+      // else for the job, which sweeps every store: see syncWorkLeft.
+      expect(await syncWorkLeft(admin, tenants)).toEqual([]);
       for (const tenantId of tenants) await gapFree(tenantId);
     } finally {
       // Closed whatever the checks say: an open server would keep jest from ending.
@@ -1070,8 +1070,19 @@ describe('hold number and receipt number (UMK-2038)', () => {
         '1999-12-31T23:59:59Z',
         '9999-12-31T23:59:59Z',
         new Date(Date.now() + 3 * 86_400_000).toISOString(),
+        // An offset no place has: zod and JavaScript take it, the database does not.
+        '2026-11-26T10:00:00+23:59',
+        '2026-11-25T10:00:00-23:59',
+        '2026-11-26T10:00:00+16:00',
+        '2026-11-26T10:00:00+14:01',
+        '2026-11-26T10:00:00+1500',
       ])
         await paidSince(s.auth, bad).expect(422);
+      for (const edge of [
+        '2026-11-26T10:00:00+14:00',
+        '2026-11-25T10:00:00-12:00',
+      ])
+        await paidSince(s.auth, edge).expect(200);
       const ok = '2026-11-26T10:00:00%2B07:00';
       await get(s.auth, `/sales/paid-since?since=${ok}`).expect(200);
       const badId = await get(

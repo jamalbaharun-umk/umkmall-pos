@@ -81,16 +81,27 @@ export const SalesQuery = z.object({
 /**
  * `GET /sales/paid-since` (UMK-2046): the time the till last looked, with its offset; `afterId` with it when
  * the answer before said `hasMore`. A time the database cannot hold, or one that is no time of a POS sale
- * (before 2020, more than a day ahead), is a 422, never a query that fails.
+ * (before 2020, more than a day ahead, an offset past 14 hours), is a 422, never a query that fails.
  */
 const PAID_SINCE_EARLIEST = Date.parse('2020-01-01T00:00:00Z');
+// No place on earth is further from UTC than +14:00. zod and JavaScript take any offset up to +23:59, and
+// Postgres, which is given the text as it came (the cursor is to the microsecond), refuses one past 15:59.
+const MAX_OFFSET_MINUTES = 14 * 60;
+const offsetMinutes = (v: string) => {
+  const m = /[+-](\d{2}):?(\d{2})$/.exec(v);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+};
 export const PaidSinceQuery = z.object({
   since: z
     .string({ required_error: 'Wajib diisi' })
     .datetime({ offset: true, message: 'Waktu tidak valid' })
     .refine((v) => {
       const t = Date.parse(v);
-      return t >= PAID_SINCE_EARLIEST && t <= Date.now() + 86_400_000;
+      return (
+        t >= PAID_SINCE_EARLIEST &&
+        t <= Date.now() + 86_400_000 &&
+        offsetMinutes(v) <= MAX_OFFSET_MINUTES
+      );
     }, 'Waktu tidak valid'),
   afterId: Uuid.optional(),
 });

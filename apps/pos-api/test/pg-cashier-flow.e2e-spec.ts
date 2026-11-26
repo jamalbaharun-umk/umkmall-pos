@@ -13,6 +13,7 @@ import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
 import { PaymentApi, startPaymentApi } from './support/payment-api';
 import { createCashier } from './support/staff';
+import { syncWorkLeft } from './support/sync-work';
 
 type Store = Awaited<ReturnType<typeof createStore>>;
 type PaymentRow = {
@@ -180,9 +181,21 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       if (x.status === 'cancelled') expect(st).not.toBe('paid');
       if (x.status === 'void') expect(st).toMatch(/^(voided|refund)/);
     }
+    // Nothing is left for the job: it sweeps every store, and the next spec file's payment-api starts on an
+    // empty database, where a refund this file left pending is a payment that does not exist (its ticks
+    // would count it as failed). The refunds some tests leave on their way are returned by the gateway here.
+    const open = await pay.sql<{ tenant_id: string; refund_key: string }[]>`
+      select tenant_id, refund_key from payment.payments
+      where status = 'refund_pending' and tenant_id in ${pay.sql(tenants)}`;
+    for (const p of open)
+      await gateway(p.tenant_id, 'POST', `/refunds/${p.refund_key}/succeed`);
+    await sync.tick(later());
+    const left = await syncWorkLeft(admin, tenants);
     await app.close();
     await pay.close();
     await admin.end();
+    // After the servers are closed: a failed check must not keep jest from ending.
+    expect(left).toEqual([]);
   });
   beforeEach(async () => {
     link = 'ok';

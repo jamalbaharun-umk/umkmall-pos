@@ -11,6 +11,7 @@ import {
   PaymentsClient,
 } from '../src/payments-client/payments.client';
 import { ADMIN_DATABASE_URL } from './support/env';
+import { syncWorkLeft } from './support/sync-work';
 import { createStore } from './support/fixtures';
 import { PaymentApi, startPaymentApi } from './support/payment-api';
 
@@ -123,6 +124,8 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       .sort();
     // No sale is left waiting (a later suite boots with payment-api off, which refuses that).
     expect(all.filter((x) => x.status === 'awaiting_payment')).toEqual([]);
+    // Nor anything else for the job, which sweeps every store: see syncWorkLeft.
+    expect(await syncWorkLeft(admin, tenants)).toEqual([]);
     // Paid payments of sales = completed sales, one to one; a cancelled sale never has a paid payment.
     expect(paidOrders).toEqual(
       all
