@@ -1,30 +1,19 @@
-import { Alert, Button } from '@umkmall/ui/primitives'
-import { Card } from '@umkmall/ui/compositions'
-import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { Button } from '@umkmall/ui/primitives'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { Store } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
 import { notifySuccess } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
-import { getSessionToken, signedOut, takeLandingPath, umkmallSession } from '@/lib/session.server'
-import { devSignInUser, failureText, RETURN_PATHS } from '@/lib/sign-in'
+import { getSessionToken } from '@/lib/session.server'
+import { devSignInUser } from '@/lib/sign-in'
+import { OwnerSignIn } from './-owner-sign-in'
 import { MetricWidgets } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
   const devSignIn = Boolean(devSignInUser())
-  if (!getSessionToken()) {
-    // Signed in to UMKMall already (shared cookie, UMK-1945): straight to the dashboard, unless just signed out here.
-    // The redirect reloads the page so the shell reads the new session too.
-    // A sign-in, not a refresh (UMK-2054): the owner came here without a POS session, usually from UMKMall's login.
-    const result = signedOut() ? 401 : await umkmallSession(true)
-    // Lands on the page that asked for the sign-in ("Lupa PIN"), else here with the "Berhasil masuk" toast.
-    if (typeof result === 'string')
-      throw takeLandingPath() === RETURN_PATHS.keamanan
-        ? redirect({ to: '/pengaturan/keamanan', search: { lupa: 1 } })
-        : redirect({ to: '/', search: { masuk: 1 } })
-    return { signedIn: false as const, devSignIn, unreachable: result === 0 || result >= 500 }
-  }
+  // Signed out: the WhatsApp sign-in card (UMK-2065). There is no UMKMall cookie to sign in from any more.
+  if (!getSessionToken()) return { signedIn: false as const, devSignIn }
   const res = await api('/catalog/products?perPage=1')
   if (!res.ok) throw new Error('Gagal memuat toko')
   const { total } = (await res.json()) as { total: number }
@@ -60,46 +49,7 @@ function Home() {
   return home.signedIn ? (
     <Dashboard products={home.products} />
   ) : (
-    <SignIn failed={gagal ?? (home.unreachable ? 503 : undefined)} devSignIn={home.devSignIn} />
-  )
-}
-
-/** Lakasir's login: a centred card on the grey page. Owners sign in with their UMKMall account instead of a password form. */
-function SignIn({ failed, devSignIn }: { failed?: number; devSignIn: boolean }) {
-  return (
-    <main className="flex min-h-svh items-center justify-center bg-default-secondary px-4">
-      <Card variant="outlined" padding="large" className="flex w-full max-w-md flex-col items-center gap-5 bg-default-primary text-center">
-        <span className="flex size-12 items-center justify-center rounded-full bg-weak-brand text-default-brand">
-          <Store className="size-6" aria-hidden />
-        </span>
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-default-primary">Masuk ke Kasir</h1>
-          <p className="text-sm text-default-secondary">
-            Pemilik toko masuk dengan akun UMKMall. Kasir masuk dengan PIN.
-          </p>
-        </div>
-        {failed !== undefined && (
-          <Alert variant="danger" className="w-full text-left">
-            {failureText(failed)}
-          </Alert>
-        )}
-        <form method="post" action="/masuk" className="w-full">
-          <Button htmlType="submit" type="primary" color="primary" width="full">
-            Masuk dengan akun UMKMall
-          </Button>
-        </form>
-        <Button asChild type="outline" color="primary" width="full">
-          <a href="/kasir/masuk">Masuk sebagai kasir (PIN)</a>
-        </Button>
-        {devSignIn && (
-          <form method="post" action="/masuk/dev" className="w-full">
-            <Button htmlType="submit" type="outline" color="primary" width="full">
-              Masuk (pengembangan)
-            </Button>
-          </form>
-        )}
-      </Card>
-    </main>
+    <OwnerSignIn failed={gagal} devSignIn={home.devSignIn} />
   )
 }
 

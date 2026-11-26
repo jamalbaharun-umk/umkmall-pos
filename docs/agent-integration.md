@@ -44,7 +44,7 @@ Set-Cookie it answers on this response, on success and on 503 alike. UMKMall's a
 owner's browser with its own answer; dropping them signs the owner out of UMKMall later.
 
 **Only UMKMall's agent backend may hold the token.** It is the owner's full UMKMall credential: whoever holds it can
-also open an owner session (`POST /auth/umkmall/session`). Never send it to a model, a log, a browser script or a
+act as the owner at UMKMall. Never send it to a model, a log, a browser script or a
 third party. Follow-up: UMK-2059, an owner opt-in before any agent session is issued.
 
 **The owner can turn the agent off from the POS, and it stays off:** `POST /agent/access/revoke` (owner session only)

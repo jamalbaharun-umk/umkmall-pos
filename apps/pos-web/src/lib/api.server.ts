@@ -1,9 +1,9 @@
 import { redirect } from '@tanstack/react-router'
 import { setResponseStatus } from '@tanstack/react-start/server'
-import { clearSessionToken, getSessionToken, posApiUrl, umkmallLoginUrl, umkmallSession } from './session.server'
+import { clearSessionToken, getSessionToken, posApiUrl, refreshOwner } from './session.server'
 import { sessionKind } from './sign-in'
 
-export const UMKMALL_DOWN = 'UMKMall sedang tidak bisa dihubungi, coba lagi'
+export const UMKMALL_DOWN = 'Layanan login UMKMall sedang tidak bisa dihubungi, coba lagi'
 export const API_DOWN = 'Tidak bisa terhubung ke server kasir. Periksa koneksi lalu coba lagi.'
 
 /** An answer that takes longer is "no answer" (UMK-2051), same as an unreachable server: the screen shows its retry. */
@@ -17,8 +17,8 @@ function timeoutMs(): number {
 /**
  * Server-side pos-api client for server functions and loaders. Sends the session cookie as a bearer.
  * On a 401: a cashier session cannot refresh, so it is cleared and sent to `/kasir/masuk` (PIN sign-in); an owner
- * session re-checks the UMKMall login cookie once and retries. A refused re-check (401: signed out of UMKMall, session
- * revoked, account being deleted) clears the cookie and redirects to UMKMall's login; UMKMall being
+ * session refreshes once through UMKMall's native session (UMK-2065) and retries. A refused refresh (401: signed out,
+ * session revoked, account being deleted) clears the cookies and redirects to the sign-in page; UMKMall being
  * unreachable (503, or pos-api down) keeps the session and throws a retryable message instead of signing out.
  * Other statuses are returned for the caller to handle.
  */
@@ -32,14 +32,14 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
     clearSessionToken()
     throw redirect({ to: '/kasir/masuk' })
   }
-  const fresh = await umkmallSession()
+  const fresh = await refreshOwner()
   if (typeof fresh === 'string') return pageStatus(await send(path, init, fresh), init)
   if (fresh === 0 || fresh >= 500) {
     trySetStatus(503)
     throw new Error(UMKMALL_DOWN)
   }
   clearSessionToken()
-  throw redirect({ href: umkmallLoginUrl() })
+  throw redirect({ to: '/' })
 }
 
 /**

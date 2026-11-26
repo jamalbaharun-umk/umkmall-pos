@@ -1,5 +1,5 @@
-import { appendResponseHeader, deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
-import { landingPath, loginUrl, sessionKind, type ReturnKey } from './sign-in'
+import { deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
+import { landingPath, parseNativeSession, sessionKind, type NativeSession, type ReturnKey } from './sign-in'
 
 // The POS session lives only in this httpOnly cookie; the browser never sees the token in JS or a URL.
 const COOKIE = 'pos_session'
@@ -27,6 +27,22 @@ export function setSessionToken(token: string, maxAgeSeconds: number): void {
 export function clearSessionToken(): void {
   deleteCookie(COOKIE, { path: '/' })
   deleteCookie(LAST_ME, { path: '/' })
+  deleteCookie(NATIVE, { path: '/' })
+}
+
+// UMKMall's native session behind an owner's WhatsApp sign-in (UMK-2065): `{ sid, refreshToken }`, the owner refresh's
+// credential. httpOnly and host-only, so page JS and other umkmall.id hosts never see it; pos-api keeps no copy.
+const NATIVE = 'pos_umkmall'
+const NATIVE_COOKIE_SECONDS = 30 * 24 * 60 * 60 // UMKMall's native refresh lifetime; UMKMall decides the real end
+
+function storeNative(session: NativeSession): void {
+  setCookie(NATIVE, JSON.stringify(session), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: NATIVE_COOKIE_SECONDS,
+  })
 }
 
 // The last answer of /tenant/me, so the shell can still render (with a banner) while UMKMall or pos-api is
@@ -54,60 +70,58 @@ export function lastMe<T>(): T | null {
 
 const OWNER_COOKIE_SECONDS = 7 * 24 * 60 * 60
 
-type SessionAnswer = { sessionToken: string; expiresIn: number }
+type SessionAnswer = { sessionToken: string; expiresIn: number; umkmall?: { sid: string; refreshToken?: string } }
+
+/**
+ * Stores a session pos-api answered: the POS token, and for an owner's WhatsApp sign-in or refresh the UMKMall native
+ * session (a refresh without `refreshToken` keeps the stored one: UMKMall did not rotate it).
+ */
+export function storeSession({ sessionToken, expiresIn, umkmall }: SessionAnswer): void {
+  // An owner token lapses in minutes; its cookie outlives it so api() knows to refresh on the first 401.
+  setSessionToken(sessionToken, sessionKind(sessionToken) === 'owner' ? OWNER_COOKIE_SECONDS : expiresIn)
+  if (!umkmall) return
+  const refreshToken = umkmall.refreshToken ?? parseNativeSession(getCookie(NATIVE))?.refreshToken
+  if (refreshToken) storeNative({ sid: umkmall.sid, refreshToken })
+}
 
 /**
  * POSTs to a pos-api auth route and stores the session it answers. Returns the new token, or the refusal's HTTP
  * status (0 when pos-api could not be reached), so callers can tell "signed out" (401) from "try again" (503/0).
- * Every Set-Cookie pos-api answers (UMKMall's renewed or newly minted login cookies) reaches the browser unchanged,
- * refusals included: dropping one signs the owner out of UMKMall later.
  */
 export async function startSession(path: string, body: unknown, headers: Record<string, string> = {}): Promise<string | number> {
   const res = await fetch(`${posApiUrl()}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(15_000),
   }).catch(() => null)
   if (!res) return 0
-  for (const cookie of res.headers.getSetCookie()) appendResponseHeader('set-cookie', cookie)
   if (!res.ok) return res.status
-  const { sessionToken, expiresIn } = (await res.json()) as SessionAnswer
-  // An owner token lapses in minutes; its cookie outlives it so api() knows to re-check UMKMall on the first 401.
-  setSessionToken(sessionToken, sessionKind(sessionToken) === 'owner' ? OWNER_COOKIE_SECONDS : expiresIn)
-  return sessionToken
+  const answer = (await res.json()) as SessionAnswer
+  storeSession(answer)
+  return answer.sessionToken
 }
-
-/** UMKMall's login cookies; only these go to pos-api (and on to UMKMall's `/api/auth/me`). */
-const UMKMALL_COOKIES = ['auth_token', 'auth_refresh'] as const
 
 /**
- * Owner sign-in and refresh from the shared UMKMall login cookie (UMK-1945). 401 without a call when the browser
- * sent neither cookie (localhost, or not signed in to UMKMall).
- *
- * `signIn` (UMK-2054) is true only where a person signs in (the sign-in page, the landing after UMKMall's login):
- * pos-api then marks the session fresh for a few minutes, which resetting or unlocking the owner's PIN asks for.
- * The refresh of a session (`api()` after a 401) never passes it.
+ * The owner refresh (UMK-2065): UMKMall's native session → a new 15-minute owner session, never a sign-in (UMK-2054).
+ * 401 without a call when there is no native session (a dev sign-in, or signed out).
  */
-export async function umkmallSession(signIn = false): Promise<string | number> {
-  const cookie = UMKMALL_COOKIES.flatMap((name) => {
-    const value = getCookie(name)
-    return value === undefined ? [] : [`${name}=${value}`]
-  }).join('; ')
-  return cookie ? startSession('/auth/umkmall/session', signIn ? { signIn: true } : {}, { cookie }) : 401
+export async function refreshOwner(): Promise<string | number> {
+  const native = parseNativeSession(getCookie(NATIVE))
+  return native ? startSession('/auth/umkmall/refresh', native) : 401
 }
 
-/** UMKMall's login page, coming back to the POS home afterwards; `/` (the POS sign-in page) when not configured. */
-export const umkmallLoginUrl = () => loginUrl(process.env.UMKMALL_WEB_URL, process.env.POS_WEB_URL)
-
-// Set by /keluar so `/` does not sign the owner straight back in from the UMKMall cookie; cleared by /masuk.
-const SIGNED_OUT = 'pos_keluar'
-
-export const signedOut = () => getCookie(SIGNED_OUT) === '1'
-
-export function setSignedOut(on: boolean): void {
-  if (!on) return deleteCookie(SIGNED_OUT, { path: '/' })
-  setCookie(SIGNED_OUT, '1', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' })
+/** Signs the owner out of the POS: ends the POS's own UMKMall session (best effort) and drops every session cookie. */
+export async function endOwnerSession(): Promise<void> {
+  const native = parseNativeSession(getCookie(NATIVE))
+  if (native)
+    await fetch(`${posApiUrl()}/auth/umkmall/sign-out`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(native),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => null)
+  clearSessionToken()
 }
 
 // Set by /masuk/ulang (UMK-2054): the next sign-in lands on the page that asked for it. Holds a key of RETURN_PATHS.

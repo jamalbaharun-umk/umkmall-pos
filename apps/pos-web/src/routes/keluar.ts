@@ -1,15 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { clearSessionToken, setSignedOut } from '@/lib/session.server'
+import { endOwnerSession } from '@/lib/session.server'
 import { seeOther } from '@/lib/sign-in'
 
-// Sign out of the POS only: drops the session cookie and lands on the sign-in page, which then does not sign back in
-// from the UMKMall cookie until the owner presses "Masuk". The device binding cookie stays (U4).
+// Sign out of the POS: ends the POS's own UMKMall session (the owner's web and app sessions stay), drops the session
+// cookies and lands on the sign-in page. The device binding cookie stays (U4).
 export const Route = createFileRoute('/keluar')({
   server: {
     handlers: {
-      POST: () => {
-        clearSessionToken()
-        setSignedOut(true)
+      POST: async () => {
+        await endOwnerSession()
         return seeOther('/?keluar=1')
       },
     },

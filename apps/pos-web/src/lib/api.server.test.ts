@@ -7,11 +7,10 @@ vi.mock('./session.server', () => ({
   getSessionToken: () => 'h.eyJraW5kIjoib3duZXIifQ.s',
   clearSessionToken: () => {},
   posApiUrl: () => 'http://pos-api.test',
-  umkmallSession: async (...args: unknown[]) => {
+  refreshOwner: async (...args: unknown[]) => {
     refreshArgs.push(args)
     return refresh
   },
-  umkmallLoginUrl: () => 'https://umkmall.id/login?next=https%3A%2F%2Fpos.umkmall.id%2F',
 }))
 let refresh: string | number = 503
 const refreshArgs: unknown[][] = []
@@ -74,15 +73,15 @@ describe('api() page status', () => {
     expect(statuses).toEqual([503])
   })
 
-  it('sends the owner to the UMKMall login when the UMKMall re-check refuses (signed out, revoked, deleted)', async () => {
+  it('sends the owner to the sign-in page when the refresh is refused (signed out, revoked, deleted)', async () => {
     refresh = 401
     vi.stubGlobal('fetch', async () => new Response('{}', { status: 401 }))
     const thrown = await api('/x').catch((e: unknown) => e)
-    expect(thrown).toMatchObject({ options: { href: 'https://umkmall.id/login?next=https%3A%2F%2Fpos.umkmall.id%2F' } })
+    expect(thrown).toMatchObject({ options: { to: '/' } })
     refresh = 503
   })
 
-  it('retries with the fresh session after a successful re-check', async () => {
+  it('retries with the fresh session after a successful refresh', async () => {
     refresh = 'fresh'
     const seen: (string | null)[] = []
     vi.stubGlobal('fetch', async (_: string, init: RequestInit) => {
@@ -94,7 +93,7 @@ describe('api() page status', () => {
     refresh = 503
   })
 
-  it('UMK-2054 the refresh after a 401 is never a sign-in: it passes no signIn, so the new session is not fresh', async () => {
+  it('UMK-2054 the refresh after a 401 is never a sign-in: it goes through refreshOwner, which pos-api never stamps as a sign-in', async () => {
     refresh = 'h.eyJraW5kIjoib3duZXIifQ.new'
     refreshArgs.length = 0
     let n = 0

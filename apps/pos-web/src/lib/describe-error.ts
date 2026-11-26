@@ -53,6 +53,12 @@ export function isSafeText(text: unknown): text is string {
  * is never used for these. `primary` is the dialog's main button.
  */
 export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary: PrimaryAction; helpCode?: string }> = {
+  // the owner's WhatsApp sign-in (UMK-2065): UMKMall's login service did not answer
+  umkmall_unavailable: {
+    what: 'Layanan login UMKMall sedang tidak bisa dihubungi, jadi kode belum bisa dikirim atau diperiksa.',
+    todo: 'Coba lagi beberapa saat lagi. Kasir tetap bisa masuk dengan PIN.',
+    primary: 'retry',
+  },
   payment_unavailable: {
     what: 'Layanan pembayaran tidak menjawab, jadi tidak ada yang berubah.',
     todo: 'Coba lagi sebentar. Jika berulang, hubungi pemilik.',

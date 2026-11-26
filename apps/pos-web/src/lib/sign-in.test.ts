@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { devSignInUser, failureText, landingPath, loginUrl, sessionKind } from './sign-in'
+import { devSignInUser, failureText, landingPath, parseNativeSession, sessionKind } from './sign-in'
 
 const token = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`
 
@@ -21,24 +21,16 @@ describe('sign-in helpers', () => {
   })
 
   it('explains a failed sign-in by status', () => {
-    expect(failureText(503)).toMatch(/UMKMall sedang tidak bisa dihubungi/)
-    expect(failureText(0)).toMatch(/UMKMall sedang tidak bisa dihubungi/)
-    expect(failureText(401)).toMatch(/Masuk lagi ke UMKMall/)
+    expect(failureText(503)).toMatch(/tidak bisa dihubungi/)
+    expect(failureText(0)).toMatch(/tidak bisa dihubungi/)
+    expect(failureText(401)).toMatch(/nomor WhatsApp/)
     expect(failureText(1)).toMatch(/Gagal masuk/)
   })
 
-  it('sends a signed-out owner to the UMKMall login, coming back to the POS host only', () => {
-    const url = new URL(loginUrl('https://umkmall.id', 'https://pos.umkmall.id'))
-    expect(url.origin + url.pathname).toBe('https://umkmall.id/login')
-    expect(url.searchParams.get('next')).toBe('https://pos.umkmall.id/')
-    // only the POS origin is kept: a path, query or credentials in the setting never reach `next`
-    const odd = new URL(loginUrl('https://preview.umkmall.id/', 'https://u:p@pos.preview.umkmall.id/x?y=//evil.example'))
-    expect(odd.searchParams.get('next')).toBe('https://pos.preview.umkmall.id/')
-  })
-
-  it('falls back to the POS sign-in page when UMKMall or the POS URL is not configured (localhost)', () => {
-    expect(loginUrl(undefined, 'https://pos.umkmall.id')).toBe('/')
-    expect(loginUrl('https://umkmall.id', undefined)).toBe('/')
+  it('UMK-2065 reads the native session cookie, or nothing from anything else', () => {
+    expect(parseNativeSession('{"sid":"s1","refreshToken":"r1","x":1}')).toEqual({ sid: 's1', refreshToken: 'r1' })
+    for (const bad of [undefined, '', 'nope', '{"sid":"s1"}', '{"sid":1,"refreshToken":"r"}', '{"sid":"","refreshToken":"r"}', 'null'])
+      expect(parseNativeSession(bad)).toBeUndefined()
   })
 
   it('UMK-2054 lands a sign-in on a listed page by its key only', () => {

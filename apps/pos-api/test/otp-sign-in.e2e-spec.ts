@@ -428,6 +428,93 @@ describe('owner sign-in by WhatsApp OTP through UMKMall native auth (UMK-2065)',
     });
   });
 
+  it('UMK-2054: the OTP sign-in is fresh, its refresh is not, and a new sign-in is fresh again', async () => {
+    const sub = await umkmallUser();
+    fake.routes['POST /mobile/v1/auth/otp/verify'] = signedIn(sub);
+    fake.routes['POST /mobile/v1/auth/refresh'] = signedIn(sub);
+    const http = () => request(app.getHttpServer());
+    const signIn = async () =>
+      `Bearer ${(await post('/auth/otp/verify', { phone: '081234567890', otp: '123456' }).expect(200)).body.sessionToken as string}`;
+    const refresh = async () =>
+      `Bearer ${(await post('/auth/umkmall/refresh', { sid: 'sid-1', refreshToken: REFRESH }).expect(200)).body.sessionToken as string}`;
+    const first = await signIn();
+    await http()
+      .put('/void-pin')
+      .set('Authorization', first)
+      .send({ pin: '482913' })
+      .expect(200);
+
+    const refreshed = await refresh();
+    for (const refusal of [
+      await http()
+        .delete(`/void-pin/${sub}`)
+        .set('Authorization', refreshed)
+        .expect(403),
+      await http()
+        .post(`/void-pin/${sub}/unlock`)
+        .set('Authorization', refreshed)
+        .expect(403),
+    ])
+      expect(refusal.body.code).toBe('fresh_sign_in_required');
+    await http()
+      .get('/void-pin')
+      .set('Authorization', refreshed)
+      .expect(200, { hasPin: true, lockedUntil: null });
+
+    const again = await signIn();
+    await http()
+      .post(`/void-pin/${sub}/unlock`)
+      .set('Authorization', again)
+      .expect(200);
+    await http()
+      .delete(`/void-pin/${sub}`)
+      .set('Authorization', again)
+      .expect(200);
+  });
+
+  it('refuses a UMKMall account with no users row here with 401, not a 500', async () => {
+    fake.routes['POST /mobile/v1/auth/otp/verify'] = signedIn(
+      '00000000-0000-4000-8000-0000000000ff',
+    );
+    await post('/auth/otp/verify', {
+      phone: '081234567890',
+      otp: '123456',
+    }).expect(401);
+  });
+
+  it('maps an upper-case user id to the same store and actor', async () => {
+    const sub = await umkmallUser();
+    fake.routes['POST /mobile/v1/auth/otp/verify'] = signedIn(sub);
+    const lower = await post('/auth/otp/verify', {
+      phone: '081234567890',
+      otp: '123456',
+    }).expect(200);
+    fake.routes['POST /mobile/v1/auth/otp/verify'] = signedIn(
+      sub.toUpperCase(),
+    );
+    const upper = await post('/auth/otp/verify', {
+      phone: '081234567890',
+      otp: '123456',
+    }).expect(200);
+    expect(upper.body.tenant.id).toBe(lower.body.tenant.id);
+    expect(claims(upper.body.sessionToken).sub).toBe(sub);
+  });
+
+  it('ends a native session that came without a refresh token and answers 503', async () => {
+    fake.routes['POST /mobile/v1/auth/otp/verify'] = signedIn(
+      await umkmallUser(),
+      { refreshToken: undefined },
+    );
+    fake.routes['DELETE /mobile/v1/auth/session'] = () => ok({});
+    await post('/auth/otp/verify', {
+      phone: '081234567890',
+      otp: '123456',
+    }).expect(503);
+    expect(fake.calls.find((x) => x.method === 'DELETE')?.bearer).toBe(
+      'native-access',
+    );
+  });
+
   describe('POST /auth/umkmall/sign-out', () => {
     it("ends the POS's UMKMall session with a fresh access token", async () => {
       fake.routes['POST /mobile/v1/auth/refresh'] = signedIn(
