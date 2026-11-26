@@ -465,7 +465,9 @@ export function rehydrate(text: string | null, legacyText: string | null, fresh:
     // A request that was out when the page went away, or one that was never answered: a sale may exist under the key
     // and nobody can say the order on screen is still that one. The cashier checks before anything is sent.
     const doubt = raw.sending === true || raw.unanswered === true
-    const recorded = raw.recorded === true || doubt
+    // A cash or EDC sale held for the job exists whatever this screen knows (it may be completed by now): Bayar must
+    // not replay it after a reload or reopen, the cashier checks Riwayat first (UMK-2049).
+    const recorded = raw.recorded === true || doubt || (held !== null && !held.online)
     // Clean (nothing may exist under the stored key: no doubt, no held sale, no tracked sale): a fresh key, so the
     // next sale never meets an old one (UMK-2050). With any of those the key stays.
     const clean = !recorded && held === null && sales.length === 0 && !old

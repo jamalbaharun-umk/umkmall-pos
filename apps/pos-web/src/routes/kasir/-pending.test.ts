@@ -77,6 +77,11 @@ function till(start: PendingState = initialState(K1)) {
       state = rehydrate(serialize(state), null, next())
       return state
     },
+    /** The cashier left the register and came back in the same page load. */
+    reopen() {
+      state = reopened(state, next())
+      return state
+    },
   }
 }
 
@@ -390,7 +395,26 @@ describe('cash 503 with a sale id (the job completes it)', () => {
     expect(t.peek(DEBIT)).toBe(K1)
     expect(t.peek(QRIS)).toBe(K1)
     expect(t.reload().held).toEqual({ saleId: A, methodId: CASH, online: false })
-    expect(t.peek(CASH)).toBe(K1)
+    // UMK-2049: after a reload the job may have completed it: Bayar never replays it, the cashier checks first
+    expect(t.peek(CASH)).toBe('recorded')
+  })
+  it('a held cash sale with an untouched cart is not replayed after the register is reopened either (UMK-2049)', () => {
+    const t = held()
+    t.reopen()
+    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false })
+    expect(t.state.recorded).toBe(true)
+    expect(orderNotice(t.state)).toBe('recorded')
+    expect(t.send(CASH)).toBe('blocked')
+    expect(t.send(DEBIT)).toBe('blocked')
+    // the cashier checked: a new order
+    t.do({ type: 'recorded_acked' })
+    expect(t.send(CASH)).not.toBe(K1)
+  })
+  it('an online held sale is still repeated after a reload: its charge is repeated under the same key (UMK-2049)', () => {
+    const t = till()
+    t.send(QRIS)
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
+    expect(rehydrate(serialize(t.state), null, id(9)).recorded).toBe(false)
   })
   it('a cart edited by hand (the minus button, not Hapus semua) is no longer surely that sale\'s order: nothing is sent under its key until the cashier checked (review 5, major A)', () => {
     // the job completes sale 1; the next customer's order, edited into the same items, must not be answered with it
