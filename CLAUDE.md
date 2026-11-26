@@ -291,10 +291,12 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   `sales.switch_cash_paid` first, then that request (`settle` mode `cash`) closes the PG bill, turns the sale into a
   cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
   `already_paid`). A request without a usable answer takes the intent back (`abandonCashSwitch`) and says so; a
-  request that finds its switch taken back (by a cancel) stops and claims no new one (409 `cancel_refused`); a
-  poll, a check or a repeat of the sale never switches and never cancels a sale that has an intent; the job
-  closes nothing for a switch: it finishes one only when the bill is already `cancelled` (closed for it), and takes
-  back an intent whose bill ended by itself or never existed, then cancels the sale. Late money on the closed bill is
+  request that finds its switch taken back (by a cancel, the job or a failed request) stops and claims no new one
+  (409 `cancel_refused`); a poll, a check or a repeat of the sale never switches and never cancels a sale that has an
+  intent; the job closes nothing for a switch: it finishes one only when the bill is already `cancelled` (closed for
+  it), and takes back an intent whose bill ended by itself or never existed, then cancels the sale. The job cannot
+  tell a dead request from one at work, so it can beat a cashier who holds the cash: that request answers 409 and
+  the sale is rung up again. Late money on the closed bill is
   payment-api's (unmatched receipt, auto-refund); pos-api only shows it. Cancelling an awaiting sale needs no PIN
   and writes no void.
 - **"Buat QR baru" is written before anything is closed, like the switch to cash** (UMK-2042, plan
