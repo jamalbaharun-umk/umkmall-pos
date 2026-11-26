@@ -280,12 +280,16 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   and writes no void.
 - **"Buat QR baru" is written before anything is closed, like the switch to cash** (UMK-2042, plan
   [2026-11-26-004](docs/plans/2026-11-26-004-feat-umk-1991-review-list-new-qr-checkout-plan.md)):
+  this supersedes the 2026-11-25 ruling "no new QR for the same sale" (plan 006 D12).
   `POST /sales/:id/payment/renew` `{ attempt }` (the attempt the screen shows; a sale past it answers its current
   bill, so a repeat makes nothing new) writes `sales.payment_renew_at`, closes the old bill, and only on payment-api's
   "closed unpaid" moves the sale to attempt + 1 (`turnToNextAttempt`, under the row lock) and charges
   `<saleId>:<attempt>` with the same method, bank and amount. The new bill is never charged before the old one is
   closed. Nobody but that request acts on the intent and nobody cancels a sale that has it (`applyToSale` answers
-  `stale`); a failed request takes it back (`abandonRenew`), the job takes back one older than its wait. Cash drops a
+  `stale`). The intent is the request's ticket (`RenewTicket`, the `payment_renew_at` it wrote): a second request
+  is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMs`: the job's wait plus four
+  payment-api timeouts), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
+  a failed request its own, the job the one it read; only a cancel drops any). Cash drops a
   renew intent; a cancel drops both. At most `MAX_PAYMENT_ATTEMPTS` bills per sale (open owner question). A cash
   sale past attempt 1 is read from its method (`!isOnlineMethod(method) && attempt > 1`), not from the attempt alone.
 - **"Perlu ditinjau"** (UMK-2041) is `GET /payment-review` (`payments.manage`): payment-api's

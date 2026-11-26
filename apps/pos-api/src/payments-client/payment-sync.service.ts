@@ -69,6 +69,16 @@ const MAX_ROUNDS = 4;
  */
 export const MAX_PAYMENT_ATTEMPTS = 5;
 
+/**
+ * The request for a new bill that holds a sale's intent (UMK-2042): the attempt its screen showed and the
+ * `payment_renew_at` it wrote, which is what it may clear or act on. A request whose intent was replaced or
+ * dropped touches nothing of the one there now.
+ */
+export type RenewTicket = { from: number; at: Date | null };
+
+const sameTime = (a: Date | null, b: Date | null) =>
+  a !== null && b !== null && a.getTime() === b.getTime();
+
 /** Our own refusal, counted and parked like payment-api's: the pos row and the payment do not agree. */
 const refused = (code: string) => new PaymentApiError('rejected', null, code);
 
@@ -161,6 +171,11 @@ export type TickResult = {
 export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PaymentSync.name);
   private readonly afterMs: number;
+  /**
+   * How old an intent for a new bill must be before anybody takes it over (the job, or another request): the
+   * job's wait plus several payment-api timeouts, as the request that wrote it makes a few calls in a row.
+   */
+  private readonly renewStrandedMs: number;
   private readonly intervalMs: number;
   private readonly maxAttempts: number;
   private readonly onlineAllowed: boolean;
@@ -174,6 +189,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   ) {
     const env = loadEnv();
     this.afterMs = env.POS_PAYMENT_RECONCILE_AFTER_SECONDS * 1000;
+    this.renewStrandedMs = this.afterMs + 4 * env.PAYMENT_API_TIMEOUT_MS;
     this.intervalMs = env.POS_PAYMENT_RECONCILE_INTERVAL_SECONDS * 1000;
     this.maxAttempts = env.POS_PAYMENT_SYNC_MAX_ATTEMPTS;
     this.onlineAllowed = env.onlinePaymentsAllowed;
@@ -277,11 +293,11 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * (payment `cancelled`). A bill the payer paid first completes the sale as the PG sale it was.
    *
    * A new bill for the same sale (UMK-2042, `paymentRenewAt` set, see `requestRenew`) is made by the cashier's
-   * own request (mode `renew`, with the attempt its screen shows in `renewFrom`): it closes the bill, and once
+   * own request (mode `renew`, with its `RenewTicket`): it closes the bill, and once
    * that is closed unpaid the sale moves to the next attempt, which that request then charges with the same
    * method, bank and amount. The new attempt is never charged before the old bill is closed, so a sale never
    * has two live bills (payment-api's own index refuses a second one too). A request whose sale is already
-   * past `renewFrom` closes nothing: it charges the current attempt, which answers the bill that attempt has.
+   * past the ticket's attempt closes nothing: it charges the current attempt, which answers the bill that attempt has.
    * No other worker acts on the intent, and none cancels the sale while it is set; the job takes back one
    * that is older than its wait (the request is gone).
    *
@@ -298,8 +314,9 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     mode: SettleMode,
     now: Date = new Date(),
     cashPaid?: number,
-    renewFrom?: number,
+    ticket?: RenewTicket,
   ): Promise<SaleSettlement> {
+    const renewFrom = ticket?.from;
     for (let round = 0; round < MAX_ROUNDS; round += 1) {
       // A cancel takes a switch to cash and a new bill back first, in every round: one asked meanwhile loses.
       if (mode === 'cancel') {
@@ -330,7 +347,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         sale.renewAt === null &&
         sale.switchCashPaid === null
       ) {
-        await this.requestRenew(tenantId, saleId, renewFrom);
+        const asked = await this.requestRenew(tenantId, saleId, renewFrom);
+        if (asked.result === 'requested' && ticket) ticket.at = asked.at;
         sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
         if (sale.status !== 'awaiting_payment' || !sale.method) continue;
       }
@@ -339,17 +357,20 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (
         mode === 'reconcile' &&
         sale.renewAt !== null &&
-        now.getTime() - sale.renewAt.getTime() >= this.afterMs
+        now.getTime() - sale.renewAt.getTime() >= this.renewStrandedMs
       ) {
-        await this.dropRenew(tenantId, saleId);
+        // Only the intent it read: one written since belongs to a request at work.
+        await this.dropRenew(tenantId, saleId, sale.renewAt);
         continue;
       }
 
       const switching = sale.switchCashPaid !== null;
       const renewing = sale.renewAt !== null;
-      // This request replaces the bill of the attempt its screen shows.
+      // This request replaces the bill of the attempt its screen shows, while the intent is its own.
       const replacing =
-        mode === 'renew' && renewing && sale.attempt === renewFrom;
+        mode === 'renew' &&
+        sale.attempt === renewFrom &&
+        sameTime(sale.renewAt, ticket?.at ?? null);
       // The request for a new bill finds the sale past that attempt: the new attempt is charged (a repeat
       // answers the bill it already has).
       const renewed =
@@ -456,7 +477,12 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         // The bill is closed unpaid and a new one is asked. Only the request that asked moves the sale to
         // the next attempt (the next round charges it); nobody else cancels the sale under it.
         if (!replacing) return { outcome: 'awaiting_payment', payment };
-        await this.turnToNextAttempt(tenantId, saleId, sale.attempt);
+        await this.turnToNextAttempt(
+          tenantId,
+          saleId,
+          sale.attempt,
+          sale.renewAt,
+        );
         continue;
       }
       if (!switching) {
@@ -593,21 +619,29 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * The cashier asks for a new bill for a sale that waits for a PG payment (UMK-2042): the intent is written
    * on the sale BEFORE the current bill is closed, so no worker that finds the bill closed cancels the sale.
    * `from` is the attempt the cashier's screen shows: a sale that is past it (`moved`) was renewed already.
-   * Returns what the sale is now; `settle` (mode `renew`) does the rest.
+   * An intent another request wrote is never overwritten (`renewing`) unless it is stranded (older than
+   * `renewStrandedMs`). Returns what the sale is now and, when written, the intent's time (the request's
+   * ticket, see `RenewTicket`); `settle` (mode `renew`) does the rest.
    */
   async requestRenew(
     tenantId: string,
     saleId: string,
     from: number,
   ): Promise<
-    | 'not_found'
-    | 'not_awaiting'
-    | 'not_online'
-    | 'switching'
-    | 'moved'
-    | 'limit'
-    | 'requested'
+    | {
+        result:
+          | 'not_found'
+          | 'not_awaiting'
+          | 'not_online'
+          | 'switching'
+          | 'renewing'
+          | 'moved'
+          | 'limit';
+        at: null;
+      }
+    | { result: 'requested'; at: Date }
   > {
+    const no = <T extends string>(result: T) => ({ result, at: null });
     return this.db.transaction(async (tx) => {
       const [sale] = await tx
         .select({
@@ -615,33 +649,43 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           method: sales.paymentMethodCode,
           attempt: sales.paymentAttempt,
           switchCashPaid: sales.switchCashPaid,
+          renewAt: sales.paymentRenewAt,
+          // The intent's age is read on the database's clock, the clock that wrote it.
+          stranded: sql<boolean>`${sales.paymentRenewAt} < clock_timestamp() - make_interval(secs => ${this.renewStrandedMs / 1000})`,
         })
         .from(sales)
         .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)))
         .for('update');
-      if (!sale) return 'not_found' as const;
-      if (sale.status !== 'awaiting_payment') return 'not_awaiting' as const;
-      if (!isOnlineMethod(sale.method)) return 'not_online' as const;
-      if (sale.switchCashPaid !== null) return 'switching' as const;
-      if (sale.attempt !== from) return 'moved' as const;
-      if (sale.attempt >= MAX_PAYMENT_ATTEMPTS) return 'limit' as const;
-      await tx
+      if (!sale) return no('not_found');
+      if (sale.status !== 'awaiting_payment') return no('not_awaiting');
+      if (!isOnlineMethod(sale.method)) return no('not_online');
+      if (sale.switchCashPaid !== null) return no('switching');
+      if (sale.attempt !== from) return no('moved');
+      if (sale.renewAt !== null && !sale.stranded) return no('renewing');
+      if (sale.attempt >= MAX_PAYMENT_ATTEMPTS) return no('limit');
+      // Milliseconds only: the time comes back as a JS Date, and it is compared as one (`dropRenew`).
+      const [row] = await tx
         .update(sales)
-        .set({ paymentRenewAt: sql`clock_timestamp()` })
-        .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
-      return 'requested' as const;
+        .set({
+          paymentRenewAt: sql`date_trunc('milliseconds', clock_timestamp())`,
+        })
+        .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)))
+        .returning({ at: sales.paymentRenewAt });
+      return { result: 'requested' as const, at: row.at as Date };
     });
   }
 
   /**
    * The request for a new bill got no usable answer and said so: the intent is taken back, so the sale is
-   * judged by its bill again (still open: it waits; closed: the next look cancels it).
+   * judged by its bill again (still open: it waits; closed: the next look cancels it). Only the request's own
+   * intent: one it never wrote, or that was replaced, belongs to another request and stays.
    */
-  async abandonRenew(tenantId: string, saleId: string) {
-    await this.dropRenew(tenantId, saleId);
+  async abandonRenew(tenantId: string, saleId: string, ticket: RenewTicket) {
+    if (ticket.at) await this.dropRenew(tenantId, saleId, ticket.at);
   }
 
-  private async dropRenew(tenantId: string, saleId: string) {
+  /** `at`: only the intent written at that time. Without it (a cancel, which wins) whatever intent there is. */
+  private async dropRenew(tenantId: string, saleId: string, at?: Date) {
     await this.db
       .update(sales)
       .set({ paymentRenewAt: null })
@@ -649,7 +693,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         and(
           eq(sales.tenantId, tenantId),
           eq(sales.id, saleId),
-          isNotNull(sales.paymentRenewAt),
+          // Compared at the millisecond a JS Date holds (a value written elsewhere may carry microseconds).
+          at
+            ? sql`date_trunc('milliseconds', ${sales.paymentRenewAt}) = ${at.toISOString()}::timestamptz`
+            : isNotNull(sales.paymentRenewAt),
         ),
       );
   }
@@ -663,6 +710,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     tenantId: string,
     saleId: string,
     attempt: number,
+    renewAt: Date | null,
   ) {
     return this.db.transaction(async (tx) => {
       const mine = and(eq(sales.tenantId, tenantId), eq(sales.id, saleId));
@@ -680,7 +728,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         !sale ||
         sale.status !== 'awaiting_payment' ||
         sale.attempt !== attempt ||
-        sale.renewAt === null ||
+        !sameTime(sale.renewAt, renewAt) ||
         sale.switchCashPaid !== null
       )
         return;

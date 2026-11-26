@@ -2807,12 +2807,16 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         renew(s.auth, saleId, { attempt: 1 }),
         renew(s.auth, saleId, { attempt: 1 }),
       ]);
-      expect([x.status, y.status]).toEqual([200, 200]);
-      expect(x.body.attempt).toBe(2);
-      expect(y.body.attempt).toBe(2);
-      expect(x.body.checkout).toEqual(y.body.checkout);
+      // One makes the bill; the other answers it, or is told one is being made (never a second intent).
+      const ok = [x, y].filter((r) => r.status === 200);
+      expect(ok.length).toBeGreaterThanOrEqual(1);
+      for (const r of [x, y].filter((r) => r.status !== 200)) {
+        expect(r.status).toBe(409);
+        expect(r.body.code).toBe('renew_in_progress');
+      }
+      for (const r of ok) expect(r.body.attempt).toBe(2);
       const again = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
-      expect(again.body.checkout).toEqual(x.body.checkout);
+      expect(again.body.checkout).toEqual(ok[0].body.checkout);
       expect(await paymentsOf(saleId)).toHaveLength(2);
       expect((await live(saleId))[0].n).toBe(1);
 
@@ -2829,6 +2833,43 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
       expect((await live(saleId))[0].n).toBe(0);
       expect(await onHand(s)).toBe(20);
+    });
+
+    it('a renew that fails beside a live one never takes the live one’s intent: the sale is not cancelled under it', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+      // A: the live renewal of attempt 2, held once the old bill is closed (its intent set).
+      const closeHold = hold(isCancel, 'after');
+      const running = renew(s.auth, saleId, { attempt: 2 }).then((r) => r);
+      await closeHold.held;
+      const intent = await renewAt(saleId);
+      expect(intent).not.toBeNull();
+      try {
+        // A second tap on the same attempt is refused and changes nothing.
+        const twice = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
+        expect(twice.body.code).toBe('renew_in_progress');
+        // A stale tab (attempt 1) whose request gets no answer: 503, and it takes back only its own intent.
+        link = 'down';
+        await renew(s.auth, saleId, { attempt: 1 }).expect(503);
+        link = 'ok';
+        expect(await renewAt(saleId)).toEqual(intent);
+        // So the poll that finds the old bill closed leaves the sale waiting.
+        const poll = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+        expect(poll.body.saleStatus).toBe('awaiting_payment');
+        // Nor does the job take it back before it is stranded.
+        await sync.tick(new Date());
+        expect(await renewAt(saleId)).toEqual(intent);
+      } finally {
+        link = 'ok';
+        closeHold.release();
+      }
+      expect((await running).body).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        attempt: 3,
+      });
+      expect((await live(saleId))[0].n).toBe(1);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
     });
 
     it('the customer paid the old bill first: 409 already_paid, completed with it, no new bill', async () => {

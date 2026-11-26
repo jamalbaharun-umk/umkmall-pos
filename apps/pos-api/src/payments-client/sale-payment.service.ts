@@ -15,6 +15,7 @@ import type { PosSession } from '../tenancy/session';
 import {
   MAX_PAYMENT_ATTEMPTS,
   PaymentSync,
+  type RenewTicket,
   type SaleSettlement,
   type SettleMode,
 } from './payment-sync.service';
@@ -64,6 +65,8 @@ const MESSAGES: Record<string, string> = {
     'Layanan pembayaran tidak menjawab, jadi penjualan belum menjadi tunai. Cek status pembayaran dulu sebelum menerima uang atau meminta pelanggan membayar: bila tagihan sudah tertutup, penjualan ini dibatalkan dan harus dibuat ulang.',
   switching_to_cash:
     'Penjualan ini sedang dialihkan ke tunai. Selesaikan atau batalkan dulu.',
+  renew_in_progress:
+    'Kode baru untuk penjualan ini sedang dibuat. Tunggu sebentar, lalu cek status pembayaran.',
   attempt_limit:
     'Penjualan ini sudah terlalu sering dibuatkan kode baru. Batalkan lalu buat penjualan baru.',
   renew_unanswered:
@@ -123,7 +126,9 @@ export const paymentUrlOf = (v: string): string | null => {
   } catch {
     return null;
   }
-  return url.protocol === 'https:' && !url.username && !url.password ? v : null;
+  return url.protocol === 'https:' && !url.username && !url.password
+    ? url.href
+    : null;
 };
 
 /** 503: the sale is a cash sale already and only the record of its cash is missing. */
@@ -316,11 +321,16 @@ export class SalePayments {
     if (!isOnlineMethod(sale.method)) throw refusal('not_online');
     if (from > sale.attempt)
       throw fieldError('attempt', 'Percobaan pembayaran tidak dikenal');
+    // The intent this request writes, and only it, is the request's to act on and to take back.
+    const ticket: RenewTicket = { from, at: null };
     if (sale.attempt === from) {
       const asked = await this.sync.requestRenew(s.tenantId, saleId, from);
-      if (asked === 'switching') throw refusal('switching_to_cash');
-      if (asked === 'limit') throw refusal('attempt_limit');
-      if (asked === 'not_online') throw refusal('not_online');
+      if (asked.result === 'switching') throw refusal('switching_to_cash');
+      if (asked.result === 'limit') throw refusal('attempt_limit');
+      if (asked.result === 'not_online') throw refusal('not_online');
+      // Another request (a second tap, another tab) is making the new bill now: never two at once.
+      if (asked.result === 'renewing') throw refusal('renew_in_progress');
+      ticket.at = asked.at;
     }
     const moved = async () => {
       const now = await this.sale(s, saleId);
@@ -334,11 +344,11 @@ export class SalePayments {
         'renew',
         new Date(),
         undefined,
-        from,
+        ticket,
       ));
     } catch (error) {
-      // Whatever went wrong, the request ends here: the intent goes with it.
-      await this.sync.abandonRenew(s.tenantId, saleId);
+      // Whatever went wrong, the request ends here: its own intent goes with it (never another's).
+      await this.sync.abandonRenew(s.tenantId, saleId, ticket);
       if (!(error instanceof PaymentApiError)) throw error;
       const past = await moved();
       if (error.kind === 'rejected')
@@ -357,9 +367,14 @@ export class SalePayments {
     if (view.saleStatus !== 'awaiting_payment')
       throw refusal('not_awaiting', now);
     if (view.attempt <= from) {
-      await this.sync.abandonRenew(s.tenantId, saleId);
+      await this.sync.abandonRenew(s.tenantId, saleId, ticket);
+      const holder = await this.sale(s, saleId);
       throw refusal(
-        view.switchingToCash ? 'switching_to_cash' : 'cancel_refused',
+        view.switchingToCash
+          ? 'switching_to_cash'
+          : holder.renewAt !== null
+            ? 'renew_in_progress'
+            : 'cancel_refused',
       );
     }
     // The sale is at the new attempt and payment-api answered no bill for it: a repeat asks again.

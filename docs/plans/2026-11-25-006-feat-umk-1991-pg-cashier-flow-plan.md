@@ -25,7 +25,7 @@ no onboarding, no sub-merchant.
 - **Attempts.** `sales.payment_attempt` (1, 2, …) is the attempt the sale is being paid with; the charge key is
   `<saleId>:<attempt>`. Only the switch to cash starts a new attempt, and `payment_attempt_at` is when it started
   (the job's wait before it gives an unanswered charge up counts from there). A new QR for the same sale (D12) is not built:
-  the cashier cancels and sells again.
+  the cashier cancels and sells again. **Superseded 2026-11-26 (UMK-2042):** a new QR, VA or link for the same sale is built, see plan [2026-11-26-004](2026-11-26-004-feat-umk-1991-review-list-new-qr-checkout-plan.md).
 - **Switch to cash is an intent written before anything is closed, and only the cashier's request acts on it.**
   `sales.switch_cash_paid` (the cash tendered) is stored first; then that request closes the PG attempt at
   payment-api (`POST /payments/:id/cancel`, or `POST /payments/close` when no payment has the key), turns the sale
@@ -82,7 +82,7 @@ no onboarding, no sub-merchant.
   was already closed for it (the rule above); the job closes no bill for a switch. Retry of a refused refund needs
   `sales.void` and no new PIN; marking it "dikembalikan manual" is the owner's alone (the approved spec). Only the sale's own cashier takes
   cash for it. Cancel is allowed for any sale that awaits payment, PG or not. There is no new QR for the same sale:
-  the cashier cancels and sells again.
+  the cashier cancels and sells again. **Superseded 2026-11-26 (UMK-2042):** a new QR, VA or link for the same sale is built, see plan [2026-11-26-004](2026-11-26-004-feat-umk-1991-review-list-new-qr-checkout-plan.md).
 - **Late PG money** on the closed attempt is payment-api's business: an unmatched receipt, refunded automatically
   (M5, D13). pos-api only shows it (`lateReceipts`).
 - **Cancel** of an awaiting sale needs no PIN (V2) and happens only on payment-api's answer (M17): payment-api
