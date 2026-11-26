@@ -53,7 +53,8 @@ export function CorrectionDialog({ receivable: r, payment, methods, shift, canOp
   const lock = useRef(false) // a double submit arrives before `busy` re-renders
   const key = useRef('')
 
-  const oldMethodId = methods.find((m) => m.name === payment?.paymentMethod)?.id
+  // By id: two methods may share a name. Undefined when the old method is no longer offered.
+  const oldMethodId = methods.find((m) => m.id === payment?.paymentMethodId)?.id
   useEffect(() => {
     if (!payment) {
       setPin('')

@@ -1,6 +1,8 @@
 import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
+import { z } from 'zod'
 import { api, trySetStatus } from '@/lib/api.server'
+import { CORRECTION_NOTE_MAX, CORRECTION_REASONS } from '../piutang/-correction'
 
 // Server functions for the U7 screens (pelanggan, voucher, metode pembayaran, piutang). pos-api validates and
 // computes every amount; these only relay. Mutations return a Result instead of throwing, for forms.
@@ -42,6 +44,7 @@ export type Receivable = ReceivableSummary & {
     amount: number
     restBefore: number
     paymentMethod: string
+    paymentMethodId: string
     createdAt: string
     // UMK-1963: who collected it and where the cash went (a shift's ledger, or outside every shift)
     actorName: string
@@ -199,24 +202,37 @@ export type CorrectionResult =
   | { ok: true; correction: Correction }
   | { ok: false; status: number; error: string; errors?: Record<string, string>; code?: string; retryAfter?: number }
 
-type CorrectionInput = {
-  id: string
-  paymentId: string
-  /** One per opened dialog: a double tap or a retry after a lost answer makes one correction. */
-  key: string
-  replacement: { amount: number; paymentMethodId?: string } | null
-  reasonCode: string
-  note?: string
-  approverId: string
-  pin: string
-}
+/**
+ * What the correction dialog may send, checked at this server boundary before it is relayed (pos-api checks it all
+ * again and decides). Shape only: the PIN's own rule and every refusal stay pos-api's, so their words reach the form.
+ */
+const CorrectionInput = z
+  .object({
+    id: z.string().uuid(),
+    paymentId: z.string().uuid(),
+    /** One per opened dialog: a double tap or a retry after a lost answer makes one correction. */
+    key: z.string().min(1).max(100),
+    replacement: z
+      .object({
+        amount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        paymentMethodId: z.string().uuid().optional(),
+      })
+      .strict()
+      .nullable(),
+    reasonCode: z.enum(CORRECTION_REASONS.map((r) => r.code) as [string, ...string[]]),
+    note: z.string().max(CORRECTION_NOTE_MAX).optional(),
+    approverId: z.string().uuid(),
+    pin: z.string().max(20),
+  })
+  .strict()
+type CorrectionInput = z.infer<typeof CorrectionInput>
 
 /**
  * "Koreksi pembayaran" (UMK-1971): pos-api writes a reversal line and, unless `replacement` is null, the new payment.
  * The PIN passes through to pos-api and is never stored, logged or echoed.
  */
 export const correctPayment = createServerFn({ method: 'POST' })
-  .validator((d: CorrectionInput) => d)
+  .validator((d: CorrectionInput) => CorrectionInput.parse(d))
   .handler(async ({ data: { id, paymentId, key, ...body } }): Promise<CorrectionResult> => {
     const res = await api(`/receivables/${enc(id)}/payments/${enc(paymentId)}/correction`, {
       method: 'POST',

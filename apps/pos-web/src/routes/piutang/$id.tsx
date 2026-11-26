@@ -280,9 +280,11 @@ function ReceivablePage() {
                           {canCorrect && (
                             <TableCell className="text-right">
                               {p.correctable && (
-                                <Button type="outline" color="light" size="small" width="auto" onClick={() => setCorrecting(p)}>
-                                  Koreksi
-                                </Button>
+                                <ActionRow>
+                                  <Button type="outline" color="light" size="small" width="auto" onClick={() => setCorrecting(p)}>
+                                    Koreksi
+                                  </Button>
+                                </ActionRow>
                               )}
                             </TableCell>
                           )}

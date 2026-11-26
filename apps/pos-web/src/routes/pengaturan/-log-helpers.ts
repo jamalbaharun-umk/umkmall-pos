@@ -62,6 +62,7 @@ const ACTIONS: Record<string, string> = {
   refund: 'Refund struk',
   refund_manual: 'Tandai refund manual',
   refund_retry: 'Coba ulang refund',
+  kasbon_correction: 'Koreksi pembayaran kasbon',
   discount_approval: 'Setujui diskon dengan PIN',
   approval_pin_set: 'Atur PIN persetujuan',
   approval_pin_unlock: 'Buka kunci PIN persetujuan',
@@ -104,6 +105,11 @@ const REASONS: Record<string, string> = {
   duplicate_transaction: 'Transaksi tercatat dobel',
   goods_returned: 'Barang dikembalikan pelanggan',
   other: 'Lainnya',
+  // A kasbon correction's reasons (UMK-1971).
+  wrong_amount: 'Salah jumlah',
+  wrong_method: 'Salah cara bayar',
+  wrong_customer: 'Salah pelanggan',
+  duplicate: 'Tercatat dua kali',
   tambah_modal: 'Tambah modal laci',
   setor_bank: 'Setor ke bank',
   ambil_pemilik: 'Diambil pemilik',
@@ -129,6 +135,13 @@ export function detailText(row: Pick<LogRow, 'event' | 'details'>, permissionLab
     case 'refund':
       parts.push(num(d.total) === null ? null : rupiah(num(d.total)!), REASONS[text(d.reasonCode) ?? ''] ?? null)
       break
+    case 'kasbon_correction': {
+      const old = num(d.oldAmount)
+      const next = num(d.newAmount)
+      if (old !== null) parts.push(next === null ? `${rupiah(old)} dibatalkan` : `${rupiah(old)} jadi ${rupiah(next)}`)
+      parts.push(REASONS[text(d.reasonCode) ?? ''] ?? null)
+      break
+    }
     case 'discount_approval':
       if (num(d.discount) !== null) parts.push(`Diskon ${rupiah(num(d.discount)!)}`)
       if (num(d.discountPercent) !== null) parts.push(`${num(d.discountPercent)}%`)
@@ -200,6 +213,11 @@ export function detailLines(
     ['Uang dihitung', num(d.countedCash) !== null ? rupiah(num(d.countedCash)!) : null],
     ['Uang seharusnya', num(d.expectedCash) !== null ? rupiah(num(d.expectedCash)!) : null],
     ['Selisih', num(d.difference) !== null ? signedRupiah(num(d.difference)!) : null],
+    ['Pembayaran lama', row.event === 'kasbon_correction' && num(d.oldAmount) !== null ? rupiah(num(d.oldAmount)!) : null],
+    [
+      'Pembayaran baru',
+      row.event === 'kasbon_correction' ? (num(d.newAmount) !== null ? rupiah(num(d.newAmount)!) : 'Dibatalkan saja') : null,
+    ],
     ['Harga normal', num(d.listPrice) !== null ? rupiah(num(d.listPrice)!) : null],
     ['Harga jadi', num(d.unitPrice) !== null ? rupiah(num(d.unitPrice)!) : null],
     ['Perubahan', ['staff_update', 'role_create', 'role_update'].includes(row.event) ? detailText(row, permissionLabel) || null : null],
