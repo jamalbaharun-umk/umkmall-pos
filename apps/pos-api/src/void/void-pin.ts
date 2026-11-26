@@ -346,6 +346,31 @@ export class VoidPins {
     return this.status(s);
   }
 
+  /**
+   * The owner's "Lupa PIN" (UMK-2054): replaces the owner's own PIN, or makes the first one, and clears its count
+   * and lock, in ONE statement, so there is never a moment with the old PIN gone and no new one. Owner only, and
+   * only after a fresh sign-in (as removing it and clearing its lock are). An admin's forgotten PIN is removed by
+   * the owner (`reset`) and set again by the admin.
+   */
+  async replaceForgotten(s: PosSession, pin: string) {
+    this.ownerOnly(s);
+    this.needsFreshSignIn(s);
+    const pinHash = await hashPin(pin);
+    await this.db
+      .insert(voidPins)
+      .values({
+        tenantId: s.tenantId,
+        actorId: s.actorId,
+        actorKind: s.kind,
+        pinHash,
+      })
+      .onConflictDoUpdate({
+        target: [voidPins.tenantId, voidPins.actorId],
+        set: { pinHash, failures: 0, lockedUntil: null, updatedAt: new Date() },
+      });
+    return this.status(s);
+  }
+
   private ownerOnly(s: PosSession) {
     if (s.kind !== 'owner') throw new ForbiddenException();
   }

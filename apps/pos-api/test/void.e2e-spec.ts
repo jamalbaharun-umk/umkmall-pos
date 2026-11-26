@@ -1292,6 +1292,62 @@ describe('void a full sale (UMK-1962)', () => {
       expect((await pinRow(s.userId)).pin_hash).toMatch(/^scrypt\$/);
     });
 
+    it('"Lupa PIN" in one call: PUT /void-pin/forgotten replaces the owner\'s PIN and its lock only after a fresh sign-in', async () => {
+      const s = await shop();
+      const forgotten = (auth: string, body: object) =>
+        put(auth, '/void-pin/forgotten', body);
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '5 minutes' where actor_id = ${s.userId}`;
+      const before = await pinRow(s.userId);
+      // Not fresh (a refresh, or a sign-in 301 s ago): 403, and the PIN, its count and lock stay.
+      for (const auth of [s.auth, await signedIn(s, 301)])
+        expect(
+          (await forgotten(auth, { pin: '270183' }).expect(403)).body,
+        ).toEqual(FRESH);
+      expect(await pinRow(s.userId)).toEqual(before);
+      // A bad body is 422 and changes nothing, fresh or not.
+      for (const bad of [
+        {},
+        { pin: '12' },
+        { pin: '270183', currentPin: OWNER_PIN },
+      ])
+        await forgotten(s.freshAuth, bad).expect(422);
+      expect(await pinRow(s.userId)).toEqual(before);
+      // An admin with sales.void cannot use it, fresh or not (their forgotten PIN is the owner's reset).
+      const rina = await createCashier(app, s, ['sales.create', 'sales.void']);
+      await setPin(rina.auth, '715064').expect(200);
+      await forgotten(rina.auth, { pin: '909090' }).expect(403);
+      expect((await pinRow(rina.staffId)).failures).toBe(0);
+
+      // Fresh: the new PIN, no count, no lock, in one step; the old PIN no longer approves.
+      expect(
+        (await forgotten(s.freshAuth, { pin: '270183' }).expect(200)).body,
+      ).toEqual({ hasPin: true, lockedUntil: null });
+      const after = await pinRow(s.userId);
+      expect(after).toMatchObject({ failures: 0, locked_until: null });
+      expect(after.pin_hash).not.toBe(before.pin_hash);
+      await open(s.auth);
+      const sale = await sell(s.auth, {
+        lines: [{ productId: s.productId, qty: 1 }],
+        paid: 5000,
+      });
+      await voidSale(s.auth, sale.body.id, s.approval).expect(422);
+      await voidSale(s.auth, sale.body.id, {
+        ...s.approval,
+        pin: '270183',
+      }).expect(201);
+      // An owner without a PIN makes the first one the same way.
+      await admin`delete from pos.void_pins where actor_id = ${s.userId}`;
+      await forgotten(s.auth, { pin: '135790' }).expect(403);
+      expect(await pinRow(s.userId)).toBeUndefined();
+      await forgotten(s.freshAuth, { pin: '135790' }).expect(200);
+      expect(await pinRow(s.userId)).toMatchObject({ failures: 0 });
+      // Another store's fresh owner changes only their own PIN.
+      const b = await shop();
+      const hashOfA = (await pinRow(s.userId)).pin_hash;
+      await forgotten(b.freshAuth, { pin: '246802' }).expect(200);
+      expect((await pinRow(s.userId)).pin_hash).toBe(hashOfA);
+    });
+
     it("another store's owner, freshly signed in, gets 404 on this owner's PIN", async () => {
       const a = await shop();
       const b = await shop();

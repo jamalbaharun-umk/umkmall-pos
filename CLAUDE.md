@@ -326,8 +326,9 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **The owner's own PIN is never changed by the session alone** (UMK-2054, `src/void/void-pin.ts`): changing it needs
   the old PIN; making the first one, removing it and clearing its lock need a fresh sign-in (`freshSignIn` in
   `src/tenancy/session.ts`: the token's `auth_time` is at most `FRESH_SIGN_IN_SECONDS` old), else 403
-  `fresh_sign_in_required`. Only a sign-in stamps `auth_time` (`POST /auth/otp/verify`, the dev sign-in);
-  **a refresh never does** (`POST /auth/umkmall/refresh`, pos-web's `api()` after a 401). A new route
+  `fresh_sign_in_required`. "Lupa PIN" is one call, `PUT /void-pin/forgotten` `{ pin }` (owner, fresh): the PIN is
+  replaced and its lock cleared in one statement. Only a sign-in stamps `auth_time` (`POST /auth/otp/verify`, the
+  dev sign-in); **a refresh never does** (`POST /auth/umkmall/refresh`, pos-web's `api()` after a 401). A new route
   that touches the owner's `void_pins` row keeps both rules. Admin PINs are not gated. In tests `createStore`'s
   `auth` is a refreshed session and `freshAuth` a just-signed-in one.
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
