@@ -3,7 +3,7 @@ import { Card } from '@umkmall/ui/compositions'
 import { MessageCircle, Store } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { showError } from '@/lib/feedback'
-import { failureText } from '@/lib/sign-in'
+import { WHATSAPP_NOT_SET_UP, WHATSAPP_NOT_SET_UP_TEXT, failureText } from '@/lib/sign-in'
 import { requestOtp, verifyOtp, type Consent, type ConsentAsk, type OtpFailure } from './-otp-api'
 
 /** Seconds before "Kirim ulang kode" opens again, as on UMKMall's own login. */
@@ -23,6 +23,7 @@ export function OwnerSignIn({ failed, devSignIn }: { failed?: number; devSignIn:
   const [ask, setAsk] = useState<ConsentAsk>()
   const [fieldError, setFieldError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [notSetUp, setNotSetUp] = useState(false)
   const [resendIn, setResendIn] = useState(0)
 
   useEffect(() => {
@@ -33,6 +34,7 @@ export function OwnerSignIn({ failed, devSignIn }: { failed?: number; devSignIn:
 
   /** A refusal that names the field stays under it; consent opens its dialog; anything else is the error dialog. */
   function handle(f: OtpFailure, field: 'phone' | 'otp', action: string, retry: () => void) {
+    if (f.code === WHATSAPP_NOT_SET_UP) return setNotSetUp(true)
     if (f.code === 'consent_required' && f.consent) return setAsk(f.consent)
     if (f.status === 422) return setFieldError(f.errors?.[field] ?? f.error ?? 'Isian belum benar.')
     showError(f, { action, retry })
@@ -87,7 +89,14 @@ export function OwnerSignIn({ failed, devSignIn }: { failed?: number; devSignIn:
             {failureText(failed)}
           </Alert>
         )}
-        {step === 'phone' ? (
+        {notSetUp ? (
+          <>
+            <h1 className="text-2xl font-bold text-default-primary">Masuk ke Kasir</h1>
+            <Alert variant="info" className="w-full text-left">
+              {WHATSAPP_NOT_SET_UP_TEXT} Kasir tetap bisa masuk dengan PIN.
+            </Alert>
+          </>
+        ) : step === 'phone' ? (
           <>
             <div className="flex flex-col gap-1">
               <h1 className="text-2xl font-bold text-default-primary">Masuk ke Kasir</h1>

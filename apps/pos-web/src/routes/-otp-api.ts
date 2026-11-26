@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { getRequestHeader, getRequestIP } from '@tanstack/react-start/server'
 import { buildForwardedFor } from '@/lib/pairing'
+import { WHATSAPP_NOT_SET_UP, whatsappNotSetUp } from '@/lib/sign-in'
 import { posApiUrl, storeSession, takeLandingPath } from '@/lib/session.server'
 
 // The owner's WhatsApp sign-in (UMK-2065). pos-api asks UMKMall; this relay only passes the input on and stores the
@@ -48,6 +49,7 @@ async function post(path: string, body: unknown): Promise<Response | null> {
 
 async function failure(res: Response | null): Promise<OtpFailure> {
   if (!res) return { ok: false, status: 0 }
+  if (whatsappNotSetUp(res.status)) return { ok: false, status: 404, code: WHATSAPP_NOT_SET_UP }
   const b = (await res.json().catch(() => ({}))) as Record<string, unknown>
   const consent = b.consent as { tos?: Policy | null; privacy?: Policy | null; needsAgeConfirmation?: boolean } | undefined
   const policy = (p?: Policy | null) => (p && typeof p.id === 'string' ? { id: p.id } : null)

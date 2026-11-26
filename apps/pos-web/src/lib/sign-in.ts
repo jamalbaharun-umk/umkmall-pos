@@ -26,6 +26,13 @@ export function failureText(status: number): string {
   return 'Gagal masuk. Coba lagi sebentar lagi.'
 }
 
+/** The code the OTP relay sets when pos-api answers 404 on the WhatsApp routes: UMKMALL_API_URL is not set there. */
+export const WHATSAPP_NOT_SET_UP = 'whatsapp_not_set_up'
+export const WHATSAPP_NOT_SET_UP_TEXT = 'Masuk lewat WhatsApp belum diatur di lingkungan ini.'
+
+/** pos-api answers a bare 404 on its WhatsApp routes only when it has no UMKMall login service configured. */
+export const whatsappNotSetUp = (status: number) => status === 404
+
 /** UMKMall's native session behind an owner's WhatsApp sign-in, as the `pos_umkmall` cookie holds it (UMK-2065). */
 export type NativeSession = { sid: string; refreshToken: string }
 
