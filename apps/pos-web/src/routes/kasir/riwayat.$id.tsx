@@ -48,16 +48,6 @@ function SalePage() {
         </>
       }
     >
-      {r.status === 'awaiting_payment' && (
-        <Alert variant="warning" size="small" className="mb-4" role="status">
-          Penjualan ini masih menunggu pembayaran QRIS atau VA. Selesaikan atau batalkan di layar kasir.
-        </Alert>
-      )}
-      {r.status === 'cancelled' && (
-        <Alert variant="info" size="small" className="mb-4" role="status">
-          Penjualan ini dibatalkan sebelum dibayar. Stok dan voucher sudah kembali; tidak ada struk.
-        </Alert>
-      )}
       {online && r.status === 'completed' && (
         <Alert variant="info" size="small" className="mb-4">
           Pembayaran lewat gateway dikembalikan dengan refund penuh. Butuh PIN admin dan alasan, sama seperti void.

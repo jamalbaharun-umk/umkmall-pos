@@ -21,6 +21,7 @@ import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  type CancelReason,
   type PaymentSyncKind,
   paymentSyncIssues,
   receivablePayments,
@@ -320,6 +321,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           sale.attempt,
           // A sale that waited for a PG payment counts from when the payer paid; any other from now.
           isOnlineMethod(payment.method) ? payment.paidAt : null,
+          { byJob: mode === 'reconcile' },
         );
         if (outcome === 'stale') continue;
         return { outcome, payment };
@@ -334,6 +336,16 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           'cancelled',
           payment.id,
           sale.attempt,
+          null,
+          {
+            cancelReason: refusedCode
+              ? 'gateway_refused'
+              : mode === 'cancel'
+                ? 'cashier'
+                : payment.status === 'expired' || payment.status === 'failed'
+                  ? payment.status
+                  : 'unpaid',
+          },
         );
         if (outcome === 'stale') continue;
         return { outcome, payment, refusedCode };
@@ -520,6 +532,9 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * A sale that is completed here gets its receipt number here (`takeNumber`), and is reported from the moment it was paid (`paid_at`): `paidAt`, a PG
    * payment's own paid time, kept between the sale's creation and now (payment-api's clock is not ours);
    * without one (a payment taken at the cashier, or a PG payment that came with no usable time) it is now.
+   *
+   * `how` is kept for the till that was away (UMK-2046): whether the job completed the sale, and why a sale
+   * was cancelled.
    */
   private async applyToSale(
     tenantId: string,
@@ -528,12 +543,12 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     paymentId: string,
     attempt: number,
     paidAt: string | null = null,
+    how: { byJob?: boolean; cancelReason?: CancelReason } = {},
   ): Promise<SaleOutcome | 'stale'> {
     return this.db.transaction(async (tx) => {
       const [sale] = await tx
         .select({
           status: sales.status,
-          number: sales.number,
           actorId: sales.actorId,
           voucherId: sales.voucherId,
           attempt: sales.paymentAttempt,
@@ -550,9 +565,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (to === 'completed') {
         // UMK-2038: the receipt number is taken here, in the write that completes the sale and under its
         // row lock, so receipts are numbered in the order they are completed and a sale that is cancelled
-        // never took one. (A sale that was waiting when UMK-2038 shipped keeps the number it has.)
-        const number =
-          sale.number ?? (await takeNumber(tx, tenantId, 'receipt')).number;
+        // never took one.
+        const { number } = await takeNumber(tx, tenantId, 'receipt');
         await tx
           .update(sales)
           .set({
@@ -560,6 +574,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             number,
             // The clock, not the transaction's start: `paid-since` pages through sales in this order.
             completedAt: sql`clock_timestamp()`,
+            settledByJob: how.byJob === true,
             paymentId,
             switchCashPaid: null,
             paidAt: paidAt
@@ -580,7 +595,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         .update(sales)
         .set({
           status: 'cancelled',
-          cancelledAt: sql`now()`,
+          cancelledAt: sql`clock_timestamp()`,
+          cancelReason: how.cancelReason ?? null,
           paymentId,
           switchCashPaid: null,
         })
