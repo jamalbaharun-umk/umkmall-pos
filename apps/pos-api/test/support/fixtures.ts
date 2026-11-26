@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import postgres from 'postgres';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from '../../src/app.module';
+import { configureBody } from '../../src/http';
 import { signSession } from '../../src/tenancy/session';
 import { ADMIN_DATABASE_URL, APP_DATABASE_URL } from './env';
 
@@ -9,7 +11,10 @@ export async function createApp(): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
   }).compile();
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>({
+    bodyParser: false,
+  });
+  configureBody(app);
   await app.init();
   return app;
 }

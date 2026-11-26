@@ -155,6 +155,8 @@ export const AGENT_TOOL_NAMES = [
   'create_member',
   'record_receivable_payment',
   'create_supplier',
+  'ledger_entries',
+  'add_product_photo',
 ] as const;
 
 const HppRow = z
@@ -1238,6 +1240,81 @@ export function buildAgentServer(
         track,
         () => Promise.resolve(previewCreate(body)),
         () => create('/suppliers', body),
+      );
+    },
+  );
+
+  tool(
+    'ledger_entries',
+    {
+      description:
+        "The POS's money movements as ledger entries for UMKMall's Catatan Keuangan (cash basis), each with a stable id to dedupe repeated pulls: sales by non-kasbon methods (in, money received), kasbon payments incl. down payments (in), money given back on a void (out), live expenses and supplier payments (out), drawer cash put in or taken out by hand (cash_in / cash_out, with the reason). Data only: map the POS categories to the ledger's own. At most 2000 entries per call (truncated = ask shorter periods).",
+      inputSchema: dateRange,
+      registry: reads(
+        'Rapikan Catatan Keuangan: pull POS transactions into the ledger',
+        '/laporan',
+      ),
+    },
+    async (a) => answer(await get('/agent/ledger', a as Query)),
+  );
+
+  tool(
+    'add_product_photo',
+    {
+      description:
+        "Add a photo to a product, e.g. one UMKMall's Upgrade Foto Produk made: imageBase64 is the JPG, PNG or WebP file (at most 2 MB) in base64, without a data: prefix. Append only: the agent never deletes or replaces a photo and never changes the product. Preview without confirm checks the product and the size.",
+      inputSchema: {
+        productId: text(64),
+        imageBase64: z.string().max(2_900_000),
+        ...writeControls,
+      },
+      registry: writes(
+        'Upgrade Foto Produk, Feed 9 Kotak, Kemasan Siap Jual: the result goes to the catalog',
+        '/catalog/products',
+      ),
+    },
+    async (a, track) => {
+      const id = idParam(a.productId);
+      if (!id) return refused(BAD_ID);
+      const bytes =
+        typeof a.imageBase64 === 'string'
+          ? Buffer.from(a.imageBase64, 'base64')
+          : Buffer.alloc(0);
+      if (bytes.length === 0 || bytes.length > 2 * 1024 * 1024)
+        return refused('Gambar harus JPG, PNG atau WebP, maksimal 2 MB.');
+      return runWrite(
+        'add_product_photo',
+        // Hash the photo, not its base64, so the idempotency record stays small.
+        {
+          productId: id,
+          photoSha256: createHash('sha256').update(bytes).digest('hex'),
+          idempotencyKey: a.idempotencyKey,
+          confirm: a.confirm,
+        },
+        track,
+        async () => {
+          const p = await get(`/catalog/products/${id}`);
+          if (!p.ok) return refused(p.message);
+          return ok({
+            preview: true,
+            productId: id,
+            product: (p.data as { name: string }).name,
+            sizeBytes: bytes.length,
+          });
+        },
+        async () => {
+          const form = new FormData();
+          form.append('file', new Blob([bytes]), 'photo');
+          const r = await callRoute(
+            ctx,
+            'POST',
+            `/catalog/products/${id}/images`,
+            { body: form },
+          );
+          if (!r.ok) return { error: r.message, status: r.status };
+          const img = r.data as { id: string };
+          return { data: { productId: id, ...img }, resultRefs: [img.id] };
+        },
       );
     },
   );
