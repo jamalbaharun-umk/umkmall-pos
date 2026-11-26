@@ -81,10 +81,12 @@ import {
   heldBank,
   holdsStock,
   isOwn,
+  NO_ANSWER_TEXT,
   NOT_STORED_TEXT,
   onlineBlocked,
   orderNotice,
   OWN_SALE_OPEN_TEXT,
+  paidBy,
   RECORDED_TEXT,
   recordedDescription,
   REQUEST_OUT_TEXT,
@@ -92,6 +94,7 @@ import {
   resumePlan,
   saleAnswerEvent,
   toCheck,
+  unseenCompletion,
   type PaidSaleInfo,
   type PendingEvent,
   type SaleAnswer,
@@ -276,21 +279,20 @@ function Register({
   }, [restored, orderSig])
   // A paid answer for the cart's own key finishes this screen, also when the request was sent from a screen that is
   // gone by now (UMK-2048): the answer lands in the tab's one store, and every register that opened before it reacts.
-  const seenPaid = useRef(0)
+  // One that arrived while the cashier was away (no register mounted) is still unseen when the register opens: the
+  // receipt and change are shown then, and the cart is cleared (UMK-2053).
   useEffect(() => {
-    seenPaid.current = pend.current().completed?.seq ?? 0
-  }, [])
-  useEffect(() => {
-    const done = pend.current().completed
-    if (!done || done.seq <= seenPaid.current) return
-    seenPaid.current = done.seq
+    if (!restored) return
+    const done = unseenCompletion(pend.current())
+    if (!done) return
+    pend.dispatch({ type: 'completed_seen' })
     void router.invalidate() // fresh prices and products for the next order
     if (done.clearCart) {
       clearOrder()
       setPaying(false)
     }
     if (done.sale) setPaid(done.sale)
-  }, [pend.state.completed?.seq])
+  }, [restored, pend.state.completed?.seq])
   const clearOrder = () => {
     setCart([])
     setNote('')
@@ -744,6 +746,7 @@ function Register({
           onMemberChange={setMember}
           voucher={voucher}
           onClose={() => setPaying(false)}
+          onClearOrder={clearOrder}
           onAwaiting={(payment, ev) => {
             setPaying(false)
             track(payment, ev)
@@ -965,6 +968,7 @@ function PayDialog({
   onMemberChange,
   voucher,
   onClose,
+  onClearOrder,
   onAwaiting,
   onlineBlocked,
 }: {
@@ -985,6 +989,8 @@ function PayDialog({
   onMemberChange: (m: MemberOption | null) => void
   voucher: AppliedVoucher | null
   onClose: () => void
+  /** Empties the cart and its member, voucher and discount (the order is over). */
+  onClearOrder: () => void
   /** UMK-1991: the sale was written and now waits for its QRIS or VA payment (`ev` is that fact for the memory). */
   onAwaiting: (payment: SalePayment, ev: PendingEvent) => void
   /** A sale remembered before a reload is still unchecked: online methods wait (cash is never blocked). */
@@ -1061,7 +1067,7 @@ function PayDialog({
       lost(e) // a sign-in redirect is followed; any other failure is "no answer"
       return {
       ok: false as const,
-      error: 'Tidak bisa terhubung. Coba lagi: penjualan tidak akan tercatat dua kali.',
+      error: NO_ANSWER_TEXT,
       total: undefined,
       errors: undefined,
       status: 0,
@@ -1123,12 +1129,14 @@ function PayDialog({
     }
     // The register's effect finishes the screen from the store (receipt, cart, fresh prices), also a new screen when
     // this one was left mid-request. The stored bill of a paid order must not come back to be rung again.
-    pend.dispatch({
+    const before = pend.current()
+    const after = pend.dispatch({
       type: 'sale_paid',
       key: sendKey,
       sale: { id: res.data.id, change: Math.max(res.data.change, 0), receivableRest: res.data.receivableRest ?? null },
     })
-    if (pend.current().completed?.clearCart) writeCart({ lines: [], note: '' })
+    // Only what THIS answer produced: for a key the order moved on from, `completed` is an older sale's (UMK-2053).
+    if (paidBy(before, after)?.clearCart) writeCart({ lines: [], note: '' })
     notifySuccess(saleToast(amount, res.data.receivableRest, rupiah))
   }
   const notice = orderNotice(pend.state)
@@ -1364,6 +1372,22 @@ function PayDialog({
                     }}
                   >
                     Sudah saya cek: buat penjualan baru
+                  </Button>
+                  {/* The sale of these lines is already recorded: the cart must not carry them into the next sale (UMK-2053). */}
+                  <Button
+                    type="outline"
+                    color="light"
+                    size="small"
+                    width="auto"
+                    disabled={busy || !canAck(pend.state)}
+                    onClick={() => {
+                      pend.dispatch({ type: 'recorded_acked' })
+                      onClearOrder()
+                      setError(undefined)
+                      onClose()
+                    }}
+                  >
+                    Sudah tercatat: kosongkan keranjang
                   </Button>
                   {!canAck(pend.state) && (
                     <span className="self-center text-xs" role="status">

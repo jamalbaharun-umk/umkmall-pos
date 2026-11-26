@@ -25,7 +25,11 @@ import type { ResumeDecision } from './-online'
 //   sale_sending(method, bank)    | own sale has a pay code shown, or recorded  | none (sendPlan answers `blocked`)
 //                                 | H online, another method or another bank    | new order (H's sale stays tracked)
 //                                 | every request that goes out                 | sending = true, STORED before it is sent
-//   sale_paid(k)                  | k = K                                       | drop sales under k; new order
+//   sale_paid(k)                  | k = K                                       | drop sales under k; new order; `completed`
+//                                 |                                             |   = { seq + 1, clearCart = !edited, seen = false }
+//                                 | k is not K (the order moved on)              | drop sales under k only; `completed` is
+//                                 |                                             |   untouched (callers read `paidBy`, never it)
+//   completed_seen                | a completed answer is not yet seen          | seen = true (the register that showed it)
 //   sale_awaiting(k, id)          |                                             | track id under k, code shown, open
 //                                 | answer unreadable                           | ... as `unchecked` (asked again)
 //   sale_held(k, id) [503+saleId] | online                                      | track id under k as `held`; H = it
@@ -63,6 +67,9 @@ import type { ResumeDecision } from './-online'
 //   resume_answered(unknown id)   |                                             | none (a late answer changes nothing)
 //   set_aside (Lanjut tunai saja) | a sale still needs its check                | aside = true; cleared when none needs one
 //   reload / the register opens   | `rehydrate`: validated; every sale becomes `unchecked`; in doubt => recorded = true
+//                                 |   (also a held cash/EDC sale); `completed` is dropped on a reload, kept on a reopen
+//                                 | nothing may exist under the stored key      | FRESH key (no doubt, no held, no tracked sale)
+//                                 |   (clean state)                             |   so the next sale never meets an old one
 
 export type TrackedPhase =
   /** Written in this page load, its charge got no answer (503 with a sale id): no pay code was shown, nothing to poll. */
@@ -86,8 +93,10 @@ export type Tracked = {
 /** `bank`: the bank of a virtual account sale (UMK-2037); null when the method needs none. Part of the body the key is bound to. */
 export type Held = { saleId: string; methodId: string; online: boolean; bank: string | null }
 
-/** The sale of a paid answer, for the receipt (never stored). */
-/** `receiptNumber`, `amount` and `method` are set for a sale found paid after the till was away (UMK-2058): what the dialog shows then. */
+/**
+ * The sale of a paid answer, for the receipt (never stored). `receiptNumber`, `amount` and `method` are set for a sale
+ * found paid after the till was away (UMK-2058): what the dialog shows then.
+ */
 export type PaidSaleInfo = {
   id: string
   change: number | null
@@ -102,7 +111,8 @@ export type PaidSaleInfo = {
  * request: that screen may be gone (the cashier left and came back) and the cart on the new one must still finish.
  * Never stored. `seq` grows with every one, so a screen acts on the ones that came after it opened.
  */
-export type Completed = { seq: number; clearCart: boolean; sale: PaidSaleInfo | null }
+/** `seen`: a register already showed it (receipt, cleared cart). One that opens later shows an unseen one (UMK-2053). */
+export type Completed = { seq: number; clearCart: boolean; sale: PaidSaleInfo | null; seen: boolean }
 
 export type PendingState = {
   /** The Idempotency-Key of the next POST /sales. */
@@ -139,6 +149,7 @@ export type PendingState = {
 export type PendingEvent =
   | { type: 'sale_sending'; methodId: string; bank?: string | null }
   | { type: 'sale_paid'; key: string; sale?: PaidSaleInfo }
+  | { type: 'completed_seen' }
   | { type: 'sale_awaiting'; key: string; saleId: string; readable: boolean }
   | { type: 'sale_held'; key: string; saleId: string; methodId: string; online: boolean; bank?: string | null }
   | { type: 'sale_cancelled'; key: string; saleId: string }
@@ -181,8 +192,10 @@ const needsCheck = (t: Tracked) => t.phase === 'unchecked' || t.phase === 'unrea
 export const inDoubt = (s: PendingState): boolean => s.sending || s.unanswered
 /** A cash or EDC sale written under the key that the job will complete: it exists, whatever happens to the order. */
 const heldOffline = (s: PendingState): boolean => s.held !== null && !s.held.online
-/** "Sudah saya cek" waits while this page load's own request under the key is still out: its answer comes first. */
-/** A request under the current key went out in this page load and has not answered yet. */
+/**
+ * A request under the current key went out in this page load and has not answered yet. "Sudah saya cek" waits while
+ * it is (`canAck`): its answer comes first.
+ */
 export const requestOut = (s: PendingState): boolean => s.out !== null && s.out === s.key
 export const canAck = (s: PendingState): boolean => s.recorded && s.out !== s.key
 /** A sale written but never charged that the order moved on from: asked in the background, never gating, never shown. */
@@ -235,6 +248,9 @@ export function orderNotice(s: PendingState): OrderNotice {
   return null
 }
 
+/** The sale request got no answer (offline, or the browser gave up): it may still be running at the server. */
+export const NO_ANSWER_TEXT =
+  'Tidak bisa terhubung. Coba lagi: penjualan tidak akan tercatat dua kali. Bila tetap gagal, muat ulang halaman ini lalu cek Riwayat sebelum membuat penjualan lagi.'
 export const OWN_SALE_OPEN_TEXT =
   'Pesanan ini sudah punya penjualan yang masih menunggu pembayaran. Buka dari Menunggu untuk menyelesaikan atau membatalkannya. Untuk pelanggan lain, tekan Hapus semua lalu buat pesanan baru.'
 export const HELD_SAME_TEXT =
@@ -299,6 +315,17 @@ export function saleAnswerEvent(
 }
 
 // ---- What the register does besides the state change ----
+
+/**
+ * The paid answer a `sale_paid` dispatch produced, or null when it produced none (the key was not the cart's: the
+ * order moved on while the request was out). `state.completed` alone is not that: it may be an older sale's.
+ */
+export function paidBy(before: PendingState, after: PendingState): Completed | null {
+  return after.completed && after.completed.seq > (before.completed?.seq ?? 0) ? after.completed : null
+}
+
+/** A completed answer no register has shown yet (a screen that opens later shows it). */
+export const unseenCompletion = (s: PendingState): Completed | null => (s.completed && !s.completed.seen ? s.completed : null)
 
 export type FinishInfo = { kind: 'paid' } | { kind: 'closed'; again: boolean }
 
@@ -379,9 +406,11 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
       const next = { ...s, sales: s.sales.filter((t) => t.key !== ev.key) }
       if (ev.key !== s.key) return next
       // The cart is this sale's order unless it was edited since (an edit while a request may be out sets `edited`).
-      const completed: Completed = { seq: (s.completed?.seq ?? 0) + 1, clearCart: !s.edited, sale: ev.sale ?? null }
+      const completed: Completed = { seq: (s.completed?.seq ?? 0) + 1, clearCart: !s.edited, sale: ev.sale ?? null, seen: false }
       return { ...newOrder(next, fresh), completed }
     }
+    case 'completed_seen':
+      return s.completed && !s.completed.seen ? { ...s, completed: { ...s.completed, seen: true } } : s
     case 'sale_awaiting': {
       const sales = upsert(s, { id: ev.saleId, key: ev.key, shown: true, phase: ev.readable ? 'open' : 'unchecked' })
       // `recorded` is left as it is: the sale is on its waiting screen, and its end starts the new order
