@@ -260,6 +260,13 @@
       "when": 1795659603337,
       "tag": "0036_sale_hold_number",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795662737040,
+      "tag": "0037_hold_number_daily",
+      "breakpoints": true
     }
   ]
 }
