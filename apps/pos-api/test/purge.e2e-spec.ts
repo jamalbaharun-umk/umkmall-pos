@@ -243,6 +243,19 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .send({ note: 'ojek' })
       .expect(200);
 
+    // The supplier paid from the drawer and one unit sent back (UMK-1970): purchase_payments, purchase_returns,
+    // purchase_return_lines (and a shift ledger entry).
+    await post(
+      `/purchasing/orders/${po.body.id}/payments`,
+      { amount: 1000, source: 'drawer' },
+      randomUUID(),
+    ).expect(201);
+    await post(
+      `/purchasing/orders/${po.body.id}/returns`,
+      { reason: 'rusak', lines: [{ lineId: po.body.lines[0].id, qty: 1 }] },
+      randomUUID(),
+    ).expect(201);
+
     // A void PIN and a voided cash sale (UMK-1962): void_pins, sale_voids, sale_void_returns.
     await http()
       .put('/void-pin')

@@ -3,9 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { fieldError } from '../common/validation';
+import { storeToday } from '../common/store-day';
+import { fieldError, LocalDate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import {
   products,
@@ -14,6 +15,11 @@ import {
   suppliers,
 } from '../db/schema';
 import { StockService } from '../stock/stock.service';
+import { debtFromRow, dueInDaysSql, paidSql, returnedSql } from './debt';
+import {
+  PurchasePaymentsService,
+  purchaseNumber,
+} from './purchase-payments.service';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
@@ -40,6 +46,8 @@ const orderFields = {
   supplierId: z.string().uuid('Pilih pemasok'),
   paymentMethod: z.string().trim().max(60).nullable().optional(),
   note: z.string().trim().max(500).nullable().optional(),
+  // UMK-1970: when the supplier wants the money; optional (without it a purchase is never late).
+  dueDate: LocalDate.nullable().optional(),
   lines: z
     .array(Line)
     .min(1)
@@ -88,40 +96,88 @@ export class PurchasingService {
   constructor(
     @InjectDb() private readonly db: Db,
     private readonly stock: StockService,
+    private readonly payments: PurchasePaymentsService,
   ) {}
 
-  list(tenantId: string) {
-    return this.db
+  /** The latest 200 purchases, each with its debt figures and payment status (UMK-1970). */
+  async list(tenantId: string) {
+    const rows = await this.db
       .select({
         id: purchaseOrders.id,
+        number: purchaseOrders.number,
         status: purchaseOrders.status,
         supplierId: purchaseOrders.supplierId,
         supplierName: suppliers.name,
         paymentMethod: purchaseOrders.paymentMethod,
         total: purchaseOrders.total,
+        dueDate: purchaseOrders.dueDate,
         approvedAt: purchaseOrders.approvedAt,
         createdAt: purchaseOrders.createdAt,
+        paid: paidSql,
+        returned: returnedSql,
+        dueInDays: dueInDaysSql(tenantId),
       })
       .from(purchaseOrders)
       .innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
       .where(eq(purchaseOrders.tenantId, tenantId))
       .orderBy(desc(purchaseOrders.createdAt))
       .limit(200);
+    return rows.map(({ paid, returned, dueInDays, ...r }) => ({
+      ...r,
+      code: purchaseNumber(r.number),
+      ...debtFromRow({ ...r, paid, returned, dueInDays }),
+    }));
+  }
+
+  /**
+   * The store's debt to its suppliers over EVERY approved purchase (not only the listed 200): what is owed, the part
+   * past its due date, and the part due within the next 7 days (today included). Store calendar days.
+   */
+  async summary(tenantId: string) {
+    const today = storeToday(tenantId);
+    const [r] = await this.db.execute(sql`
+      select coalesce(sum(x.remaining), 0) as total,
+             coalesce(sum(x.remaining) filter (where x.due_date < ${today}), 0) as overdue,
+             coalesce(sum(x.remaining) filter (
+               where x.due_date >= ${today} and x.due_date <= ${today} + 7), 0) as due_soon,
+             count(*) filter (where x.remaining > 0)::int as open_count,
+             count(*) filter (where x.remaining > 0 and x.due_date < ${today})::int as overdue_count
+        from (select o.due_date,
+                     greatest(o.total
+                       - coalesce((select sum(pr.total) from pos.purchase_returns pr
+                                    where pr.tenant_id = o.tenant_id and pr.order_id = o.id), 0)
+                       - coalesce((select sum(pp.amount) from pos.purchase_payments pp
+                                    where pp.tenant_id = o.tenant_id and pp.order_id = o.id
+                                      and pp.voided_at is null), 0), 0) as remaining
+                from pos.purchase_orders o
+               where o.tenant_id = ${tenantId} and o.status = 'approved') x`);
+    return {
+      total: Number(r.total),
+      overdue: Number(r.overdue),
+      dueSoon: Number(r.due_soon),
+      openCount: Number(r.open_count),
+      overdueCount: Number(r.overdue_count),
+    };
   }
 
   async get(tenantId: string, id: string, db: Db | Tx = this.db) {
     const [order] = await db
       .select({
         id: purchaseOrders.id,
+        number: purchaseOrders.number,
         status: purchaseOrders.status,
         supplierId: purchaseOrders.supplierId,
         supplierName: suppliers.name,
         paymentMethod: purchaseOrders.paymentMethod,
         note: purchaseOrders.note,
         total: purchaseOrders.total,
+        dueDate: purchaseOrders.dueDate,
         approvedBy: purchaseOrders.approvedBy,
         approvedAt: purchaseOrders.approvedAt,
         createdAt: purchaseOrders.createdAt,
+        paid: paidSql,
+        returned: returnedSql,
+        dueInDays: dueInDaysSql(tenantId),
       })
       .from(purchaseOrders)
       .innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
@@ -147,7 +203,26 @@ export class PurchasingService {
         ),
       )
       .orderBy(products.name);
-    return { ...order, lines };
+    const { paid, returned, dueInDays, ...head } = order;
+    // UMK-1970: the debt, its history (payments, voided ones too, and returns) and per line what may still go back.
+    const [payments, returns, stock] = await Promise.all([
+      this.payments.payments(tenantId, id),
+      this.payments.returns(tenantId, id),
+      this.payments.lineStock(tenantId, id),
+    ]);
+    return {
+      ...head,
+      code: purchaseNumber(head.number),
+      ...debtFromRow({ ...head, paid, returned, dueInDays }),
+      lines: lines.map((l) => ({
+        ...l,
+        returnedQty: stock.get(l.id)?.returnedQty ?? 0,
+        // What is left in the line's stock batch: the most a return may take (0 before approval).
+        returnable: stock.get(l.id)?.returnable ?? 0,
+      })),
+      payments,
+      returns,
+    };
   }
 
   async create(
@@ -157,13 +232,23 @@ export class PurchasingService {
   ) {
     const id = await this.db.transaction(async (tx) => {
       await this.assertSupplier(tx, tenantId, input.supplierId);
+      // The next number of this store, one creation at a time (released at commit).
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext('pos.purchase_number'), hashtext(${tenantId}))`,
+      );
+      const [last] = await tx
+        .select({ n: sql<number | null>`max(${purchaseOrders.number})` })
+        .from(purchaseOrders)
+        .where(eq(purchaseOrders.tenantId, tenantId));
       const [order] = await tx
         .insert(purchaseOrders)
         .values({
           tenantId,
+          number: Number(last?.n ?? 0) + 1,
           supplierId: input.supplierId,
           paymentMethod: input.paymentMethod,
           note: input.note,
+          dueDate: input.dueDate ?? null,
           createdBy: actorId,
         })
         .returning({ id: purchaseOrders.id });
@@ -173,9 +258,20 @@ export class PurchasingService {
     return this.get(tenantId, id);
   }
 
+  /**
+   * A draft changes freely. An approved purchase changes only its due date (UMK-1970: the supplier's terms can move
+   * after the goods came in); anything else, or a cancelled purchase, is 409.
+   */
   async update(tenantId: string, id: string, input: OrderInput) {
     await this.db.transaction(async (tx) => {
-      await this.lockDraft(tx, tenantId, id);
+      const status = await this.lock(tx, tenantId, id);
+      const onlyDueDate = Object.keys(input).every((k) => k === 'dueDate');
+      if (status !== 'draft' && !(status === 'approved' && onlyDueDate))
+        throw new ConflictException(
+          status === 'approved'
+            ? 'Pembelian yang sudah disetujui hanya bisa diubah jatuh temponya'
+            : 'Hanya draf yang bisa diubah',
+        );
       if (input.supplierId)
         await this.assertSupplier(tx, tenantId, input.supplierId);
       await tx
@@ -184,6 +280,7 @@ export class PurchasingService {
           supplierId: input.supplierId,
           paymentMethod: input.paymentMethod,
           note: input.note,
+          dueDate: input.dueDate,
           updatedAt: new Date(),
         })
         .where(eq(purchaseOrders.id, id));

@@ -27,6 +27,8 @@ export const STOCK_REASONS = [
   'sale_void',
   'purchase',
   'opname',
+  // UMK-1970: units sent back to the supplier, out of the purchase's own batch.
+  'purchase_return',
 ] as const;
 export type StockReason = (typeof STOCK_REASONS)[number];
 
@@ -89,7 +91,7 @@ export const stockMovements = pos
       check('stock_movements_delta_ck', sql`${t.delta} <> 0`),
       check(
         'stock_movements_reason_ck',
-        sql`${t.reason} in ('opening', 'sale', 'sale_void', 'purchase', 'opname')`,
+        sql`${t.reason} in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return')`,
       ),
     ],
   )

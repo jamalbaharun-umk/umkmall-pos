@@ -31,7 +31,9 @@ export const CASH_DIRECTIONS = ['in', 'out'] as const;
  *   src/shifts/cash-entries.service.ts.
  * - collector_deposit (in): ref_id = pos.store_cash_deposits.id, a collector's outside-shift cash received
  *   into this drawer ("Setoran penagih"). Written only by src/store-cash/store-cash-deposits.service.ts.
- * A supplier payment tied to a purchase order (UMK-1970) gets its own kind here when it is built.
+ * - purchase_payment (out): ref_id = pos.purchase_payments.id, a supplier paid for a purchase from the drawer
+ *   (UMK-1970). purchase_payment_reversal (in): the same id, that payment voided while its shift was open.
+ *   Written only by src/purchasing/purchase-payments.service.ts.
  */
 export const CASH_ENTRY_KINDS = [
   'receivable_payment',
@@ -41,6 +43,8 @@ export const CASH_ENTRY_KINDS = [
   'manual_in',
   'manual_out',
   'collector_deposit',
+  'purchase_payment',
+  'purchase_payment_reversal',
 ] as const;
 
 export const shiftCashEntries = pos
