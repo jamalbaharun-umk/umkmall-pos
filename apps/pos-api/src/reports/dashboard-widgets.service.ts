@@ -30,6 +30,12 @@ export const HOURS_TO = 20;
 export const MIX_PARTS = 5;
 export const OTHER_METHODS = 'Lainnya';
 
+/** Whole-number percent change of `current` from `previous`; null when there is nothing to compare with. */
+export const percentChange = (current: number, previous: number) =>
+  previous === 0
+    ? null
+    : Math.round(((current - previous) * 100) / Math.abs(previous));
+
 /**
  * The dashboard's widgets (design feature 35). Every figure is the reports' own definition, read again for the
  * widget's shape: sales PAID in the window (`paid_at`) minus voids DONE in it, final sales only
@@ -112,13 +118,26 @@ export class DashboardWidgetsService {
         grossProfit: m.grossProfit,
       };
     };
+    const current = figures(dash.current);
+    const previous = figures(dash.previous);
     return {
       period,
       timezone: tz,
       from: dash.from,
       to: dash.to,
-      current: figures(dash.current),
-      previous: figures(dash.previous),
+      current,
+      previous,
+      // What the tiles say: a percent for money, the plain difference for the transaction count; null = no
+      // comparison (nothing in the period before).
+      delta: {
+        sales: percentChange(current.sales, previous.sales),
+        salesCount: current.salesCount - previous.salesCount,
+        averageBasket: percentChange(
+          current.averageBasket,
+          previous.averageBasket,
+        ),
+        grossProfit: percentChange(current.grossProfit, previous.grossProfit),
+      },
       trend: buckets.map((b) => {
         const sales = n(b.sales);
         const salesCount = n(b.sales_count);

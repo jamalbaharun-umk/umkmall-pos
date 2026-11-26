@@ -106,6 +106,18 @@ export const loadProfitLoss = createServerFn()
   .validator((p: 'today' | 'week' | 'month') => p)
   .handler(({ data }) => load<ProfitLoss>(`/reports/profit-loss?period=${encodeURIComponent(data)}`))
 
+/**
+ * The dashboard widgets' read-only routes (UMK-1972), by path: only `/reports/widgets/<name>` and
+ * `/reports/receivables/aging`, with a plain query string. The typed wrappers are in `-dashboard/api.ts`.
+ */
+type WidgetJson = string | number | boolean | null | WidgetJson[] | { [key: string]: WidgetJson }
+export const loadWidget = createServerFn()
+  .validator((path: string) => {
+    if (!/^\/reports\/(widgets\/[a-z-]+|receivables\/aging)(\?[A-Za-z0-9=&_-]*)?$/.test(path)) throw new Error('Alamat tidak dikenal')
+    return path
+  })
+  .handler(({ data }) => load<WidgetJson>(data))
+
 /** UMK-1964 "Laporan kasbon": summary and the customers who still owe (needs reports.view). */
 export const loadKasbon = createServerFn()
   .validator((f: KasbonFilter) => f)

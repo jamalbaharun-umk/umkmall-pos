@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call -- supertest answers `any` bodies; the specs read them as JSON */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
@@ -103,10 +104,23 @@ describe('dashboard widgets (UMK-1972)', () => {
     };
   }
 
+  type Figures = {
+    sales: number;
+    salesCount: number;
+    averageBasket: number;
+    grossProfit: number;
+  };
+  type Bucket = Figures & { from: string; to: string };
+  type Overview = {
+    from: string;
+    current: Figures;
+    previous: Figures;
+    delta: Record<string, number | null>;
+    trend: Bucket[];
+  };
   const overview = async (auth: string, period = 'today') =>
     (await get(auth, `/reports/widgets/overview?period=${period}`).expect(200))
-      .body;
-
+      .body as Overview;
   describe('overview (hero, tiles, trend)', () => {
     it('sales and gross profit leave tax out; average basket and trend come from the server', async () => {
       const s = await shop();
@@ -133,6 +147,13 @@ describe('dashboard widgets (UMK-1972)', () => {
           averageBasket: 10_000,
           grossProfit: 4000,
         },
+      });
+      // Server-made changes: 15.000 against 10.000 is +50%, 6.000 against 4.000 +50%, one transaction each.
+      expect(o.delta).toEqual({
+        sales: 50,
+        salesCount: 0,
+        averageBasket: 50,
+        grossProfit: 50,
       });
       expect(o.trend).toHaveLength(7);
       // Consecutive store days ending today; the last bucket is the current figures, yesterday's the previous.
@@ -221,6 +242,13 @@ describe('dashboard widgets (UMK-1972)', () => {
         grossProfit: 0,
       });
       expect(o.trend.every((b: { sales: number }) => b.sales === 0)).toBe(true);
+      // Nothing to compare with: no percent, never a division by zero.
+      expect(o.delta).toEqual({
+        sales: null,
+        salesCount: 0,
+        averageBasket: null,
+        grossProfit: null,
+      });
       const bad = await get(s.auth, '/reports/widgets/overview?period=decade');
       expect(bad.status).toBe(422);
     });
