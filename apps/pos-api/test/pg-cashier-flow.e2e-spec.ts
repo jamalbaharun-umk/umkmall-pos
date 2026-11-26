@@ -65,6 +65,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     when: 'before' | 'after';
     used: boolean;
     reached: () => void;
+    release: () => void;
     gate: Promise<void>;
   };
   let holds: Hold[] = [];
@@ -81,8 +82,19 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     let reached!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const held = new Promise<void>((r) => (reached = r));
-    holds.push({ match, when, used: false, reached, gate });
+    holds.push({ match, when, used: false, reached, release, gate });
     return { held, release };
+  }
+  /**
+   * Runs a test body that holds calls and releases every hold it made when it ends, also when an assertion
+   * fails half way, so no call of pos-api stays parked on a gate (and keeps a request or the app open).
+   */
+  async function holding(body: () => Promise<void>) {
+    try {
+      await body();
+    } finally {
+      for (const h of holds) h.release();
+    }
   }
   const isFindByKey = (c: Call) =>
     c.init.method === 'GET' && c.url.includes('/payments?idempotencyKey=');
@@ -163,48 +175,54 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
 
   afterAll(async () => {
     link = 'ok';
-    // The balance check over every store of this file.
-    const all = await admin<
-      { id: string; status: string; payment_id: string | null }[]
-    >`select id, status, payment_id from pos.sales where tenant_id in ${admin(tenants)}`;
-    const payments = await pay.sql<PaymentRow[]>`
-      select id, order_ref, status from payment.payments where tenant_id in ${pay.sql(tenants)}`;
-    const statusOf = new Map(payments.map((p) => [p.id, p.status]));
-    // No sale is left waiting (a later suite boots with payment-api off, which refuses that).
-    expect(all.filter((x) => x.status === 'awaiting_payment')).toEqual([]);
-    // Paid payments = completed sales, one to one: nothing paid twice, nothing paid for a cancelled sale.
-    expect(
-      payments
-        .filter((p) => p.status === 'paid')
-        .map((p) => p.order_ref)
-        .sort(),
-    ).toEqual(
-      all
-        // A kasbon sale takes no payment of its own.
-        .filter((x) => x.status === 'completed' && x.payment_id)
-        .map((x) => x.id)
-        .sort(),
-    );
-    for (const x of all) {
-      const st = x.payment_id ? statusOf.get(x.payment_id) : undefined;
-      if (x.status === 'completed' && x.payment_id) expect(st).toBe('paid');
-      if (x.status === 'cancelled') expect(st).not.toBe('paid');
-      if (x.status === 'void') expect(st).toMatch(/^(voided|refund)/);
+    let left: unknown[] = [];
+    // The servers are closed whatever a check says: a failed check (or a test that failed with a call held)
+    // must not keep jest from ending.
+    try {
+      // The balance check over every store of this file.
+      const all = await admin<
+        { id: string; status: string; payment_id: string | null }[]
+      >`select id, status, payment_id from pos.sales where tenant_id in ${admin(tenants)}`;
+      const payments = await pay.sql<PaymentRow[]>`
+        select id, order_ref, status from payment.payments where tenant_id in ${pay.sql(tenants)}`;
+      const statusOf = new Map(payments.map((p) => [p.id, p.status]));
+      // No sale is left waiting (a later suite boots with payment-api off, which refuses that).
+      expect(all.filter((x) => x.status === 'awaiting_payment')).toEqual([]);
+      // Paid payments = completed sales, one to one: nothing paid twice, nothing paid for a cancelled sale.
+      expect(
+        payments
+          .filter((p) => p.status === 'paid')
+          .map((p) => p.order_ref)
+          .sort(),
+      ).toEqual(
+        all
+          // A kasbon sale takes no payment of its own.
+          .filter((x) => x.status === 'completed' && x.payment_id)
+          .map((x) => x.id)
+          .sort(),
+      );
+      for (const x of all) {
+        const st = x.payment_id ? statusOf.get(x.payment_id) : undefined;
+        if (x.status === 'completed' && x.payment_id) expect(st).toBe('paid');
+        if (x.status === 'cancelled') expect(st).not.toBe('paid');
+        if (x.status === 'void') expect(st).toMatch(/^(voided|refund)/);
+      }
+      // Nothing is left for the job: it sweeps every store, and the next spec file's payment-api starts on an
+      // empty database, where a refund this file left pending is a payment that does not exist (its ticks
+      // would count it as failed). The refunds some tests leave on their way are returned by the gateway here.
+      const open = await pay.sql<{ tenant_id: string; refund_key: string }[]>`
+        select tenant_id, refund_key from payment.payments
+        where status = 'refund_pending' and tenant_id in ${pay.sql(tenants)}`;
+      for (const p of open)
+        await gateway(p.tenant_id, 'POST', `/refunds/${p.refund_key}/succeed`);
+      await sync.tick(later());
+      left = await syncWorkLeft(admin, tenants);
+    } finally {
+      for (const h of holds) h.release();
+      await app.close();
+      await pay.close();
+      await admin.end();
     }
-    // Nothing is left for the job: it sweeps every store, and the next spec file's payment-api starts on an
-    // empty database, where a refund this file left pending is a payment that does not exist (its ticks
-    // would count it as failed). The refunds some tests leave on their way are returned by the gateway here.
-    const open = await pay.sql<{ tenant_id: string; refund_key: string }[]>`
-      select tenant_id, refund_key from payment.payments
-      where status = 'refund_pending' and tenant_id in ${pay.sql(tenants)}`;
-    for (const p of open)
-      await gateway(p.tenant_id, 'POST', `/refunds/${p.refund_key}/succeed`);
-    await sync.tick(later());
-    const left = await syncWorkLeft(admin, tenants);
-    await app.close();
-    await pay.close();
-    await admin.end();
-    // After the servers are closed: a failed check must not keep jest from ending.
     expect(left).toEqual([]);
   });
   beforeEach(async () => {
@@ -1643,58 +1661,60 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       stale: (s: Shop, saleId: string) => PromiseLike<unknown>,
       cashAt: 'cash_charge' | 'bill_closed',
     ) {
-      const s = await shop();
-      const saleId = (await sell(s).expect(201)).body.id as string;
-      const first = hold(isFindByKey);
-      const staleRun = Promise.resolve(stale(s, saleId));
-      await first.held;
-      const second =
-        cashAt === 'cash_charge'
-          ? // The sale is a cash sale at attempt 2 and its cash is not recorded yet.
-            hold(isCharge)
-          : // The bill is closed for the switch and the sale is still at attempt 1.
-            hold(isCancel, 'after');
-      const cash = post(s.auth, `/sales/${saleId}/payment/cash`, {
-        paid: 5200,
-      }).then((r) => r);
-      await second.held;
-      expect(await saleRow(saleId)).toMatchObject(
-        cashAt === 'cash_charge'
-          ? { status: 'awaiting_payment', payment_attempt: 2 }
-          : {
-              status: 'awaiting_payment',
-              payment_attempt: 1,
-              switch_cash_paid: '5200',
-            },
-      );
-      first.release();
-      await staleRun;
-      // The stale worker found attempt 1 closed unpaid. It must not have cancelled the sale.
-      expect((await saleRow(saleId)).status).not.toBe('cancelled');
-      expect(await onHand(s)).toBe(19);
-      second.release();
-      const res = await cash;
-      expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({
-        saleStatus: 'completed',
-        method: 'cash',
-        attempt: 2,
-      });
-      expect(await saleRow(saleId)).toMatchObject({
-        status: 'completed',
-        payment_method_code: 'cash',
-        paid: '5200',
-      });
-      expect(
-        (await paymentsOf(saleId)).map((p) => [p.method, p.status]),
-      ).toEqual([
-        ['fake_qris', 'cancelled'],
-        ['cash', 'paid'],
-      ]);
-      expect(await onHand(s)).toBe(19);
-      expect(await shift(s.auth)).toMatchObject({
-        cashSales: 5200,
-        salesCount: 1,
+      await holding(async () => {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        const first = hold(isFindByKey);
+        const staleRun = Promise.resolve(stale(s, saleId));
+        await first.held;
+        const second =
+          cashAt === 'cash_charge'
+            ? // The sale is a cash sale at attempt 2 and its cash is not recorded yet.
+              hold(isCharge)
+            : // The bill is closed for the switch and the sale is still at attempt 1.
+              hold(isCancel, 'after');
+        const cash = post(s.auth, `/sales/${saleId}/payment/cash`, {
+          paid: 5200,
+        }).then((r) => r);
+        await second.held;
+        expect(await saleRow(saleId)).toMatchObject(
+          cashAt === 'cash_charge'
+            ? { status: 'awaiting_payment', payment_attempt: 2 }
+            : {
+                status: 'awaiting_payment',
+                payment_attempt: 1,
+                switch_cash_paid: '5200',
+              },
+        );
+        first.release();
+        await staleRun;
+        // The stale worker found attempt 1 closed unpaid. It must not have cancelled the sale.
+        expect((await saleRow(saleId)).status).not.toBe('cancelled');
+        expect(await onHand(s)).toBe(19);
+        second.release();
+        const res = await cash;
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({
+          saleStatus: 'completed',
+          method: 'cash',
+          attempt: 2,
+        });
+        expect(await saleRow(saleId)).toMatchObject({
+          status: 'completed',
+          payment_method_code: 'cash',
+          paid: '5200',
+        });
+        expect(
+          (await paymentsOf(saleId)).map((p) => [p.method, p.status]),
+        ).toEqual([
+          ['fake_qris', 'cancelled'],
+          ['cash', 'paid'],
+        ]);
+        expect(await onHand(s)).toBe(19);
+        expect(await shift(s.auth)).toMatchObject({
+          cashSales: 5200,
+          salesCount: 1,
+        });
       });
     }
     const poll = (s: Shop, saleId: string) =>
@@ -1731,77 +1751,81 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       return sale;
     }
 
-    it('a cancel and a switch to cash at once: one of them wins, the sale is cancelled or a cash sale, never both', async () => {
-      // Each order is forced with holds (PR 51 review: no timing luck).
-      // 1. Cash X closed the bill (its answer held); cancel C took the switch back and is held before it looks the
-      //    bill up. X finds its switch gone: it stops and claims no new one (409), C cancels.
-      {
-        const s = await shop();
-        const saleId = (await sell(s).expect(201)).body.id as string;
-        const xClosed = hold(isCancel, 'after');
-        const x = post(s.auth, `/sales/${saleId}/payment/cash`, {
-          paid: 5200,
-        }).then((r) => r);
-        await xClosed.held;
-        expect((await saleRow(saleId)).switch_cash_paid).not.toBeNull();
-        const cLooks = hold(isFindByKey, 'before');
-        const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
-          (r) => r,
-        );
-        await cLooks.held;
-        expect((await saleRow(saleId)).switch_cash_paid).toBeNull();
-        let cash: request.Response;
-        try {
-          xClosed.release();
-          cash = await x;
-        } finally {
-          xClosed.release();
-          cLooks.release();
-        }
-        expect(cash.status).toBe(409);
-        expect(cash.body.code).toBe('cancel_refused');
-        expect(await saleRow(saleId)).toMatchObject({
-          status: 'awaiting_payment',
-          payment_attempt: 1,
-          switch_cash_paid: null,
-        });
-        expect((await c).status).toBe(200);
-        expect((await settled(s, saleId)).status).toBe('cancelled');
-        expect(
-          (await paymentsOf(saleId)).map((p) => [p.idempotency_key, p.status]),
-        ).toEqual([[`${saleId}:1`, 'cancelled']]);
-        expect(await shift(s.auth)).toMatchObject({ cashSales: 0 });
-      }
-      // 2. C closed the bill (its answer held) before X asked for cash: X turns the closed bill into a cash sale
-      //    and completes it; C's answer is then stale and it finds the sale paid (409 already_paid).
-      {
-        const s = await shop();
-        const saleId = (await sell(s).expect(201)).body.id as string;
-        const cClosed = hold(isCancel, 'after');
-        const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
-          (r) => r,
-        );
-        await cClosed.held;
-        let cash: request.Response;
-        try {
-          cash = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+    it('a cancel and a switch to cash at once: one of them wins, the sale is cancelled or a cash sale, never both', () =>
+      holding(async () => {
+        // Each order is forced with holds (PR 51 review: no timing luck).
+        // 1. Cash X closed the bill (its answer held); cancel C took the switch back and is held before it looks the
+        //    bill up. X finds its switch gone: it stops and claims no new one (409), C cancels.
+        {
+          const s = await shop();
+          const saleId = (await sell(s).expect(201)).body.id as string;
+          const xClosed = hold(isCancel, 'after');
+          const x = post(s.auth, `/sales/${saleId}/payment/cash`, {
             paid: 5200,
+          }).then((r) => r);
+          await xClosed.held;
+          expect((await saleRow(saleId)).switch_cash_paid).not.toBeNull();
+          const cLooks = hold(isFindByKey, 'before');
+          const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
+            (r) => r,
+          );
+          await cLooks.held;
+          expect((await saleRow(saleId)).switch_cash_paid).toBeNull();
+          let cash: request.Response;
+          try {
+            xClosed.release();
+            cash = await x;
+          } finally {
+            xClosed.release();
+            cLooks.release();
+          }
+          expect(cash.status).toBe(409);
+          expect(cash.body.code).toBe('cancel_refused');
+          expect(await saleRow(saleId)).toMatchObject({
+            status: 'awaiting_payment',
+            payment_attempt: 1,
+            switch_cash_paid: null,
           });
-        } finally {
-          cClosed.release();
+          expect((await c).status).toBe(200);
+          expect((await settled(s, saleId)).status).toBe('cancelled');
+          expect(
+            (await paymentsOf(saleId)).map((p) => [
+              p.idempotency_key,
+              p.status,
+            ]),
+          ).toEqual([[`${saleId}:1`, 'cancelled']]);
+          expect(await shift(s.auth)).toMatchObject({ cashSales: 0 });
         }
-        expect(cash.status).toBe(200);
-        expect(cash.body).toMatchObject({
-          saleStatus: 'completed',
-          method: 'cash',
-        });
-        const cancel = await c;
-        expect(cancel.status).toBe(409);
-        expect(cancel.body.code).toBe('already_paid');
-        expect((await settled(s, saleId)).status).toBe('completed');
-        expect(await shift(s.auth)).toMatchObject({ cashSales: 5200 });
-      }
-    });
+        // 2. C closed the bill (its answer held) before X asked for cash: X turns the closed bill into a cash sale
+        //    and completes it; C's answer is then stale and it finds the sale paid (409 already_paid).
+        {
+          const s = await shop();
+          const saleId = (await sell(s).expect(201)).body.id as string;
+          const cClosed = hold(isCancel, 'after');
+          const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
+            (r) => r,
+          );
+          await cClosed.held;
+          let cash: request.Response;
+          try {
+            cash = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+              paid: 5200,
+            });
+          } finally {
+            cClosed.release();
+          }
+          expect(cash.status).toBe(200);
+          expect(cash.body).toMatchObject({
+            saleStatus: 'completed',
+            method: 'cash',
+          });
+          const cancel = await c;
+          expect(cancel.status).toBe(409);
+          expect(cancel.body.code).toBe('already_paid');
+          expect((await settled(s, saleId)).status).toBe('completed');
+          expect(await shift(s.auth)).toMatchObject({ cashSales: 5200 });
+        }
+      }));
 
     it('a cancel and the customer’s payment at once: cancelled with nothing paid, or completed with the payment', async () => {
       for (let i = 0; i < 3; i += 1) {
@@ -1887,33 +1911,35 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
     });
 
-    it('a refund that succeeded is not overwritten by an older answer', async () => {
-      const s = await shop();
-      const saleId = await paidSale(s);
-      await refund(s, saleId).expect(201);
-      const [payment] = await paymentsOf(saleId);
-      // A follower (the job's way) read the payment while the refund was on its way and is held with
-      // that answer.
-      const stale = hold(
-        (c) =>
-          c.init.method === 'GET' && c.url.endsWith(`/payments/${payment.id}`),
-        'after',
-      );
-      const follower = sync.followRefund(s.tenantId, saleId);
-      await stale.held;
-      await gateway(
-        s.tenantId,
-        'POST',
-        `/refunds/${payment.refund_key}/succeed`,
-      );
-      const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
-      expect(view.body.refund.status).toBe('succeeded');
-      expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
-      stale.release();
-      // It answers what is stored, not the older answer it holds.
-      expect(await follower).toBe('succeeded');
-      expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
-    });
+    it('a refund that succeeded is not overwritten by an older answer', () =>
+      holding(async () => {
+        const s = await shop();
+        const saleId = await paidSale(s);
+        await refund(s, saleId).expect(201);
+        const [payment] = await paymentsOf(saleId);
+        // A follower (the job's way) read the payment while the refund was on its way and is held with
+        // that answer.
+        const stale = hold(
+          (c) =>
+            c.init.method === 'GET' &&
+            c.url.endsWith(`/payments/${payment.id}`),
+          'after',
+        );
+        const follower = sync.followRefund(s.tenantId, saleId);
+        await stale.held;
+        await gateway(
+          s.tenantId,
+          'POST',
+          `/refunds/${payment.refund_key}/succeed`,
+        );
+        const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+        expect(view.body.refund.status).toBe('succeeded');
+        expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
+        stale.release();
+        // It answers what is stored, not the older answer it holds.
+        expect(await follower).toBe('succeeded');
+        expect((await voidsOf(saleId))[0].refund_status).toBe('succeeded');
+      }));
   });
 
   describe('cancel', () => {
@@ -2954,42 +2980,45 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await onHand(s)).toBe(20);
     });
 
-    it('a renew that fails beside a live one never takes the live one’s intent: the sale is not cancelled under it', async () => {
-      const s = await shop();
-      const saleId = (await sell(s).expect(201)).body.id as string;
-      await renew(s.auth, saleId, { attempt: 1 }).expect(200);
-      // A: the live renewal of attempt 2, held once the old bill is closed (its intent set).
-      const closeHold = hold(isCancel, 'after');
-      const running = renew(s.auth, saleId, { attempt: 2 }).then((r) => r);
-      await closeHold.held;
-      const intent = await renewAt(saleId);
-      expect(intent).not.toBeNull();
-      try {
-        // A second tap on the same attempt is refused and changes nothing.
-        const twice = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
-        expect(twice.body.code).toBe('renew_in_progress');
-        // A stale tab (attempt 1) whose request gets no answer: 503, and it takes back only its own intent.
-        link = 'down';
-        await renew(s.auth, saleId, { attempt: 1 }).expect(503);
-        link = 'ok';
-        expect(await renewAt(saleId)).toEqual(intent);
-        // So the poll that finds the old bill closed leaves the sale waiting.
-        const poll = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
-        expect(poll.body.saleStatus).toBe('awaiting_payment');
-        // Nor does the job take it back before it is stranded.
-        await sync.tick(new Date());
-        expect(await renewAt(saleId)).toEqual(intent);
-      } finally {
-        link = 'ok';
-        closeHold.release();
-      }
-      expect((await running).body).toMatchObject({
-        saleStatus: 'awaiting_payment',
-        attempt: 3,
-      });
-      expect((await live(saleId))[0].n).toBe(1);
-      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
-    });
+    it('a renew that fails beside a live one never takes the live one’s intent: the sale is not cancelled under it', () =>
+      holding(async () => {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+        // A: the live renewal of attempt 2, held once the old bill is closed (its intent set).
+        const closeHold = hold(isCancel, 'after');
+        const running = renew(s.auth, saleId, { attempt: 2 }).then((r) => r);
+        await closeHold.held;
+        const intent = await renewAt(saleId);
+        expect(intent).not.toBeNull();
+        try {
+          // A second tap on the same attempt is refused and changes nothing.
+          const twice = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
+          expect(twice.body.code).toBe('renew_in_progress');
+          // A stale tab (attempt 1) whose request gets no answer: 503, and it takes back only its own intent.
+          link = 'down';
+          await renew(s.auth, saleId, { attempt: 1 }).expect(503);
+          link = 'ok';
+          expect(await renewAt(saleId)).toEqual(intent);
+          // So the poll that finds the old bill closed leaves the sale waiting.
+          const poll = await get(s.auth, `/sales/${saleId}/payment`).expect(
+            200,
+          );
+          expect(poll.body.saleStatus).toBe('awaiting_payment');
+          // Nor does the job take it back before it is stranded.
+          await sync.tick(new Date());
+          expect(await renewAt(saleId)).toEqual(intent);
+        } finally {
+          link = 'ok';
+          closeHold.release();
+        }
+        expect((await running).body).toMatchObject({
+          saleStatus: 'awaiting_payment',
+          attempt: 3,
+        });
+        expect((await live(saleId))[0].n).toBe(1);
+        await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+      }));
 
     it('PR 44: a stranded intent is taken over by a new request, which makes the new bill', async () => {
       const s = await shop();
@@ -3008,54 +3037,57 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
     });
 
-    it('PR 44 A/B: a second renew is refused beside a live one, takes it over once stranded; one live bill, and A answers it', async () => {
-      const s = await shop();
-      const saleId = (await sell(s).expect(201)).body.id as string;
-      const knobs = sync as unknown as { renewStrandedMs: number };
-      const bound = knobs.renewStrandedMs;
-      // A: holds the intent, its answer to the close of bill 1 held.
-      const closeHold = hold(isCancel, 'after');
-      const a = renew(s.auth, saleId, { attempt: 1 }).then((r) => r);
-      await closeHold.held;
-      const intentOfA = await renewAt(saleId);
-      let b: request.Response;
-      try {
-        // B, beside a live A: refused, A's intent untouched.
-        const refused = await renew(s.auth, saleId, { attempt: 1 }).expect(409);
-        expect(refused.body.code).toBe('renew_in_progress');
-        expect(await renewAt(saleId)).toEqual(intentOfA);
-        // The job, with its own clock far ahead, still reads the intent's age on the database's clock.
-        await sync.tick(later());
-        expect(await renewAt(saleId)).toEqual(intentOfA);
-        // A is now stranded (as if it had outlived renewStrandedMs): B takes the intent over.
-        knobs.renewStrandedMs = 0;
-        b = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
-      } finally {
-        knobs.renewStrandedMs = bound;
-        closeHold.release();
-      }
-      expect(b.body).toMatchObject({
-        saleStatus: 'awaiting_payment',
-        attempt: 2,
-      });
-      // A comes back to a sale past its attempt: it moves nothing and answers the bill B made.
-      const answerOfA = (await a).body;
-      expect(answerOfA).toMatchObject({
-        saleStatus: 'awaiting_payment',
-        attempt: 2,
-      });
-      expect(answerOfA.checkout).toEqual(b.body.checkout);
-      expect(await saleRow(saleId)).toMatchObject({ payment_attempt: 2 });
-      expect(await renewAt(saleId)).toBeNull();
-      expect((await live(saleId))[0].n).toBe(1);
-      expect(
-        (await paymentsOf(saleId)).map((p) => [p.idempotency_key, p.status]),
-      ).toEqual([
-        [`${saleId}:1`, 'cancelled'],
-        [`${saleId}:2`, 'pending'],
-      ]);
-      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
-    });
+    it('PR 44 A/B: a second renew is refused beside a live one, takes it over once stranded; one live bill, and A answers it', () =>
+      holding(async () => {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        const knobs = sync as unknown as { renewStrandedMs: number };
+        const bound = knobs.renewStrandedMs;
+        // A: holds the intent, its answer to the close of bill 1 held.
+        const closeHold = hold(isCancel, 'after');
+        const a = renew(s.auth, saleId, { attempt: 1 }).then((r) => r);
+        await closeHold.held;
+        const intentOfA = await renewAt(saleId);
+        let b: request.Response;
+        try {
+          // B, beside a live A: refused, A's intent untouched.
+          const refused = await renew(s.auth, saleId, { attempt: 1 }).expect(
+            409,
+          );
+          expect(refused.body.code).toBe('renew_in_progress');
+          expect(await renewAt(saleId)).toEqual(intentOfA);
+          // The job, with its own clock far ahead, still reads the intent's age on the database's clock.
+          await sync.tick(later());
+          expect(await renewAt(saleId)).toEqual(intentOfA);
+          // A is now stranded (as if it had outlived renewStrandedMs): B takes the intent over.
+          knobs.renewStrandedMs = 0;
+          b = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+        } finally {
+          knobs.renewStrandedMs = bound;
+          closeHold.release();
+        }
+        expect(b.body).toMatchObject({
+          saleStatus: 'awaiting_payment',
+          attempt: 2,
+        });
+        // A comes back to a sale past its attempt: it moves nothing and answers the bill B made.
+        const answerOfA = (await a).body;
+        expect(answerOfA).toMatchObject({
+          saleStatus: 'awaiting_payment',
+          attempt: 2,
+        });
+        expect(answerOfA.checkout).toEqual(b.body.checkout);
+        expect(await saleRow(saleId)).toMatchObject({ payment_attempt: 2 });
+        expect(await renewAt(saleId)).toBeNull();
+        expect((await live(saleId))[0].n).toBe(1);
+        expect(
+          (await paymentsOf(saleId)).map((p) => [p.idempotency_key, p.status]),
+        ).toEqual([
+          [`${saleId}:1`, 'cancelled'],
+          [`${saleId}:2`, 'pending'],
+        ]);
+        await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+      }));
 
     it(`PR 44: while a request holds the intent it waits on at most RENEW_INTENT_CALLS (${RENEW_INTENT_CALLS}) payment-api calls`, async () => {
       const s = await shop();
@@ -3106,98 +3138,100 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await paymentsOf(saleId)).toHaveLength(1);
     });
 
-    it('a poll that read the sale before the renewal and finds the old bill closed never cancels it (stale rule)', async () => {
-      const s = await shop();
-      const saleId = (await sell(s).expect(201)).body.id as string;
-      // The poll reads the sale (no intent yet) and is held before it asks payment-api.
-      const pollHold = hold(isFindByKey, 'before');
-      const poll = get(s.auth, `/sales/${saleId}/payment`).then((r) => r);
-      await pollHold.held;
-      // The renewal closes the old bill and is held there, before the sale moves.
-      const closeHold = hold(isCancel, 'after');
-      const renewing = renew(s.auth, saleId, { attempt: 1 }).then((r) => r);
-      await closeHold.held;
-      // The poll now finds the old bill closed: it must not cancel the sale.
-      try {
-        pollHold.release();
-        expect((await poll).status).toBe(200);
-        expect((await saleRow(saleId)).status).toBe('awaiting_payment');
-        // Nor do a check or the job while the renewal runs.
-        await post(s.auth, `/sales/${saleId}/payment/check`).expect(200);
-        await sync.tick(new Date());
-        expect((await saleRow(saleId)).status).toBe('awaiting_payment');
-      } finally {
-        closeHold.release();
-      }
-      expect((await renewing).body).toMatchObject({
-        saleStatus: 'awaiting_payment',
-        attempt: 2,
-      });
-      expect(await onHand(s)).toBe(19);
-      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
-    });
+    it('a poll that read the sale before the renewal and finds the old bill closed never cancels it (stale rule)', () =>
+      holding(async () => {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        // The poll reads the sale (no intent yet) and is held before it asks payment-api.
+        const pollHold = hold(isFindByKey, 'before');
+        const poll = get(s.auth, `/sales/${saleId}/payment`).then((r) => r);
+        await pollHold.held;
+        // The renewal closes the old bill and is held there, before the sale moves.
+        const closeHold = hold(isCancel, 'after');
+        const renewing = renew(s.auth, saleId, { attempt: 1 }).then((r) => r);
+        await closeHold.held;
+        // The poll now finds the old bill closed: it must not cancel the sale.
+        try {
+          pollHold.release();
+          expect((await poll).status).toBe(200);
+          expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+          // Nor do a check or the job while the renewal runs.
+          await post(s.auth, `/sales/${saleId}/payment/check`).expect(200);
+          await sync.tick(new Date());
+          expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+        } finally {
+          closeHold.release();
+        }
+        expect((await renewing).body).toMatchObject({
+          saleStatus: 'awaiting_payment',
+          attempt: 2,
+        });
+        expect(await onHand(s)).toBe(19);
+        await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+      }));
 
-    it('cash and renew exclude each other; a cancel during a renewal wins', async () => {
-      const s = await shop();
-      const saleId = (await sell(s).expect(201)).body.id as string;
-      // A switch to cash asked (its request at work): no new bill.
-      await admin`update pos.sales set switch_cash_paid = 10000 where id = ${saleId}`;
-      const r = await renew(s.auth, saleId, { attempt: 1 }).expect(409);
-      expect(r.body.code).toBe('switching_to_cash');
-      await admin`update pos.sales set switch_cash_paid = null where id = ${saleId}`;
-      // The cash request drops a renewal intent: cash wins.
-      await admin`update pos.sales set payment_renew_at = now() where id = ${saleId}`;
-      const cash = await post(s.auth, `/sales/${saleId}/payment/cash`, {
-        paid: 10_000,
-      }).expect(200);
-      expect(cash.body).toMatchObject({
-        saleStatus: 'completed',
-        method: 'cash',
-      });
-      expect(await renewAt(saleId)).toBeNull();
-      // A cash sale gets no new bill.
-      const after = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
-      expect(after.body.code).toBe('already_paid');
+    it('cash and renew exclude each other; a cancel during a renewal wins', () =>
+      holding(async () => {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        // A switch to cash asked (its request at work): no new bill.
+        await admin`update pos.sales set switch_cash_paid = 10000 where id = ${saleId}`;
+        const r = await renew(s.auth, saleId, { attempt: 1 }).expect(409);
+        expect(r.body.code).toBe('switching_to_cash');
+        await admin`update pos.sales set switch_cash_paid = null where id = ${saleId}`;
+        // The cash request drops a renewal intent: cash wins.
+        await admin`update pos.sales set payment_renew_at = now() where id = ${saleId}`;
+        const cash = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+          paid: 10_000,
+        }).expect(200);
+        expect(cash.body).toMatchObject({
+          saleStatus: 'completed',
+          method: 'cash',
+        });
+        expect(await renewAt(saleId)).toBeNull();
+        // A cash sale gets no new bill.
+        const after = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
+        expect(after.body.code).toBe('already_paid');
 
-      // A cancel during a renewal wins, in this exact order (PR 51 review): the renewal R wrote its intent and
-      // closed bill 1 (its answer held); the cancel C took the intent back and is held before it looks the bill
-      // up. R then finds its intent gone: it stops, claims no new one and makes no second bill. C cancels.
-      const other = (await sell(s).expect(201)).body.id as string;
-      const rClosed = hold(isCancel, 'after');
-      const renewing = renew(s.auth, other, { attempt: 1 }).then((x) => x);
-      await rClosed.held;
-      expect(await renewAt(other)).not.toBeNull();
-      const cLooks = hold(isFindByKey, 'before');
-      const cancel = post(s.auth, `/sales/${other}/payment/cancel`).then(
-        (x) => x,
-      );
-      await cLooks.held;
-      expect(await renewAt(other)).toBeNull();
-      let rn: request.Response;
-      try {
-        rClosed.release();
-        rn = await renewing;
-      } finally {
-        rClosed.release();
-        cLooks.release();
-      }
-      expect(rn.status).toBe(409);
-      expect(rn.body.code).toBe('cancel_refused');
-      // No intent claimed again, the sale still at attempt 1, never a bill for attempt 2.
-      expect(await renewAt(other)).toBeNull();
-      expect(await saleRow(other)).toMatchObject({ payment_attempt: 1 });
-      const cn = await cancel;
-      expect(cn.status).toBe(200);
-      expect(await saleRow(other)).toMatchObject({
-        status: 'cancelled',
-        payment_attempt: 1,
-        cancel_reason: 'cashier',
-      });
-      expect(
-        (await paymentsOf(other)).map((p) => [p.idempotency_key, p.status]),
-      ).toEqual([[`${other}:1`, 'cancelled']]);
-      expect((await live(other))[0].n).toBe(0);
-    });
+        // A cancel during a renewal wins, in this exact order (PR 51 review): the renewal R wrote its intent and
+        // closed bill 1 (its answer held); the cancel C took the intent back and is held before it looks the bill
+        // up. R then finds its intent gone: it stops, claims no new one and makes no second bill. C cancels.
+        const other = (await sell(s).expect(201)).body.id as string;
+        const rClosed = hold(isCancel, 'after');
+        const renewing = renew(s.auth, other, { attempt: 1 }).then((x) => x);
+        await rClosed.held;
+        expect(await renewAt(other)).not.toBeNull();
+        const cLooks = hold(isFindByKey, 'before');
+        const cancel = post(s.auth, `/sales/${other}/payment/cancel`).then(
+          (x) => x,
+        );
+        await cLooks.held;
+        expect(await renewAt(other)).toBeNull();
+        let rn: request.Response;
+        try {
+          rClosed.release();
+          rn = await renewing;
+        } finally {
+          rClosed.release();
+          cLooks.release();
+        }
+        expect(rn.status).toBe(409);
+        expect(rn.body.code).toBe('cancel_refused');
+        // No intent claimed again, the sale still at attempt 1, never a bill for attempt 2.
+        expect(await renewAt(other)).toBeNull();
+        expect(await saleRow(other)).toMatchObject({ payment_attempt: 1 });
+        const cn = await cancel;
+        expect(cn.status).toBe(200);
+        expect(await saleRow(other)).toMatchObject({
+          status: 'cancelled',
+          payment_attempt: 1,
+          cancel_reason: 'cashier',
+        });
+        expect(
+          (await paymentsOf(other)).map((p) => [p.idempotency_key, p.status]),
+        ).toEqual([[`${other}:1`, 'cancelled']]);
+        expect((await live(other))[0].n).toBe(0);
+      }));
 
     it('payment-api down: 503, the intent is taken back and the sale still waits on its old bill', async () => {
       const s = await shop();
