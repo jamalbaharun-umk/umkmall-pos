@@ -155,6 +155,74 @@ describe('owner sign-in from the shared UMKMall cookie', () => {
     expect(Date.now() - started).toBeLessThan(7_000);
   }, 10_000);
 
+  describe('fresh sign-in (UMK-2054)', () => {
+    const http = () => request(app.getHttpServer());
+    const open = async (body?: object) => {
+      const req = session(AUTH);
+      const res = await (body ? req.send(body) : req).expect(200);
+      return `Bearer ${res.body.sessionToken as string}`;
+    };
+    const resetOwn = (auth: string, sub: string) =>
+      http().delete(`/void-pin/${sub}`).set('Authorization', auth);
+    const setPin = (auth: string, body: object) =>
+      http().put('/void-pin').set('Authorization', auth).send(body);
+    const unlockOwn = (auth: string, sub: string) =>
+      http().post(`/void-pin/${sub}/unlock`).set('Authorization', auth);
+
+    it('a sign-in is fresh; the refresh that follows it is not, and a new sign-in is fresh again', async () => {
+      const sub = await umkmallUser();
+      stub.answer = signedIn(sub);
+      const first = await open({ signIn: true });
+      await setPin(first, { pin: '482913' }).expect(200);
+
+      // The owner refresh: the same call without `signIn`, minutes or seconds after the sign-in.
+      for (const refreshed of [await open(), await open({})]) {
+        for (const refusal of [
+          await resetOwn(refreshed, sub).expect(403),
+          await unlockOwn(refreshed, sub).expect(403),
+        ])
+          expect(refusal.body.code).toBe('fresh_sign_in_required');
+        // Everything else works in a refreshed session, the change with the old PIN too.
+        await http()
+          .get('/void-pin')
+          .set('Authorization', refreshed)
+          .expect(200, { hasPin: true, lockedUntil: null });
+      }
+      await setPin(await open(), {
+        pin: '270183',
+        currentPin: '482913',
+      }).expect(200);
+
+      const again = await open({ signIn: true });
+      await unlockOwn(again, sub).expect(200);
+      await resetOwn(again, sub).expect(200);
+      await setPin(await open(), { pin: '905512' }).expect(403);
+      await setPin(again, { pin: '905512' }).expect(200);
+    });
+
+    it('takes nothing but `signIn: true` in the body', async () => {
+      stub.answer = signedIn(await umkmallUser());
+      for (const body of [
+        { signIn: false },
+        { signIn: 'yes' },
+        { fresh: true },
+      ])
+        await session(AUTH).send(body).expect(422);
+      expect(stub.cookies).toEqual([]);
+    });
+
+    it('the dev sign-in is a sign-in: fresh, outside production only', async () => {
+      const sub = await umkmallUser();
+      const res = await http()
+        .post('/auth/dev/sign-in')
+        .send({ userId: sub })
+        .expect(200);
+      const auth = `Bearer ${res.body.sessionToken as string}`;
+      await setPin(auth, { pin: '482913' }).expect(200);
+      await resetOwn(auth, sub).expect(200);
+    });
+  });
+
   describe('dev sign-in', () => {
     const devSignIn = (userId: string) =>
       request(app.getHttpServer()).post('/auth/dev/sign-in').send({ userId });

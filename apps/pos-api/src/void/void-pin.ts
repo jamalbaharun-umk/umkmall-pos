@@ -19,6 +19,7 @@ import {
 import { hashPin, verifyPin } from '../staff/secrets';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
+import { freshSignIn } from '../tenancy/session';
 
 export const MAX_PIN_FAILURES = 5;
 export const PIN_LOCK_SECONDS = 5 * 60;
@@ -30,6 +31,9 @@ type Check =
   { ok: true } | { ok: false; retryAfter?: number; attemptsLeft?: number };
 
 const WRONG_PIN = 'PIN salah';
+
+/** The refusal of a change to the owner's own PIN that needs a sign-in of the last minutes (UMK-2054). */
+export const FRESH_SIGN_IN_REQUIRED = 'fresh_sign_in_required';
 
 const wrongPin = (field: string) => fieldError(field, WRONG_PIN);
 
@@ -48,7 +52,13 @@ const locked = (field: string, retryAfter: number) => {
  * Lockout: every guess runs under the PIN row's lock, so parallel guesses are counted one by one. The
  * 5th wrong PIN in a row locks that approver for 5 minutes; a guess during the lock is refused without
  * being checked and does not extend it; after the lock the count starts again at 0. A correct PIN
- * resets the count. The owner can unlock, and can remove a forgotten PIN.
+ * resets the count. The owner can unlock an admin, and can remove an admin's forgotten PIN.
+ *
+ * The owner's own PIN (UMK-2054) approves what the owner session alone may not (the retry of a refused refund),
+ * so the session alone never gets around it: changing it needs the old PIN; making the first one, removing a
+ * forgotten one and clearing its lock need a fresh sign-in (`freshSignIn`: the owner came through UMKMall's
+ * login in the last minutes; a refreshed session never counts), else 403 `fresh_sign_in_required`. An admin's
+ * PIN is not that hole: the owner cannot set it, and it never approves an owner-only action.
  */
 @Injectable()
 export class VoidPins {
@@ -245,12 +255,26 @@ export class VoidPins {
     return this.verify(tenantId, approverId, pin);
   }
 
-  /** Sets the actor's own PIN; changing an existing one needs the current PIN (counted like a void's). */
+  /** The owner's own PIN row is touched without the old PIN only after a fresh sign-in (UMK-2054). */
+  private needsFreshSignIn(s: PosSession) {
+    if (!freshSignIn(s))
+      throw new ForbiddenException({
+        message:
+          'Untuk keamanan, masuk lagi dengan akun UMKMall, lalu ulangi dalam 5 menit.',
+        code: FRESH_SIGN_IN_REQUIRED,
+      });
+  }
+
+  /**
+   * Sets the actor's own PIN; changing an existing one needs the current PIN (counted like a void's). The
+   * owner's first PIN (never made, or removed) has no old PIN to ask for, so it needs a fresh sign-in.
+   */
   async set(s: PosSession, pin: string, currentPin?: string) {
     const pinHash = await hashPin(pin);
     const outcome = await this.db.transaction(async (tx): Promise<Check> => {
       const row = await this.lockRow(tx, s.tenantId, s.actorId);
       if (!row) {
+        if (s.kind === 'owner') this.needsFreshSignIn(s);
         // On conflict: a concurrent first set won; this one is refused below like a missing current PIN.
         const made = await tx
           .insert(voidPins)
@@ -286,9 +310,13 @@ export class VoidPins {
     if (s.kind !== 'owner') throw new ForbiddenException();
   }
 
-  /** Owner only: clears an approver's lock and count. 404 for an id without a PIN in this store. */
+  /**
+   * Owner only: clears an approver's lock and count. 404 for an id without a PIN in this store. The owner's own
+   * lock needs a fresh sign-in.
+   */
   async unlock(s: PosSession, actorId: string) {
     this.ownerOnly(s);
+    if (actorId === s.actorId) this.needsFreshSignIn(s);
     const rows = await this.db
       .update(voidPins)
       .set({
@@ -303,9 +331,10 @@ export class VoidPins {
     return { actorId, hasPin: true, lockedUntil: null };
   }
 
-  /** Owner only: removes a forgotten PIN, so its holder sets a new one. */
+  /** Owner only: removes a forgotten PIN, so its holder sets a new one. The owner's own needs a fresh sign-in. */
   async reset(s: PosSession, actorId: string) {
     this.ownerOnly(s);
+    if (actorId === s.actorId) this.needsFreshSignIn(s);
     const rows = await this.db
       .delete(voidPins)
       .where(this.where(s.tenantId, actorId))

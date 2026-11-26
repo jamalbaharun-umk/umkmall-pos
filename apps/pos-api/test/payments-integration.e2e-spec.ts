@@ -174,7 +174,7 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
     await post(s.auth, '/shifts/open', { openingCash: 100_000 }).expect(201);
     await http()
       .put('/void-pin')
-      .set('Authorization', s.auth)
+      .set('Authorization', s.freshAuth)
       .send({ pin: OWNER_PIN })
       .expect(200);
     return { ...s, productId };

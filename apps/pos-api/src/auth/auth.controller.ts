@@ -40,6 +40,13 @@ const MeAnswer = z.object({
   user: z.object({ id: z.string().uuid() }),
 });
 const DevBody = z.object({ userId: z.string().uuid() });
+/**
+ * `signIn: true` is sent by the relay (pos-web) only when a person is signing in, never by the refresh of a
+ * session (UMK-2054). pos-api cannot tell the two apart by itself: both are the same UMKMall cookie.
+ */
+const UmkmallSessionBody = z
+  .object({ signIn: z.literal(true).optional() })
+  .strict();
 // A JWT or any opaque token: no character that could end the cookie or add another one.
 // New Teman AI consent: the scopes the owner granted and UMKMall's consent record. Read is always included.
 const agentGrant = {
@@ -66,6 +73,7 @@ const AgentBody = z
   .strict();
 
 const parse = validate;
+const nowSeconds = () => Math.floor(Date.now() / 1000);
 const digest = (s: string) => createHash('sha256').update(s).digest();
 /** The `Cookie` header cut down to UMKMall's two auth cookies, or undefined when neither is there. */
 export function authCookies(header: string | undefined): string | undefined {
@@ -97,14 +105,20 @@ export class AuthController {
    * The shared UMKMall login cookie (UMK-1945) → 15-minute owner session; also the owner refresh. Asks UMKMall's
    * `/api/auth/me` with only the two auth cookies. Every Set-Cookie it answers goes back unchanged: it can renew the
    * access cookie and mint the refresh cookie once, and dropping that signs the owner out of UMKMall later.
+   *
+   * A sign-in (`{ signIn: true }`) stamps the session with its sign-in time, which makes it fresh for
+   * `FRESH_SIGN_IN_SECONDS` (UMK-2054: resetting or unlocking the owner's PIN). A refresh sends no `signIn` and
+   * its session carries no sign-in time: a refresh is never fresh, whatever the session before it was.
    */
   @Public()
   @Post('umkmall/session')
   @HttpCode(200)
   async umkmallSession(
     @Headers('cookie') cookie: string | undefined,
+    @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
   ) {
+    const { signIn } = parse(UmkmallSessionBody, body ?? {});
     const forwarded = authCookies(cookie);
     if (!forwarded) throw new UnauthorizedException();
     const { userId, setCookies, unavailable } =
@@ -113,7 +127,12 @@ export class AuthController {
     if (unavailable) throw new ServiceUnavailableException();
     if (!userId) throw new UnauthorizedException();
     const tenantId = await this.tenantOfUmkmallUser(userId);
-    return this.issue({ tenantId, actorId: userId, kind: 'owner' });
+    return this.issue({
+      tenantId,
+      actorId: userId,
+      kind: 'owner',
+      ...(signIn && { signedInAt: nowSeconds() }),
+    });
   }
 
   /** Local work without UMKMall (localhost cookies carry no UMKMall login). Only in development or test. */
@@ -127,7 +146,13 @@ export class AuthController {
     const { userId } = parse(DevBody, body);
     try {
       const tenantId = await this.findOrCreateTenant(this.db, userId);
-      return this.issue({ tenantId, actorId: userId, kind: 'owner' });
+      // Always a sign-in (this route refreshes nothing), so local work can reset the owner's PIN too.
+      return this.issue({
+        tenantId,
+        actorId: userId,
+        kind: 'owner',
+        signedInAt: nowSeconds(),
+      });
     } catch (error) {
       // 23503: no such public.users row
       if (isMissingUser(error))

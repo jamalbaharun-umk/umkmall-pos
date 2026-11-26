@@ -14,7 +14,11 @@ export async function createApp(): Promise<INestApplication> {
   return app;
 }
 
-/** A UMKMall account (stub row) plus its store. Returns ids and an owner bearer token. */
+/**
+ * A UMKMall account (stub row) plus its store. Returns ids and an owner bearer token. `auth` is a session without
+ * a sign-in time, as after a refresh; `freshAuth` is the session of an owner who signed in just now (UMK-2054:
+ * making, removing or unlocking the owner's own PIN).
+ */
 export async function createStore() {
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1 });
   const appDb = postgres(APP_DATABASE_URL, { max: 1 });
@@ -28,11 +32,21 @@ export async function createStore() {
       { tenantId: tenant.id, actorId: user.id, kind: 'owner' },
       process.env.POS_SESSION_SECRET!,
     );
+    const fresh = await signSession(
+      {
+        tenantId: tenant.id,
+        actorId: user.id,
+        kind: 'owner',
+        signedInAt: Math.floor(Date.now() / 1000),
+      },
+      process.env.POS_SESSION_SECRET!,
+    );
     return {
       userId: user.id,
       tenantId: tenant.id,
       token,
       auth: `Bearer ${token}`,
+      freshAuth: `Bearer ${fresh}`,
     };
   } finally {
     await admin.end();

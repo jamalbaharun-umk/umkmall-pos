@@ -244,7 +244,11 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .expect(200);
 
     // A void PIN and a voided cash sale (UMK-1962): void_pins, sale_voids, sale_void_returns.
-    await put('/void-pin', { pin: '482913' }).expect(200);
+    await http()
+      .put('/void-pin')
+      .set('Authorization', s.freshAuth)
+      .send({ pin: '482913' })
+      .expect(200);
     const voided = await post(
       '/sales',
       { lines: [{ productId, qty: 1 }], paid: 10_000 },
