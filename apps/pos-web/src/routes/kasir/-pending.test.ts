@@ -14,9 +14,11 @@ import {
   isTracked,
   KEY_REUSED_TEXT,
   MAX_TRACKED,
+  NO_ANSWER_TEXT,
   onlineBlocked,
   orderNotice,
   ownSale,
+  paidBy,
   heldBank,
   planSend,
   recordedDescription,
@@ -29,6 +31,7 @@ import {
   sendPlan,
   serialize,
   toCheck,
+  unseenCompletion,
   WAITING_ANSWER_HINT,
   type PendingEvent,
   type PendingState,
@@ -258,7 +261,7 @@ describe('the next customer\'s identical order is never answered with a lost sal
     expect(t.send(CASH)).toBe('blocked')
     // the late answer settles it: paid means that order is done, and a new one starts
     t.do({ type: 'sale_paid', key: K1 })
-    expect(t.state).toEqual({ ...initialState(t.state.key), completed: { seq: 1, clearCart: true, sale: null } })
+    expect(t.state).toEqual({ ...initialState(t.state.key), completed: { seq: 1, clearCart: true, sale: null, seen: false } })
     expect(t.state.key).not.toBe(K1)
   })
   it('the corrected amount or method of the same order (422 of a used key) asks for the same check (review 3, major 4)', () => {
@@ -523,7 +526,7 @@ describe('paid', () => {
     const t = till()
     t.send(CASH)
     t.do({ type: 'sale_paid', key: K1 })
-    expect(t.state).toEqual({ ...initialState(id(3)), completed: { seq: 1, clearCart: true, sale: null } })
+    expect(t.state).toEqual({ ...initialState(id(3)), completed: { seq: 1, clearCart: true, sale: null, seen: false } })
   })
   it('a cash sale that is paid never forgets another sale (review 3, major 2)', () => {
     const t = till()
@@ -1068,7 +1071,7 @@ describe('a paid answer after the register was left and opened again (UMK-2048)'
     t.send(CASH)
     t.reopen() // the cashier left mid-request and came back; the cart on the new screen is untouched
     t.do({ type: 'sale_paid', key: K1, sale: SALE })
-    expect(t.state.completed).toEqual({ seq: 1, clearCart: true, sale: SALE })
+    expect(t.state.completed).toEqual({ seq: 1, clearCart: true, sale: SALE, seen: false })
     expect(t.state.key).not.toBe(K1)
     expect(t.state.recorded).toBe(false)
     expect(t.state.out).toBeNull()
@@ -1095,13 +1098,97 @@ describe('a paid answer after the register was left and opened again (UMK-2048)'
     expect(t.reopen().completed?.seq).toBe(1)
     const k = t.send(CASH)
     t.do({ type: 'sale_paid', key: k as string })
-    expect(t.state.completed).toEqual({ seq: 2, clearCart: true, sale: null })
+    expect(t.state.completed).toEqual({ seq: 2, clearCart: true, sale: null, seen: false })
   })
   it('is never stored', () => {
     const t = till()
     t.send(CASH)
     t.do({ type: 'sale_paid', key: K1, sale: SALE })
     expect(serialize(t.state)).not.toMatch(/completed|change/)
+  })
+})
+
+describe('a paid answer is read from what it produced, and shown once (UMK-2053)', () => {
+  const SALE = { id: A, change: 500, receivableRest: null }
+  it('paidBy: the answer for the cart\'s key produced a completion; one for a key the order moved on from did not', () => {
+    const t = till()
+    const k = t.send(CASH) as string
+    const before = t.state
+    t.do({ type: 'sale_paid', key: k, sale: SALE })
+    expect(paidBy(before, t.state)).toEqual({ seq: 1, clearCart: true, sale: SALE, seen: false })
+    // an older completion exists (seq 1); a late answer of a key that is no longer the cart's changes nothing
+    const before2 = t.state
+    t.do({ type: 'sale_paid', key: id(88), sale: SALE })
+    expect(t.state.completed).toBe(before2.completed)
+    expect(paidBy(before2, t.state)).toBeNull() // the stale `completed.clearCart` is not this answer's
+  })
+  it('an edited order\'s paid answer is a completion that must not clear the cart', () => {
+    const t = till()
+    const k = t.send(CASH) as string
+    t.do({ type: 'cart_edited' })
+    const before = t.state
+    t.do({ type: 'sale_paid', key: k })
+    expect(paidBy(before, t.state)?.clearCart).toBe(false)
+  })
+  it('a paid answer that lands with no register mounted is unseen until a register shows it, then never again', () => {
+    const t = till()
+    const k = t.send(CASH) as string
+    t.reopen()
+    t.do({ type: 'sale_paid', key: k, sale: SALE }) // the cashier is on another page
+    expect(unseenCompletion(t.state)?.sale).toEqual(SALE)
+    t.reopen() // the register opens: it shows the receipt and change
+    expect(unseenCompletion(t.state)?.sale).toEqual(SALE)
+    t.do({ type: 'completed_seen' })
+    expect(unseenCompletion(t.state)).toBeNull()
+    expect(t.reopen().completed?.seen).toBe(true) // leaving and coming back does not show it again
+    expect(t.do({ type: 'completed_seen' })).toBe(t.state)
+  })
+  it('completed_seen with nothing completed changes nothing', () => {
+    const t = till()
+    const before = t.state
+    expect(t.do({ type: 'completed_seen' })).toBe(before)
+  })
+})
+
+describe('after "Sudah saya cek" the next order starts clean (UMK-2053)', () => {
+  it('a held cash sale: the ack renews the key, and emptying the cart afterwards does not make the new key doubtful', () => {
+    const t = till()
+    t.send(CASH)
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: CASH, online: false })
+    t.reopen()
+    expect(t.state.recorded).toBe(true)
+    t.do({ type: 'recorded_acked' })
+    const fresh = t.state.key
+    expect(fresh).not.toBe(K1)
+    // the page clears the cart (the sale of those lines is recorded): that edit is on a clean order
+    t.do({ type: 'cart_edited' })
+    expect(t.state).toMatchObject({ key: fresh, recorded: false, edited: false })
+    expect(t.send(CASH)).toBe(fresh)
+  })
+})
+
+describe('the no-answer text of a sale request (UMK-2053)', () => {
+  it('says the sale is not written twice and points to a reload, then Riwayat', () => {
+    expect(NO_ANSWER_TEXT).toMatch(/tidak akan tercatat dua kali/)
+    expect(NO_ANSWER_TEXT).toMatch(/muat ulang/)
+    expect(NO_ANSWER_TEXT).toMatch(/Riwayat/)
+  })
+})
+
+describe('guard: the register reads a paid answer from what its dispatch produced (UMK-2053)', () => {
+  const dir = join(__dirname)
+  const sources = readdirSync(dir)
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f))
+    .map((f) => ({ f, text: readFileSync(join(dir, f), 'utf8') }))
+  const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+  it('pay() compares before and after, and the register shows an unseen completion once', () => {
+    const text = code(sources.find((s) => s.f === 'index.tsx')!.text)
+    expect(text).toMatch(/paidBy\(before, after\)\?\.clearCart/)
+    expect(text).not.toMatch(/pend\.current\(\)\.completed\?\.clearCart/)
+    expect(text).toMatch(/unseenCompletion\(pend\.current\(\)\)/)
+    expect(text).toMatch(/type: 'completed_seen'/)
+    expect(text).toMatch(/error: NO_ANSWER_TEXT/)
+    expect(text).toMatch(/Sudah tercatat: kosongkan keranjang/)
   })
 })
 
