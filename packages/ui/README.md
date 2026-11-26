@@ -1,5 +1,9 @@
 # @umkmall/ui
 
+> [← Back to the project README](../../README.md). This is a **vendored copy** used by UMKMall POS; read
+> [POS-COPY.md](POS-COPY.md) first and do not edit components here. Links below that point into the UMKMall monorepo do
+> not resolve in this repository.
+
 The UMKMall design system (Ensyra — DS in Figma): primitives, compositions, layouts, tokens, and the
 variant contract they all build against. **In `apps/main-website` this library is the default.** A raw
 `<button>`, `<input>`, `<svg>`, hex colour or stock palette class is the exception and needs a
