@@ -2,13 +2,14 @@ import { Link, useRouter } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { Alert, Button } from '@umkmall/ui/primitives'
 import { Page, PageLoading } from '@/components/page'
+import { SCROLL_ROW } from '@/lib/scroll-row'
 import { REPORTS } from './-reports'
 
 /** Lakasir's report pages share a tab row listing every report (HasReportPageSidebar renders it on top). */
 export function ReportLayout({ title, children }: { title: string; children: ReactNode }) {
   return (
     <Page title={title} crumbs={[{ label: 'Laporan', to: '/laporan' }, { label: title }]}>
-      <nav aria-label="Laporan" className="flex flex-wrap gap-1 rounded-xl bg-default-primary p-1 print:hidden">
+      <nav aria-label="Laporan" className={`flex gap-1 rounded-xl bg-default-primary p-1 print:hidden ${SCROLL_ROW}`}>
         <Link to="/laporan" activeOptions={{ exact: true }} className="whitespace-nowrap rounded-lg px-3 py-2 hover:bg-weak-brand" activeProps={{ className: 'bg-weak-brand font-medium text-default-brand' }} inactiveProps={{ className: 'text-default-primary' }}>
           Semua laporan
         </Link>

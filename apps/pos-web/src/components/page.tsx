@@ -69,7 +69,7 @@ export function Empty({ title, children, action }: { title: string; children?: R
       </span>
       <p className="font-semibold text-default-primary">{title}</p>
       {children && <div className="max-w-md text-sm text-default-secondary">{children}</div>}
-      {action}
+      {action && <div className={actionRowClass({ className: 'sm:w-auto sm:justify-center' })}>{action}</div>}
     </div>
   )
 }
