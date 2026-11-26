@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   ConflictException,
+  ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -25,6 +27,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
   AGENT_LABEL,
+  discountApprovals,
   FINAL_SALE_STATUSES,
   members,
   paymentMethods,
@@ -52,7 +55,19 @@ import {
   paymentMethodCode,
 } from '../payments-client/payments.client';
 import { SalePayments } from '../payments-client/sale-payment.service';
+import { codedError } from '../common/validation';
+import { VoidPins } from '../void/void-pin';
 import { cashMethodId, cashRounding } from './cash';
+import {
+  DISCOUNT_APPROVAL_REQUIRED,
+  DISCOUNT_APPROVAL_TTL_SECONDS,
+  DISCOUNT_INVALID,
+  DISCOUNT_SELF_APPROVAL,
+  lineDiscountOf,
+  leavesSomething,
+  needsApproval,
+  withinApproval,
+} from './line-discount';
 import { saleNumbers, takeNumber } from './numbers';
 import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
@@ -64,6 +79,7 @@ import {
   evaluateVoucher,
 } from '../vouchers/vouchers.controller';
 import type {
+  DiscountApprovalInput,
   PaidSinceQuery,
   QuoteInput,
   SaleInput,
@@ -86,8 +102,9 @@ export const taxOf = (taxable: number, bps: number) =>
 export { cashRounding };
 
 /**
- * The one arithmetic of a sale after its lines: tax on the amount after the manual discount AND the voucher (Lakasir
- * flaw 2); only a cash sale is rounded (UMK-1993), after tax, outside `total`. Used by the sale and by its quote.
+ * The one arithmetic of a sale after its lines: tax on the amount after the manual discounts (the lines' and the
+ * order's, UMK-1990) AND the voucher (Lakasir flaw 2); only a cash sale is rounded (UMK-1993), after tax, outside
+ * `total`. Used by the sale and by its quote.
  */
 export function saleAmounts(a: {
   subtotal: number;
@@ -137,6 +154,59 @@ const fail = (
     ...extra,
   });
 
+type DiscountRequest = { discountPercent?: number; discountAmount?: number };
+const hasDiscount = (l: DiscountRequest) =>
+  l.discountPercent !== undefined || l.discountAmount !== undefined;
+
+/** UMK-1990: a line discount needs sales.price_override (403); a client price, by contrast, is silently ignored. */
+function assertMayDiscount(s: PosSession, lines: DiscountRequest[]) {
+  if (lines.some(hasDiscount) && !hasPermission(s, 'sales.price_override'))
+    throw new ForbiddenException({
+      message:
+        'Anda belum punya izin memberi diskon. Minta admin atau pemilik.',
+      code: 'DISCOUNT_FORBIDDEN',
+    });
+}
+
+/** UMK-1990: the approver named is the asking actor, unless that actor is the owner (who may confirm their own). */
+const isSelf = (s: PosSession, approverId: string) =>
+  s.kind !== 'owner' && approverId.toLowerCase() === s.actorId.toLowerCase();
+
+/**
+ * UMK-1990: each line's discount in rupiah, on its total at the price it is charged (the wholesale tier
+ * applied). 422 `DISCOUNT_INVALID` for a discount on a line with a manual price (the manual price replaces the
+ * discount, design feature 30) and for one that leaves nothing of the line (100% or more).
+ */
+function discountsOf(
+  lines: (DiscountRequest & { lineTotal: number; overridden: boolean })[],
+) {
+  return lines.map((l, i) => {
+    if (!hasDiscount(l))
+      return { discount: 0, discountPercent: null, needsApproval: false };
+    const field = `lines.${i}.${l.discountPercent !== undefined ? 'discountPercent' : 'discountAmount'}`;
+    if (l.overridden)
+      throw codedError(
+        DISCOUNT_INVALID,
+        field,
+        'Harga manual dan diskon tidak bisa dipakai bersama pada satu baris',
+      );
+    const discount = lineDiscountOf(l.lineTotal, l);
+    if (!leavesSomething(discount, l.lineTotal))
+      throw codedError(
+        DISCOUNT_INVALID,
+        field,
+        discount > l.lineTotal
+          ? 'Diskon melebihi harga baris'
+          : 'Diskon 100% tidak diperbolehkan untuk satu baris',
+      );
+    return {
+      discount,
+      discountPercent: l.discountPercent ?? null,
+      needsApproval: needsApproval(discount, l.lineTotal),
+    };
+  });
+}
+
 /**
  * Cash sales (Lakasir SellingService + classic cashier). The server computes every price and total
  * (flaw 3: a client price counts only with `sales.price_override`, cost always stored), every sale
@@ -150,6 +220,7 @@ export class SalesService {
     private readonly stock: StockService,
     private readonly payments: PaymentSync,
     private readonly salePayments: SalePayments,
+    private readonly pins: VoidPins,
   ) {}
 
   private async byKey(tenantId: string, key: string) {
@@ -260,6 +331,7 @@ export class SalesService {
     const hash = requestHash(input);
     const prior = await this.replay(s, key, hash);
     if (prior) return prior;
+    assertMayDiscount(s, input.lines);
     await this.checkBank(s, input);
     let created: { id: string; downPaymentId: string | null };
     try {
@@ -267,8 +339,10 @@ export class SalesService {
         this.insert(tx, s, key, input, hash),
       );
     } catch (e) {
-      // A concurrent request with the same key won the unique index: return its sale (same body only).
-      if (isUniqueViolation(e)) {
+      // A concurrent request with the same key won: return its sale (same body only). It may have won the
+      // unique index, or committed first while this one waited on a lock and then found what it took gone
+      // (the discount approval used, the stock sold): a refusal is answered only when no such sale exists.
+      if (isUniqueViolation(e) || e instanceof HttpException) {
         const winner = await this.replay(s, key, hash);
         if (winner) return winner;
       }
@@ -378,14 +452,32 @@ export class SalesService {
         unitPrice,
         lineTotal: unitPrice * l.qty,
         priceOverriddenBy: overridden ? s.actorId : null,
+        overridden,
         index: i,
       };
     });
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
-    const discount = canOverride ? (input.discount ?? 0) : 0;
-    if (discount > subtotal)
+    // UMK-1990: line discounts first (on the tier price), then the order discount, then the voucher on what is
+    // left, then tax (saleAmounts). `assertMayDiscount` already refused a line discount without the permission.
+    const discounts = discountsOf(
+      lines.map((l) => ({ ...input.lines[l.index], ...l })),
+    );
+    const approvals = await this.lockApprovals(
+      tx,
+      s,
+      lines.map((l, i) => ({
+        ...discounts[i],
+        productId: l.productId,
+        lineTotal: l.lineTotal,
+        approvalId: input.lines[i].discountApprovalId,
+      })),
+    );
+    const lineDiscount = discounts.reduce((n, d) => n + d.discount, 0);
+    const orderDiscount = canOverride ? (input.discount ?? 0) : 0;
+    if (orderDiscount > subtotal - lineDiscount)
       throw fail('Diskon melebihi subtotal', {}, 'discount');
+    const discount = lineDiscount + orderDiscount;
     // U7: validated before anything is taken (Lakasir flaw 1); quota is consumed below, in this transaction.
     const voucher = input.voucherCode
       ? await evaluateVoucher(
@@ -480,6 +572,7 @@ export class SalesService {
         requestHash: hash,
         subtotal,
         discount,
+        lineDiscount,
         memberId,
         voucherId: voucher?.id ?? null,
         voucherDiscount,
@@ -499,6 +592,20 @@ export class SalesService {
         paymentBank: charged && method.isOnline ? (input.bank ?? null) : null,
       })
       .returning({ id: sales.id });
+    // Each PIN approval is used once: taken by this sale (rolled back with it when it fails).
+    if (approvals.size)
+      await tx
+        .update(discountApprovals)
+        .set({ usedAt: sql`now()`, saleId: sale.id })
+        .where(
+          and(
+            eq(discountApprovals.tenantId, s.tenantId),
+            inArray(
+              discountApprovals.id,
+              [...approvals.values()].map((a) => a.id),
+            ),
+          ),
+        );
 
     let costTotal = 0;
     // Product-id order: two multi-item sales lock batches in the same order (no deadlock).
@@ -566,6 +673,9 @@ export class SalesService {
         unitPrice: l.unitPrice,
         lineTotal: l.lineTotal,
         priceOverriddenBy: l.priceOverriddenBy,
+        discount: discounts[l.index].discount,
+        discountPercent: discounts[l.index].discountPercent,
+        discountApprovedBy: approvals.get(l.index)?.approverId ?? null,
         costTotal: cost,
       });
     }
@@ -581,6 +691,120 @@ export class SalesService {
         })
       : null;
     return { id: sale.id, downPaymentId };
+  }
+
+  /**
+   * UMK-1990: the PIN approval of every line whose discount is above 30%, locked for this transaction. The
+   * approval must be this store's, asked by this actor, for the line's product, unused, unexpired, and cover
+   * the discount; one approval serves one line. 422 `DISCOUNT_APPROVAL_REQUIRED` otherwise. An approval named on
+   * a line that does not need one is left unused.
+   */
+  private async lockApprovals(
+    tx: Tx,
+    s: PosSession,
+    lines: {
+      discount: number;
+      needsApproval: boolean;
+      productId: string;
+      lineTotal: number;
+      approvalId?: string;
+    }[],
+  ) {
+    const taken = new Map<number, { id: string; approverId: string }>();
+    for (const [i, l] of lines.entries()) {
+      if (!l.needsApproval) continue;
+      const field = `lines.${i}.discountApprovalId`;
+      const refuse = (message: string) =>
+        codedError(DISCOUNT_APPROVAL_REQUIRED, field, message);
+      if (!l.approvalId) throw refuse('Diskon lebih dari 30% perlu PIN admin');
+      const [a] = await tx
+        .select({
+          id: discountApprovals.id,
+          approverId: discountApprovals.approverId,
+          maxBps: discountApprovals.maxBps,
+        })
+        .from(discountApprovals)
+        .where(
+          and(
+            eq(discountApprovals.tenantId, s.tenantId),
+            eq(discountApprovals.id, l.approvalId),
+            eq(discountApprovals.actorId, s.actorId),
+            eq(discountApprovals.productId, l.productId),
+            isNull(discountApprovals.usedAt),
+            sql`${discountApprovals.expiresAt} > now()`,
+          ),
+        )
+        .for('update');
+      if (!a || [...taken.values()].some((t) => t.id === a.id))
+        throw refuse(
+          'Persetujuan diskon tidak berlaku lagi. Minta PIN admin sekali lagi.',
+        );
+      if (!withinApproval(l.discount, l.lineTotal, a.maxBps))
+        throw refuse(
+          'Diskon lebih besar dari yang disetujui. Minta PIN admin sekali lagi.',
+        );
+      taken.set(i, { id: a.id, approverId: a.approverId });
+    }
+    return taken;
+  }
+
+  /**
+   * UMK-1990: `POST /sales/discount-approvals`. The approver (the owner or staff holding sales.price_override)
+   * types their own PIN on the till; the void PIN, with its count and lock. Answers the approval the sale names
+   * on its line. The product must be a live product of this store. The approver is a second person: a cashier
+   * naming themself is refused before the PIN is checked (no attempt counted); only the owner may confirm their
+   * own discount with their PIN.
+   */
+  async approveDiscount(s: PosSession, input: DiscountApprovalInput) {
+    if (isSelf(s, input.approverId))
+      throw codedError(
+        DISCOUNT_SELF_APPROVAL,
+        'approverId',
+        'Diskon ini harus disetujui admin lain atau pemilik',
+      );
+    const [product] = await this.db
+      .select({ id: products.id })
+      .from(products)
+      .where(
+        and(
+          eq(products.tenantId, s.tenantId),
+          eq(products.id, input.productId),
+          isNull(products.deletedAt),
+        ),
+      );
+    if (!product) throw fail('Produk tidak ditemukan', {}, 'productId');
+    const approver = await this.pins.verify(
+      s.tenantId,
+      input.approverId,
+      input.pin,
+      'sales.price_override',
+    );
+    const [row] = await this.db
+      .insert(discountApprovals)
+      .values({
+        tenantId: s.tenantId,
+        actorId: s.actorId,
+        approverId: approver.id,
+        approverKind: approver.kind,
+        productId: product.id,
+        maxBps: input.maxBps,
+        expiresAt: sql`now() + make_interval(secs => ${DISCOUNT_APPROVAL_TTL_SECONDS})`,
+      })
+      .returning({
+        id: discountApprovals.id,
+        maxBps: discountApprovals.maxBps,
+        expiresAt: discountApprovals.expiresAt,
+      });
+    return { ...row, approver: { id: approver.id, name: approver.name } };
+  }
+
+  /**
+   * UMK-1990: who may approve a line discount above 30% by PIN (holders of sales.price_override), never the
+   * asking cashier themself; the owner sees themself.
+   */
+  async discountApprovers(s: PosSession) {
+    const all = await this.pins.approvers(s.tenantId, 'sales.price_override');
+    return all.filter((a) => !isSelf(s, a.id));
   }
 
   /**
@@ -655,9 +879,19 @@ export class SalesService {
    * The cart shows "Harga grosir" from `appliedTier` and "Tambah N lagi" from `nextTier`.
    */
   async quote(s: PosSession, input: QuoteInput) {
+    assertMayDiscount(s, input.lines);
     const { byId, priced } = await this.price(this.db, s.tenantId, input.lines);
+    // UMK-1990: the discount of each line, as the sale computes it (an approval is asked only by the sale).
+    const discounts = discountsOf(
+      input.lines.map((l, i) => ({
+        ...l,
+        lineTotal: priced[i].listPrice * l.qty,
+        overridden: false,
+      })),
+    );
     const lines = input.lines.map((l, i) => {
       const q = priced[i];
+      const d = discounts[i];
       return {
         productId: l.productId,
         name: byId.get(l.productId)!.name,
@@ -671,15 +905,26 @@ export class SalesService {
         appliedTier: q.appliedTier,
         savings: q.savings,
         nextTier: q.nextTier,
+        discount: d.discount,
+        discountPercent: d.discountPercent,
+        netTotal: q.listPrice * l.qty - d.discount,
+        // Above 30% of the line: the sale must name a PIN approval for it.
+        discountNeedsApproval: d.needsApproval,
       };
     });
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
+    const lineDiscount = discounts.reduce((n, d) => n + d.discount, 0);
     if (!input.voucherCode && !input.paymentMethodId)
-      return { lines, subtotal };
+      return { lines, subtotal, lineDiscount };
     // UMK-1981: the rest of the sale's arithmetic, as `insert` does it, without taking the voucher or a number.
     const voucher = input.voucherCode
-      ? await evaluateVoucher(this.db, s.tenantId, input.voucherCode, subtotal)
+      ? await evaluateVoucher(
+          this.db,
+          s.tenantId,
+          input.voucherCode,
+          subtotal - lineDiscount,
+        )
       : null;
     const voucherDiscount = voucher?.discount ?? 0;
     // Only a method that was named is read: the default cash method is not seeded by a quote (it writes nothing).
@@ -690,10 +935,11 @@ export class SalesService {
     return {
       lines,
       subtotal,
+      lineDiscount,
       voucherDiscount,
       ...saleAmounts({
         subtotal,
-        discount: 0,
+        discount: lineDiscount,
         voucherDiscount,
         taxBps,
         isCash: method?.isCash ?? false,
@@ -796,6 +1042,7 @@ export class SalesService {
             else coalesce(${staff.name}, 'Pemilik') end`,
           subtotal: sales.subtotal,
           discount: sales.discount,
+          lineDiscount: sales.lineDiscount,
           voucherDiscount: sales.voucherDiscount,
           tax: sales.tax,
           total: sales.total,
@@ -1020,6 +1267,7 @@ export class SalesService {
         paymentMethod: paymentMethods.name,
         subtotal: sales.subtotal,
         discount: sales.discount,
+        lineDiscount: sales.lineDiscount,
         memberId: sales.memberId,
         memberName: members.name,
         receivableId: receivables.id,
@@ -1071,6 +1319,9 @@ export class SalesService {
         lineTotal: saleLines.lineTotal,
         costTotal: saleLines.costTotal,
         priceOverriddenBy: saleLines.priceOverriddenBy,
+        discount: saleLines.discount,
+        discountPercent: saleLines.discountPercent,
+        discountApprovedBy: saleLines.discountApprovedBy,
       })
       .from(saleLines)
       .innerJoin(products, eq(products.id, saleLines.productId))
@@ -1101,6 +1352,8 @@ export class SalesService {
             : (l.normalUnitPrice - l.listPrice) * l.qty,
         // The price was typed by someone with sales.price_override ("Harga manual").
         manualPrice: l.priceOverriddenBy !== null,
+        // UMK-1990: what the line was charged after its discount (`lineTotal` stays qty × unitPrice).
+        netTotal: l.lineTotal - l.discount,
         costTotal: showCost ? l.costTotal : undefined,
       })),
     };
@@ -1167,9 +1420,14 @@ export class SalesService {
         appliedTier: l.appliedTier,
         savings: l.savings,
         manualPrice: l.manualPrice,
+        discount: l.discount,
+        discountPercent: l.discountPercent,
+        netTotal: l.netTotal,
       })),
       subtotal: sale.subtotal,
+      // Every manual discount; `lineDiscount` is the lines' part ("Diskon baris"), the rest the order's.
       discount: sale.discount,
+      lineDiscount: sale.lineDiscount,
       voucherDiscount: sale.voucherDiscount,
       memberName: sale.memberName,
       receivableRest: sale.receivableRest,

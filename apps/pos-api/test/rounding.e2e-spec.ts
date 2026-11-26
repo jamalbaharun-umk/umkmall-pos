@@ -554,8 +554,8 @@ describe('cash rounding to the next Rp100 (UMK-1993)', () => {
         revenue: 2 * TOTAL,
         rounding: ROUNDING,
       });
-      expect(before.salesCsv).toContain(`Pendapatan,,,,,,,${2 * TOTAL},,`);
-      expect(before.salesCsv).toContain(`Pembulatan,,,,,,,${ROUNDING},,`);
+      expect(before.salesCsv).toContain(`Pendapatan,,,,,,,${2 * TOTAL},,,`);
+      expect(before.salesCsv).toContain(`Pembulatan,,,,,,,${ROUNDING},,,`);
       expect(before.productsCsv).toContain(`Pembulatan,,,${ROUNDING},,`);
       expect(before.shiftsCsv[0]).toBe(
         'Kasir,Buka,Tutup,Transaksi,Pendapatan,Modal,Laba kotor,Pembulatan,Kas awal,Pembayaran piutang,Kas masuk,Kas keluar,Kas seharusnya,Kas dihitung,Selisih',
@@ -587,7 +587,7 @@ describe('cash rounding to the next Rp100 (UMK-1993)', () => {
         rounding: 0,
         voidedCount: 1,
       });
-      expect(after.salesCsv).toContain('Pembulatan,,,,,,,0,,');
+      expect(after.salesCsv).toContain('Pembulatan,,,,,,,0,,,');
       // Money: the drawer holds what it opened with.
       expect(await current(s.auth)).toMatchObject({ expectedCash: 100_000 });
     });

@@ -103,7 +103,16 @@ import {
 } from './-pending'
 import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
-import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { cashRounding, numpadEdit, parseRupiah, qtyError, quickAmounts } from './-money'
+import { DiscountDialog, type DiscountTarget } from './-discount-dialog'
+import {
+  breakdown,
+  discountFields,
+  discountLabel,
+  lineDiscountState,
+  pruneDiscounts,
+  type LineDiscount,
+} from './-discount'
 import { ActionRow } from '@/components/action-row'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -257,9 +266,10 @@ function Register({
     const id = pend.current().showing
     if (id && !known.current[id]) pend.dispatch({ type: 'resume_answered', saleId: id, result: 'retry' })
   }, [pend.state.showing, payments])
-  // Order discount (pos-api `discount`): only for actors with sales.price_override; the server ignores it otherwise.
+  // UMK-1990: line discounts, by cart line key; only an actor with sales.price_override gives one (pos-api: 403).
   const canDiscount = useCan('sales.price_override')
-  const [discountText, setDiscountText] = useState('')
+  const [discounts, setDiscounts] = useState<Record<string, LineDiscount>>({})
+  const [discounting, setDiscounting] = useState<DiscountTarget>()
   const [member, setMember] = useState<MemberOption | null>(null)
   const [voucher, setVoucher] = useState<AppliedVoucher | null>(null)
   // The open bill is kept per tab while the cashier visits other pages; restored once on mount (after hydration).
@@ -268,14 +278,22 @@ function Register({
     const saved = restoreCart(readCart(), products)
     if (saved.lines.length) setCart(saved.lines)
     if (saved.note) setNote(saved.note)
+    setDiscounts(saved.discounts)
     setRestored(true)
   }, [])
+  // A removed line takes its discount with it (not before the restore: the first render's empty cart would drop them).
+  const keys = cart.map(entryKey)
   useEffect(() => {
-    if (restored) writeCart({ lines: savedLines(cart), note })
-  }, [restored, cart, note])
+    if (restored) setDiscounts((d) => pruneDiscounts(d, keys))
+  }, [restored, keys.join('|')])
+  // Kind and value only: a PIN approval never leaves this screen's memory.
+  const savedDiscounts = Object.fromEntries(Object.entries(discounts).map(([k, d]) => [k, { kind: d.kind, value: d.value }]))
+  useEffect(() => {
+    if (restored) writeCart({ lines: savedLines(cart), note, discounts: savedDiscounts })
+  }, [restored, cart, note, JSON.stringify(savedDiscounts)])
   // The cashier changed the order (not the first render, nor the restore after a reload): the reducer decides whether
   // that is another sale. The Idempotency-Key is never made or kept here.
-  const orderSig = JSON.stringify([savedLines(cart), note, member?.id ?? null, voucher?.code ?? null, discountText])
+  const orderSig = JSON.stringify([savedLines(cart), note, member?.id ?? null, voucher?.code ?? null, discounts])
   const lastOrderSig = useRef<string | null>(null)
   useEffect(() => {
     if (!restored) return
@@ -303,7 +321,7 @@ function Register({
     setNote('')
     setMember(null)
     setVoucher(null)
-    setDiscountText('')
+    setDiscounts({})
   }
   // The answers about the sales that had to be checked (after a reload, or put aside): a completed one is rung up (its
   // order leaves the cart only when the cart is still its order, and its receipt is offered), an ended one only says so.
@@ -359,7 +377,14 @@ function Register({
   const [quote, setQuote] = useState<{ sig: string; quote: Quote }>()
   const [quoteState, setQuoteState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [quoteTry, setQuoteTry] = useState(0) // bumped by "Coba lagi" to ask the server again
-  const sig = cartSignature(cart)
+  // The quote prices the lines at the server's unit and tier price; the discount of each line is computed on that
+  // (the same rule as pos-api) and sent with it, so the server checks it too. One that no longer fits is not sent.
+  const listPriced = priceEntries(cart, quote?.sig ? quote.quote : null)
+  const quoteLines = requestLines(cart).map((l, i) => {
+    const d = discounts[entryKey(cart[i])]
+    return lineDiscountState(listPriced[i].lineTotal, d).problem ? l : { ...l, ...discountFields(d, false) }
+  })
+  const sig = cartSignature(cart) + JSON.stringify(quoteLines)
   useEffect(() => {
     if (cart.length === 0) {
       setQuote(undefined)
@@ -369,7 +394,7 @@ function Register({
     let stale = false
     setQuoteState('loading')
     const t = setTimeout(() => {
-      quoteCart({ data: requestLines(cart) })
+      quoteCart({ data: quoteLines })
         .then((r) => {
           if (stale) return
           if (r.ok) setQuote({ sig, quote: r.data })
@@ -386,13 +411,14 @@ function Register({
   const priced = priceEntries(cart, current)
   const hints = wholesaleHints(cart, current)
   const subtotal = subtotalOf(priced)
-  const discountBad = canDiscount ? discountError(discountText, subtotal) : undefined
-  const discount = canDiscount && !discountBad && discountText.trim() ? parseRupiah(discountText) : 0
-  // Estimate shown to the cashier; pos-api computes the charged total the same way: discount, then the voucher on
-  // what is left, then tax on the rest (Lakasir flaw 2).
+  const lineStates = priced.map((pl, i) => lineDiscountState(pl.lineTotal, discounts[entryKey(cart[i])]))
+  const lineDiscount = lineStates.reduce((n, d) => n + d.discount, 0)
+  const discountProblem = lineStates.find((d) => d.problem)?.problem
+  // Estimate shown to the cashier; pos-api computes the charged total the same way: line discounts, then the voucher
+  // on what is left, then tax after every discount (Lakasir flaw 2), then cash rounding at payment.
   const voucherDiscount = voucher?.discount ?? 0
-  const tax = taxOf(subtotal - discount - voucherDiscount, taxBps)
-  const total = subtotal - discount - voucherDiscount + tax
+  const { afterDiscount, tax, total } = breakdown({ subtotal, lineDiscount, voucherDiscount, taxBps })
+  const cashTotalRounding = cashRounding(total)
   const qtyOf = (id: string) => baseQtyInCart(cart, id)
 
   // Stock is only a hint here (pos-api refuses an oversold sale); an empty product says why nothing was added.
@@ -574,23 +600,44 @@ function Register({
                 const name = l.unit ? `${l.product.name} (${l.unit})` : l.product.name
                 const pl = priced[i]
                 const note = savingsNote(pl)
+                const d = discounts[key]
+                const ds = lineStates[i]
+                const qtyText = `${l.qty} ${unitLabel(l.product, l.unit)} × ${rupiah(pl.unitPrice)}`
                 return (
                   <li key={key} className="rounded-2xl border border-default-primary p-3">
                     <p className="flex justify-between gap-2">
                       <span className="min-w-0 truncate font-medium">{l.product.name}</span>
-                      <span className="shrink-0 text-default-brand">{rupiah(pl.lineTotal)}</span>
+                      {ds.discount > 0 ? (
+                        <span className="flex shrink-0 flex-col items-end leading-tight">
+                          <s className="text-xs text-default-secondary">{rupiah(pl.lineTotal)}</s>
+                          <span className="text-default-brand">{rupiah(ds.netTotal)}</span>
+                        </span>
+                      ) : (
+                        <span className="shrink-0 text-default-brand">{rupiah(pl.lineTotal)}</span>
+                      )}
                     </p>
                     <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-default-secondary">
                       <span>
-                        {l.qty} {unitLabel(l.product, l.unit)} × {rupiah(pl.unitPrice)}
+                        {qtyText}
+                        {d && ds.discount > 0 && ` · ${discountLabel(d)}`}
                       </span>
                       {pl.appliedTier && (
                         <Badge color="success" size="small">
                           Harga grosir
                         </Badge>
                       )}
+                      {d && ds.discount > 0 && (
+                        <Badge color="warning" size="small">
+                          Diskon
+                        </Badge>
+                      )}
                     </p>
                     {note && <p className="mt-1 text-xs text-default-secondary">{note}</p>}
+                    {ds.problem && (
+                      <p role="alert" className="mt-1 text-xs text-default-error">
+                        {ds.problem}
+                      </p>
+                    )}
                     <div className="mt-2 flex items-center gap-2">
                       <Button
                         iconOnly
@@ -621,10 +668,36 @@ function Register({
                       >
                         <Icon name="trash" size="sm" />
                       </Button>
+                      {canDiscount && (
+                        <Button
+                          width="auto"
+                          type="text"
+                          size="compact"
+                          className="ml-auto"
+                          aria-label={`${d ? 'Ubah diskon' : 'Beri diskon'} ${name}`}
+                          onClick={() =>
+                            setDiscounting({
+                              key,
+                              productId: l.product.id,
+                              name: l.product.name,
+                              qtyText,
+                              lineTotal: pl.lineTotal,
+                              current: d,
+                            })
+                          }
+                        >
+                          {d ? 'Ubah diskon' : 'Beri diskon'}
+                        </Button>
+                      )}
                     </div>
                   </li>
                 )
               })}
+              {!canDiscount && (
+                <li className="px-1 text-xs text-default-secondary">
+                  Anda belum punya izin memberi diskon. Minta admin atau pemilik.
+                </li>
+              )}
               {hints.map((h) => (
                 <li key={`hint-${h.productId}`}>
                   <Alert variant="info" size="small">
@@ -650,24 +723,7 @@ function Register({
               </button>
             </dd>
           </div>
-          {canDiscount && (
-            <div className="flex items-start justify-between gap-3">
-              <dt className="pt-1 text-default-secondary">Diskon</dt>
-              <dd className="w-36">
-                <TextField
-                  aria-label="Diskon pesanan"
-                  size="xsmall"
-                  prefix="Rp"
-                  inputMode="numeric"
-                  placeholder="0"
-                  value={discountText}
-                  error={discountBad}
-                  onChange={(e) => setDiscountText(e.target.value)}
-                />
-              </dd>
-            </div>
-          )}
-          <VoucherRow voucher={voucher} amount={subtotal - discount} onChange={setVoucher} />
+          <VoucherRow voucher={voucher} amount={subtotal - lineDiscount} onChange={setVoucher} />
         </dl>
 
         <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
@@ -675,17 +731,29 @@ function Register({
             label={quoteState === 'loading' ? 'Subtotal (menghitung…)' : 'Subtotal'}
             value={<span className="text-default-brand">{rupiah(subtotal)}</span>}
           />
-          {discount > 0 && (
-            <Row label="Diskon" value={<span className="text-default-brand">−{rupiah(discount)}</span>} />
+          {lineDiscount > 0 && (
+            <Row label="Diskon baris" value={<span className="text-default-brand">−{rupiah(lineDiscount)}</span>} />
           )}
           {voucher && (
-            <Row label="Voucher" value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>} />
+            <Row
+              label={`Diskon voucher ${voucher.code}`}
+              value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>}
+            />
           )}
-          <Row label="Pajak" value={<span className="text-default-brand">{taxBps / 100}%</span>} />
+          {(lineDiscount > 0 || voucher) && (
+            <Row label="Setelah diskon" value={<span className="text-default-brand">{rupiah(afterDiscount)}</span>} />
+          )}
+          <Row label={`Pajak ${taxBps / 100}%`} value={<span className="text-default-brand">{rupiah(tax)}</span>} />
+          {cashTotalRounding > 0 && (
+            <Row label="Pembulatan tunai" value={<span className="text-default-brand">{rupiah(cashTotalRounding)}</span>} />
+          )}
           <div className="flex justify-between border-t border-default-primary pt-2 text-base font-bold">
-            <dt>Total</dt>
-            <dd className="text-default-brand">{rupiah(total)}</dd>
+            <dt>{cashTotalRounding > 0 ? 'Total tunai' : 'Total'}</dt>
+            <dd className="text-default-brand">{rupiah(total + cashTotalRounding)}</dd>
           </div>
+          {cashTotalRounding > 0 && (
+            <p className="text-xs text-default-secondary">Non-tunai {rupiah(total)}, tanpa pembulatan.</p>
+          )}
         </dl>
         {quoteState === 'error' && (
           <Alert
@@ -707,6 +775,11 @@ function Register({
             {stockOverMessage(over[0].stock ?? 0)}
           </Alert>
         )}
+        {discountProblem && (
+          <Alert variant="warning" size="small" role="alert">
+            {discountProblem}
+          </Alert>
+        )}
         <Button
           size="large"
           width="full"
@@ -715,9 +788,9 @@ function Register({
               cartSize: cart.length,
               overCount: over.length,
               quoteState,
-            })
+            }) || !!discountProblem
           }
-          onClick={() => (discountBad ? showError({ status: 422, error: `Diskon: ${discountBad}` }, 'melanjutkan ke pembayaran') : setPaying(true))}
+          onClick={() => setPaying(true)}
         >
           Lanjut ke pembayaran
         </Button>
@@ -732,10 +805,37 @@ function Register({
         }}
       />
       <NoteDialog open={editingNote} note={note} onClose={() => setEditingNote(false)} onSave={setNote} />
+      <DiscountDialog
+        target={discounting}
+        onClose={() => setDiscounting(undefined)}
+        onApply={(key, d) => setDiscounts((all) => ({ ...all, [key]: d }))}
+        onRemove={(key) =>
+          setDiscounts((all) => {
+            const { [key]: _gone, ...rest } = all
+            return rest
+          })
+        }
+      />
       {paying && (
         <PayDialog
           subtotal={subtotal}
-          discount={discount}
+          lineDiscount={lineDiscount}
+          afterDiscount={afterDiscount}
+          discounts={discounts}
+          lineAmounts={priced.map((pl, i) => {
+            const d = discounts[entryKey(cart[i])]
+            return {
+              gross: pl.lineTotal,
+              net: lineStates[i].netTotal,
+              label: d && lineStates[i].discount > 0 ? discountLabel(d) : undefined,
+            }
+          })}
+          onApprovalLost={(i) => {
+            // pos-api no longer takes the line's PIN approval (expired, used): the line asks for the PIN again.
+            const key = entryKey(cart[i])
+            setDiscounts((all) => (all[key] ? { ...all, [key]: { kind: all[key].kind, value: all[key].value } } : all))
+            setPaying(false)
+          }}
           taxBps={taxBps}
           tax={tax}
           total={total}
@@ -959,7 +1059,11 @@ const BLOCKED_TEXT = { recorded: RECORDED_TEXT, request_out: REQUEST_OUT_TEXT, o
 
 function PayDialog({
   subtotal,
-  discount,
+  lineDiscount,
+  afterDiscount,
+  discounts,
+  lineAmounts,
+  onApprovalLost,
   taxBps,
   tax,
   total,
@@ -980,7 +1084,14 @@ function PayDialog({
   onlineBlocked,
 }: {
   subtotal: number
-  discount: number
+  /** UMK-1990: the cart's line discounts, and the amount after them and the voucher (tax comes after both). */
+  lineDiscount: number
+  afterDiscount: number
+  discounts: Record<string, LineDiscount>
+  /** Each cart line at the server's price (`gross`) and after its discount (`net`), with the discount's label. */
+  lineAmounts: { gross: number; net: number; label?: string }[]
+  /** The sale was refused because line `index` lost its PIN approval. */
+  onApprovalLost: (index: number) => void
   taxBps: number
   tax: number
   total: number
@@ -1063,9 +1174,8 @@ function PayDialog({
     const res = await createSale({
       data: {
         key: sendKey,
-        lines: requestLines(cart),
+        lines: requestLines(cart).map((l, i) => ({ ...l, ...discountFields(discounts[entryKey(cart[i])], true) })),
         paid: amount,
-        discount: discount > 0 ? discount : undefined,
         note: note || undefined,
         memberId: member?.id,
         voucherCode: voucher?.code,
@@ -1101,6 +1211,14 @@ function PayDialog({
         // The first sale exists (or may): never a silent dead end. The dialog and the notice above the button say so.
         showError(res, { action: 'menyimpan penjualan' }, () => recordedDescription(res.error))
         return setError(RECORDED_TEXT)
+      }
+      // UMK-1990: a line's PIN approval ran out or was used: that line asks for the PIN again before the next try.
+      const lostApproval = Object.keys(res.errors ?? {})
+        .map((k) => /^lines\.(\d+)\.discountApprovalId$/.exec(k)?.[1])
+        .find((n) => n !== undefined)
+      if (res.status === 422 && lostApproval !== undefined) {
+        showError(res, { action: 'menyimpan penjualan' })
+        return onApprovalLost(Number(lostApproval))
       }
       // pos-api's 422 on `bank` (UMK-2037): the bank list moved on, the sale (if one was written) is cancelled.
       if (res.status === 422 && res.errors?.bank) {
@@ -1191,14 +1309,17 @@ function PayDialog({
           )}
           <dl className="space-y-1 text-sm">
             <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
-            {discount > 0 && (
-              <Row label="Diskon" value={<span className="text-default-brand">−{rupiah(discount)}</span>} />
+            {lineDiscount > 0 && (
+              <Row label="Diskon baris" value={<span className="text-default-brand">−{rupiah(lineDiscount)}</span>} />
             )}
             {voucher && (
               <Row
-                label={`Voucher ${voucher.code}`}
+                label={`Diskon voucher ${voucher.code}`}
                 value={<span className="text-default-brand">−{rupiah(voucher.discount)}</span>}
               />
+            )}
+            {(lineDiscount > 0 || voucher) && (
+              <Row label="Setelah diskon" value={<span className="text-default-brand">{rupiah(afterDiscount)}</span>} />
             )}
             <Row label={`Pajak ${taxBps / 100}%`} value={<span className="text-default-brand">{rupiah(tax)}</span>} />
             <div className="flex justify-between border-t border-default-primary pt-2 font-bold">
@@ -1429,13 +1550,23 @@ function PayDialog({
           </ActionRow>
         </div>
         <ul className="hidden space-y-3 md:block" aria-label="Item pesanan">
-          {cart.map((l) => (
-            <li key={l.product.id} className="flex justify-between gap-3 text-sm">
+          {cart.map((l, i) => (
+            <li key={entryKey(l)} className="flex justify-between gap-3 text-sm">
               <span>
                 <span className="block font-semibold">{l.product.name}</span>
-                <span className="text-default-secondary">× {l.qty}</span>
+                <span className="text-default-secondary">
+                  × {l.qty}
+                  {l.unit ? ` ${l.unit}` : ''}
+                  {lineAmounts[i]?.label ? ` · ${lineAmounts[i].label}` : ''}
+                </span>
               </span>
-              <span className="text-default-brand">{rupiah(l.product.sellingPrice * l.qty)}</span>
+              {/* UMK-1990: the line at the server's price, after its discount (struck through before it). */}
+              <span className="text-right text-default-brand">
+                {lineAmounts[i] && lineAmounts[i].net < lineAmounts[i].gross && (
+                  <s className="block text-xs text-default-secondary">{rupiah(lineAmounts[i].gross)}</s>
+                )}
+                {rupiah(lineAmounts[i]?.net ?? l.product.sellingPrice * l.qty)}
+              </span>
             </li>
           ))}
           {note && (

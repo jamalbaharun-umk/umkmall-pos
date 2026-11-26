@@ -303,6 +303,8 @@ export class ReceivablesService {
           qty: saleLines.qty,
           unitPrice: saleLines.unitPrice,
           lineTotal: saleLines.lineTotal,
+          // UMK-1990: the line discount; the line was charged lineTotal - discount.
+          discount: saleLines.discount,
         })
         .from(saleLines)
         .where(

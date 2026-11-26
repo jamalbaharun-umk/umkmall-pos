@@ -9,6 +9,7 @@ import { VoidDialog } from './-void-dialog'
 import { reasonLabel } from './-void-helpers'
 import { paidLater } from './-online'
 import { soldPriceNote } from './-helpers'
+import { receiptDiscounts, soldDiscountLabel } from './-discount'
 import { hasRounding } from './-money'
 
 // Lakasir's "View selling": selling details, product table, totals, and the print-receipt action.
@@ -175,12 +176,26 @@ function SalePage() {
                   {soldPriceNote(l) && (
                     <span className="block text-xs text-default-secondary">{soldPriceNote(l)}</span>
                   )}
+                  {soldDiscountLabel(l) && (
+                    <span className="block text-xs text-default-secondary">
+                      {soldDiscountLabel(l)} −{rupiah(l.discount ?? 0)}
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="text-right">{rupiah(l.unitPrice)}</TableCell>
                 <TableCell className="text-right">
                   {l.qty} {l.unit}
                 </TableCell>
-                <TableCell className="text-right">{rupiah(l.lineTotal)}</TableCell>
+                <TableCell className="text-right">
+                  {(l.discount ?? 0) > 0 ? (
+                    <>
+                      <s className="block text-xs text-default-secondary">{rupiah(l.lineTotal)}</s>
+                      {rupiah(l.lineTotal - (l.discount ?? 0))}
+                    </>
+                  ) : (
+                    rupiah(l.lineTotal)
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -188,11 +203,21 @@ function SalePage() {
         <dl className="ml-auto grid max-w-sm grid-cols-2 gap-y-2 text-sm">
           <dt className="font-medium">Subtotal</dt>
           <dd className="text-right">{rupiah(r.subtotal)}</dd>
-          <dt className="font-medium">Diskon</dt>
-          <dd className="text-right">{rupiah(r.discount)}</dd>
+          {receiptDiscounts(r).lines > 0 && (
+            <>
+              <dt className="font-medium">Diskon baris</dt>
+              <dd className="text-right">−{rupiah(receiptDiscounts(r).lines)}</dd>
+            </>
+          )}
+          {(receiptDiscounts(r).order > 0 || receiptDiscounts(r).lines === 0) && (
+            <>
+              <dt className="font-medium">Diskon</dt>
+              <dd className="text-right">{rupiah(receiptDiscounts(r).order)}</dd>
+            </>
+          )}
           {r.voucherDiscount > 0 && (
             <>
-              <dt className="font-medium">Voucher</dt>
+              <dt className="font-medium">Diskon voucher</dt>
               <dd className="text-right">−{rupiah(r.voucherDiscount)}</dd>
             </>
           )}

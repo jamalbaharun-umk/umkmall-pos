@@ -326,7 +326,7 @@ describe('reports and dashboard (U5)', () => {
     const salesCsv = (
       await get(store, `/reports/sales/csv?${q}`).expect(200)
     ).text.split('\r\n');
-    expect(salesCsv).toContain('Voucher,,,,,,,950,,');
+    expect(salesCsv).toContain('Voucher,,,,,,,950,,,');
     const productsCsv = (
       await get(store, `/reports/products/csv?${q}`).expect(200)
     ).text.split('\r\n');
@@ -376,10 +376,10 @@ describe('reports and dashboard (U5)', () => {
     ).expect(200);
     const lines = csv.text.split('\r\n');
     expect(lines[0]).toBe(
-      'No. struk,Waktu,Kasir,SKU,Produk,Qty,Harga,Jumlah,Modal,Laba kotor',
+      'No. struk,Waktu,Kasir,SKU,Produk,Qty,Harga,Jumlah,Diskon,Modal,Laba kotor',
     );
     expect(lines[1].split(',')[2]).toBe(staffName);
-    expect(lines).toContain('Pendapatan,,,,,,,5000,,');
+    expect(lines).toContain('Pendapatan,,,,,,,5000,,,');
   });
 
   it('purchasing report lists approved purchases only', async () => {

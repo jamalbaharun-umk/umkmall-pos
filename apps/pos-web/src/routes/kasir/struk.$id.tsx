@@ -6,6 +6,7 @@ import { soldQtyText, soldPriceNote } from './-helpers'
 import { hasRounding } from './-money'
 import { ActionRow } from '@/components/action-row'
 import { ReceiptMark } from './-receipt-mark'
+import { receiptDiscounts, soldDiscountLabel } from './-discount'
 
 // Printable receipt (Lakasir's browser printer): the browser's print dialog, sized for 58/80 mm paper.
 export const Route = createFileRoute('/kasir/struk/$id')({
@@ -44,13 +45,15 @@ function ReceiptPage() {
                   <span>{rupiah(l.lineTotal)}</span>
                 </p>
                 {soldPriceNote(l) && <p className="text-xs">{soldPriceNote(l)}</p>}
+                {soldDiscountLabel(l) && <Line label={soldDiscountLabel(l)!} value={-(l.discount ?? 0)} />}
               </li>
             ))}
           </ul>
           <hr className="my-2 border-dashed border-black/40" />
           <Line label="Subtotal" value={r.subtotal} />
-          {r.discount > 0 && <Line label="Diskon" value={-r.discount} />}
-          {r.voucherDiscount > 0 && <Line label="Voucher" value={-r.voucherDiscount} />}
+          {receiptDiscounts(r).lines > 0 && <Line label="Diskon baris" value={-receiptDiscounts(r).lines} />}
+          {receiptDiscounts(r).order > 0 && <Line label="Diskon" value={-receiptDiscounts(r).order} />}
+          {r.voucherDiscount > 0 && <Line label="Diskon voucher" value={-r.voucherDiscount} />}
           {r.tax > 0 && <Line label={`Pajak ${r.taxBps / 100}%`} value={r.tax} />}
           <p className="flex justify-between font-semibold">
             <span>Total</span>

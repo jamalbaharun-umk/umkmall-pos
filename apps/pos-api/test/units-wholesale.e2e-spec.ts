@@ -468,6 +468,10 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           appliedTier: { minQty: 12, price: 3300 },
           savings: 2400,
           manualPrice: false,
+          // UMK-1990: no line discount.
+          discount: 0,
+          discountPercent: null,
+          netTotal: 39_600,
         },
         {
           name: 'Teh Botol 350ml',
@@ -481,6 +485,9 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           appliedTier: null,
           savings: 0,
           manualPrice: false,
+          discount: 0,
+          discountPercent: null,
+          netTotal: 78_000,
         },
       ]);
       // Tax after the discount: (117.600 − 10.000) × 11% = 11.836; total 119.436; rounding 64.
@@ -924,6 +931,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       const nextTier = { minQty: 48, price: 3200, remaining: 12 };
       expect(res.body).toEqual({
         subtotal: 117_600,
+        lineDiscount: 0,
         lines: [
           {
             productId,
@@ -938,6 +946,10 @@ describe('units and wholesale pricing (UMK-1985)', () => {
             appliedTier: { minQty: 12, price: 3300 },
             savings: 2400,
             nextTier,
+            discount: 0,
+            discountPercent: null,
+            netTotal: 39_600,
+            discountNeedsApproval: false,
           },
           {
             productId,
@@ -952,6 +964,10 @@ describe('units and wholesale pricing (UMK-1985)', () => {
             appliedTier: null,
             savings: 0,
             nextTier,
+            discount: 0,
+            discountPercent: null,
+            netTotal: 78_000,
+            discountNeedsApproval: false,
           },
         ],
       });

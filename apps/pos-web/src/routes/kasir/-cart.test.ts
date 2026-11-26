@@ -8,7 +8,7 @@ describe('open bill restore', () => {
   ]
   it('matches saved lines to current products and keeps the note', () => {
     const r = restoreCart({ lines: [{ productId: 'b', qty: 2 }], note: 'tanpa gula' }, products)
-    expect(r).toEqual({ lines: [{ product: products[1], unit: null, qty: 2 }], note: 'tanpa gula' })
+    expect(r).toEqual({ lines: [{ product: products[1], unit: null, qty: 2 }], note: 'tanpa gula', discounts: {} })
   })
   it('drops products no longer on sale and bad quantities; survives garbage', () => {
     const r = restoreCart(
@@ -23,8 +23,8 @@ describe('open bill restore', () => {
       products,
     )
     expect(r.lines).toEqual([{ product: products[1], unit: null, qty: 3 }])
-    expect(restoreCart(null, products)).toEqual({ lines: [], note: '' })
-    expect(restoreCart('junk', products)).toEqual({ lines: [], note: '' })
+    expect(restoreCart(null, products)).toEqual({ lines: [], note: '', discounts: {} })
+    expect(restoreCart('junk', products)).toEqual({ lines: [], note: '', discounts: {} })
   })
   it('keeps a unit the product still has (any case, spelled as the product does) and drops one it lost', () => {
     const r = restoreCart(
@@ -54,5 +54,22 @@ describe('open bill restore', () => {
       [null, 12],
       ['Dus', 1],
     ])
+  })
+  it('UMK-1990: keeps the discount of a restored line (kind and value only); drops bad ones and those of dropped lines', () => {
+    const r = restoreCart(
+      {
+        lines: [
+          { productId: 'a', qty: 4 },
+          { productId: 'b', qty: 1, unit: 'dus' },
+        ],
+        discounts: {
+          'a:': { kind: 'percent', value: 40, approval: { id: 'x', maxBps: 4000, approverName: 'Rina' } },
+          'b:dus': { kind: 'percent', value: 100 },
+          'x:': { kind: 'amount', value: 500 },
+        },
+      },
+      products,
+    )
+    expect(r.discounts).toEqual({ 'a:': { kind: 'percent', value: 40 } })
   })
 })

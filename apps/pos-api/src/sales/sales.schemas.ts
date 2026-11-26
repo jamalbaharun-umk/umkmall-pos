@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Uuid } from '../catalog/catalog.schemas';
+import { VoidPin } from '../void/void.schemas';
 
 const rupiah = z.number().int().nonnegative().max(1_000_000_000_000);
 
@@ -29,6 +30,26 @@ const lineFields = {
     .optional(),
 };
 
+// UMK-1990: a line discount, as a whole percent (1-99) or in rupiah, never both; only with sales.price_override
+// (403 otherwise). Above 30% of the line it names a PIN approval (`POST /sales/discount-approvals`).
+const discountFields = {
+  discountPercent: z
+    .number()
+    .int('Diskon persen harus bilangan bulat')
+    .min(1, 'Diskon minimal 1%')
+    .max(99, 'Diskon 100% tidak diperbolehkan')
+    .optional(),
+  discountAmount: rupiah.positive('Diskon harus lebih dari 0').optional(),
+};
+const noDoubleDiscount = (l: {
+  discountPercent?: number;
+  discountAmount?: number;
+}) => l.discountPercent === undefined || l.discountAmount === undefined;
+const DOUBLE_DISCOUNT = {
+  message: 'Pilih diskon persen atau rupiah, tidak keduanya',
+  path: ['discountAmount'],
+};
+
 const linesOf = <T extends z.ZodType<{ productId: string; unit?: string }>>(
   line: T,
 ) =>
@@ -49,10 +70,14 @@ export const SaleInput = z
           ...lineFields,
           // Honoured only with sales.price_override; otherwise the server's unit or wholesale price is used.
           price: rupiah.optional(),
+          ...discountFields,
+          discountApprovalId: Uuid.optional(),
         })
-        .strict(),
+        .strict()
+        .refine(noDoubleDiscount, DOUBLE_DISCOUNT),
     ),
-    // Honoured only with sales.price_override.
+    // The order discount (before UMK-1990; the cashier screen now gives line discounts). Honoured only with
+    // sales.price_override; it comes off after the line discounts, before the voucher.
     discount: rupiah.optional(),
     // U7: member (required for a credit method), voucher code, payment method (default Tunai).
     memberId: Uuid.optional(),
@@ -90,9 +115,41 @@ export const AgentSaleInput = z
  */
 export const QuoteInput = z
   .object({
+    // UMK-1990: with line discounts (sales.price_override), so the cart shows the server's discounted lines.
+    lines: linesOf(
+      z
+        .object({ ...lineFields, ...discountFields })
+        .strict()
+        .refine(noDoubleDiscount, DOUBLE_DISCOUNT),
+    ),
+    voucherCode: z.string().trim().min(1).max(40).optional(),
+    paymentMethodId: Uuid.optional(),
+  })
+  .strict();
+
+/** UMK-1981: the agent's quote, which never carries a discount (the agent never sets a price). */
+export const AgentQuoteInput = z
+  .object({
     lines: linesOf(z.object(lineFields).strict()),
     voucherCode: z.string().trim().min(1).max(40).optional(),
     paymentMethodId: Uuid.optional(),
+  })
+  .strict();
+
+/**
+ * UMK-1990: a PIN approval of a line discount above 30%: whose PIN (`approverId`, the owner or staff holding
+ * sales.price_override), the product, and the largest share of the line approved, in basis points (3001-9999).
+ */
+export const DiscountApprovalInput = z
+  .object({
+    approverId: Uuid,
+    pin: VoidPin,
+    productId: Uuid,
+    maxBps: z
+      .number()
+      .int('Harus bilangan bulat')
+      .min(3001, 'Diskon sampai 30% tidak perlu persetujuan')
+      .max(9999, 'Diskon 100% tidak diperbolehkan'),
   })
   .strict();
 
@@ -140,5 +197,7 @@ export const SettingsInput = z
 
 export type SaleInput = z.infer<typeof SaleInput>;
 export type QuoteInput = z.infer<typeof QuoteInput>;
+export type AgentQuoteInput = z.infer<typeof AgentQuoteInput>;
+export type DiscountApprovalInput = z.infer<typeof DiscountApprovalInput>;
 export type SalesQuery = z.infer<typeof SalesQuery>;
 export type PaidSinceQuery = z.infer<typeof PaidSinceQuery>;
