@@ -157,7 +157,7 @@ function NewExpense() {
             <Button htmlType="button" type="outline" color="light" width="auto" disabled={busy} onClick={() => void navigate({ to: '/pengeluaran', search: { period: 'today' } })}>
               Batal
             </Button>
-            <Button htmlType="submit" width="full" isLoading={busy} disabled={busy}>
+            <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
               Simpan
             </Button>
           </ActionRow>
