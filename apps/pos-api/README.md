@@ -15,7 +15,7 @@ npm run build -w pos-api
 DATABASE_URL=postgres://pos_app:<key>@localhost:5544/pos npm run db:migrate -w pos-api
 ```
 
-Then start it with the variables below ([full local setup](../../README.md#-run-it-locally)):
+Then start it with the variables below ([full local setup](../../README.md#-installation)):
 
 ```bash
 npm run start -w pos-api

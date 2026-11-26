@@ -4,7 +4,7 @@
 
 The merchant web app of UMKMall POS, for desktop and phone. TanStack Start (React 19) on Vite and Nitro, styled with
 Tailwind CSS 4 and [`@umkmall/ui`](../../packages/ui/README.md). Interface language: Indonesian.
-How to use each screen: [user guide](../../README.md#-user-guide).
+How to use each screen: [how to use](../../README.md#-how-to-use-a-day-at-warung-berkah).
 
 ## Run
 
@@ -14,7 +14,7 @@ Start [pos-api](../pos-api/README.md) first, then from the repository root:
 POS_API_URL=http://localhost:3000 POS_DEV_USER_ID=<user id> npm run dev -w pos-web
 ```
 
-Open http://localhost:3101. Full steps: [local setup](../../README.md#-run-it-locally).
+Open http://localhost:3101. Full steps: [installation](../../README.md#-installation).
 
 | Variable | Meaning |
 |---|---|

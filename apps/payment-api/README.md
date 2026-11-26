@@ -13,7 +13,7 @@ database `payment`. Only other services call it ([pos-api](../pos-api/README.md)
 ## Run
 
 Create the database and role once ([`ops/payment-role.sql`](../../ops/payment-role.sql); steps in
-[local setup](../../README.md#-run-it-locally)).
+[installation](../../README.md#-installation)).
 
 ```bash
 npm run build -w payment-api
