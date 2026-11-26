@@ -323,7 +323,9 @@ export class SalePayments {
     const checkout =
       payment && waiting && payment.checkout
         ? Object.fromEntries(
-            ['qrString', 'bank', 'vaNumber']
+            // `accountName` (UMK-2045): the holder name the customer's bank shows for the VA, as the gateway
+            // labels it. Only these keys reach the screen, whatever else a gateway may answer.
+            ['qrString', 'bank', 'vaNumber', 'accountName']
               .filter((k) => k in payment.checkout!)
               .map((k) => [k, payment.checkout![k]]),
           )

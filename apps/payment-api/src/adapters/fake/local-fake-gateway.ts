@@ -97,6 +97,9 @@ export const FAKE_BANKS = [
   { code: 'FAKE2', name: 'Bank Fake Dua', vaPrefix: '8809' },
 ] as const;
 
+/** What a payer's bank would show as the holder of a fake VA. */
+export const FAKE_VA_ACCOUNT_NAME = 'FAKE GATEWAY';
+
 const CLOSED: readonly FakeBillStatus[] = ['failed', 'expired', 'cancelled'];
 const PREFIX: Record<FakeMethod, string> = {
   fake_qris: 'QR',
@@ -204,6 +207,8 @@ export class LocalFakeGateway {
     if (!chosen) throw new Error('fake gateway: a VA needs one of its banks');
     return {
       bank: chosen.code,
+      // UMK-2045: the holder name a bank shows for the VA. A fixed label: the fake gateway knows no store.
+      accountName: FAKE_VA_ACCOUNT_NAME,
       vaNumber: `${chosen.vaPrefix}${BigInt(`0x${serial}`).toString().padStart(15, '0').slice(-12)}`,
     };
   }

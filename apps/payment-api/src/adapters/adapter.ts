@@ -33,7 +33,10 @@ export interface PaymentRef {
  * - `qrString`: a QR to draw at the till (dynamic QRIS);
  * - `paymentUrl`: the PG's own payment page to open or show as a link (a PG that offers a method for a
  *   sub-account only through its hosted checkout);
- * - `vaNumber` and `bank`: a virtual account.
+ * - `vaNumber` and `bank`: a virtual account;
+ * - `accountName`: the name the payer's bank shows for that virtual account ("a.n. …"), so the payer can check
+ *   it before sending. It is the gateway's label for the account, as the gateway answers it: never a bank
+ *   account or identity data of the store that payment-api holds (it holds none).
  * A charge answers at least one of `qrString`, `paymentUrl` or `vaNumber`; a caller shows what it finds.
  */
 export type Checkout = Record<string, string>;

@@ -139,6 +139,21 @@ describe('local fake gateway', () => {
         },
         capabilities: { singleUseQr: false },
       });
+      // UMK-2045: the holder name the payer's bank shows, the gateway's label and nothing of the store's.
+      expect(p.checkout).toEqual({
+        bank: 'FAKE',
+        vaNumber: expect.any(String),
+        accountName: 'FAKE GATEWAY',
+      });
+      // Stored with the payment, and answered again on a read and after the gateway is asked.
+      expect((await s.read(p.id)).checkout).toEqual(p.checkout);
+      await s.post(`/payments/${p.id}/sync`).expect(200);
+      expect((await s.read(p.id)).checkout).toEqual(p.checkout);
+      const [row] = await sql<{ checkout: Record<string, string> }[]>`
+        select checkout from payment.payments where id = ${p.id}`;
+      expect(row.checkout.accountName).toBe('FAKE GATEWAY');
+      // A QR has no account holder.
+      expect(Object.keys((await bill(s)).checkout)).toEqual(['qrString']);
     });
 
     describe('UMK-2037 the bank of a virtual account', () => {

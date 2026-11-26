@@ -55,7 +55,7 @@ export type Payment = {
   amount: number;
   method: string;
   attempt: number;
-  /** What the payer needs for a PG payment: `qrString`, or `bank` and `vaNumber`. */
+  /** What the payer needs for a PG payment: `qrString`, or `bank`, `vaNumber` and the VA's `accountName`. */
   checkout: Record<string, string> | null;
   /** ISO time the QR or VA stops accepting payment; null for a payment taken at the cashier. */
   expiresAt: string | null;

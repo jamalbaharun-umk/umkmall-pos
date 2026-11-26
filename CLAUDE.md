@@ -174,6 +174,10 @@ test per resource, idempotent money changes), with these differences:
   `bank_required` / `bank_unknown`; `bank_not_supported` for a method without banks), kept in `payments.bank`,
   handed to the adapter in `PaymentRef.bank` and part of the key's fingerprint only when sent. A key that already has
   a payment still answers it. A merchant account's methods answer their `banks`.
+- **`checkout` has well-known keys** (`adapter.ts`): `qrString`, `paymentUrl`, `vaNumber`, `bank`, and
+  `accountName` (UMK-2045), the name the payer's bank shows for a VA: the gateway's label as it answers it, never
+  bank account or identity data of the store. pos-api passes only `qrString`, `bank`, `vaNumber` and `accountName`
+  on to the screen (`SalePayment.checkout`).
 - **Modes:** `PAYMENT_GATEWAY_MODE` (`fake` default, `sandbox`, `live`), one per environment. `live` needs
   `PAYMENT_LIVE_ENABLED` (default off; a boot error without it) and stays off until the legal gate (UMK-1977).
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;

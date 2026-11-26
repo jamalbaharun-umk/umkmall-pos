@@ -657,10 +657,30 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
           vaNumber: expect.stringMatching(/^8809\d{12}$/),
         },
       });
+      // UMK-2045: with the name the customer's bank will show for the VA ("a.n."), the gateway's label.
+      expect(res.body.payment.checkout.accountName).toBe('FAKE GATEWAY');
       expect(Object.keys(res.body.payment.checkout).sort()).toEqual([
+        'accountName',
         'bank',
         'vaNumber',
       ]);
+      const poll = await get(s.auth, `/sales/${res.body.id}/payment`).expect(
+        200,
+      );
+      expect(poll.body.checkout).toEqual(res.body.payment.checkout);
+      // Only the known keys reach the screen: whatever else a gateway answers about the account stays behind.
+      mangle = (p) => {
+        p.checkout = {
+          ...(p.checkout as object),
+          accountNumber: '1234567890',
+          holderIdentityNumber: '3171234567890001',
+        };
+      };
+      const strict = await get(s.auth, `/sales/${res.body.id}/payment`).expect(
+        200,
+      );
+      expect(strict.body.checkout).toEqual(res.body.payment.checkout);
+      mangle = null;
       const [row] = await admin<{ payment_bank: string | null }[]>`
         select payment_bank from pos.sales where id = ${res.body.id}`;
       expect(row.payment_bank).toBe('FAKE2');
