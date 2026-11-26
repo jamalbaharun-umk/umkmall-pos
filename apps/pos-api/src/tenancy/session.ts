@@ -9,16 +9,27 @@ const AUDIENCE = 'pos-api';
 
 const ClaimsSchema = z.object({
   tid: z.string().uuid(), // tenant id — the only source of tenancy for a request
-  sub: z.string().min(1), // actor: UMKMall user id (owner) or POS staff id (cashier)
-  kind: z.enum(['owner', 'cashier']),
+  sub: z.string().min(1), // actor: UMKMall user id (owner, agent) or POS staff id (cashier)
+  kind: z.enum(['owner', 'cashier', 'agent']),
   csid: z.string().uuid().optional(), // cashier session row (U4); the guard checks it is still live
+  scp: z.array(z.enum(['pos.read', 'pos.write'])).optional(), // agent scopes the owner consented to
+  cid: z.string().max(100).optional(), // UMKMall's consent record behind an agent session
 });
+
+/** What an owner let UMKMall's agent do: read the store, and separately act on it (New Teman AI consent). */
+export type AgentScope = 'pos.read' | 'pos.write';
 
 export type PosSession = {
   tenantId: string;
   actorId: string;
-  kind: 'owner' | 'cashier';
+  /** `agent`: UMKMall's agent acting for the owner (UMK-1978); it reaches only `@AgentRoute()` routes. */
+  kind: 'owner' | 'cashier' | 'agent';
   cashierSessionId?: string;
+  /** Agent sessions only: the consented scopes (read is always there) and UMKMall's consent record id. */
+  agentScopes?: readonly AgentScope[];
+  consentRef?: string;
+  /** When the token was signed (epoch seconds), read from the token; the owner's agent revocation compares it. */
+  issuedAt?: number;
   /** Set by the session guard per request, never from the token (U4). Owners hold every permission. */
   permissions?: readonly string[];
 };
@@ -32,6 +43,8 @@ export async function signSession(
     tid: session.tenantId,
     kind: session.kind,
     ...(session.cashierSessionId && { csid: session.cashierSessionId }),
+    ...(session.agentScopes && { scp: session.agentScopes }),
+    ...(session.consentRef && { cid: session.consentRef }),
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(session.actorId)
@@ -65,6 +78,11 @@ export async function verifySession(
       actorId: claims.sub,
       kind: claims.kind,
       ...(claims.csid && { cashierSessionId: claims.csid }),
+      ...(claims.kind === 'agent' && {
+        issuedAt: payload.iat,
+        agentScopes: claims.scp ?? ['pos.read'],
+        ...(claims.cid && { consentRef: claims.cid }),
+      }),
     };
   } catch {
     return null;

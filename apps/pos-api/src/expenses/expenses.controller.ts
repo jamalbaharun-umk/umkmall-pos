@@ -19,7 +19,7 @@ import { IdempotencyKey } from '../sales/sales.schemas';
 import { ShiftsModule } from '../shifts/shifts.module';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   ExpenseInput,
@@ -140,6 +140,7 @@ export class ExpensesController {
 export class ProfitLossController {
   constructor(private readonly profitLoss: ProfitLossService) {}
 
+  @AgentRoute()
   @Get()
   report(@CurrentSession() s: PosSession, @Query() query: unknown) {
     return this.profitLoss.report(s.tenantId, validate(PeriodQuery, query));

@@ -1,3 +1,4 @@
+import { AgentModule } from './agent/agent.module';
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ErrorFilter } from './common/error.filter';
@@ -31,6 +32,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     DbModule,
     CatalogModule,
     StaffModule,
+    AgentModule,
     StockModule,
     SuppliersModule,
     PurchasingModule,

@@ -1,12 +1,13 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { loadEnv } from '../config';
-import { IS_PUBLIC, SessionRequest } from './decorators';
+import { AGENT_ROUTE, IS_PUBLIC, SessionRequest } from './decorators';
 import { verifySession } from './session';
 import { StaffAccess } from '../staff/staff-access';
 
@@ -34,6 +35,14 @@ export class SessionGuard implements CanActivate {
     // U4: cashier sessions must still be live; every session gets its current permissions.
     const session = verified ? await this.staffAccess.resolve(verified) : null;
     if (!session) throw new UnauthorizedException();
+    if (
+      session.kind === 'agent' &&
+      !this.reflector.getAllAndOverride<boolean>(AGENT_ROUTE, [
+        ctx.getHandler(),
+        ctx.getClass(),
+      ])
+    )
+      throw new ForbiddenException();
     req.posSession = session;
     return true;
   }

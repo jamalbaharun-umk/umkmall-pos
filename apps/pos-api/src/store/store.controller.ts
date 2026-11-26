@@ -29,7 +29,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { BUSINESS_TYPES, storeProfiles } from '../db/schema';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { Inject } from '@nestjs/common';
 
@@ -98,6 +98,8 @@ export class StoreController {
     };
   }
 
+  // The agent's business_context reads it (New Teman AI: the business layer of context).
+  @AgentRoute()
   @Get()
   async get(@CurrentSession() s: PosSession) {
     return this.present(await this.row(s.tenantId));

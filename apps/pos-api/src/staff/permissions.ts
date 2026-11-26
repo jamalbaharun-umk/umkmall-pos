@@ -37,6 +37,26 @@ export const ADMIN_PERMISSIONS: readonly Permission[] = PERMISSIONS.filter(
   (p) => !ADMIN_EXCLUDED_PERMISSIONS.includes(p),
 );
 
+/**
+ * What UMKMall's agent may do for the owner (UMK-1978), per consented scope (New Teman AI: reading and acting are
+ * separate permissions). `pos.read` reads reports, margins and the catalog with cost; `pos.write` also fills the
+ * catalog. The agent reaches only routes marked `@AgentRoute()`, so a permission here opens nothing without that
+ * mark (store settings and payment methods ask `catalog.manage` but are not marked). Sales come with UMK-1981.
+ */
+export const AGENT_SCOPE_PERMISSIONS: Record<
+  'pos.read' | 'pos.write',
+  readonly Permission[]
+> = {
+  'pos.read': ['reports.view'],
+  'pos.write': ['catalog.manage'],
+};
+
+export const agentPermissions = (
+  scopes: readonly ('pos.read' | 'pos.write')[],
+): readonly Permission[] => [
+  ...new Set(scopes.flatMap((s) => AGENT_SCOPE_PERMISSIONS[s])),
+];
+
 export const ADMIN_ROLE_NAME = 'Admin';
 
 // Seeded for a store the first time its roles are used.

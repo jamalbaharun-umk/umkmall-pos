@@ -107,6 +107,28 @@ silent, follow the monorepo's principles.
   the route ids in `BARE_ROUTES`. Screens use `components/page.tsx` (`Page`, `Panel`, `Empty`, `PageLoading`,
   `PageError`) for Lakasir's page layout.
 
+## UMKMall agent (MCP, UMK-1978..1982)
+
+Plan [2026-11-26-001](docs/plans/2026-11-26-001-feat-umk-1978-agent-mcp-plan.md), contract
+[docs/agent-integration.md](docs/agent-integration.md). The POS is a New Teman AI connection: registry entry, consent,
+usage record and provenance on every tool.
+
+- **An agent session (`kind: 'agent'`) reaches only routes marked `@AgentRoute()`** (allow-list in the session guard;
+  the set is pinned in `src/guards.spec.ts`). Its permissions come from its consented scopes (`AGENT_SCOPE_PERMISSIONS`:
+  `pos.read`, `pos.write`). A new route stays closed to the agent until it is marked and the pin is updated.
+- **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, void or drawer cash-out):
+  `PATCH /catalog/products/:id` is not an agent route, an agent creates with `AgentProductCreate` only, and the HPP
+  import creates new `UMK-<ref>` SKUs and leaves existing ones untouched.
+- **The agent session is server to server** (`X-Pos-Service-Key`, then the owner's token checked at `/auth/me`) and
+  relays `/auth/me`'s Set-Cookie like owner sign-in; UMKMall's agent backend passes it to the browser. The owner's
+  switch is persistent (`pos.agent_access.enabled`): revoke refuses old sessions and every new one until enable.
+- **Tools call the REST routes over loopback** with the caller's token (`src/agent/loopback.ts`): never a service
+  method, never a tenant id of their own. A new tool is one entry in `AGENT_TOOL_NAMES`, its registry entry and its
+  section in `docs/agent-integration.md` (the e2e test compares all three).
+- **Every write tool previews without `confirm: true` and runs once per `idempotencyKey`** (`pos.agent_requests`): a
+  4xx frees the key, a lost answer (0 or 5xx) keeps it.
+- **HPP import sends `cogs`, never UMKMall's `hpp`** (which adds allocated fixed costs, booked as expenses here).
+
 ## payment-api (UMK-1991)
 
 `apps/payment-api` is the one service that records payments and, later, talks to a payment gateway (PG). Plan:

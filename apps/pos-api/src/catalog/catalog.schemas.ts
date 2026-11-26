@@ -140,8 +140,32 @@ export const ProductUpdate = z
   .partial()
   .strict();
 
+/**
+ * What UMKMall's agent may send when it creates a product (owner ruling 24 Nov 2026: the agent never changes a price
+ * after the fact): one base price and cost, no extra units, no wholesale tiers, no deactivation.
+ */
+export const AgentProductCreate = z
+  .object({
+    categoryId: productFields.categoryId,
+    name: productFields.name,
+    sku: productFields.sku,
+    unit: productFields.unit,
+    costPrice: productFields.costPrice,
+    sellingPrice: productFields.sellingPrice,
+    type: productFields.type,
+    lowStockThreshold: productFields.lowStockThreshold,
+    barcodes: productFields.barcodes,
+  })
+  .strict()
+  .refine(costNotAboveSelling, {
+    message: 'Harga modal tidak boleh melebihi harga jual',
+    path: ['costPrice'],
+  });
+
 export const ProductQuery = z.object({
   q: z.string().trim().max(100).optional(),
+  // Exact SKU (UMKMall's HPP import finds its UMK-<ref> product by it).
+  sku: z.string().trim().min(1).max(64).optional(),
   categoryId: Uuid.optional(),
   // UMK-1966: only tracked products that are running low (0 < on-hand <= threshold) or out (on-hand 0).
   stock: z.enum(['low', 'out']).optional(),

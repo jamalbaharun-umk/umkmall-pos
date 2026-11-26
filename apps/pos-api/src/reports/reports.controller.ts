@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { validate as parse } from '../common/validation';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { toCsv } from './csv';
 import { DashboardQuery, DateRange, SettingsInput } from './reports.schemas';
@@ -36,11 +36,13 @@ export class ReportsController {
     );
   }
 
+  @AgentRoute()
   @Get('dashboard')
   dashboard(@CurrentSession() s: PosSession, @Query() q: unknown) {
     return this.reports.dashboard(s.tenantId, parse(DashboardQuery, q).period);
   }
 
+  @AgentRoute()
   @Get('sales')
   sales(@CurrentSession() s: PosSession, @Query() q: unknown) {
     return this.reports.sales(s.tenantId, parse(DateRange, q));
@@ -134,6 +136,7 @@ export class ReportsController {
     );
   }
 
+  @AgentRoute()
   @Get('products')
   products(@CurrentSession() s: PosSession, @Query() q: unknown) {
     return this.reports.products(s.tenantId, parse(DateRange, q));
@@ -235,6 +238,7 @@ export class ReportsController {
     );
   }
 
+  @AgentRoute()
   @Get('purchasing')
   purchasing(@CurrentSession() s: PosSession, @Query() q: unknown) {
     return this.reports.purchasing(s.tenantId, parse(DateRange, q));
