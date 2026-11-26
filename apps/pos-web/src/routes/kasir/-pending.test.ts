@@ -929,6 +929,14 @@ describe('guard: one place remembers unfinished sales', () => {
     expect(text).toMatch(/!canAck\(pend\.state\) && \([\s\S]{0,120}WAITING_ANSWER_HINT/)
     expect(WAITING_ANSWER_HINT).toBe('Menunggu jawaban permintaan sebelumnya')
   })
+  it('the register page and the waiting list warn when the storage failed, not only the pay dialog (UMK-2052)', () => {
+    const index = code(sources.find((s) => s.f === 'index.tsx')!.text)
+    const list = code(sources.find((s) => s.f === '-online-pay.tsx')!.text)
+    // pay dialog + register page
+    expect(index.match(/!pend\.durable && \(/g)?.length).toBe(2)
+    expect(index).toMatch(/<AwaitingList[^>]*durable=\{pend\.durable\}/)
+    expect(list).toMatch(/!durable && \([\s\S]{0,120}NOT_STORED_TEXT/)
+  })
   it('only the pending store and the open bill touch browser storage', () => {
     const users = sources.filter((s) => /\b(sessionStorage|localStorage)\b/.test(code(s.text))).map((s) => s.f)
     expect(users.sort()).toEqual(['-cart.ts', '-pending-store.ts'])

@@ -37,6 +37,7 @@ import {
   type SalePayment,
 } from './-online'
 import { parseRupiah, quickAmounts } from './-money'
+import { NOT_STORED_TEXT } from './-pending'
 import { QUIET_ZONE, qrMatrix, qrPath } from './-qr'
 import { useLost } from './-use-lost'
 
@@ -778,7 +779,18 @@ export function ResumeGate({ gate, onRetry, onAside }: { gate: 'none' | 'checkin
  * second tablet can pick one up again (design 26, screen 13). Tapping one opens its waiting screen. Sales paid while
  * the till was off are in the sales history, not here.
  */
-export function AwaitingList({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (p: SalePayment) => void }) {
+export function AwaitingList({
+  open,
+  onClose,
+  onPick,
+  durable = true,
+}: {
+  open: boolean
+  onClose: () => void
+  onPick: (p: SalePayment) => void
+  /** false once the tab's storage failed (UMK-2052): a reload then forgets the sales in progress. */
+  durable?: boolean
+}) {
   const lost = useLost()
   const [state, setState] = useState<{ s: 'loading' } | { s: 'error'; failure: FailureLike } | { s: 'ready'; rows: AwaitingSale[] }>({ s: 'loading' })
   const [opening, setOpening] = useState<string | null>(null)
@@ -812,6 +824,11 @@ export function AwaitingList({ open, onClose, onPick }: { open: boolean; onClose
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()} title="Menunggu pembayaran" size="medium">
       <div className="flex max-h-[80dvh] flex-col gap-3 overflow-y-auto px-6 pb-6">
+        {!durable && (
+          <Alert variant="warning" size="small" role="alert">
+            {NOT_STORED_TEXT}
+          </Alert>
+        )}
         {state.s === 'loading' && (
           <p className="flex items-center gap-2 text-sm text-default-secondary" role="status">
             <Spinner size="sm" /> Memuat penjualan menunggu…

@@ -485,6 +485,11 @@ function Register({
             </Button>
           </div>
         </div>
+        {!pend.durable && (
+          <Alert variant="warning" size="small" role="alert">
+            {NOT_STORED_TEXT}
+          </Alert>
+        )}
         <div className="flex items-center justify-between">
           <Text as="h2" variant="h6" weight="bold">
             Pesanan
@@ -701,6 +706,7 @@ function Register({
       )}
       <SuccessDialog sale={paid} onClose={() => setPaid(undefined)} />
       <AwaitingList
+        durable={pend.durable}
         open={listing}
         onClose={() => setListing(false)}
         onPick={(payment) => track(payment, { type: 'sale_picked', saleId: payment.saleId })}
