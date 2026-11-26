@@ -39,6 +39,12 @@ function ReportIndex() {
             <p className="mt-1 text-sm text-default-secondary">Hasil jualan, modal barang, pengeluaran, dan untung bersih.</p>
           </Card>
         </Link>
+        <Link to="/laporan/kasbon" className="block">
+          <Card variant="outlined" padding="medium" className="h-full hover:border-default-brand">
+            <h2 className="font-semibold text-default-primary">Laporan kasbon</h2>
+            <p className="mt-1 text-sm text-default-secondary">Siapa yang masih berhutang, berapa, dan siapa yang sudah jatuh tempo.</p>
+          </Card>
+        </Link>
       </div>
       <TimezoneSetting current={settings.data.timezone} />
     </ReportLayout>

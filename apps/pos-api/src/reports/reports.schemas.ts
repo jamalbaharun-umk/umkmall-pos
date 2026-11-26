@@ -80,3 +80,26 @@ export const SettingsInput = z
 
 export type DateRange = z.infer<typeof DateRange>;
 export type Period = (typeof PERIODS)[number];
+
+/** UMK-1964 kasbon report: which customers to list, by the status of their open kasbon. */
+export const RECEIVABLE_FILTERS = ['all', 'due', 'not_due'] as const;
+export type ReceivableFilter = (typeof RECEIVABLE_FILTERS)[number];
+export const ReceivablesQuery = z.object({
+  filter: z.preprocess(
+    (v) => (v === undefined ? 'all' : asText(v)),
+    z
+      .string()
+      .refine(
+        (v): v is ReceivableFilter =>
+          (RECEIVABLE_FILTERS as readonly string[]).includes(v),
+        'Filter harus semua, jatuh tempo atau belum jatuh tempo',
+      ),
+  ),
+});
+/** The CSV takes the same filter and, to narrow a file that is too large, one customer. */
+export const ReceivablesCsvQuery = ReceivablesQuery.extend({
+  memberId: z.preprocess(
+    (v) => (v === undefined || v === '' ? undefined : asText(v)),
+    z.string().uuid('Pelanggan tidak valid').optional(),
+  ),
+});

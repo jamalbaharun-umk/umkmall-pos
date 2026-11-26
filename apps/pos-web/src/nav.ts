@@ -70,7 +70,13 @@ export const NAV: NavGroup[] = [
       { to: '/staf/perangkat', label: 'Perangkat', icon: MonitorSmartphone, permission: 'staff.manage' },
     ],
   },
-  { items: [{ to: '/laporan', label: 'Laporan', icon: FileText, permission: 'reports.view' }] },
+  {
+    items: [
+      { to: '/laporan', label: 'Laporan', icon: FileText, permission: 'reports.view' },
+      // UMK-1964: who still owes, how much, who is overdue.
+      { to: '/laporan/kasbon', label: 'Laporan kasbon', icon: HandCoins, permission: 'reports.view' },
+    ],
+  },
   { items: [{ to: '/voucher', label: 'Voucher', icon: TicketPercent, permission: 'vouchers.manage' }] },
   {
     items: [

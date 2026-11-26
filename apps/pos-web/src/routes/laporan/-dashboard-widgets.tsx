@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { Card } from '@umkmall/ui/compositions'
 import { Alert, SegmentedControl, Skeleton } from '@umkmall/ui/primitives'
-import { loadDashboard, rupiah, type Dashboard, type Metrics, type Period } from './-api'
+import { ChevronRight } from 'lucide-react'
+import { loadDashboard, loadKasbonSummary, rupiah, type Dashboard, type Metrics, type Period } from './-api'
+import { cardLine, type KasbonSummary } from './-kasbon'
 import { hasRounding } from '../kasir/-money'
 import { SCROLL_ROW } from '@/lib/scroll-row'
 import { change } from './-reports'
@@ -91,5 +94,53 @@ function Stat({ value, previous, money, prevLabel }: { value: number; previous: 
         )}
       </p>
     </>
+  )
+}
+
+type CardState = { status: 'loading' } | { status: 'hidden' } | { status: 'error'; error: string } | { status: 'ok'; data: KasbonSummary }
+
+/**
+ * UMK-1964 dashboard card "Piutang belum dibayar": what customers still owe and how much of it is due; tapping it opens
+ * the kasbon report. Hidden without `reports.view`.
+ */
+export function ReceivablesCard() {
+  const [state, setState] = useState<CardState>({ status: 'loading' })
+  useEffect(() => {
+    let live = true
+    loadKasbonSummary()
+      .then((r) => {
+        if (!live) return
+        if (r.ok) setState({ status: 'ok', data: r.data })
+        else setState(r.status === 403 ? { status: 'hidden' } : { status: 'error', error: r.error })
+      })
+      .catch(() => live && setState({ status: 'error', error: 'Gagal memuat piutang, coba lagi.' }))
+    return () => {
+      live = false
+    }
+  }, [])
+  if (state.status === 'hidden') return null
+  return (
+    <Link to="/laporan/kasbon" className="block" aria-label="Piutang belum dibayar, buka laporan kasbon">
+      <Card variant="outlined" padding="medium" className="flex items-center gap-3 hover:border-default-brand">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-default-secondary">Piutang belum dibayar</p>
+          {state.status === 'ok' ? (
+            <>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-default-primary">{rupiah(state.data.totalRest)}</p>
+              <p className="mt-1 text-sm text-default-secondary">{cardLine(state.data, rupiah)}</p>
+            </>
+          ) : state.status === 'loading' ? (
+            <>
+              <p className="sr-only" role="status">Memuat…</p>
+              <Skeleton shape="text" className="mt-2 h-8 w-32" />
+              <Skeleton shape="text" className="mt-2 h-4 w-48" />
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-default-error">{state.error}</p>
+          )}
+        </div>
+        <ChevronRight className="size-5 shrink-0 text-default-secondary" aria-hidden />
+      </Card>
+    </Link>
   )
 }

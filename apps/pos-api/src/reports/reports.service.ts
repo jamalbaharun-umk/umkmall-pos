@@ -135,6 +135,43 @@ export class ReportsService {
   }
 
   /**
+   * UMK-1964: of the revenue in `[start, end)`, the part rung up as kasbon (a sale with a receivable), by the
+   * same rule as `salesMetrics` (sales by `paid_at` minus voids by the void's time). Lunas = revenue − this.
+   */
+  private async creditRevenue(tenantId: string, start: SQL, end: SQL) {
+    const [r] = await this.rows(sql`
+      select (select coalesce(sum(s.total), 0) from pos.sales s
+               where s.tenant_id = ${tenantId} and s.paid_at >= ${start} and s.paid_at < ${end}
+                 and s.status in (${FINAL_LIST})
+                 and exists (select 1 from pos.receivables r
+                              where r.tenant_id = s.tenant_id and r.sale_id = s.id))
+           - (select coalesce(sum(v.total), 0) from pos.sale_voids v
+               where v.tenant_id = ${tenantId} and v.created_at >= ${start} and v.created_at < ${end}
+                 and exists (select 1 from pos.receivables r
+                              where r.tenant_id = v.tenant_id and r.sale_id = v.sale_id)) as credit`);
+    return n(r.credit);
+  }
+
+  /**
+   * UMK-1964 "Piutang dibayar (uang masuk)": kasbon instalments received in `[start, end)` minus the instalments
+   * that voids done in `[start, end)` gave back. Not revenue: the kasbon sale was counted when it was rung up.
+   * A kasbon's down payment (the book row written with the sale, the only one without an Idempotency-Key) is part
+   * of that sale and is left out. The kasbon report's "Dibayar bulan ini" is this figure for the month.
+   */
+  async receivablePaid(tenantId: string, start: SQL, end: SQL) {
+    const [r] = await this.rows(sql`
+      select (select coalesce(sum(p.amount), 0) from pos.receivable_payments p
+               where p.tenant_id = ${tenantId} and p.idempotency_key is not null
+                 and p.created_at >= ${start} and p.created_at < ${end})
+           - (select coalesce(sum(p.amount), 0) from pos.sale_voids v
+                join pos.receivables r on r.tenant_id = v.tenant_id and r.sale_id = v.sale_id
+                join pos.receivable_payments p on p.tenant_id = r.tenant_id and p.receivable_id = r.id
+               where v.tenant_id = ${tenantId} and p.idempotency_key is not null
+                 and v.created_at >= ${start} and v.created_at < ${end}) as paid`);
+    return n(r.paid);
+  }
+
+  /**
    * The hook of the profit and loss report (UMK-1984): the same revenue, tax, cost and rounding as
    * every report here, for whole store days `[from, to]`; with `cutoff` (a timestamptz expression) the
    * window ends there when that is earlier ("up to the same moment one period ago").
@@ -214,7 +251,7 @@ export class ReportsService {
     const tz = await this.timezone(tenantId);
     const { start, end } = this.bounds(range, tz);
     const lineRows = this.lineRows(tenantId, start, end);
-    const [lines, totals, [q]] = await Promise.all([
+    const [lines, totals, [q], credit, repaid] = await Promise.all([
       this.rows(sql`
         select x.number, x.kind, to_char(x.at at time zone ${tz}, 'YYYY-MM-DD HH24:MI') as time,
                x.actor_kind, st.name as staff_name,
@@ -227,6 +264,8 @@ export class ReportsService {
       this.salesMetrics(tenantId, start, end),
       // Totalled as rung up, in each line's own unit (UMK-1985); the product report counts base units.
       this.rows(sql`select coalesce(sum(x.qty), 0) as qty from ${lineRows} x`),
+      this.creditRevenue(tenantId, start, end),
+      this.receivablePaid(tenantId, start, end),
     ]);
     return {
       ...range,
@@ -248,7 +287,15 @@ export class ReportsService {
         cost: n(r.cost_total),
         grossProfit: n(r.line_total) - n(r.cost_total),
       })),
-      totals: { qty: n(q.qty), ...totals },
+      totals: {
+        qty: n(q.qty),
+        ...totals,
+        // UMK-1964: revenue split into Lunas and Kasbon (settledSales + creditSales = revenue), and the kasbon
+        // instalments received, shown apart: money in, not new revenue.
+        settledSales: totals.revenue - credit,
+        creditSales: credit,
+        receivablePaid: repaid,
+      },
     };
   }
 
