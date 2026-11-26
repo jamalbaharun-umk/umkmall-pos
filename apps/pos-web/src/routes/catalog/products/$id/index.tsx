@@ -23,6 +23,7 @@ const REASON: Record<string, string> = {
   sale_void: 'Penjualan dibatalkan',
   purchase: 'Pembelian',
   opname: 'Stok opname',
+  purchase_return: 'Retur ke pemasok',
 }
 const SOURCE: Record<string, string> = { opening: 'Stok awal', purchase: 'Pembelian', adjustment: 'Penyesuaian' }
 

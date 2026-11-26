@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  date,
   index,
   integer,
   text,
@@ -56,6 +57,10 @@ export const purchaseOrders = pos
       note: text('note'),
       // Σ qty × unit cost of the lines, computed by the server.
       total: rupiah('total').notNull().default(0),
+      // UMK-1970: the store's n-th purchase ("PB-0012"), given at creation; the migration numbered older ones.
+      number: integer('number'),
+      // UMK-1970: when the supplier wants the money (store calendar day); optional, never late without it.
+      dueDate: date('due_date', { mode: 'string' }),
       createdBy: uuid('created_by').notNull(),
       approvedBy: uuid('approved_by'),
       approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -64,6 +69,7 @@ export const purchaseOrders = pos
     },
     (t) => [
       index('purchase_orders_tenant_idx').on(t.tenantId, t.createdAt),
+      uniqueIndex('purchase_orders_tenant_number_uq').on(t.tenantId, t.number),
       check(
         'purchase_orders_status_ck',
         sql`${t.status} in ('draft', 'approved', 'cancelled')`,

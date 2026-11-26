@@ -31,11 +31,14 @@ export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
  *   src/store-cash/store-cash-deposits.service.ts. (`transfer` on rows from before the drawer rule.)
  * - expense_void (in): ref_id = pos.expenses.id, a voided drawer expense whose shift was already closed:
  *   the cash given back goes to the store, the closed shift never changes (owner ruling 2026-11-25).
+ * - purchase_payment_void (in): ref_id = pos.purchase_payments.id, a voided drawer supplier payment whose shift
+ *   was already closed (UMK-1970), the same rule as expense_void.
  */
 export const STORE_CASH_KINDS = [
   'receivable_payment',
   'collector_deposit',
   'expense_void',
+  'purchase_payment_void',
 ] as const;
 
 export const storeCashEntries = pos

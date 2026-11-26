@@ -5,7 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
-import { fieldError } from '../common/validation';
+import { codedError, fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
@@ -287,6 +287,66 @@ export class StockService {
       total += qty;
     }
     return { qty: total };
+  }
+
+  /**
+   * Sends `qty` units of ONE batch back to its supplier (UMK-1970, purchase return): exactly that batch, under its
+   * row lock, so the units leave at the batch's own cost and what was already sold keeps its cost. 422
+   * `RETURN_EXCEEDS_BATCH` on `field` when the batch holds less. A caller returning several batches calls in
+   * product-id order, the order a sale locks them.
+   */
+  async returnToSupplier(
+    tx: Tx,
+    input: {
+      tenantId: string;
+      batchId: string;
+      qty: number;
+      refId: string;
+      actorId: string;
+      field: string;
+    },
+  ): Promise<{ unitCost: number; productId: string }> {
+    positiveInt(input.qty, 'Jumlah');
+    const [b] = await tx
+      .select({
+        productId: stockBatches.productId,
+        qtyRemaining: stockBatches.qtyRemaining,
+        unitCost: stockBatches.unitCost,
+      })
+      .from(stockBatches)
+      .where(
+        and(
+          eq(stockBatches.tenantId, input.tenantId),
+          eq(stockBatches.id, input.batchId),
+        ),
+      )
+      .for('update');
+    if (!b || b.qtyRemaining < input.qty)
+      throw codedError(
+        'RETURN_EXCEEDS_BATCH',
+        input.field,
+        `Jumlah retur melebihi barang yang tersisa di stok batch itu (sisa ${b?.qtyRemaining ?? 0})`,
+        { available: b?.qtyRemaining ?? 0 },
+      );
+    await tx
+      .update(stockBatches)
+      .set({ qtyRemaining: b.qtyRemaining - input.qty })
+      .where(
+        and(
+          eq(stockBatches.tenantId, input.tenantId),
+          eq(stockBatches.id, input.batchId),
+        ),
+      );
+    await tx.insert(stockMovements).values({
+      tenantId: input.tenantId,
+      productId: b.productId,
+      batchId: input.batchId,
+      delta: -input.qty,
+      reason: 'purchase_return',
+      refId: input.refId,
+      actorId: input.actorId,
+    });
+    return { unitCost: b.unitCost, productId: b.productId };
   }
 
   /** On-hand of one product with its batches locked FOR UPDATE: a concurrent sale waits until the caller commits. */

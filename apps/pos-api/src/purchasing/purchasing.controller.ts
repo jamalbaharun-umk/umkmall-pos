@@ -3,18 +3,28 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Module,
   Param,
   Patch,
   Post,
 } from '@nestjs/common';
+import { z } from 'zod';
 import { validate } from '../common/validation';
+import { IdempotencyKey } from '../sales/sales.schemas';
+import { ShiftsModule } from '../shifts/shifts.module';
 import { StockModule } from '../stock/stock.module';
 import { parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
+import {
+  PaymentInput,
+  PurchasePaymentsService,
+  ReturnInput,
+  VoidInput,
+} from './purchase-payments.service';
 import {
   OrderCreate,
   OrderUpdate,
@@ -25,16 +35,32 @@ import {
 const seesCost = (s: PosSession) =>
   hasPermission(s, 'purchasing.manage') || hasPermission(s, 'reports.view');
 
+/** The money of a purchase (UMK-1970) is cost too: hidden with the total, the status and due date stay. */
+const MONEY = ['total', 'paid', 'returned', 'remaining', 'credit'] as const;
+const withoutMoney = <T extends object>(r: T) =>
+  ({
+    ...r,
+    ...Object.fromEntries(MONEY.map((k) => [k, undefined])),
+  }) as T;
+
+const keyOf = (key: unknown) =>
+  validate(z.object({ idempotencyKey: IdempotencyKey }), {
+    idempotencyKey: key,
+  }).idempotencyKey;
+
 @Controller('purchasing/orders')
 export class PurchasingController {
-  constructor(private readonly orders: PurchasingService) {}
+  constructor(
+    private readonly orders: PurchasingService,
+    private readonly payments: PurchasePaymentsService,
+  ) {}
 
+  /** The list, plus the store's debt to its suppliers (`summary`, for cost viewers only). */
   @Get()
   async list(@CurrentSession() s: PosSession) {
     const rows = await this.orders.list(s.tenantId);
-    return {
-      data: seesCost(s) ? rows : rows.map((r) => ({ ...r, total: undefined })),
-    };
+    if (!seesCost(s)) return { data: rows.map(withoutMoney) };
+    return { data: rows, summary: await this.orders.summary(s.tenantId) };
   }
 
   @Post()
@@ -52,10 +78,67 @@ export class PurchasingController {
     const order = await this.orders.get(s.tenantId, parseId(id));
     if (seesCost(s)) return order;
     return {
-      ...order,
-      total: undefined,
+      ...withoutMoney(order),
       lines: order.lines.map((l) => ({ ...l, unitCost: undefined })),
+      payments: undefined,
+      returns: undefined,
     };
+  }
+
+  /** "Bayar pemasok" (UMK-1970): at most the debt, from the drawer or outside it; `Idempotency-Key` required. */
+  @Post(':id/payments')
+  @RequirePermission('purchasing.manage')
+  pay(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    return this.payments.pay(
+      s,
+      orderId,
+      keyOf(key),
+      validate(PaymentInput, body),
+    );
+  }
+
+  /** The correction of a payment: voided with a reason, never edited or deleted. */
+  @Post(':id/payments/:paymentId/void')
+  @RequirePermission('purchasing.manage')
+  @HttpCode(200)
+  voidPayment(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    const payment = parseId(paymentId);
+    return this.payments.voidPayment(
+      s,
+      orderId,
+      payment,
+      validate(VoidInput, body).reason,
+    );
+  }
+
+  /** "Retur barang": lines and quantities back to the supplier, out of their stock batches; `Idempotency-Key`. */
+  @Post(':id/returns')
+  @RequirePermission('purchasing.manage')
+  createReturn(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    return this.payments.createReturn(
+      s,
+      orderId,
+      keyOf(key),
+      validate(ReturnInput, body),
+    );
   }
 
   @Patch(':id')
@@ -95,8 +178,8 @@ export class PurchasingController {
 }
 
 @Module({
-  imports: [StockModule],
+  imports: [StockModule, ShiftsModule],
   controllers: [PurchasingController],
-  providers: [PurchasingService],
+  providers: [PurchasingService, PurchasePaymentsService],
 })
 export class PurchasingModule {}

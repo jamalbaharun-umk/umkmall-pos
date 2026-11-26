@@ -98,6 +98,10 @@ export type CashTotals = {
   manualOut: number;
   /** Collectors' outside-shift cash received into the drawer, "Setoran penagih" (part of cashIn). */
   collectorDeposits: number;
+  /** Suppliers paid for a purchase from the drawer (part of cashOut, UMK-1970). */
+  purchasePayments: number;
+  /** Those payments voided while the shift was open, their cash back in the drawer (part of cashIn). */
+  purchasePaymentReversals: number;
 };
 
 export const NO_CASH: CashTotals = {
@@ -110,6 +114,8 @@ export const NO_CASH: CashTotals = {
   manualIn: 0,
   manualOut: 0,
   collectorDeposits: 0,
+  purchasePayments: 0,
+  purchasePaymentReversals: 0,
 };
 
 /** The actor's open shift, row-locked until the transaction ends; null when none is open. */
@@ -300,6 +306,12 @@ export async function cashTotals(
       collectorDeposits: sum(
         sql`${e.direction} = 'in' and ${e.kind} = 'collector_deposit'`,
       ),
+      purchasePayments: sum(
+        sql`${e.direction} = 'out' and ${e.kind} = 'purchase_payment'`,
+      ),
+      purchasePaymentReversals: sum(
+        sql`${e.direction} = 'in' and ${e.kind} = 'purchase_payment_reversal'`,
+      ),
     })
     .from(e)
     .where(and(eq(e.tenantId, tenantId), inArray(e.shiftId, shiftIds)))
@@ -317,6 +329,8 @@ export async function cashTotals(
         manualIn: Number(r.manualIn),
         manualOut: Number(r.manualOut),
         collectorDeposits: Number(r.collectorDeposits),
+        purchasePayments: Number(r.purchasePayments),
+        purchasePaymentReversals: Number(r.purchasePaymentReversals),
       },
     ]),
   );

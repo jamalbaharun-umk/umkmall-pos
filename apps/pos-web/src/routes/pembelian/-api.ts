@@ -1,6 +1,8 @@
+import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { searchPath } from '@/lib/product-search'
+import type { Payment, PaymentStatus, PaySource, Return } from './-debt'
 
 // Server functions for the U6 screens (pemasok, pembelian, stok opname). pos-api validates and computes
 // every total; these only relay. Mutations return a Result instead of throwing, for forms.
@@ -9,17 +11,42 @@ export type Supplier = { id: string; name: string; phone: string | null; address
 export type OrderStatus = 'draft' | 'approved' | 'cancelled'
 export type OrderSummary = {
   id: string
+  /** "PB-0012" (UMK-1970). */
+  code?: string
   status: OrderStatus
   supplierName: string
   paymentMethod: string | null
-  total?: number // absent without purchasing.manage / reports.view
+  total?: number // absent without purchasing.manage / reports.view, like every money figure below
   createdAt: string
+  approvedAt?: string | null
+  dueDate: string | null
+  dueInDays: number | null
+  paid?: number
+  returned?: number
+  /** Still owed; null for a draft or cancelled purchase. */
+  remaining?: number | null
+  credit?: number
+  paymentStatus: PaymentStatus | null
+  overdueDays: number | null
 }
+export type DebtSummary = { total: number; overdue: number; dueSoon: number; openCount: number; overdueCount: number }
 export type Order = OrderSummary & {
   note: string | null
   approvedAt: string | null
   supplierId: string
-  lines: { id: string; productId: string; productName: string; sku: string; qty: number; unitCost?: number }[]
+  lines: {
+    id: string
+    productId: string
+    productName: string
+    sku: string
+    qty: number
+    unitCost?: number
+    /** Units sent back so far, and what is left in the line's stock batch (the most a return may take). */
+    returnedQty: number
+    returnable: number
+  }[]
+  payments?: Payment[]
+  returns?: Return[]
 }
 export type OpnameSummary = { id: string; status: 'draft' | 'approved'; note: string | null; createdAt: string }
 export type Opname = OpnameSummary & {
@@ -100,9 +127,10 @@ export const deleteSupplier = createServerFn({ method: 'POST' })
   .validator((id: string) => id)
   .handler(({ data }) => mutate(`/suppliers/${enc(data)}`, 'DELETE'))
 
-export const loadOrders = createServerFn().handler(
-  async () => (await load<{ data: OrderSummary[] }>('/purchasing/orders')).data,
-)
+export const loadOrders = createServerFn().handler(async () => {
+  const body = await load<{ data: OrderSummary[]; summary?: DebtSummary }>('/purchasing/orders')
+  return { orders: body.data, summary: body.summary ?? null }
+})
 
 export const loadOrderForm = createServerFn().handler(async () => ({
   suppliers: (await load<{ data: Supplier[] }>('/suppliers')).data,
@@ -113,11 +141,92 @@ export const loadOrder = createServerFn()
   .validator((id: string) => id)
   .handler(({ data }) => load<Order>(`/purchasing/orders/${enc(data)}`))
 
+/** The order plus the actor's open drawer (expected cash), for "Bayar pemasok"; null without an open shift. */
+export const loadOrderPage = createServerFn()
+  .validator((id: string) => id)
+  .handler(async ({ data }) => {
+    const [order, drawerCash] = await Promise.all([
+      load<Order>(`/purchasing/orders/${enc(data)}`),
+      // /shifts/current needs sales.create: without it the form simply shows no drawer figure.
+      api('/shifts/current')
+        .then(async (r) =>
+          r.ok ? (((await r.json()) as { shift: { expectedCash: number } | null }).shift?.expectedCash ?? null) : null,
+        )
+        .catch(() => null),
+    ])
+    return { order, drawerCash }
+  })
+
+/** A refused payment or return: pos-api's text, its stable code and the figure that helps recover. */
+export type MoneyResult<T> =
+  | { ok: true; data: T }
+  | {
+      ok: false
+      status: number
+      error: string
+      code?: string
+      errors?: Record<string, string>
+      remaining?: number
+      drawerCash?: number
+      available?: number
+    }
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) ? v : undefined)
+
+async function sendMoney<T>(path: string, body: unknown, key?: string): Promise<MoneyResult<T>> {
+  const res = await api(path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: key ? { 'idempotency-key': key } : {},
+  }).catch((e: unknown) => {
+    if (isRedirect(e)) throw e // session ended: go to sign-in
+    return null
+  })
+  if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
+  if (res.ok) return { ok: true, data: (await res.json()) as T }
+  const err = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  const safe = (res.status === 409 || res.status === 422) && typeof err.message === 'string'
+  return {
+    ok: false,
+    status: res.status,
+    error: safe ? (err.message as string) : (ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.'),
+    code: typeof err.code === 'string' ? err.code : undefined,
+    errors: safe && err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined,
+    remaining: num(err.remaining),
+    drawerCash: num(err.drawerCash),
+    available: num(err.available),
+  }
+}
+
+// `key` is made once per form attempt, so a double tap or a retry records one payment / one return.
+export const payOrder = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; key: string; body: { amount: number; source: PaySource; note?: string } }) => d)
+  .handler(({ data }) => sendMoney<Payment>(`/purchasing/orders/${enc(data.id)}/payments`, data.body, data.key))
+
+export const voidPayment = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; paymentId: string; reason: string }) => d)
+  .handler(({ data }) =>
+    sendMoney<Payment>(`/purchasing/orders/${enc(data.id)}/payments/${enc(data.paymentId)}/void`, {
+      reason: data.reason,
+    }),
+  )
+
+export const returnGoods = createServerFn({ method: 'POST' })
+  .validator(
+    (d: { id: string; key: string; body: { reason: string; note?: string; lines: { lineId: string; qty: number }[] } }) => d,
+  )
+  .handler(({ data }) => sendMoney<Return>(`/purchasing/orders/${enc(data.id)}/returns`, data.body, data.key))
+
+export const setDueDate = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; dueDate: string | null }) => d)
+  .handler(({ data }) => mutate(`/purchasing/orders/${enc(data.id)}`, 'PATCH', { dueDate: data.dueDate }))
+
 type OrderInput = {
   id?: string
   supplierId: string
   paymentMethod: string | null
   note: string | null
+  dueDate: string | null
   lines: { productId: string; qty: number; unitCost: number }[]
 }
 export const updateOrder = createServerFn({ method: 'POST' })

@@ -5,6 +5,7 @@ export * from './catalog';
 export * from './staff';
 export * from './stock';
 export * from './purchasing';
+export * from './purchase-payments';
 export * from './sales';
 export * from './reports';
 export * from './members';
