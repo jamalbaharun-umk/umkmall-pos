@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
+import { searchPath } from '@/lib/product-search'
 
 // Server functions for the U6 screens (pemasok, pembelian, stok opname). pos-api validates and computes
 // every total; these only relay. Mutations return a Result instead of throwing, for forms.
@@ -68,13 +69,24 @@ async function mutate(path: string, method: string, body?: unknown): Promise<Res
 
 const enc = encodeURIComponent
 
-// Stock-tracked products for line pickers. shortcut: first 100 products only; add search when a store outgrows it.
-async function stockProducts(): Promise<StockProduct[]> {
-  const page = await load<{ data: (StockProduct & { type: string; isActive: boolean })[] }>(
-    '/catalog/products?perPage=100',
-  )
-  return page.data.filter((p) => p.type === 'product')
+// Stock-tracked products for the line pickers: one searched page (name, SKU or barcode), never the whole catalogue.
+type ProductPage = { data: StockProduct[]; total: number }
+async function stockProducts(q = ''): Promise<ProductPage> {
+  const page = await load<ProductPage>(searchPath(q))
+  return {
+    data: page.data.map((p) => ({ id: p.id, name: p.name, sku: p.sku, costPrice: p.costPrice })),
+    total: page.total,
+  }
 }
+
+async function productsForForm() {
+  const page = await stockProducts()
+  return { products: page.data, productTotal: page.total }
+}
+
+export const searchStockProducts = createServerFn()
+  .validator((d: { q: string }) => ({ q: String(d.q ?? '') }))
+  .handler(({ data }) => stockProducts(data.q))
 
 export const loadSuppliers = createServerFn().handler(async () => (await load<{ data: Supplier[] }>('/suppliers')).data)
 
@@ -94,7 +106,7 @@ export const loadOrders = createServerFn().handler(
 
 export const loadOrderForm = createServerFn().handler(async () => ({
   suppliers: (await load<{ data: Supplier[] }>('/suppliers')).data,
-  products: await stockProducts(),
+  ...(await productsForForm()),
 }))
 
 export const loadOrder = createServerFn()
@@ -128,7 +140,7 @@ export const loadOpnames = createServerFn().handler(
   async () => (await load<{ data: OpnameSummary[] }>('/stock-opnames')).data,
 )
 
-export const loadOpnameForm = createServerFn().handler(() => stockProducts())
+export const loadOpnameForm = createServerFn().handler(() => productsForForm())
 
 export const loadOpname = createServerFn()
   .validator((id: string) => id)

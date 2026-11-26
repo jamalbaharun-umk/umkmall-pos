@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Icon,
-  Select,
   Table,
   TableBody,
   TableCell,
@@ -32,6 +31,7 @@ import { useCan } from '@/components/shell'
 import { createOpname, loadOpnameForm } from '../pembelian/-api'
 import { type OpnameLine as Line, validateOpname } from '../pembelian/-validate'
 import { ActionRow } from '@/components/action-row'
+import { ProductPicker } from '@/components/product-picker'
 
 // Lakasir's create stock opname plus its items (product, counted qty, reason) on one screen.
 export const Route = createFileRoute('/stok-opname/baru')({
@@ -44,7 +44,7 @@ export const Route = createFileRoute('/stok-opname/baru')({
 const blank = (): Line => ({ productId: '', countedQty: '', reason: '' })
 
 function NewOpnamePage() {
-  const products = Route.useLoaderData()
+  const { products, productTotal } = Route.useLoaderData()
   const navigate = useNavigate()
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([blank()])
@@ -67,7 +67,7 @@ function NewOpnamePage() {
       </Page>
     )
 
-  if (products.length === 0)
+  if (productTotal === 0)
     return (
       <Page crumbs={[{ label: 'Stok opname', to: '/stok-opname' }, { label: 'Buat' }]} title="Stok opname baru">
         <Card variant="outlined">
@@ -89,11 +89,6 @@ function NewOpnamePage() {
     // An edited field drops its own error (and the duplicate/total notes that depend on it) until the next submit.
     setErrors((e) => clearKeys(e, [...Object.keys(patch).map((k) => `lines.${i}.${k}`), 'lines']))
   }
-  const productOptions = products.map((p) => ({
-    value: p.id,
-    label: p.name,
-    description: p.sku,
-  }))
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -170,15 +165,12 @@ function NewOpnamePage() {
                 <TableRow key={i} className="max-sm:grid max-sm:grid-cols-[1fr_auto] max-sm:items-end max-sm:gap-x-3">
                   <TableCell className="sm:min-w-56 max-sm:col-span-full max-sm:block">
                     <span className="mb-1 block text-xs text-default-secondary sm:hidden">Produk</span>
-                    <Select
-                      aria-label={`Produk baris ${i + 1}`}
-                      size="small"
-                      showSearch
-                      placeholder="Pilih produk"
+                    <ProductPicker
+                      label={`Produk baris ${i + 1}`}
                       error={errors[`lines.${i}.productId`]}
-                      options={productOptions}
-                      value={l.productId || undefined}
-                      onValueChange={(v) => set(i, { productId: v })}
+                      initial={products}
+                      value={l.productId}
+                      onPick={(p) => set(i, { productId: p.id })}
                     />
                   </TableCell>
                   <TableCell className="max-sm:col-span-full max-sm:block">

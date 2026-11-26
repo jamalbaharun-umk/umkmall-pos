@@ -167,6 +167,8 @@ export const ProductQuery = z.object({
   // Exact SKU (UMKMall's HPP import finds its UMK-<ref> product by it).
   sku: z.string().trim().min(1).max(64).optional(),
   categoryId: Uuid.optional(),
+  // UMK-1967: line pickers list stock-tracked products only.
+  type: z.enum(PRODUCT_TYPES).optional(),
   // UMK-1966: only tracked products that are running low (0 < on-hand <= threshold) or out (on-hand 0).
   stock: z.enum(['low', 'out']).optional(),
   page: z.coerce.number().int().min(1).default(1),

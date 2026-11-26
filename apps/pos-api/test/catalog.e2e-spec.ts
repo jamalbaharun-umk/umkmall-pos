@@ -207,6 +207,7 @@ describe('catalog (U2)', () => {
       await make('Es Jeruk', cat.id, { sku: 'JRK-1' });
       await make('Es Teh', cat.id, { barcodes: ['12345678'] });
       await make('Nasi Goreng', other.id);
+      await make('Es Service', other.id, { type: 'service' });
       const list = (query: Record<string, string | number>) =>
         http()
           .get('/catalog/products')
@@ -217,16 +218,29 @@ describe('catalog (U2)', () => {
       const names = (body: { data: { name: string }[] }) =>
         body.data.map((p) => p.name).sort();
 
-      expect(names(await list({ q: 'es' }))).toEqual(['Es Jeruk', 'Es Teh']);
+      expect(names(await list({ q: 'es' }))).toEqual([
+        'Es Jeruk',
+        'Es Service',
+        'Es Teh',
+      ]);
       expect(names(await list({ q: 'jrk-1' }))).toEqual(['Es Jeruk']);
       expect(names(await list({ q: '345' }))).toEqual(['Es Teh']);
       expect(names(await list({ q: '%' }))).toEqual([]);
+      // UMK-1967: the line pickers ask for stock-tracked products only, searched and paged.
+      expect(names(await list({ q: 'es', type: 'product' }))).toEqual([
+        'Es Jeruk',
+        'Es Teh',
+      ]);
+      const picker = await list({ q: 'es', type: 'product', perPage: 1 });
+      expect(picker).toMatchObject({ total: 2 });
+      expect(picker.data).toHaveLength(1);
       expect(names(await list({ categoryId: other.id }))).toEqual([
+        'Es Service',
         'Nasi Goreng',
       ]);
       const page = await list({ perPage: 2, page: 2 });
-      expect(page).toMatchObject({ page: 2, perPage: 2, total: 3 });
-      expect(page.data).toHaveLength(1);
+      expect(page).toMatchObject({ page: 2, perPage: 2, total: 4 });
+      expect(page.data).toHaveLength(2);
       await http()
         .get('/catalog/products')
         .query({ perPage: 1000 })
@@ -526,6 +540,20 @@ describe('catalog (U2)', () => {
         .query({ categoryId: pA.categoryId })
         .set('Authorization', b.auth);
       expect(filtered.body).toMatchObject({ data: [], total: 0 });
+      // UMK-1967: the picker's search (name, SKU, barcode) never finds A's product from B.
+      const barcodeA = (
+        await http()
+          .get(`/catalog/products/${pA.id}`)
+          .set('Authorization', a.auth)
+      ).body as { name: string; sku: string; barcodes: string[] };
+      for (const q of [barcodeA.name, barcodeA.sku, barcodeA.barcodes[0]]) {
+        const found = await http()
+          .get('/catalog/products')
+          .query({ q, type: 'product' })
+          .set('Authorization', b.auth)
+          .expect(200);
+        expect(ids(found.body)).not.toContain(pA.id);
+      }
     });
 
     it('answers 404 to B on every route that names an A id', async () => {

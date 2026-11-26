@@ -185,6 +185,7 @@ export class CatalogService {
     const filters = [this.live(tenantId)];
     if (q.categoryId) filters.push(eq(products.categoryId, q.categoryId));
     if (q.sku) filters.push(eq(products.sku, q.sku));
+    if (q.type) filters.push(eq(products.type, q.type));
     if (q.q) {
       const like = `%${escapeLike(q.q)}%`;
       filters.push(
