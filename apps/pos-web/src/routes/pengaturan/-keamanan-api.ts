@@ -58,14 +58,10 @@ export const resetPin = createServerFn({ method: 'POST' })
   .handler(({ data }) => answer(`/void-pin/${encodeURIComponent(data)}`, 'DELETE'))
 
 /**
- * The owner's "Lupa PIN" after signing in again (UMK-2054): removes the forgotten PIN (and its lock), then saves the
- * new one. Both steps need the fresh sign-in; a PIN that is already gone (404) is not a failure. If the second step
- * fails the owner has no PIN, and the page shows the plain "make a PIN" form.
+ * The owner's "Lupa PIN" after signing in again (UMK-2054): one pos-api call (`PUT /void-pin/forgotten`) replaces the
+ * forgotten PIN, or makes the first one, and clears its lock in one step, so a failure never leaves the owner without
+ * a PIN. Needs the fresh sign-in (`fresh: true` otherwise).
  */
 export const replaceForgottenPin = createServerFn({ method: 'POST' })
-  .validator((d: { actorId: string; pin: string }) => d)
-  .handler(async ({ data }): Promise<PinAnswer> => {
-    const removed = await answer(`/void-pin/${encodeURIComponent(data.actorId)}`, 'DELETE')
-    if (!removed.ok && removed.failure.kind !== 'gone') return removed
-    return answer('/void-pin', 'PUT', { pin: data.pin })
-  })
+  .validator((d: { pin: string }) => d)
+  .handler(({ data }) => answer('/void-pin/forgotten', 'PUT', { pin: data.pin }))

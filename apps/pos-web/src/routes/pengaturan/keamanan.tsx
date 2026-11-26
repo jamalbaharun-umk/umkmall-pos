@@ -42,7 +42,7 @@ function SecurityPage() {
       ) : (
         <div className="flex flex-col gap-6">
           {isOwner && lupa && me ? (
-            <ForgotPinForm ownerId={me.actor.id} askSignIn={setFresh} />
+            <ForgotPinForm askSignIn={setFresh} />
           ) : (
             <PinForm status={status} isOwner={isOwner} askSignIn={setFresh} />
           )}
@@ -84,7 +84,7 @@ function SignInAgainDialog({ reason, onClose }: { reason: FreshReason | null; on
 }
 
 /** The owner after "Lupa PIN" and a new sign-in: a new PIN without the old one, within 5 minutes of signing in. */
-function ForgotPinForm({ ownerId, askSignIn }: { ownerId: string; askSignIn: (reason: FreshReason) => void }) {
+function ForgotPinForm({ askSignIn }: { askSignIn: (reason: FreshReason) => void }) {
   const router = useRouter()
   const navigate = useNavigate({ from: '/pengaturan/keamanan' })
   const [pin, setPinText] = useState('')
@@ -103,7 +103,7 @@ function ForgotPinForm({ ownerId, askSignIn }: { ownerId: string; askSignIn: (re
     if (Object.keys(bad).length > 0) return
     lock.current = true
     setBusy(true)
-    const r = await replaceForgottenPin({ data: { actorId: ownerId, pin } }).catch(() => null)
+    const r = await replaceForgottenPin({ data: { pin } }).catch(() => null)
     setPinText('')
     setConfirm('')
     lock.current = false
