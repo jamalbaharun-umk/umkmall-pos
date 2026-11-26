@@ -84,6 +84,13 @@ silent, follow the monorepo's principles.
   refresh repeats that call. **Every `Set-Cookie` from `/auth/me` goes back to the browser unchanged** (pos-api and
   pos-web both relay it): it can mint UMKMall's refresh cookie once, and dropping it signs the owner out of UMKMall.
   Never forward any other cookie to UMKMall.
+- **Owner sign-in by WhatsApp OTP** (UMK-2065, plan 2026-11-26-005): pos-api calls UMKMall apps/api's native auth
+  (`${UMKMALL_API_URL}/mobile/v1/auth/**`, `src/auth/umkmall-native.ts`, bodies only, never cookies) at
+  `POST /auth/otp/request`, `/auth/otp/verify`, `/auth/umkmall/refresh`, `/auth/umkmall/sign-out`. The user id comes
+  only from UMKMall's answer. Verify is a sign-in (fresh); the refresh never is. pos-api stores no UMKMall token: the
+  native `{ sid, refreshToken }` goes back to pos-web. Consent UMKMall asks for (409 `consent_required`) is recorded
+  before a session is handed out. Never log a phone number, an OTP or a token. Until UMK-2066, UMKMall's per-IP OTP caps
+  see only pos-api, so pos-api limits per address first. `UMKMALL_API_URL` unset → those routes answer 404.
 - **No `console`** in `src/` (lint + guard). Never log tokens, PINs, phone numbers or customer names.
 - **Erasure:** the tenant FK to `public.users` is `ON DELETE RESTRICT`; a store is erased by the U8 purge,
   which must cover every new table and every stored image. `POST /internal/tenants/purge` (`src/purge/`)

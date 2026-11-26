@@ -24,9 +24,11 @@ import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
 import { WindowLimiter } from '../agent/rate-limit';
 import { agentEnabled } from '../agent/usage';
+import { addressKey } from '../staff/address-limits';
 import { Public } from '../tenancy/decorators';
 import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
+import { type NativeAnswer, UmkmallNative } from './umkmall-native';
 
 const SESSION_TTL = 15 * 60;
 /** Failed agent-key checks allowed per network address per minute (UMK-1978 review). */
@@ -72,6 +74,79 @@ const AgentBody = z
   })
   .strict();
 
+// WhatsApp OTP sign-in (UMK-2065). UMKMall checks the number and the code; these only keep junk away from it.
+const Phone = z
+  .string({ required_error: 'Nomor WhatsApp wajib diisi' })
+  .trim()
+  .regex(/^\+?[0-9][0-9 -]{7,19}$/, 'Format nomor WhatsApp tidak valid');
+/** What the owner agreed to on the consent dialog: the live versions UMKMall named in `consent_required`. */
+const Consent = z
+  .object({
+    tosVersionId: z.string().max(100).nullable().optional(),
+    privacyVersionId: z.string().max(100).nullable().optional(),
+    ageConfirmed: z.boolean().optional(),
+  })
+  .strict();
+const OtpRequestBody = z
+  .object({ phone: Phone, consent: Consent.optional() })
+  .strict();
+const OtpVerifyBody = z
+  .object({
+    phone: Phone,
+    otp: z
+      .string({ required_error: 'Kode OTP wajib diisi' })
+      .regex(/^\d{4,8}$/, 'Kode OTP harus berupa angka'),
+    consent: Consent.optional(),
+  })
+  .strict();
+/** UMKMall's native session as the POS keeps it (pos-web's httpOnly cookie): its id and refresh secret. */
+const NativeSessionBody = z
+  .object({
+    sid: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9._:-]+$/),
+    refreshToken: z
+      .string()
+      .min(16)
+      .max(1024)
+      .regex(/^[A-Za-z0-9._~+/=-]+$/),
+  })
+  .strict();
+const ConsentStatus = z.object({
+  needsConsent: z.boolean(),
+  needsAgeConfirmation: z.boolean().optional(),
+  tos: z
+    .object({ id: z.string(), version: z.unknown(), title: z.unknown() })
+    .nullable(),
+  privacy: z
+    .object({ id: z.string(), version: z.unknown(), title: z.unknown() })
+    .nullable(),
+});
+const OtpSent = z.object({
+  data: z.object({
+    otpLength: z.number().int().min(4).max(8),
+    expiresAt: z.string(),
+  }),
+});
+const NativeSignedIn = z.object({
+  data: z.object({
+    accessToken: z.string().min(1),
+    refreshToken: z.string().min(16).optional(), // absent on a refresh that lost the rotation race (UMKMall's grace)
+    user: z.object({ id: z.string().uuid() }),
+    session: z.object({ id: z.string().min(1) }),
+    isNewUser: z.boolean().optional(),
+  }),
+});
+/** Per network address, before UMKMall: its own per-IP caps see only pos-api until UMK-2066. */
+export const OTP_REQUESTS_PER_WINDOW = 10;
+export const OTP_VERIFIES_PER_WINDOW = 30;
+const OTP_WINDOW_SECONDS = 600;
+const UNAVAILABLE =
+  'Layanan login UMKMall sedang tidak bisa dihubungi. Coba lagi beberapa saat lagi.';
+const TOO_MANY = 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.';
+
 const parse = validate;
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const digest = (s: string) => createHash('sha256').update(s).digest();
@@ -99,7 +174,252 @@ export class AuthController {
     60_000,
   );
 
+  private readonly umkmall = this.env.UMKMALL_API_URL
+    ? new UmkmallNative(this.env.UMKMALL_API_URL)
+    : null;
+  private readonly otpRequestLimit = new WindowLimiter(
+    OTP_REQUESTS_PER_WINDOW,
+    OTP_WINDOW_SECONDS * 1000,
+  );
+  private readonly otpVerifyLimit = new WindowLimiter(
+    OTP_VERIFIES_PER_WINDOW,
+    OTP_WINDOW_SECONDS * 1000,
+  );
+
   constructor(@InjectDb() private readonly db: Db) {}
+
+  /**
+   * Step 1 of the owner's WhatsApp sign-in (UMK-2065): UMKMall sends the code. A number UMKMall has no current consent
+   * for (a new account, or a new policy version) answers 409 `consent_required` with the versions to show, and no code
+   * is sent until the owner agrees and asks again with `consent`. Like UMKMall's own login, a new number becomes a new
+   * UMKMall account at the verify step.
+   */
+  @Public()
+  @Post('otp/request')
+  @HttpCode(200)
+  async otpRequest(
+    @Req() req: Request,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const umkmall = this.nativeOrNotFound();
+    const { phone, consent } = parse(OtpRequestBody, body);
+    this.limit(this.otpRequestLimit, req, res);
+    await this.assertConsent(umkmall, phone, consent, res);
+    const sent = await umkmall.call('POST', '/mobile/v1/auth/otp/request', {
+      phone,
+    });
+    if (sent.status !== 200) throw this.refusal(sent, 'phone', res);
+    const answer = OtpSent.safeParse(sent.body);
+    if (!answer.success) throw this.unavailable();
+    return answer.data.data;
+  }
+
+  /**
+   * Step 2: UMKMall checks the code and opens a native session for the POS; the owner gets a 15-minute POS session
+   * stamped as a sign-in (fresh for UMK-2054) and UMKMall's `{ sid, refreshToken }` for `POST /auth/umkmall/refresh`.
+   * pos-api keeps neither. Consent the owner gave at step 1 is recorded at UMKMall before the session is handed out.
+   */
+  @Public()
+  @Post('otp/verify')
+  @HttpCode(200)
+  async otpVerify(
+    @Req() req: Request,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const umkmall = this.nativeOrNotFound();
+    const { phone, otp, consent } = parse(OtpVerifyBody, body);
+    this.limit(this.otpVerifyLimit, req, res);
+    const needed = await this.assertConsent(umkmall, phone, consent, res);
+    const verified = await umkmall.call('POST', '/mobile/v1/auth/otp/verify', {
+      phone,
+      otp,
+    });
+    if (verified.status !== 200) throw this.refusal(verified, 'otp', res);
+    const answer = NativeSignedIn.safeParse(verified.body);
+    if (!answer.success || !answer.data.data.refreshToken)
+      throw this.unavailable();
+    const { accessToken, refreshToken, user, session, isNewUser } =
+      answer.data.data;
+    if (needed && consent) {
+      const recorded = await umkmall.call(
+        'POST',
+        '/mobile/v1/auth/consent/record',
+        {
+          ...consent,
+          acceptanceMethod: isNewUser ? 'initial_signup' : 'forced_reconfirm',
+        },
+        accessToken,
+      );
+      if (recorded.status !== 200) {
+        // No session without the consent it needs: end the one UMKMall just opened.
+        await umkmall.call(
+          'DELETE',
+          '/mobile/v1/auth/session',
+          undefined,
+          accessToken,
+        );
+        if (recorded.status === 409) await this.assertConsent(umkmall, phone);
+        throw this.unavailable();
+      }
+    }
+    const tenantId = await this.tenantOfUmkmallUser(user.id);
+    return {
+      ...(await this.issue({
+        tenantId,
+        actorId: user.id,
+        kind: 'owner',
+        signedInAt: nowSeconds(),
+      })),
+      umkmall: { sid: session.id, refreshToken },
+    };
+  }
+
+  /**
+   * The owner refresh for a WhatsApp sign-in: UMKMall rotates its native session and names the user again, so a
+   * session UMKMall ended (sign-out everywhere, account deletion) ends here within 15 minutes. Never a sign-in: the
+   * session carries no sign-in time (UMK-2054). `umkmall.refreshToken` is there only when UMKMall rotated it.
+   */
+  @Public()
+  @Post('umkmall/refresh')
+  @HttpCode(200)
+  async umkmallRefresh(@Body() body: unknown) {
+    const umkmall = this.nativeOrNotFound();
+    const { sid, refreshToken } = parse(NativeSessionBody, body);
+    const refreshed = await umkmall.call('POST', '/mobile/v1/auth/refresh', {
+      sid,
+      refreshToken,
+    });
+    if (refreshed.status === 401 || refreshed.status === 400)
+      throw new UnauthorizedException();
+    if (refreshed.status !== 200) throw this.unavailable();
+    const answer = NativeSignedIn.safeParse(refreshed.body);
+    if (!answer.success) throw this.unavailable();
+    const { user, refreshToken: rotated } = answer.data.data;
+    const tenantId = await this.tenantOfUmkmallUser(user.id);
+    return {
+      ...(await this.issue({ tenantId, actorId: user.id, kind: 'owner' })),
+      umkmall: { sid, ...(rotated && { refreshToken: rotated }) },
+    };
+  }
+
+  /** Ends the POS's own UMKMall session (the owner's web and app sessions stay). An already ended one is fine. */
+  @Public()
+  @Post('umkmall/sign-out')
+  @HttpCode(204)
+  async umkmallSignOut(@Body() body: unknown): Promise<void> {
+    const umkmall = this.nativeOrNotFound();
+    const { sid, refreshToken } = parse(NativeSessionBody, body);
+    // UMKMall signs a device out by its access token, which the POS does not keep: refresh once for one.
+    const refreshed = await umkmall.call('POST', '/mobile/v1/auth/refresh', {
+      sid,
+      refreshToken,
+    });
+    if (refreshed.status === 401 || refreshed.status === 400) return;
+    const answer = NativeSignedIn.safeParse(refreshed.body);
+    if (refreshed.status !== 200 || !answer.success) throw this.unavailable();
+    const ended = await umkmall.call(
+      'DELETE',
+      '/mobile/v1/auth/session',
+      undefined,
+      answer.data.data.accessToken,
+    );
+    if (ended.status !== 200 && ended.status !== 204 && ended.status !== 401)
+      throw this.unavailable();
+  }
+
+  private nativeOrNotFound(): UmkmallNative {
+    if (!this.umkmall) throw new NotFoundException();
+    return this.umkmall;
+  }
+
+  private limit(limiter: WindowLimiter, req: Request, res: Response): void {
+    if (limiter.hit(addressKey(req.ip ?? 'unknown'))) return;
+    res.setHeader('retry-after', String(OTP_WINDOW_SECONDS));
+    throw new HttpException(
+      {
+        message: TOO_MANY,
+        code: 'too_many_attempts',
+        retryAfterSeconds: OTP_WINDOW_SECONDS,
+      },
+      429,
+    );
+  }
+
+  /**
+   * 409 `consent_required` (with the live versions) when UMKMall needs the owner's consent and none was sent. Answers
+   * whether consent was needed, so verify records it only then.
+   */
+  private async assertConsent(
+    umkmall: UmkmallNative,
+    phone: string,
+    consent?: z.infer<typeof Consent>,
+    res?: Response,
+  ): Promise<boolean> {
+    const status = await umkmall.call(
+      'POST',
+      '/mobile/v1/auth/consent/status',
+      { phone },
+    );
+    if (status.status !== 200) throw this.refusal(status, 'phone', res);
+    const answer = ConsentStatus.safeParse(status.body);
+    if (!answer.success) throw this.unavailable();
+    const { needsConsent, needsAgeConfirmation, tos, privacy } = answer.data;
+    if (needsConsent && !consent)
+      throw new HttpException(
+        {
+          message:
+            'Setujui Syarat & Ketentuan dan Kebijakan Privasi UMKMall untuk melanjutkan.',
+          code: 'consent_required',
+          consent: {
+            tos,
+            privacy,
+            needsAgeConfirmation: needsAgeConfirmation ?? false,
+          },
+        },
+        409,
+      );
+    return needsConsent;
+  }
+
+  /**
+   * UMKMall's refusal as the POS answers it. 400 is the owner's input (UMKMall's own Indonesian message, which names
+   * no value) → 422 on `field`; 429 keeps its wait; 401 stays 401; anything else, or no answer, is 503.
+   */
+  private refusal(
+    answer: NativeAnswer,
+    field: 'phone' | 'otp',
+    res?: Response,
+  ): HttpException {
+    const message = answer.body.message;
+    if (answer.status === 400)
+      return fieldError(
+        field,
+        typeof message === 'string' && message.length <= 160
+          ? message
+          : 'Data tidak valid',
+      );
+    if (answer.status === 429) {
+      const wait = Number(answer.body.retryAfterSeconds);
+      const retryAfterSeconds =
+        Number.isInteger(wait) && wait > 0 ? wait : OTP_WINDOW_SECONDS;
+      res?.setHeader('retry-after', String(retryAfterSeconds));
+      return new HttpException(
+        { message: TOO_MANY, code: 'too_many_attempts', retryAfterSeconds },
+        429,
+      );
+    }
+    if (answer.status === 401) return new UnauthorizedException();
+    return this.unavailable();
+  }
+
+  private unavailable(): HttpException {
+    return new ServiceUnavailableException({
+      message: UNAVAILABLE,
+      code: 'umkmall_unavailable',
+    });
+  }
 
   /**
    * The shared UMKMall login cookie (UMK-1945) → 15-minute owner session; also the owner refresh. Asks UMKMall's

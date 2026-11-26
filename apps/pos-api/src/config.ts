@@ -18,6 +18,9 @@ const EnvSchema = z
     // UMKMall's web origin: owner sign-in asks its `/api/auth/me` with the shared login cookie (UMK-1945).
     // The POS holds no UMKMall key or proxy secret.
     UMKMALL_WEB_URL: z.string().url(),
+    // UMKMall apps/api's origin: owner sign-in by WhatsApp OTP through its native `/mobile/v1/auth` routes (UMK-2065),
+    // credentials in JSON bodies, never cookies. Unset = OTP sign-in is off (its routes answer 404).
+    UMKMALL_API_URL: z.preprocess(blankIsUnset, z.string().url().optional()),
     // Shared with UMKMall: authenticates its call to POST /internal/tenants/purge (U8).
     POS_SERVICE_KEY: z.string().min(16),
     // UMKMall's agent backend only: authenticates POST /auth/agent/session (UMK-1978). Its own key, never the purge
@@ -68,6 +71,13 @@ const EnvSchema = z
   .refine((env) => env.POS_AGENT_SERVICE_KEY !== env.POS_SERVICE_KEY, {
     path: ['POS_AGENT_SERVICE_KEY'],
   })
+  .refine(
+    (env) =>
+      !env.UMKMALL_API_URL ||
+      env.NODE_ENV !== 'production' ||
+      env.UMKMALL_API_URL.startsWith('https://'),
+    { path: ['UMKMALL_API_URL'] },
+  )
   .refine((env) => !env.PAYMENT_API_URL || !!env.PAYMENT_SERVICE_KEY, {
     path: ['PAYMENT_SERVICE_KEY'],
   })
