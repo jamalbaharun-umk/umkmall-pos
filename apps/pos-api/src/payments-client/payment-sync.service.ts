@@ -79,6 +79,24 @@ export type RenewTicket = { from: number; at: Date | null };
 const sameTime = (a: Date | null, b: Date | null) =>
   a !== null && b !== null && a.getTime() === b.getTime();
 
+/**
+ * How many payment-api calls a request for a new bill waits on, at most, while it holds the sale's intent
+ * (`payment_renew_at`): the lookup of the bill, its close, and the read of a bill the payer paid first
+ * (`already_paid`). The intent is cleared by the move to the next attempt, before the new bill is charged.
+ * A round that finds the intent no longer its own holds nothing. Guarded by a test that counts the calls.
+ */
+export const RENEW_INTENT_CALLS = 3;
+
+/**
+ * How old an intent for a new bill must be before anybody takes it over (another request, the job): the job's
+ * wait plus four payment-api timeouts. It assumes the request that wrote it is gone by then: it waits on at most
+ * `RENEW_INTENT_CALLS` calls, each cut at `timeoutMs` (`AbortSignal.timeout`), and `afterMs` is at least two
+ * timeouts (`loadEnv` refuses less), so at the smallest settings the bound is six timeouts against three, the
+ * rest being slack for the database. A change that adds calls under the intent must keep that (unit test).
+ */
+export const renewStrandedMsOf = (afterMs: number, timeoutMs: number) =>
+  afterMs + 4 * timeoutMs;
+
 /** Our own refusal, counted and parked like payment-api's: the pos row and the payment do not agree. */
 const refused = (code: string) => new PaymentApiError('rejected', null, code);
 
@@ -117,15 +135,15 @@ const GATE_REFUSALS = new Set([
   'merchant_mode_mismatch',
 ]);
 
+/** How long a store's banks are kept in memory, and for how many stores at most. */
+export const BANKS_CACHE_MS = 30_000;
+const BANKS_CACHE_STORES = 1000;
+
 /**
  * payment-api's refusals of a charge whose bank does not fit the method (UMK-2037). pos-api checks the bank
  * before the sale is written; these are payment-api's own answer when that check could not be made or its
  * list has changed since. No bill exists after one of these either.
  */
-/** How long a store's banks are kept in memory, and for how many stores at most. */
-const BANKS_CACHE_MS = 30_000;
-const BANKS_CACHE_STORES = 1000;
-
 export const BANK_REFUSALS = new Set([
   'bank_required',
   'bank_unknown',
@@ -171,10 +189,7 @@ export type TickResult = {
 export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PaymentSync.name);
   private readonly afterMs: number;
-  /**
-   * How old an intent for a new bill must be before anybody takes it over (the job, or another request): the
-   * job's wait plus several payment-api timeouts, as the request that wrote it makes a few calls in a row.
-   */
+  /** How old an intent for a new bill must be before anybody takes it over: see `renewStrandedMsOf`. */
   private readonly renewStrandedMs: number;
   private readonly intervalMs: number;
   private readonly maxAttempts: number;
@@ -189,7 +204,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
   ) {
     const env = loadEnv();
     this.afterMs = env.POS_PAYMENT_RECONCILE_AFTER_SECONDS * 1000;
-    this.renewStrandedMs = this.afterMs + 4 * env.PAYMENT_API_TIMEOUT_MS;
+    this.renewStrandedMs = renewStrandedMsOf(
+      this.afterMs,
+      env.PAYMENT_API_TIMEOUT_MS,
+    );
     this.intervalMs = env.POS_PAYMENT_RECONCILE_INTERVAL_SECONDS * 1000;
     this.maxAttempts = env.POS_PAYMENT_SYNC_MAX_ATTEMPTS;
     this.onlineAllowed = env.onlinePaymentsAllowed;
@@ -215,8 +233,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * check of the charge decides (`BANK_REFUSALS`). Called before the sale's transaction, never inside one.
    *
    * Kept per store for `BANKS_CACHE_MS`, so a busy till does not ask payment-api before every online sale.
-   * A list that changed meanwhile costs nothing: payment-api checks the charge itself. Only an answer is
-   * kept, never "no answer".
+   * The price of a list that changed meanwhile, for at most that long: a bank the gateway added is refused
+   * here (422 on `bank`, nothing written), and one it removed passes here and is refused by payment-api's own
+   * check of the charge, after the sale is written (it is then cancelled at once with its stock back). Only an
+   * answer is kept, never "no answer".
    */
   private readonly banksCache = new Map<
     string,
@@ -239,7 +259,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         if (!(error instanceof PaymentApiError)) throw error;
         return null;
       }
-      // Bounded: a store that sells online asks again within the minute anyway.
+      // Bounded: emptied when full; a store that sells online asks again after BANKS_CACHE_MS anyway.
       if (this.banksCache.size >= BANKS_CACHE_STORES) this.banksCache.clear();
       this.banksCache.set(tenantId, known);
     }
@@ -354,11 +374,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       }
       // The job meets an intent for a new bill only when the request that wrote it is gone: it is taken
       // back, and the sale is then judged like any other.
-      if (
-        mode === 'reconcile' &&
-        sale.renewAt !== null &&
-        now.getTime() - sale.renewAt.getTime() >= this.renewStrandedMs
-      ) {
+      // Its age is read on the database's clock, the clock that wrote it (as `requestRenew` does).
+      if (mode === 'reconcile' && sale.renewAt !== null && sale.renewStranded) {
         // Only the intent it read: one written since belongs to a request at work.
         await this.dropRenew(tenantId, saleId, sale.renewAt);
         continue;
@@ -501,6 +518,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
                 : payment.status === 'expired' || payment.status === 'failed'
                   ? payment.status
                   : 'unpaid',
+            refusedCode,
           },
         );
         if (outcome === 'stale') continue;
@@ -541,10 +559,16 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         attemptAt: sales.paymentAttemptAt,
         switchCashPaid: sales.switchCashPaid,
         renewAt: sales.paymentRenewAt,
+        renewStranded: this.strandedSql(),
       })
       .from(sales)
       .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
     return sale ?? null;
+  }
+
+  /** Whether the sale's intent for a new bill is stranded (`renewStrandedMsOf`), on the database's clock. */
+  private strandedSql() {
+    return sql<boolean>`coalesce(${sales.paymentRenewAt} < clock_timestamp() - make_interval(secs => ${this.renewStrandedMs / 1000}), false)`;
   }
 
   /** `settle` for the callers that need only the sale's status afterwards. */
@@ -651,7 +675,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           switchCashPaid: sales.switchCashPaid,
           renewAt: sales.paymentRenewAt,
           // The intent's age is read on the database's clock, the clock that wrote it.
-          stranded: sql<boolean>`${sales.paymentRenewAt} < clock_timestamp() - make_interval(secs => ${this.renewStrandedMs / 1000})`,
+          stranded: this.strandedSql(),
         })
         .from(sales)
         .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)))
@@ -831,7 +855,11 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     paymentId: string,
     attempt: number,
     paidAt: string | null = null,
-    how: { byJob?: boolean; cancelReason?: CancelReason } = {},
+    how: {
+      byJob?: boolean;
+      cancelReason?: CancelReason;
+      refusedCode?: string;
+    } = {},
   ): Promise<SaleOutcome | 'stale'> {
     return this.db.transaction(async (tx) => {
       const [sale] = await tx
@@ -889,6 +917,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           status: 'cancelled',
           cancelledAt: sql`clock_timestamp()`,
           cancelReason: how.cancelReason ?? null,
+          paymentRefusedCode: how.refusedCode ?? null,
           paymentId,
           switchCashPaid: null,
           paymentRenewAt: null,

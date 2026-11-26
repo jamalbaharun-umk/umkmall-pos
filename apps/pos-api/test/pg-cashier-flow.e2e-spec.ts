@@ -6,7 +6,10 @@ import path from 'node:path';
 import postgres from 'postgres';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { PaymentSync } from '../src/payments-client/payment-sync.service';
+import {
+  PaymentSync,
+  RENEW_INTENT_CALLS,
+} from '../src/payments-client/payment-sync.service';
 import { PAYMENT_FETCH } from '../src/payments-client/payments.client';
 import { seedMerchant } from '../../payment-api/test/support/merchants';
 import { ADMIN_DATABASE_URL } from './support/env';
@@ -71,6 +74,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   let loseAnswerOf: ((c: Call) => boolean) | null = null;
   /** payment-api's answer to a matching call, made up by the test; the call never reaches payment-api. */
   let answerInstead: ((c: Call) => Response | null) | null = null;
+  /** Awaited before every call reaches payment-api (after any `before` hold): a test looks at the database then. */
+  let onCall: ((c: Call) => Promise<void>) | null = null;
   function hold(match: Hold['match'], when: Hold['when'] = 'before') {
     let release!: () => void;
     let reached!: () => void;
@@ -110,6 +115,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
             h.reached();
             await h.gate;
           }
+          if (onCall) await onCall(call);
           const made = answerInstead?.(call);
           if (made) return made;
           let res = await fetch(url, init);
@@ -353,9 +359,11 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
           paid: string;
           change: string;
           switch_cash_paid: string | null;
+          cancel_reason: string | null;
+          payment_refused_code: string | null;
         }[]
       >`select status, payment_id, payment_attempt, payment_method_code, rounding, paid, change,
-          switch_cash_paid from pos.sales where id = ${id}`
+          switch_cash_paid, cancel_reason, payment_refused_code from pos.sales where id = ${id}`
     )[0];
   const paymentsOf = (saleId: string) =>
     pay.sql<PaymentRow[]>`
@@ -633,7 +641,9 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const close = await post(s.auth, '/shifts/current/close', {
         countedCash: 100_000,
       }).expect(409);
-      expect(close.body.saleNumbers).toEqual([res.body.number]);
+      expect(
+        (close.body as { sales: { id: string }[] }).sales.map((w) => w.id),
+      ).toEqual([saleId]);
 
       // The cashier cancels: stock and voucher come back, and the shift can close.
       await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
@@ -841,6 +851,23 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const missing = await sell(s, { paymentMethodId: va }).expect(422);
       expect(missing.body.code).toBe('bank_required');
       answerInstead = null;
+      // UMK-2055: the store's banks known now say BCA would do (the list changed since): a repeat still
+      // answers what the first request got, never a guess from today's list.
+      (
+        sync as unknown as {
+          banksCache: Map<
+            string,
+            { at: number; byMethod: Map<string, unknown> }
+          >;
+        }
+      ).banksCache.set(s.tenantId, {
+        at: Date.now(),
+        byMethod: new Map([['fake_va', [{ code: 'BCA', name: 'BCA' }]]]),
+      });
+      expect(await saleRow(res.body.saleId)).toMatchObject({
+        cancel_reason: 'gateway_refused',
+        payment_refused_code: 'bank_unknown',
+      });
       // A repeat of the request answers the same 422 with the same code, not a 409.
       const again = await sell(
         s,
@@ -896,9 +923,25 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
       expect((await saleRow(res.body.saleId)).status).toBe('cancelled');
       expect(await onHand(s)).toBe(20);
-      // A retry of the same request answers the same cancelled sale.
+      // A retry of the same request answers the same cancelled sale, with the same code (UMK-2055), also when
+      // the banks known now would make a bank refusal of it (QRIS "needs" a bank in this made-up list).
+      (
+        sync as unknown as {
+          banksCache: Map<
+            string,
+            { at: number; byMethod: Map<string, unknown> }
+          >;
+        }
+      ).banksCache.set(s.tenantId, {
+        at: Date.now(),
+        byMethod: new Map([['fake_qris', [{ code: 'FAKE', name: 'Fake' }]]]),
+      });
       const again = await sell(s, {}, key).expect(409);
-      expect(again.body.saleId).toBe(res.body.saleId);
+      expect(again.body).toMatchObject({
+        saleId: res.body.saleId,
+        status: 'cancelled',
+        code: 'merchant_not_active',
+      });
       expect(await onHand(s)).toBe(20);
       expect(await bills(s.tenantId)).toEqual([]);
       // The charge key is closed: nothing can be paid under it later.
@@ -2869,6 +2912,108 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         attempt: 3,
       });
       expect((await live(saleId))[0].n).toBe(1);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+    });
+
+    it('PR 44: a stranded intent is taken over by a new request, which makes the new bill', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      // The request that wrote this intent died long ago (older than renewStrandedMs on the database's clock).
+      await admin`update pos.sales set payment_renew_at = now() - interval '10 minutes' where id = ${saleId}`;
+      const old = await renewAt(saleId);
+      const res = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+      expect(res.body).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        attempt: 2,
+      });
+      expect(await renewAt(saleId)).toBeNull();
+      expect(old).not.toBeNull();
+      expect((await live(saleId))[0].n).toBe(1);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+    });
+
+    it('PR 44 A/B: a second renew is refused beside a live one, takes it over once stranded; one live bill, and A answers it', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      const knobs = sync as unknown as { renewStrandedMs: number };
+      const bound = knobs.renewStrandedMs;
+      // A: holds the intent, its answer to the close of bill 1 held.
+      const closeHold = hold(isCancel, 'after');
+      const a = renew(s.auth, saleId, { attempt: 1 }).then((r) => r);
+      await closeHold.held;
+      const intentOfA = await renewAt(saleId);
+      let b: request.Response;
+      try {
+        // B, beside a live A: refused, A's intent untouched.
+        const refused = await renew(s.auth, saleId, { attempt: 1 }).expect(409);
+        expect(refused.body.code).toBe('renew_in_progress');
+        expect(await renewAt(saleId)).toEqual(intentOfA);
+        // The job, with its own clock far ahead, still reads the intent's age on the database's clock.
+        await sync.tick(later());
+        expect(await renewAt(saleId)).toEqual(intentOfA);
+        // A is now stranded (as if it had outlived renewStrandedMs): B takes the intent over.
+        knobs.renewStrandedMs = 0;
+        b = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+      } finally {
+        knobs.renewStrandedMs = bound;
+        closeHold.release();
+      }
+      expect(b.body).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        attempt: 2,
+      });
+      // A comes back to a sale past its attempt: it moves nothing and answers the bill B made.
+      const answerOfA = (await a).body;
+      expect(answerOfA).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        attempt: 2,
+      });
+      expect(answerOfA.checkout).toEqual(b.body.checkout);
+      expect(await saleRow(saleId)).toMatchObject({ payment_attempt: 2 });
+      expect(await renewAt(saleId)).toBeNull();
+      expect((await live(saleId))[0].n).toBe(1);
+      expect(
+        (await paymentsOf(saleId)).map((p) => [p.idempotency_key, p.status]),
+      ).toEqual([
+        [`${saleId}:1`, 'cancelled'],
+        [`${saleId}:2`, 'pending'],
+      ]);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+    });
+
+    it(`PR 44: while a request holds the intent it waits on at most RENEW_INTENT_CALLS (${RENEW_INTENT_CALLS}) payment-api calls`, async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      const underIntent: string[] = [];
+      onCall = async (c) => {
+        if ((await renewAt(saleId)) !== null)
+          underIntent.push(`${c.init.method} ${new URL(c.url).pathname}`);
+      };
+      try {
+        await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+        // The payer pays the old bill just before it is closed: the close finds it paid (409 already_paid).
+        const other = (await sell(s).expect(201)).body.id as string;
+        const paidFirst: string[] = [];
+        onCall = async (c) => {
+          if ((await renewAt(other)) !== null)
+            paidFirst.push(`${c.init.method} ${new URL(c.url).pathname}`);
+          if (isCancel(c)) await onBill(s, other, 'pay');
+        };
+        await renew(s.auth, other, { attempt: 1 }).expect(409);
+        expect(paidFirst).toEqual([
+          'GET /payments',
+          expect.stringMatching(/^POST \/payments\/.+\/cancel$/),
+        ]);
+        expect(paidFirst.length).toBeLessThanOrEqual(RENEW_INTENT_CALLS);
+      } finally {
+        onCall = null;
+      }
+      // The lookup of bill 1 and its close; the new bill is charged after the intent is cleared.
+      expect(underIntent).toEqual([
+        'GET /payments',
+        expect.stringMatching(/^POST \/payments\/.+\/cancel$/),
+      ]);
+      expect(underIntent.length).toBeLessThanOrEqual(RENEW_INTENT_CALLS);
       await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
     });
 

@@ -254,6 +254,9 @@ export const sales = pos
       settledByJob: boolean('settled_by_job').notNull().default(false),
       // Why a sale was cancelled, when known (CANCEL_REASONS); null on a sale cancelled before UMK-2046.
       cancelReason: text('cancel_reason', { enum: CANCEL_REASONS }),
+      // payment-api's code when it refused to bill the sale at all (`gateway_refused`: GATE_REFUSALS or
+      // BANK_REFUSALS, UMK-2055), so a repeat of the request answers what the first one did.
+      paymentRefusedCode: text('payment_refused_code'),
       createdAt: createdAt(),
     },
     (t) => [

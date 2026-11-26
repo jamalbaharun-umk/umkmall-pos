@@ -276,7 +276,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   gets one), checked against payment-api's list BEFORE the sale's transaction (`SalesService.checkBank`,
   `PaymentSync.banksOf`); the sale keeps it in `sales.payment_bank` and every charge and close of the PG attempt
   sends it. With no answer to that check the sale goes on and payment-api's own refusal (`BANK_REFUSALS`) cancels it
-  at once, like a gate refusal (422).
+  at once, like a gate refusal (422). The refusal's code is kept on the sale (`sales.payment_refused_code`), and a
+  repeat of the request answers it (UMK-2055), never a code worked out again from today's banks.
 - **Switch to cash is written before anything is closed, and only the cashier's request does it:**
   `sales.switch_cash_paid` first, then that request (`settle` mode `cash`) closes the PG bill, turns the sale into a
   cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
@@ -295,8 +296,9 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   `<saleId>:<attempt>` with the same method, bank and amount. The new bill is never charged before the old one is
   closed. Nobody but that request acts on the intent and nobody cancels a sale that has it (`applyToSale` answers
   `stale`). The intent is the request's ticket (`RenewTicket`, the `payment_renew_at` it wrote): a second request
-  is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMs`: the job's wait plus four
-  payment-api timeouts), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
+  is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMsOf`: the job's wait plus four
+  payment-api timeouts, read on the database's clock by the request and the job alike; it assumes the holder waits on
+  at most `RENEW_INTENT_CALLS` calls, guarded by tests: a new call under the intent keeps that), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
   a failed request its own, the job the one it read; only a cancel drops any). Cash drops a
   renew intent; a cancel drops both. At most `MAX_PAYMENT_ATTEMPTS` bills per sale (open owner question). A cash
   sale past attempt 1 is read from its method (`!isOnlineMethod(method) && attempt > 1`), not from the attempt alone.
@@ -318,13 +320,15 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   "dikembalikan manual" are the owner's alone (403 for anyone else); a retry is approved again by the OWNER's
   own PIN (owner decision 2026-11-26; `{ approverId, pin }`, `VoidPins.verifyOwner`): any other approver id, also an
   admin's with `sales.void`, answers the generic "PIN salah" and counts nowhere; the owner's count and lock are the
-  void's (wrong PIN 422, locked 429). Checked before payment-api is asked; `sale_voids.approved_by` stays the
+  void's (wrong PIN 422, locked 429 `owner_pin_locked`, no PIN yet 422 `owner_pin_missing`: the owner's words, never
+  "ask another admin"). Checked before payment-api is asked; `sale_voids.approved_by` stays the
   refund's approver (UMK-2040).
 - **The owner's own PIN is never changed by the session alone** (UMK-2054, `src/void/void-pin.ts`): changing it needs
   the old PIN; making the first one, removing it and clearing its lock need a fresh sign-in (`freshSignIn` in
   `src/tenancy/session.ts`: the token's `auth_time` is at most `FRESH_SIGN_IN_SECONDS` old), else 403
-  `fresh_sign_in_required`. Only a sign-in stamps `auth_time` (`POST /auth/otp/verify`, the dev sign-in);
-  **a refresh never does** (`POST /auth/umkmall/refresh`, pos-web's `api()` after a 401). A new route
+  `fresh_sign_in_required`. "Lupa PIN" is one call, `PUT /void-pin/forgotten` `{ pin }` (owner, fresh): the PIN is
+  replaced and its lock cleared in one statement. Only a sign-in stamps `auth_time` (`POST /auth/otp/verify`, the
+  dev sign-in); **a refresh never does** (`POST /auth/umkmall/refresh`, pos-web's `api()` after a 401). A new route
   that touches the owner's `void_pins` row keeps both rules. Admin PINs are not gated. In tests `createStore`'s
   `auth` is a refreshed session and `freshAuth` a just-signed-in one.
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
@@ -355,7 +359,7 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   cancelled sales with `reason` (`sales.cancel_reason`, written by `applyToSale`; its `status` says `expired` for
   a QR or VA that ran out, the sale's own status stays `cancelled`). A new way to cancel a sale gives its reason. Oldest first, 50 a page: with `hasMore` the till sends `asOf` and `afterId`
   back until it is false. A shift that cannot close for waiting sales answers 409 `sales_awaiting_payment` with
-  those sales (UMK-2044). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
+  those sales (UMK-2044; the old `saleNumbers` field is gone, UMK-2055). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
   cancelled sale, so a hold number is never printed as a receipt number.
 - **Migrations `sale_hold_number` (0036) and `hold_number_daily` (0037) are not for a rolling deploy:** the
   version before 0036 violates `sales_number_ck` on every sale, and the one before 0037 writes a hold number

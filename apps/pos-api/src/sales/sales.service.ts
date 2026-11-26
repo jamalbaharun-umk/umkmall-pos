@@ -210,15 +210,12 @@ export class SalesService {
       });
     // UMK-2037: payment-api refused the bank (the check before the sale could not be made, or its banks have
     // changed since). No bill was made; the sale is cancelled with its stock and voucher back.
-    // A repeat of that sale answers the same 422, not the 409 of a payment that failed.
-    const bankCode =
+    // A repeat of a refused sale answers what the first request did (UMK-2055): the code is kept on the sale.
+    const code =
       status === 'cancelled'
-        ? refusedCode && BANK_REFUSALS.has(refusedCode)
-          ? refusedCode
-          : refusedCode
-            ? null
-            : await this.bankRefusalOf(s, id)
-        : null;
+        ? (refusedCode ?? (await this.refusedCodeOf(s, id)))
+        : undefined;
+    const bankCode = code && BANK_REFUSALS.has(code) ? code : null;
     if (bankCode)
       throw new UnprocessableEntityException({
         message:
@@ -232,38 +229,31 @@ export class SalesService {
       });
     if (status === 'cancelled')
       throw new ConflictException({
-        message: refusedCode
+        message: code
           ? 'Pembayaran online belum aktif untuk toko ini. Penjualan dibatalkan, pilih metode pembayaran lain.'
           : 'Pembayaran gagal dan penjualan ini dibatalkan. Buat transaksi baru.',
         saleId: id,
         status,
-        ...(refusedCode ? { code: refusedCode } : {}),
+        ...(code ? { code } : {}),
       });
     return this.get(s, id, true);
   }
 
   /**
-   * For a repeat of a sale that was cancelled because no bill could be made (`gateway_refused`): payment-api's
-   * bank refusal of it, worked out again from the sale's bank and the method's banks. Null when it was
-   * refused for another reason, or when payment-api cannot say (the repeat then answers the plain 409).
+   * For a repeat of a sale that was cancelled because no bill could be made (`gateway_refused`): the code
+   * payment-api refused it with, as stored then (UMK-2055). Never worked out again from today's banks: a list
+   * that changed since would answer another refusal than the first request got. Undefined for any other sale,
+   * and for one refused before the code was kept (it answers the plain 409).
    */
-  private async bankRefusalOf(s: PosSession, id: string) {
+  private async refusedCodeOf(
+    s: PosSession,
+    id: string,
+  ): Promise<string | undefined> {
     const [sale] = await this.db
-      .select({
-        reason: sales.cancelReason,
-        method: sales.paymentMethodCode,
-        bank: sales.paymentBank,
-      })
+      .select({ code: sales.paymentRefusedCode })
       .from(sales)
       .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, id)));
-    if (sale?.reason !== 'gateway_refused' || !isOnlineMethod(sale.method))
-      return null;
-    const banks = await this.payments.banksOf(s.tenantId, sale.method);
-    if (banks === null) return null;
-    if (banks.length === 0)
-      return sale.bank === null ? null : 'bank_not_supported';
-    if (sale.bank === null) return 'bank_required';
-    return banks.some((b) => b.code === sale.bank) ? null : 'bank_unknown';
+    return sale?.code ?? undefined;
   }
 
   async create(s: PosSession, key: string, input: SaleInput) {

@@ -13,10 +13,13 @@ vi.mock('@tanstack/react-start/server', () => ({
   deleteCookie: (name: string) => {
     cookies.delete(name)
   },
+  getRequestHeader: (name: string) => headers.get(name),
 }))
+const headers = new Map<string, string>()
 process.env.POS_API_URL = 'http://pos-api.test'
 
-const { endOwnerSession, refreshOwner, setReturnTo, startSession, takeLandingPath } = await import('./session.server')
+const { endOwnerSession, isSameOriginPost, refreshOwner, sameOriginRequest, setReturnTo, startSession, takeLandingPath } =
+  await import('./session.server')
 
 const ownerToken = `h.${Buffer.from(JSON.stringify({ kind: 'owner' })).toString('base64url')}.s`
 const NATIVE = JSON.stringify({ sid: 'sid-1', refreshToken: 'r1' })
@@ -101,6 +104,53 @@ describe('where a sign-in lands (UMK-2054)', () => {
     for (const forged of ['https://evil.example/', '//evil.example', '/pengaturan/keamanan', 'constructor', '']) {
       cookies.set('pos_kembali', forged)
       expect(takeLandingPath()).toBe('/?masuk=1')
+    }
+  })
+})
+
+describe('isSameOriginPost: /masuk/ulang only from the POS itself (UMK-2054)', () => {
+  const POS = 'https://pos.umkmall.id'
+
+  it('Sec-Fetch-Site decides when sent: only same-origin passes, whatever Origin says', () => {
+    expect(isSameOriginPost({ secFetchSite: 'same-origin', posWebUrl: POS })).toBe(true)
+    for (const site of ['same-site', 'cross-site', 'none', ''])
+      expect(isSameOriginPost({ secFetchSite: site, origin: POS, posWebUrl: POS })).toBe(false)
+  })
+
+  it('without it, the Origin must be the POS origin (POS_WEB_URL)', () => {
+    expect(isSameOriginPost({ origin: POS, posWebUrl: `${POS}/` })).toBe(true)
+    for (const origin of [
+      'https://evil.example',
+      'https://umkmall.id',
+      'http://pos.umkmall.id',
+      'https://pos.umkmall.id.evil.example',
+      'null',
+      'not a url',
+      '',
+    ])
+      expect(isSameOriginPost({ origin, posWebUrl: POS, host: 'pos.umkmall.id' })).toBe(false)
+    // No header at all: refused.
+    expect(isSameOriginPost({ posWebUrl: POS })).toBe(false)
+  })
+
+  it('without POS_WEB_URL (local work), the Origin must be this request\'s host', () => {
+    expect(isSameOriginPost({ origin: 'http://localhost:3101', host: 'localhost:3101' })).toBe(true)
+    expect(isSameOriginPost({ origin: 'http://localhost:9999', host: 'localhost:3101' })).toBe(false)
+    expect(isSameOriginPost({ origin: 'http://localhost:3101' })).toBe(false)
+  })
+
+  it('reads the request being served', () => {
+    process.env.POS_WEB_URL = POS
+    try {
+      headers.clear()
+      expect(sameOriginRequest()).toBe(false)
+      headers.set('origin', POS)
+      expect(sameOriginRequest()).toBe(true)
+      headers.set('sec-fetch-site', 'cross-site')
+      expect(sameOriginRequest()).toBe(false)
+    } finally {
+      delete process.env.POS_WEB_URL
+      headers.clear()
     }
   })
 })

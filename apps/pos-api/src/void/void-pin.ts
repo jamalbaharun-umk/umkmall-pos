@@ -48,6 +48,28 @@ const locked = (field: string, retryAfter: number) => {
   );
 };
 
+/** The owner's own PIN is locked (an owner-only approval, UMK-2055): nobody else can stand in for it. */
+export const OWNER_PIN_LOCKED = 'owner_pin_locked';
+/** The owner has no PIN yet, so an owner-only approval cannot be given (UMK-2055). */
+export const OWNER_PIN_MISSING = 'owner_pin_missing';
+
+const ownerLocked = (retryAfter: number) => {
+  const message = `Terlalu banyak PIN salah. Coba lagi dalam ${Math.ceil(retryAfter / 60)} menit, atau buka kuncinya di Pengaturan, Keamanan (Anda diminta masuk lagi dulu).`;
+  return new HttpException(
+    { message, errors: { pin: message }, retryAfter, code: OWNER_PIN_LOCKED },
+    HttpStatus.TOO_MANY_REQUESTS,
+  );
+};
+
+const ownerMissing = () => {
+  const message =
+    'Anda belum membuat PIN pembatalan. Buat dulu di Pengaturan, Keamanan.';
+  return new HttpException(
+    { message, errors: { pin: message }, code: OWNER_PIN_MISSING },
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
+};
+
 /**
  * The void PIN (UMK-1962): the 6-digit PIN an approver types to approve a void. The only file that reads
  * or writes pos.void_pins (guard in src/guards.spec.ts), so the hash never reaches a response or a log.
@@ -227,10 +249,7 @@ export class VoidPins {
   ): Promise<Approver> {
     const approver = await this.approver(tenantId, approverId);
     if (!approver) throw wrongPin('pin');
-    const outcome = await this.db.transaction(async (tx) => {
-      const row = await this.lockRow(tx, tenantId, approverId);
-      return row ? this.check(tx, row, pin) : null;
-    });
+    const outcome = await this.guess(tenantId, approverId, pin);
     if (!outcome)
       throw fieldError(
         'approverId',
@@ -243,11 +262,23 @@ export class VoidPins {
     return approver;
   }
 
+  /** One guess against the approver's PIN row, under its lock; null when the approver has no PIN. */
+  private guess(tenantId: string, approverId: string, pin: string) {
+    return this.db.transaction(async (tx) => {
+      const row = await this.lockRow(tx, tenantId, approverId);
+      return row ? this.check(tx, row, pin) : null;
+    });
+  }
+
   /**
    * As `verify`, for an approval that is the OWNER's alone (the retry of a refused refund, owner decision
    * 2026-11-26): `approverId` must be the store's owner, so only the owner's own PIN row is ever checked.
-   * Any other id, also an admin's who holds `sales.void` and has a PIN, gets the wrong-PIN answer and
-   * counts nowhere. The owner's count and lock are the void's own.
+   * Any other id, also an admin's who holds `sales.void` and has a PIN, or another store's owner, gets the
+   * wrong-PIN answer and counts nowhere. The owner's count and lock are the void's own.
+   *
+   * Told in the owner's words (UMK-2055): no PIN yet is 422 `owner_pin_missing` on `pin`, a lock is 429
+   * `owner_pin_locked` that points to Keamanan (clearing it needs a fresh sign-in, UMK-2054), never "ask another
+   * admin": no admin can approve this.
    */
   async verifyOwner(
     tenantId: string,
@@ -255,7 +286,13 @@ export class VoidPins {
     pin: string,
   ): Promise<Approver> {
     if ((await this.ownerId(tenantId)) !== approverId) throw wrongPin('pin');
-    return this.verify(tenantId, approverId, pin);
+    const outcome = await this.guess(tenantId, approverId, pin);
+    if (!outcome) throw ownerMissing();
+    if (!outcome.ok)
+      throw outcome.retryAfter
+        ? ownerLocked(outcome.retryAfter)
+        : wrongPin('pin');
+    return { id: approverId, kind: 'owner', name: 'Pemilik' };
   }
 
   /** The owner's own PIN row is touched without the old PIN only after a fresh sign-in (UMK-2054). */
@@ -306,6 +343,31 @@ export class VoidPins {
         ? fieldError('currentPin', 'Masukkan PIN lama untuk menggantinya')
         : wrongPin('currentPin');
     }
+    return this.status(s);
+  }
+
+  /**
+   * The owner's "Lupa PIN" (UMK-2054): replaces the owner's own PIN, or makes the first one, and clears its count
+   * and lock, in ONE statement, so there is never a moment with the old PIN gone and no new one. Owner only, and
+   * only after a fresh sign-in (as removing it and clearing its lock are). An admin's forgotten PIN is removed by
+   * the owner (`reset`) and set again by the admin.
+   */
+  async replaceForgotten(s: PosSession, pin: string) {
+    this.ownerOnly(s);
+    this.needsFreshSignIn(s);
+    const pinHash = await hashPin(pin);
+    await this.db
+      .insert(voidPins)
+      .values({
+        tenantId: s.tenantId,
+        actorId: s.actorId,
+        actorKind: s.kind,
+        pinHash,
+      })
+      .onConflictDoUpdate({
+        target: [voidPins.tenantId, voidPins.actorId],
+        set: { pinHash, failures: 0, lockedUntil: null, updatedAt: new Date() },
+      });
     return this.status(s);
   }
 

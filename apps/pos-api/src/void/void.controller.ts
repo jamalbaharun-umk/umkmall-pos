@@ -28,6 +28,7 @@ import {
   ManualRefundInput,
   RefundRetryInput,
   SetPinInput,
+  ForgottenPinInput,
   VoidInput,
 } from './void.schemas';
 import { VoidService } from './void.service';
@@ -173,6 +174,13 @@ export class VoidPinController {
     return withRetryAfter(res, () =>
       this.pins.set(s, input.pin, input.currentPin),
     );
+  }
+
+  /** Owner only, after a fresh sign-in: "Lupa PIN" replaces the owner's own PIN in one step (UMK-2054). */
+  @Put('forgotten')
+  @RequirePermission('sales.void')
+  replaceForgotten(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    return this.pins.replaceForgotten(s, validate(ForgottenPinInput, body).pin);
   }
 
   /** Owner only. */

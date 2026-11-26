@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { INestApplication } from '@nestjs/common';
+import { HttpException, INestApplication } from '@nestjs/common';
 import postgres from 'postgres';
 import request from 'supertest';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { signSession } from '../src/tenancy/session';
+import { VoidPins } from '../src/void/void-pin';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
 
@@ -1291,6 +1292,62 @@ describe('void a full sale (UMK-1962)', () => {
       expect((await pinRow(s.userId)).pin_hash).toMatch(/^scrypt\$/);
     });
 
+    it('"Lupa PIN" in one call: PUT /void-pin/forgotten replaces the owner\'s PIN and its lock only after a fresh sign-in', async () => {
+      const s = await shop();
+      const forgotten = (auth: string, body: object) =>
+        put(auth, '/void-pin/forgotten', body);
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '5 minutes' where actor_id = ${s.userId}`;
+      const before = await pinRow(s.userId);
+      // Not fresh (a refresh, or a sign-in 301 s ago): 403, and the PIN, its count and lock stay.
+      for (const auth of [s.auth, await signedIn(s, 301)])
+        expect(
+          (await forgotten(auth, { pin: '270183' }).expect(403)).body,
+        ).toEqual(FRESH);
+      expect(await pinRow(s.userId)).toEqual(before);
+      // A bad body is 422 and changes nothing, fresh or not.
+      for (const bad of [
+        {},
+        { pin: '12' },
+        { pin: '270183', currentPin: OWNER_PIN },
+      ])
+        await forgotten(s.freshAuth, bad).expect(422);
+      expect(await pinRow(s.userId)).toEqual(before);
+      // An admin with sales.void cannot use it, fresh or not (their forgotten PIN is the owner's reset).
+      const rina = await createCashier(app, s, ['sales.create', 'sales.void']);
+      await setPin(rina.auth, '715064').expect(200);
+      await forgotten(rina.auth, { pin: '909090' }).expect(403);
+      expect((await pinRow(rina.staffId)).failures).toBe(0);
+
+      // Fresh: the new PIN, no count, no lock, in one step; the old PIN no longer approves.
+      expect(
+        (await forgotten(s.freshAuth, { pin: '270183' }).expect(200)).body,
+      ).toEqual({ hasPin: true, lockedUntil: null });
+      const after = await pinRow(s.userId);
+      expect(after).toMatchObject({ failures: 0, locked_until: null });
+      expect(after.pin_hash).not.toBe(before.pin_hash);
+      await open(s.auth);
+      const sale = await sell(s.auth, {
+        lines: [{ productId: s.productId, qty: 1 }],
+        paid: 5000,
+      });
+      await voidSale(s.auth, sale.body.id, s.approval).expect(422);
+      await voidSale(s.auth, sale.body.id, {
+        ...s.approval,
+        pin: '270183',
+      }).expect(201);
+      // An owner without a PIN makes the first one the same way.
+      await admin`delete from pos.void_pins where actor_id = ${s.userId}`;
+      await forgotten(s.auth, { pin: '135790' }).expect(403);
+      expect(await pinRow(s.userId)).toBeUndefined();
+      await forgotten(s.freshAuth, { pin: '135790' }).expect(200);
+      expect(await pinRow(s.userId)).toMatchObject({ failures: 0 });
+      // Another store's fresh owner changes only their own PIN.
+      const b = await shop();
+      const hashOfA = (await pinRow(s.userId)).pin_hash;
+      await forgotten(b.freshAuth, { pin: '246802' }).expect(200);
+      expect((await pinRow(s.userId)).pin_hash).toBe(hashOfA);
+    });
+
     it("another store's owner, freshly signed in, gets 404 on this owner's PIN", async () => {
       const a = await shop();
       const b = await shop();
@@ -1305,6 +1362,97 @@ describe('void a full sale (UMK-1962)', () => {
       // And B's own fresh session changes B's PIN only.
       await reset(b.freshAuth, b.userId).expect(200);
       expect((await pinRow(a.userId)).pin_hash).toBe(hash);
+    });
+  });
+
+  describe('the owner-only approval of a refund retry (UMK-2055)', () => {
+    const pins = () => app.get(VoidPins);
+    const httpOf = (e: unknown) => {
+      expect(e).toBeInstanceOf(HttpException);
+      const h = e as HttpException;
+      return {
+        status: h.getStatus(),
+        body: h.getResponse() as Record<string, unknown>,
+      };
+    };
+    const refusal = (p: Promise<unknown>) => p.then(() => null, httpOf);
+
+    it('an owner without a PIN is told to make their own, never "Admin ini", and nothing is counted', async () => {
+      const s = await shop();
+      await admin`delete from pos.void_pins where actor_id = ${s.userId}`;
+      const r = await refusal(
+        pins().verifyOwner(s.tenantId, s.userId, OWNER_PIN),
+      );
+      expect(r).toMatchObject({
+        status: 422,
+        body: {
+          code: 'owner_pin_missing',
+          errors: { pin: expect.stringMatching(/^Anda belum membuat PIN/) },
+        },
+      });
+      expect(JSON.stringify(r)).not.toMatch(/Admin ini/);
+      expect(await pinRow(s.userId)).toBeUndefined();
+    });
+
+    it("a locked owner is pointed to Keamanan, never to another admin; the lock is the void's own", async () => {
+      const s = await shop();
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '4 minutes' where actor_id = ${s.userId}`;
+      const r = await refusal(
+        pins().verifyOwner(s.tenantId, s.userId, OWNER_PIN),
+      );
+      expect(r).toMatchObject({
+        status: 429,
+        body: {
+          code: 'owner_pin_locked',
+          retryAfter: expect.any(Number),
+          errors: { pin: expect.stringMatching(/Pengaturan, Keamanan/) },
+        },
+      });
+      expect(JSON.stringify(r)).not.toMatch(/admin lain/);
+      expect((r!.body.retryAfter as number) <= 240).toBe(true);
+      // A wrong PIN is still the plain answer, and the 5th locks with the owner's words.
+      await admin`update pos.void_pins set failures = 3, locked_until = null where actor_id = ${s.userId}`;
+      expect(
+        await refusal(pins().verifyOwner(s.tenantId, s.userId, '000000')),
+      ).toEqual({
+        status: 422,
+        body: { message: 'PIN salah', errors: { pin: 'PIN salah' } },
+      });
+      const fifth = await refusal(
+        pins().verifyOwner(s.tenantId, s.userId, '000000'),
+      );
+      expect(fifth).toMatchObject({
+        status: 429,
+        body: { code: 'owner_pin_locked', retryAfter: 300 },
+      });
+      // The right PIN after the lock ran out approves, as the owner.
+      await admin`update pos.void_pins set locked_until = now() - interval '1 second' where actor_id = ${s.userId}`;
+      await expect(
+        pins().verifyOwner(s.tenantId, s.userId, OWNER_PIN),
+      ).resolves.toEqual({ id: s.userId, kind: 'owner', name: 'Pemilik' });
+      // A plain void keeps its shared words (another admin may approve a void).
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '4 minutes' where actor_id = ${s.userId}`;
+      const v = await refusal(pins().verify(s.tenantId, s.userId, OWNER_PIN));
+      expect(JSON.stringify(v)).toMatch(/admin lain/);
+    });
+
+    it("another store's owner id, with that owner's right PIN, is the plain wrong PIN and counts nowhere", async () => {
+      const a = await shop();
+      const b = await shop();
+      const r = await refusal(
+        pins().verifyOwner(a.tenantId, b.userId, OWNER_PIN),
+      );
+      expect(r).toEqual({
+        status: 422,
+        body: { message: 'PIN salah', errors: { pin: 'PIN salah' } },
+      });
+      expect((await pinRow(a.userId)).failures).toBe(0);
+      expect((await pinRow(b.userId)).failures).toBe(0);
+      // Also when this store's owner has no PIN: never "owner_pin_missing" for an id that is not the owner.
+      await admin`delete from pos.void_pins where actor_id = ${a.userId}`;
+      expect(
+        await refusal(pins().verifyOwner(a.tenantId, b.userId, OWNER_PIN)),
+      ).toMatchObject({ status: 422, body: { errors: { pin: 'PIN salah' } } });
     });
   });
 

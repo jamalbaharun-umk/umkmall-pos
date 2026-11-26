@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { endOwnerSession, setReturnTo } from '@/lib/session.server'
+import { endOwnerSession, sameOriginRequest, setReturnTo } from '@/lib/session.server'
 import { seeOther } from '@/lib/sign-in'
 
 // "Masuk lagi" of Pengaturan, Keamanan (UMK-2054): the owner forgot their PIN, or its lock must be cleared. The POS
@@ -9,6 +9,8 @@ export const Route = createFileRoute('/masuk/ulang')({
   server: {
     handlers: {
       POST: async () => {
+        // Only the POS's own page may end the owner's sessions and set the landing: another site's form gets 403.
+        if (!sameOriginRequest()) return new Response(null, { status: 403 })
         await endOwnerSession()
         setReturnTo('keamanan')
         return seeOther('/')

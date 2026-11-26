@@ -63,3 +63,6 @@ export const SetPinInput = z
   })
   .strict();
 export type SetPinInput = z.infer<typeof SetPinInput>;
+
+/** UMK-2054: the owner's new PIN after "Lupa PIN" (no old PIN: the fresh sign-in stands in for it). */
+export const ForgottenPinInput = z.object({ pin: VoidPin }).strict();

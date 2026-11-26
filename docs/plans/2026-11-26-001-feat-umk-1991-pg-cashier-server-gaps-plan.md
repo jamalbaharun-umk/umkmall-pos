@@ -111,7 +111,7 @@ online-payments controller), `src/sales/` (schemas, service), `src/db/schema/sal
 - **Minors.** The banks of a store are kept in memory for 30 s (`PaymentSync.banksOf`; an answer only, never "no
   answer"), so a busy till does not ask payment-api before every online sale. A repeat of a sale that payment-api
   refused for its bank answers the same 422 and code (worked out again from the sale's bank and the method's
-  banks; 409 as before when payment-api cannot say).
+  banks; 409 as before when payment-api cannot say). Superseded by plan 2026-11-26-007: the code is stored on the sale and a repeat answers it.
 - `[test]` each of the above; revert-red on the owner check of the approver, the four statuses, the name's
   cleaning and the repeat's 422.
 
@@ -133,7 +133,8 @@ Decided and built:
   `src/tenancy/session.ts`). The token carries the sign-in time (`auth_time`, `PosSession.signedInAt`).
   `POST /auth/umkmall/session` stamps it only when the body says `{ signIn: true }`; pos-web sends that from the
   sign-in page (`POST /masuk`) and the landing after UMKMall's login (`/` without a POS session), never from the
-  refresh in `api()`. A refreshed session carries no sign-in time, so a refresh is never fresh, also seconds after
+  refresh in `api()`. (Since UMK-2065 the sign-in is the WhatsApp code: only `POST /auth/otp/verify`
+  stamps it; plan 2026-11-26-007 makes `/masuk/ulang` same-origin only.) A refreshed session carries no sign-in time, so a refresh is never fresh, also seconds after
   a sign-in. The dev sign-in (development and test only) is always a sign-in.
 - **Admin PINs are as before.** First PIN without a fresh sign-in; the owner unlocks and removes an admin's PIN from
   any owner session. Judged not the same hole: the owner cannot set an admin's PIN (`set` is the actor's own), an
