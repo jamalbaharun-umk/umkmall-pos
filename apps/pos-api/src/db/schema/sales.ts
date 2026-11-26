@@ -68,7 +68,11 @@ export const shifts = pos
  * payment-api's methods an online payment method may carry (UMK-1991). Only the local fake gateway's until
  * the legal gate (UMK-1977); a real provider adds its methods here, with a migration for the check below.
  */
-export const GATEWAY_METHODS = ['fake_qris', 'fake_va'] as const;
+export const GATEWAY_METHODS = [
+  'fake_qris',
+  'fake_va',
+  'fake_checkout',
+] as const;
 
 export const paymentMethods = pos
   .table(
@@ -83,7 +87,7 @@ export const paymentMethods = pos
       isCredit: boolean('is_credit').notNull().default(false),
       isWallet: boolean('is_wallet').notNull().default(false),
       // UMK-1991: paid through a payment gateway (dynamic QRIS, VA). `gateway_method` is payment-api's method
-      // for it (`fake_qris`, `fake_va`), set exactly when the kind is online.
+      // for it (`fake_qris`, `fake_va`, `fake_checkout`), set exactly when the kind is online.
       isOnline: boolean('is_online').notNull().default(false),
       gatewayMethod: text('gateway_method'),
       deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -223,14 +227,19 @@ export const sales = pos
       // UMK-2037: the bank the customer chose for a PG method that needs one (a virtual account), as the
       // cashier sent it and payment-api knows it. Sent with every charge of the PG attempt; null otherwise.
       paymentBank: text('payment_bank'),
-      // Which try at paying this sale: the charge key at payment-api is `<sale id>:<attempt>`. Only the switch
-      // from a PG method to cash starts a new one, and `payment_attempt_at` is when it started (the job waits
-      // from then before it gives an unanswered charge up).
+      // Which try at paying this sale: the charge key at payment-api is `<sale id>:<attempt>`. The switch from
+      // a PG method to cash starts a new one, and so does a new QR, VA or link for the same sale (UMK-2042);
+      // `payment_attempt_at` is when it started (the job waits from then before it gives an unanswered charge
+      // up).
       paymentAttempt: integer('payment_attempt').notNull().default(1),
       paymentAttemptAt: ts('payment_attempt_at').notNull().defaultNow(),
       // The cashier asked to take cash instead of the PG payment: the cash tendered. While it is set, the PG
       // attempt closing unpaid turns the sale into a cash sale instead of cancelling it.
       switchCashPaid: rupiah('switch_cash_paid'),
+      // UMK-2042: the cashier asked for a new bill (QR, VA, link) for this sale, and when. While it is set, the
+      // current bill closing unpaid does not cancel the sale: the request that wrote it moves the sale to the
+      // next attempt. Never set together with `switch_cash_paid`.
+      paymentRenewAt: ts('payment_renew_at'),
       cancelledAt: ts('cancelled_at'),
       // The moment the sale counts from in every report and list (owner ruling 2026-11-25): when it was
       // PAID. That is when it was rung up, except for a sale that waited for a payment gateway: the
@@ -268,7 +277,8 @@ export const sales = pos
       ),
       check(
         'sales_attempt_ck',
-        sql`${t.paymentAttempt} >= 1 and (${t.switchCashPaid} is null or ${t.status} = 'awaiting_payment')`,
+        sql`${t.paymentAttempt} >= 1 and (${t.switchCashPaid} is null or ${t.status} = 'awaiting_payment')
+          and (${t.paymentRenewAt} is null or (${t.status} = 'awaiting_payment' and ${t.switchCashPaid} is null))`,
       ),
       // The job's sweep of sales still waiting for their payment.
       index('sales_awaiting_idx')

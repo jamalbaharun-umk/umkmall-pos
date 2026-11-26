@@ -190,7 +190,7 @@ describe('repo guards', () => {
     )
       .split(/\n {2}@Post\(/)
       .slice(1);
-    expect(actions.length).toBe(3);
+    expect(actions.length).toBe(4);
     const refunds = text(path.join('void', 'void.controller.ts'))
       .split(/\n {2}@Post\(/)
       .slice(1)
@@ -297,12 +297,13 @@ describe('repo guards', () => {
       files.find(({ f }) => f === path.join('payments-client', name))!.text;
     const text = inClient('payment-sync.service.ts');
     // Every transaction of the file is written `this.db.transaction(async (tx) => { … \n    });`: the
-    // write of a sale's step 2, the request of a switch to cash, and the turn of a sale into a cash sale.
+    // write of a sale's step 2, the request of a switch to cash, the turn of a sale into a cash sale, the
+    // request of a new bill and the move of a sale to its next attempt (UMK-2042).
     const bodies = text
       .split('.transaction(')
       .slice(1)
       .map((part) => part.slice(0, part.indexOf('\n    });\n')));
-    expect(bodies).toHaveLength(3);
+    expect(bodies).toHaveLength(5);
     for (const body of bodies) {
       expect(body.length).toBeGreaterThan(300);
       // Neither the client nor anything of this class that calls it.
@@ -343,6 +344,8 @@ describe('repo guards', () => {
       .map(({ f }) => f)
       .sort();
     expect(readers).toEqual([
+      // Sales by id of any status (the sale a late payment came in for) and refused refunds, for the owner.
+      path.join('payments-client', 'payment-review.service.ts'),
       path.join('payments-client', 'payment-sync.service.ts'),
       // One sale by id, of any status: the payment screen of a sale that still waits.
       path.join('payments-client', 'sale-payment.service.ts'),

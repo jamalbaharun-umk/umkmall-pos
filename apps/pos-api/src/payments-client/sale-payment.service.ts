@@ -13,6 +13,7 @@ import { saleNumbers } from '../sales/numbers';
 import { hasPermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
+  MAX_PAYMENT_ATTEMPTS,
   PaymentSync,
   type SaleSettlement,
   type SettleMode,
@@ -61,6 +62,14 @@ const MESSAGES: Record<string, string> = {
     'Layanan pembayaran menolak permintaan ini. Coba lagi atau hubungi pemilik.',
   cash_switch_unanswered:
     'Layanan pembayaran tidak menjawab, jadi penjualan belum menjadi tunai. Cek status pembayaran dulu sebelum menerima uang atau meminta pelanggan membayar: bila tagihan sudah tertutup, penjualan ini dibatalkan dan harus dibuat ulang.',
+  switching_to_cash:
+    'Penjualan ini sedang dialihkan ke tunai. Selesaikan atau batalkan dulu.',
+  attempt_limit:
+    'Penjualan ini sudah terlalu sering dibuatkan kode baru. Batalkan lalu buat penjualan baru.',
+  renew_unanswered:
+    'Layanan pembayaran tidak menjawab, jadi kode baru belum dibuat. Cek status pembayaran dulu: bila tagihan lama sudah tertutup, penjualan ini dibatalkan dan harus dibuat ulang.',
+  renew_pending:
+    'Tagihan lama sudah ditutup, tetapi kode baru belum dibuat. Tekan lagi untuk membuatnya.',
   cash_payment_pending:
     'Penjualan ini sudah menjadi penjualan tunai, tetapi pembayarannya belum tercatat. Coba lagi.',
 };
@@ -101,6 +110,21 @@ const UNPRINTABLE =
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
 export const accountNameOf = (v: string): string | null =>
   v.replace(UNPRINTABLE, '').trim().slice(0, 100).trim() || null;
+
+/**
+ * The gateway's payment page as the screen may show and open it (UMK-2043): an `https:` URL without
+ * credentials, at most 2000 characters. Anything else (another scheme, a URL that does not parse) is dropped.
+ */
+export const paymentUrlOf = (v: string): string | null => {
+  if (v.length > 2000 || /\s/.test(v)) return null;
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return null;
+  }
+  return url.protocol === 'https:' && !url.username && !url.password ? v : null;
+};
 
 /** 503: the sale is a cash sale already and only the record of its cash is missing. */
 const cashPending = () =>
@@ -143,6 +167,7 @@ export class SalePayments {
         attempt: sales.paymentAttempt,
         paymentId: sales.paymentId,
         switchCashPaid: sales.switchCashPaid,
+        renewAt: sales.paymentRenewAt,
         paymentMethodId: sales.paymentMethodId,
         paymentMethodName: paymentMethods.name,
       })
@@ -270,6 +295,82 @@ export class SalePayments {
     throw refusal('not_awaiting', extra);
   }
 
+  /**
+   * "Buat QR baru" (UMK-2042): a new bill (QR, VA, link) for the same waiting sale. `from` is the attempt the
+   * cashier's screen shows, which makes a repeat safe: a sale already past it answers the bill it has now.
+   * The sale's own cashier or a `sales.void` holder, like a cancel. Stock and voucher stay taken.
+   *
+   * The old bill is closed first (`PaymentSync.settle`, mode `renew`). No usable answer before the sale moved
+   * to the new attempt: the intent is taken back and the answer says so; the sale waits on its old bill, or
+   * is cancelled by the next look when that bill is closed. Once it HAS moved, only the new bill is missing:
+   * 503 `renew_pending`, and a repeat makes it.
+   */
+  async renew(s: PosSession, saleId: string, from: number) {
+    const sale = await this.sale(s, saleId);
+    const extra = { saleId, status: sale.status };
+    if (sale.status !== 'awaiting_payment')
+      throw refusal(
+        sale.status === 'completed' ? 'already_paid' : 'not_awaiting',
+        extra,
+      );
+    if (!isOnlineMethod(sale.method)) throw refusal('not_online');
+    if (from > sale.attempt)
+      throw fieldError('attempt', 'Percobaan pembayaran tidak dikenal');
+    if (sale.attempt === from) {
+      const asked = await this.sync.requestRenew(s.tenantId, saleId, from);
+      if (asked === 'switching') throw refusal('switching_to_cash');
+      if (asked === 'limit') throw refusal('attempt_limit');
+      if (asked === 'not_online') throw refusal('not_online');
+    }
+    const moved = async () => {
+      const now = await this.sale(s, saleId);
+      return now.attempt > from && now.status === 'awaiting_payment';
+    };
+    let payment: Payment | null;
+    try {
+      ({ payment } = await this.sync.settle(
+        s.tenantId,
+        saleId,
+        'renew',
+        new Date(),
+        undefined,
+        from,
+      ));
+    } catch (error) {
+      // Whatever went wrong, the request ends here: the intent goes with it.
+      await this.sync.abandonRenew(s.tenantId, saleId);
+      if (!(error instanceof PaymentApiError)) throw error;
+      const past = await moved();
+      if (error.kind === 'rejected')
+        throw refusal(past ? 'payment_refused' : 'cancel_refused');
+      if (error.status !== null && REFUSED_STATUSES.has(error.status))
+        throw refusal('payment_refused');
+      throw new ServiceUnavailableException(
+        past
+          ? { message: MESSAGES.renew_pending, code: 'renew_pending' }
+          : { message: MESSAGES.renew_unanswered, code: 'payment_unavailable' },
+      );
+    }
+    const view = await this.view(s, saleId, payment, true);
+    const now = { saleId, status: view.saleStatus };
+    if (view.saleStatus === 'completed') throw refusal('already_paid', now);
+    if (view.saleStatus !== 'awaiting_payment')
+      throw refusal('not_awaiting', now);
+    if (view.attempt <= from) {
+      await this.sync.abandonRenew(s.tenantId, saleId);
+      throw refusal(
+        view.switchingToCash ? 'switching_to_cash' : 'cancel_refused',
+      );
+    }
+    // The sale is at the new attempt and payment-api answered no bill for it: a repeat asks again.
+    if (!payment)
+      throw new ServiceUnavailableException({
+        message: MESSAGES.renew_pending,
+        code: 'renew_pending',
+      });
+    return view;
+  }
+
   /** The cashier gives an awaiting sale up. No PIN and no void record: it never was a receipt (V2). */
   async cancel(s: PosSession, saleId: string) {
     const sale = await this.sale(s, saleId);
@@ -309,8 +410,12 @@ export class SalePayments {
         // payment (checkout, capabilities, late money) comes only from the one-payment route.
         const id = sale.paymentId ?? (known && online ? known.id : null);
         if (id) payment = await this.client.get(s.tenantId, id);
-        // Earlier attempts (a QR closed for cash) can still receive money: show what arrived on them.
-        if (sale.attempt > 1 && sale.status !== 'awaiting_payment') {
+        // Earlier attempts (a QR closed for cash, or replaced by a new one) can still receive money: show
+        // what arrived on them.
+        if (
+          sale.attempt > 1 &&
+          (sale.status !== 'awaiting_payment' || online)
+        ) {
           const all = await this.client.listByOrder(s.tenantId, saleId);
           others = await Promise.all(
             all
@@ -339,13 +444,16 @@ export class SalePayments {
         ? Object.fromEntries(
             // `accountName` (UMK-2045): the holder name the customer's bank shows for the VA, as the gateway
             // labels it. Only these keys reach the screen, whatever else a gateway may answer.
-            ['qrString', 'bank', 'vaNumber', 'accountName']
+            // `paymentUrl` (UMK-2043): the gateway's own payment page, only as an https URL.
+            ['qrString', 'bank', 'vaNumber', 'accountName', 'paymentUrl']
               .filter((k) => k in payment.checkout!)
               .map((k): [string, string | null] => [
                 k,
                 k === 'accountName'
                   ? accountNameOf(payment.checkout![k])
-                  : payment.checkout![k],
+                  : k === 'paymentUrl'
+                    ? paymentUrlOf(payment.checkout![k])
+                    : payment.checkout![k],
               ])
               .filter((e): e is [string, string] => e[1] !== null),
           )
@@ -380,6 +488,12 @@ export class SalePayments {
       lastCheckedAt: payment?.lastSyncedAt ?? null,
       canCloseAtGateway: payment?.canCancel ?? true,
       switchingToCash: sale.switchCashPaid !== null,
+      // UMK-2042: a new bill (QR, VA, link) may be asked for this sale (`POST …/payment/renew`).
+      canRenew:
+        online &&
+        sale.status === 'awaiting_payment' &&
+        sale.switchCashPaid === null &&
+        sale.attempt < MAX_PAYMENT_ATTEMPTS,
       refund,
       lateReceipts: [...(payment ? [payment] : []), ...others].flatMap((p) =>
         p.unmatchedReceipts.map((r) => ({

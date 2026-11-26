@@ -63,6 +63,12 @@ const SWEEP_LIMIT = 100;
 /** How often `settle` reads a sale again after an answer turned out stale, or after a switch to cash. */
 const MAX_ROUNDS = 4;
 
+/**
+ * How many bills one sale may get (UMK-2042): the first and the new ones the cashier asks for. The switch to
+ * cash is not refused by it. A placeholder until the owner decides.
+ */
+export const MAX_PAYMENT_ATTEMPTS = 5;
+
 /** Our own refusal, counted and parked like payment-api's: the pos row and the payment do not agree. */
 const refused = (code: string) => new PaymentApiError('rejected', null, code);
 
@@ -77,9 +83,10 @@ export type SaleOutcome =
  * - `sync`: the manual check: payment-api asks the PG first.
  * - `cancel`: the cashier gives the sale up: the bill is closed first.
  * - `cash`: the cashier takes cash for a sale that waits for a PG payment: the bill is closed first.
+ * - `renew`: the cashier asks for a new bill (QR, VA, link) for the same sale: the bill is closed first.
  */
 export type SettleMode =
-  'charge' | 'reconcile' | 'read' | 'sync' | 'cancel' | 'cash';
+  'charge' | 'reconcile' | 'read' | 'sync' | 'cancel' | 'cash' | 'renew';
 
 /** The sale's status afterwards, and the payment of its current attempt when payment-api was asked. */
 export type SaleSettlement = {
@@ -269,9 +276,18 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * progress changes nothing; the job finishes one whose request died after the bill was closed for it
    * (payment `cancelled`). A bill the payer paid first completes the sale as the PG sale it was.
    *
+   * A new bill for the same sale (UMK-2042, `paymentRenewAt` set, see `requestRenew`) is made by the cashier's
+   * own request (mode `renew`, with the attempt its screen shows in `renewFrom`): it closes the bill, and once
+   * that is closed unpaid the sale moves to the next attempt, which that request then charges with the same
+   * method, bank and amount. The new attempt is never charged before the old bill is closed, so a sale never
+   * has two live bills (payment-api's own index refuses a second one too). A request whose sale is already
+   * past `renewFrom` closes nothing: it charges the current attempt, which answers the bill that attempt has.
+   * No other worker acts on the intent, and none cancels the sale while it is set; the job takes back one
+   * that is older than its wait (the request is gone).
+   *
    * The sale is read without a lock, so an answer may be stale by the time it is applied: `applyToSale`
    * refuses it (`stale`) when the sale has moved to another attempt, or would be cancelled while a switch to
-   * cash is asked, and the sale is read again.
+   * cash or a new bill is asked, and the sale is read again.
    *
    * Throws PaymentApiError when payment-api gave no usable answer (`unavailable`) or one that does not fit
    * the sale (`rejected`): the sale has not moved then.
@@ -282,10 +298,14 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     mode: SettleMode,
     now: Date = new Date(),
     cashPaid?: number,
+    renewFrom?: number,
   ): Promise<SaleSettlement> {
     for (let round = 0; round < MAX_ROUNDS; round += 1) {
-      // A cancel takes a switch to cash back first, in every round: a switch asked meanwhile loses.
-      if (mode === 'cancel') await this.dropCashSwitch(tenantId, saleId);
+      // A cancel takes a switch to cash and a new bill back first, in every round: one asked meanwhile loses.
+      if (mode === 'cancel') {
+        await this.dropCashSwitch(tenantId, saleId);
+        await this.dropRenew(tenantId, saleId);
+      }
       let sale = await this.saleForSettle(tenantId, saleId);
       if (!sale) return { outcome: 'not_found', payment: null };
       // Completed, voided or cancelled already: nothing is asked and nothing moves (M16).
@@ -296,17 +316,50 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (
         mode === 'cash' &&
         cashPaid !== undefined &&
-        sale.attempt === 1 &&
+        isOnlineMethod(sale.method) &&
         sale.switchCashPaid === null
       ) {
         await this.requestCashSwitch(tenantId, saleId, cashPaid);
         sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
         if (sale.status !== 'awaiting_payment' || !sale.method) continue;
       }
+      // So does the request for a new bill, while the sale is still at the attempt its screen shows.
+      if (
+        mode === 'renew' &&
+        sale.attempt === renewFrom &&
+        sale.renewAt === null &&
+        sale.switchCashPaid === null
+      ) {
+        await this.requestRenew(tenantId, saleId, renewFrom);
+        sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
+        if (sale.status !== 'awaiting_payment' || !sale.method) continue;
+      }
+      // The job meets an intent for a new bill only when the request that wrote it is gone: it is taken
+      // back, and the sale is then judged like any other.
+      if (
+        mode === 'reconcile' &&
+        sale.renewAt !== null &&
+        now.getTime() - sale.renewAt.getTime() >= this.afterMs
+      ) {
+        await this.dropRenew(tenantId, saleId);
+        continue;
+      }
 
       const switching = sale.switchCashPaid !== null;
-      // Only a cancel and the cashier's own cash request close a bill.
-      const closing = mode === 'cancel' || (mode === 'cash' && switching);
+      const renewing = sale.renewAt !== null;
+      // This request replaces the bill of the attempt its screen shows.
+      const replacing =
+        mode === 'renew' && renewing && sale.attempt === renewFrom;
+      // The request for a new bill finds the sale past that attempt: the new attempt is charged (a repeat
+      // answers the bill it already has).
+      const renewed =
+        mode === 'renew' &&
+        renewFrom !== undefined &&
+        sale.attempt > renewFrom &&
+        isOnlineMethod(sale.method);
+      // Only a cancel, the cashier's own cash request and their request for a new bill close a bill.
+      const closing =
+        mode === 'cancel' || (mode === 'cash' && switching) || replacing;
       const actor = actorRef(sale.actorKind, sale.actorId);
       const charge = {
         orderRef: saleId,
@@ -323,9 +376,15 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       };
       let payment: Payment | null;
       let refusedCode: string | undefined;
-      // A sale past its first attempt was switched to cash: the cashier said the cash was received, so
+      // A cash sale past its first attempt was switched to cash: the cashier said the cash was received, so
       // every worker charges it (as it finishes a switch), and none gives it up for want of a payment.
-      if (!closing && !switching && (mode === 'charge' || sale.attempt > 1)) {
+      const cashOfSwitch = !isOnlineMethod(sale.method) && sale.attempt > 1;
+      if (
+        !closing &&
+        !switching &&
+        !renewing &&
+        (mode === 'charge' || cashOfSwitch || renewed)
+      ) {
         payment = await this.client
           .charge(tenantId, charge)
           .catch((error: unknown) => {
@@ -362,6 +421,9 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             await this.dropCashSwitch(tenantId, saleId);
             continue;
           }
+          // Nor for a new bill: an intent the job did not take back above is a request still at work.
+          if (mode === 'reconcile' && renewing)
+            return { outcome: 'awaiting_payment', payment: null };
           payment = await this.client.close(tenantId, charge);
         }
       }
@@ -390,6 +452,13 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       // A PG payment still open: the sale waits until payment-api pays or closes it.
       if (!CLOSED_UNPAID.has(payment.status))
         return { outcome: 'awaiting_payment', payment };
+      if (renewing) {
+        // The bill is closed unpaid and a new one is asked. Only the request that asked moves the sale to
+        // the next attempt (the next round charges it); nobody else cancels the sale under it.
+        if (!replacing) return { outcome: 'awaiting_payment', payment };
+        await this.turnToNextAttempt(tenantId, saleId, sale.attempt);
+        continue;
+      }
       if (!switching) {
         const outcome = await this.applyToSale(
           tenantId,
@@ -445,6 +514,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         attempt: sales.paymentAttempt,
         attemptAt: sales.paymentAttemptAt,
         switchCashPaid: sales.switchCashPaid,
+        renewAt: sales.paymentRenewAt,
       })
       .from(sales)
       .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
@@ -510,11 +580,118 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (!isOnlineMethod(sale.method)) return 'not_online' as const;
       if (paid < sale.total + cashRounding(sale.total))
         return 'underpaid' as const;
+      // Cash wins over a new bill asked at the same time: that request finds its intent gone.
       await tx
         .update(sales)
-        .set({ switchCashPaid: paid })
+        .set({ switchCashPaid: paid, paymentRenewAt: null })
         .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
       return 'requested' as const;
+    });
+  }
+
+  /**
+   * The cashier asks for a new bill for a sale that waits for a PG payment (UMK-2042): the intent is written
+   * on the sale BEFORE the current bill is closed, so no worker that finds the bill closed cancels the sale.
+   * `from` is the attempt the cashier's screen shows: a sale that is past it (`moved`) was renewed already.
+   * Returns what the sale is now; `settle` (mode `renew`) does the rest.
+   */
+  async requestRenew(
+    tenantId: string,
+    saleId: string,
+    from: number,
+  ): Promise<
+    | 'not_found'
+    | 'not_awaiting'
+    | 'not_online'
+    | 'switching'
+    | 'moved'
+    | 'limit'
+    | 'requested'
+  > {
+    return this.db.transaction(async (tx) => {
+      const [sale] = await tx
+        .select({
+          status: sales.status,
+          method: sales.paymentMethodCode,
+          attempt: sales.paymentAttempt,
+          switchCashPaid: sales.switchCashPaid,
+        })
+        .from(sales)
+        .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)))
+        .for('update');
+      if (!sale) return 'not_found' as const;
+      if (sale.status !== 'awaiting_payment') return 'not_awaiting' as const;
+      if (!isOnlineMethod(sale.method)) return 'not_online' as const;
+      if (sale.switchCashPaid !== null) return 'switching' as const;
+      if (sale.attempt !== from) return 'moved' as const;
+      if (sale.attempt >= MAX_PAYMENT_ATTEMPTS) return 'limit' as const;
+      await tx
+        .update(sales)
+        .set({ paymentRenewAt: sql`clock_timestamp()` })
+        .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
+      return 'requested' as const;
+    });
+  }
+
+  /**
+   * The request for a new bill got no usable answer and said so: the intent is taken back, so the sale is
+   * judged by its bill again (still open: it waits; closed: the next look cancels it).
+   */
+  async abandonRenew(tenantId: string, saleId: string) {
+    await this.dropRenew(tenantId, saleId);
+  }
+
+  private async dropRenew(tenantId: string, saleId: string) {
+    await this.db
+      .update(sales)
+      .set({ paymentRenewAt: null })
+      .where(
+        and(
+          eq(sales.tenantId, tenantId),
+          eq(sales.id, saleId),
+          isNotNull(sales.paymentRenewAt),
+        ),
+      );
+  }
+
+  /**
+   * The bill of `attempt` is closed unpaid and a new one was asked: the sale moves to the next attempt, which
+   * the caller then charges. Under the sale's row lock, and only while it is still that attempt with the
+   * intent set, so two workers move it once. Stock and voucher stay taken; method, bank and amount stay.
+   */
+  private async turnToNextAttempt(
+    tenantId: string,
+    saleId: string,
+    attempt: number,
+  ) {
+    return this.db.transaction(async (tx) => {
+      const mine = and(eq(sales.tenantId, tenantId), eq(sales.id, saleId));
+      const [sale] = await tx
+        .select({
+          status: sales.status,
+          attempt: sales.paymentAttempt,
+          renewAt: sales.paymentRenewAt,
+          switchCashPaid: sales.switchCashPaid,
+        })
+        .from(sales)
+        .where(mine)
+        .for('update');
+      if (
+        !sale ||
+        sale.status !== 'awaiting_payment' ||
+        sale.attempt !== attempt ||
+        sale.renewAt === null ||
+        sale.switchCashPaid !== null
+      )
+        return;
+      await tx
+        .update(sales)
+        .set({
+          paymentAttempt: attempt + 1,
+          paymentAttemptAt: sql`now()`,
+          paymentRenewAt: null,
+        })
+        .where(mine);
     });
   }
 
@@ -580,6 +757,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           // The cashier holds the cash now: the sale counts from this moment.
           paidAt: sql`now()`,
           switchCashPaid: null,
+          paymentRenewAt: null,
         })
         .where(mine);
     });
@@ -615,6 +793,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           voucherId: sales.voucherId,
           attempt: sales.paymentAttempt,
           switchCashPaid: sales.switchCashPaid,
+          renewAt: sales.paymentRenewAt,
         })
         .from(sales)
         .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)))
@@ -624,6 +803,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (sale.status !== 'awaiting_payment') return sale.status;
       if (sale.attempt !== attempt) return 'stale';
       if (to === 'cancelled' && sale.switchCashPaid !== null) return 'stale';
+      // Nor while a new bill is asked for it (UMK-2042): its bill was closed to be replaced.
+      if (to === 'cancelled' && sale.renewAt !== null) return 'stale';
       if (to === 'completed') {
         // UMK-2038: the receipt number is taken here, in the write that completes the sale and under its
         // row lock, so receipts are numbered in the order they are completed and a sale that is cancelled
@@ -639,6 +820,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             settledByJob: how.byJob === true,
             paymentId,
             switchCashPaid: null,
+            paymentRenewAt: null,
             paidAt: paidAt
               ? sql`greatest(${sales.createdAt}, least(${paidAt}::timestamptz, now()))`
               : sql`now()`,
@@ -661,6 +843,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           cancelReason: how.cancelReason ?? null,
           paymentId,
           switchCashPaid: null,
+          paymentRenewAt: null,
         })
         .where(and(eq(sales.tenantId, tenantId), eq(sales.id, saleId)));
       return 'cancelled';

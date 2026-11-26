@@ -538,7 +538,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         await admin`delete from pos.payment_methods where id = ${row.id as string}`;
       } finally {
         await admin`alter table pos.payment_methods add constraint payment_methods_gateway_method_ck
-          check (gateway_method is null or gateway_method in ('fake_qris', 'fake_va'))`;
+          check (gateway_method is null or gateway_method in ('fake_qris', 'fake_va', 'fake_checkout'))`;
       }
     });
   });
@@ -2506,6 +2506,527 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         .catch((e: unknown) => {
           if (e !== rollback) throw e;
         });
+    });
+  });
+
+  describe('UMK-2043 payment-page link (fake_checkout)', () => {
+    it('a checkout method sells: awaiting with the https payment page, paid → completed, refunded like any PG sale', async () => {
+      const s = await shop();
+      const link = await method(s, 'Link Pembayaran', 'fake_checkout');
+      const res = await sell(s, { paymentMethodId: link }).expect(201);
+      const saleId = res.body.id as string;
+      expect(res.body.payment).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        online: true,
+        method: 'fake_checkout',
+        paymentMethodName: 'Link Pembayaran',
+        attempt: 1,
+        canRenew: true,
+      });
+      const checkout = res.body.payment.checkout as Record<string, string>;
+      expect(Object.keys(checkout)).toEqual(['paymentUrl']);
+      expect(checkout.paymentUrl).toMatch(/^https:\/\//);
+      expect(await onHand(s)).toBe(19);
+      await onBill(s, saleId, 'pay');
+      const paid = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(paid.body).toMatchObject({
+        saleStatus: 'completed',
+        status: 'paid',
+        method: 'fake_checkout',
+      });
+      await gatewaySettings('succeed');
+      await refund(s, saleId).expect(201);
+      expect((await saleRow(saleId)).status).toBe('void');
+    });
+
+    it('a payment page that is not https (or carries credentials) never reaches the screen', async () => {
+      const s = await shop();
+      const link = await method(s, 'Link Pembayaran', 'fake_checkout');
+      for (const bad of [
+        'javascript:alert(1)',
+        'http://fake-gateway.invalid/pay/1',
+        'https://user:secret@fake-gateway.invalid/pay/1',
+        'not a url',
+      ]) {
+        mangle = (p) => {
+          if (p.checkout)
+            (p.checkout as Record<string, string>).paymentUrl = bad;
+        };
+        const res = await sell(s, { paymentMethodId: link }).expect(201);
+        expect(res.body.payment.checkout ?? {}).not.toHaveProperty(
+          'paymentUrl',
+        );
+        mangle = null;
+        await post(s.auth, `/sales/${res.body.id}/payment/cancel`).expect(200);
+      }
+    });
+
+    it('the database takes fake_checkout and still refuses a method it does not know', async () => {
+      const s = await shop();
+      const insert = (m: string) =>
+        admin`insert into pos.payment_methods (tenant_id, name, is_online, gateway_method)
+          values (${s.tenantId}, ${m}, true, ${m}) returning id`;
+      await insert('fake_checkout');
+      await expect(insert('xendit_checkout')).rejects.toThrow(
+        /payment_methods_gateway_method_ck/,
+      );
+    });
+  });
+
+  describe('UMK-2041 "Perlu ditinjau"', () => {
+    type Review = {
+      enabled: boolean;
+      receipts: {
+        items: Record<string, unknown>[];
+        total: number;
+        page: number;
+        perPage: number;
+      };
+      failedRefunds: Record<string, unknown>[];
+    };
+    const review = async (auth: string, query = '') =>
+      (await get(auth, `/payment-review${query}`).expect(200)).body as Review;
+
+    /** A sale whose bill closed unpaid (cancelled), then the customer paid it after all. */
+    async function lateMoney(s: Shop) {
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+      await onBill(s, saleId, 'late-pay');
+      return saleId;
+    }
+
+    it('lists money that paid no sale with its sale, amount, kind and refund status, and the refused refunds; needsReview filters', async () => {
+      const s = await shop();
+      await gatewaySettings('fail');
+      const failedLate = await lateMoney(s);
+      await gatewaySettings('succeed');
+      const refundedLate = await lateMoney(s);
+      // A refund of a paid sale that the gateway refuses.
+      const refused = await paidSale(s);
+      await gatewaySettings('fail');
+      await refund(s, refused).expect(201);
+
+      const all = await review(s.auth);
+      expect(all.enabled).toBe(true);
+      expect(all.receipts.total).toBe(2);
+      const bySale = new Map(all.receipts.items.map((r) => [r.saleId, r]));
+      expect(bySale.get(failedLate)).toMatchObject({
+        kind: 'late_payment',
+        amount: PRICE,
+        needsReview: true,
+        refundStatus: 'failed',
+        saleStatus: 'cancelled',
+        receivedAt: expect.any(String),
+      });
+      expect(bySale.get(refundedLate)).toMatchObject({
+        kind: 'late_payment',
+        amount: PRICE,
+        refundStatus: 'refunded',
+        saleStatus: 'cancelled',
+      });
+      expect(bySale.get(failedLate)!.saleNumber).not.toBeNull();
+      // Only the known fields: no payment id, gateway reference, fee or actor.
+      for (const r of all.receipts.items)
+        expect(Object.keys(r).sort()).toEqual(
+          [
+            'amount',
+            'id',
+            'kind',
+            'needsReview',
+            'receivedAt',
+            'refundStatus',
+            'saleId',
+            'saleNumber',
+            'saleStatus',
+          ].sort(),
+        );
+      expect(all.failedRefunds).toMatchObject([
+        { saleId: refused, amount: PRICE, reasonCode: 'customer_cancelled' },
+      ]);
+
+      const open = await review(s.auth, '?needsReview=true');
+      expect(open.receipts.items.map((r) => r.saleId)).toEqual([failedLate]);
+      const done = await review(s.auth, '?needsReview=false');
+      expect(done.receipts.items.map((r) => r.saleId)).toEqual([refundedLate]);
+      const paged = await review(s.auth, '?perPage=1&page=2');
+      expect(paged.receipts).toMatchObject({ page: 2, perPage: 1, total: 2 });
+      expect(paged.receipts.items).toHaveLength(1);
+
+      for (const q of ['?needsReview=yes', '?perPage=101', '?page=0', '?x=1'])
+        await get(s.auth, `/payment-review${q}`).expect(422);
+      link = 'down';
+      await get(s.auth, '/payment-review').expect(503);
+      link = 'ok';
+    });
+
+    it('only the owner (payments.manage): a cashier and an admin get 403', async () => {
+      const s = await shop();
+      const kasir = await createCashier(app, s);
+      const adminLike = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+        'reports.view',
+        'staff.manage',
+      ]);
+      await get(kasir.auth, '/payment-review').expect(403);
+      await get(adminLike.auth, '/payment-review').expect(403);
+      await http().get('/payment-review').expect(401);
+      await get(s.auth, '/payment-review').expect(200);
+    });
+
+    it('cross-tenant: store B sees none of store A’s money, and A’s sale is never named to B', async () => {
+      const a = await shop();
+      const b = await shop();
+      await gatewaySettings('succeed');
+      const saleA = await lateMoney(a);
+      expect((await review(a.auth)).receipts.items).toMatchObject([
+        { saleId: saleA },
+      ]);
+      expect(await review(b.auth)).toMatchObject({
+        receipts: { items: [], total: 0 },
+        failedRefunds: [],
+      });
+      // Even if payment-api named A's sale to B, pos-api looks the sale up in B's store only.
+      answerInstead = (c) =>
+        c.url.includes('/unmatched-receipts')
+          ? Response.json({
+              items: [
+                {
+                  id: randomUUID(),
+                  orderRef: saleA,
+                  kind: 'late_payment',
+                  grossAmount: PRICE,
+                  needsReview: true,
+                  refundStatus: 'pending',
+                  createdAt: new Date().toISOString(),
+                  paymentId: randomUUID(),
+                  feeAmount: 10,
+                },
+              ],
+              page: 1,
+              perPage: 50,
+              total: 1,
+            })
+          : null;
+      const leaked = await review(b.auth);
+      expect(leaked.receipts.items).toMatchObject([
+        { saleId: null, saleNumber: null, saleStatus: null, amount: PRICE },
+      ]);
+      expect(leaked.receipts.items[0]).not.toHaveProperty('paymentId');
+      expect(leaked.receipts.items[0]).not.toHaveProperty('feeAmount');
+    });
+  });
+
+  describe('UMK-2042 "Buat QR baru"', () => {
+    const renew = (auth: string, saleId: string, body: object) =>
+      post(auth, `/sales/${saleId}/payment/renew`, body);
+    const live = (saleId: string) =>
+      pay.sql<{ n: number }[]>`
+        select count(*)::int as n from payment.payments
+        where order_ref = ${saleId} and status in ('created', 'pending')`;
+    const renewAt = async (saleId: string) =>
+      (
+        await admin<
+          { payment_renew_at: Date | null }[]
+        >`select payment_renew_at from pos.sales where id = ${saleId}`
+      )[0].payment_renew_at;
+
+    it('a new bill for the same sale: the old one is closed first, key <saleId>:2, stock and voucher stay; the new bill pays the sale once and money on the old one is refunded', async () => {
+      const s = await shop();
+      const first = await sell(s).expect(201);
+      const saleId = first.body.id as string;
+      const oldQr = first.body.payment.checkout.qrString as string;
+      const res = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+      expect(res.body).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        status: 'awaiting_payment',
+        attempt: 2,
+        method: 'fake_qris',
+        amount: PRICE,
+        canRenew: true,
+      });
+      expect(res.body.checkout.qrString).not.toBe(oldQr);
+      const [old, fresh, ...more] = await paymentsOf(saleId);
+      expect(more).toEqual([]);
+      expect(old).toMatchObject({
+        idempotency_key: `${saleId}:1`,
+        status: 'cancelled',
+      });
+      expect(fresh).toMatchObject({
+        idempotency_key: `${saleId}:2`,
+        method: 'fake_qris',
+        amount: String(PRICE),
+        status: 'pending',
+      });
+      expect((await live(saleId))[0].n).toBe(1);
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 2,
+      });
+      expect(await renewAt(saleId)).toBeNull();
+      expect(await onHand(s)).toBe(19);
+
+      // The customer pays the new QR: completed once.
+      const bill2 = (await bills(s.tenantId)).filter(
+        (b) => b.orderRef === saleId,
+      );
+      const open = bill2.find((b) => b.status !== 'cancelled')!;
+      await gateway(s.tenantId, 'POST', `/payments/${open.providerRef}/pay`);
+      const done = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(done.body).toMatchObject({
+        saleStatus: 'completed',
+        status: 'paid',
+        attempt: 2,
+        canRenew: false,
+      });
+      expect(await saleRow(saleId)).toMatchObject({ payment_id: fresh.id });
+
+      // The old QR paid after all: payment-api refunds it, the sale is not paid twice.
+      await gatewaySettings('succeed');
+      const closed = bill2.find((b) => b.status === 'cancelled')!;
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/payments/${closed.providerRef}/late-pay`,
+      );
+      const late = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(late.body).toMatchObject({
+        saleStatus: 'completed',
+        lateReceipts: [{ attempt: 1, amount: PRICE, kind: 'late_payment' }],
+      });
+      expect(
+        (await paymentsOf(saleId)).filter((p) => p.status === 'paid'),
+      ).toHaveLength(1);
+      expect(await shift(s.auth)).toMatchObject({ salesCount: 1 });
+    });
+
+    it('replay safe: the same attempt twice (also at once) makes one new bill; renewing the new bill makes the third; the limit is 409', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      const [x, y] = await Promise.all([
+        renew(s.auth, saleId, { attempt: 1 }),
+        renew(s.auth, saleId, { attempt: 1 }),
+      ]);
+      expect([x.status, y.status]).toEqual([200, 200]);
+      expect(x.body.attempt).toBe(2);
+      expect(y.body.attempt).toBe(2);
+      expect(x.body.checkout).toEqual(y.body.checkout);
+      const again = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+      expect(again.body.checkout).toEqual(x.body.checkout);
+      expect(await paymentsOf(saleId)).toHaveLength(2);
+      expect((await live(saleId))[0].n).toBe(1);
+
+      await renew(s.auth, saleId, { attempt: 2 }).expect(200);
+      await renew(s.auth, saleId, { attempt: 3 }).expect(200);
+      const fifth = await renew(s.auth, saleId, { attempt: 4 }).expect(200);
+      expect(fifth.body).toMatchObject({ attempt: 5, canRenew: false });
+      const limit = await renew(s.auth, saleId, { attempt: 5 }).expect(409);
+      expect(limit.body.code).toBe('attempt_limit');
+      expect(await paymentsOf(saleId)).toHaveLength(5);
+      expect((await live(saleId))[0].n).toBe(1);
+      // An attempt the sale never had is a bad request.
+      await renew(s.auth, saleId, { attempt: 9 }).expect(422);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+      expect((await live(saleId))[0].n).toBe(0);
+      expect(await onHand(s)).toBe(20);
+    });
+
+    it('the customer paid the old bill first: 409 already_paid, completed with it, no new bill', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await onBill(s, saleId, 'pay');
+      const res = await renew(s.auth, saleId, { attempt: 1 }).expect(409);
+      expect(res.body.code).toBe('already_paid');
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'completed',
+        payment_attempt: 1,
+      });
+      expect(await paymentsOf(saleId)).toHaveLength(1);
+    });
+
+    it('a poll that read the sale before the renewal and finds the old bill closed never cancels it (stale rule)', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      // The poll reads the sale (no intent yet) and is held before it asks payment-api.
+      const pollHold = hold(isFindByKey, 'before');
+      const poll = get(s.auth, `/sales/${saleId}/payment`).then((r) => r);
+      await pollHold.held;
+      // The renewal closes the old bill and is held there, before the sale moves.
+      const closeHold = hold(isCancel, 'after');
+      const renewing = renew(s.auth, saleId, { attempt: 1 }).then((r) => r);
+      await closeHold.held;
+      // The poll now finds the old bill closed: it must not cancel the sale.
+      try {
+        pollHold.release();
+        expect((await poll).status).toBe(200);
+        expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+        // Nor do a check or the job while the renewal runs.
+        await post(s.auth, `/sales/${saleId}/payment/check`).expect(200);
+        await sync.tick(new Date());
+        expect((await saleRow(saleId)).status).toBe('awaiting_payment');
+      } finally {
+        closeHold.release();
+      }
+      expect((await renewing).body).toMatchObject({
+        saleStatus: 'awaiting_payment',
+        attempt: 2,
+      });
+      expect(await onHand(s)).toBe(19);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+    });
+
+    it('cash and renew exclude each other; a cancel during a renewal wins', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      // A switch to cash asked (its request at work): no new bill.
+      await admin`update pos.sales set switch_cash_paid = 10000 where id = ${saleId}`;
+      const r = await renew(s.auth, saleId, { attempt: 1 }).expect(409);
+      expect(r.body.code).toBe('switching_to_cash');
+      await admin`update pos.sales set switch_cash_paid = null where id = ${saleId}`;
+      // The cash request drops a renewal intent: cash wins.
+      await admin`update pos.sales set payment_renew_at = now() where id = ${saleId}`;
+      const cash = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 10_000,
+      }).expect(200);
+      expect(cash.body).toMatchObject({
+        saleStatus: 'completed',
+        method: 'cash',
+      });
+      expect(await renewAt(saleId)).toBeNull();
+      // A cash sale gets no new bill.
+      const after = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
+      expect(after.body.code).toBe('already_paid');
+
+      // A cancel while a renewal is held: one outcome, cancelled, no live bill.
+      const other = (await sell(s).expect(201)).body.id as string;
+      const h = hold(isCancel, 'before');
+      const renewing = renew(s.auth, other, { attempt: 1 }).then((x) => x);
+      await h.held;
+      const cancel = post(s.auth, `/sales/${other}/payment/cancel`).then(
+        (x) => x,
+      );
+      h.release();
+      const [rn, cn] = await Promise.all([renewing, cancel]);
+      expect(cn.status).toBe(200);
+      expect([200, 409, 503]).toContain(rn.status);
+      // Whatever the renewal answered, the sale ends cancelled or waiting on exactly one bill.
+      const row = await saleRow(other);
+      if (row.status === 'awaiting_payment') {
+        expect((await live(other))[0].n).toBe(1);
+        await post(s.auth, `/sales/${other}/payment/cancel`).expect(200);
+      }
+      expect((await saleRow(other)).status).toBe('cancelled');
+      expect((await live(other))[0].n).toBe(0);
+    });
+
+    it('payment-api down: 503, the intent is taken back and the sale still waits on its old bill', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      link = 'down';
+      const res = await renew(s.auth, saleId, { attempt: 1 }).expect(503);
+      expect(res.body.code).toBe('payment_unavailable');
+      link = 'ok';
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 1,
+      });
+      expect(await renewAt(saleId)).toBeNull();
+      expect((await paymentsOf(saleId))[0].status).toBe('pending');
+      await onBill(s, saleId, 'pay');
+      const paid = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(paid.body).toMatchObject({ saleStatus: 'completed', attempt: 1 });
+    });
+
+    it('the new bill’s charge got no answer: 503 renew_pending, a repeat answers the bill; if nobody repeats, the job gives the sale up with its stock back', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      link = 'no_charge';
+      const res = await renew(s.auth, saleId, { attempt: 1 }).expect(503);
+      expect(res.body.code).toBe('renew_pending');
+      link = 'ok';
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 2,
+      });
+      expect((await live(saleId))[0].n).toBe(0);
+      const again = await renew(s.auth, saleId, { attempt: 1 }).expect(200);
+      expect(again.body).toMatchObject({ attempt: 2 });
+      expect(again.body.checkout.qrString).toEqual(expect.any(String));
+      expect((await live(saleId))[0].n).toBe(1);
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+
+      const other = (await sell(s).expect(201)).body.id as string;
+      link = 'no_charge';
+      await renew(s.auth, other, { attempt: 1 }).expect(503);
+      link = 'ok';
+      // A poll never gives up; the job does after its wait, closing the key first.
+      await get(s.auth, `/sales/${other}/payment`).expect(200);
+      expect((await saleRow(other)).status).toBe('awaiting_payment');
+      await sync.tick(later());
+      expect((await saleRow(other)).status).toBe('cancelled');
+      expect(
+        (await paymentsOf(other)).map((p) => [p.idempotency_key, p.status]),
+      ).toEqual([
+        [`${other}:1`, 'cancelled'],
+        [`${other}:2`, 'cancelled'],
+      ]);
+      expect(await onHand(s)).toBe(20);
+    });
+
+    it('the job takes back a stranded intent; the sale then waits on its open bill', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      await admin`update pos.sales set payment_renew_at = now() - interval '10 minutes' where id = ${saleId}`;
+      await sync.tick(later());
+      expect(await renewAt(saleId)).toBeNull();
+      expect(await saleRow(saleId)).toMatchObject({
+        status: 'awaiting_payment',
+        payment_attempt: 1,
+      });
+      await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+    });
+
+    it('who: the sale’s cashier or a sales.void holder; another cashier and store B get 404; a cash sale 409; a bad body 422', async () => {
+      const s = await shop();
+      const b = await shop();
+      const ayu = await createCashier(app, s);
+      const budi = await createCashier(app, s);
+      const supervisor = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+      ]);
+      await post(ayu.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const saleId = (await sell(s, {}, randomUUID(), ayu.auth).expect(201))
+        .body.id as string;
+      await renew(budi.auth, saleId, { attempt: 1 }).expect(404);
+      await renew(b.auth, saleId, { attempt: 1 }).expect(404);
+      expect((await paymentsOf(saleId))[0].status).toBe('pending');
+      for (const bad of [
+        {},
+        { attempt: 0 },
+        { attempt: 1.5 },
+        { attempt: 1, x: 1 },
+      ])
+        await renew(ayu.auth, saleId, bad).expect(422);
+      await renew(ayu.auth, saleId, { attempt: 1 }).expect(200);
+      await renew(supervisor.auth, saleId, { attempt: 2 }).expect(200);
+      await http()
+        .post(`/sales/${saleId}/payment/renew`)
+        .send({ attempt: 3 })
+        .expect(401);
+      await post(ayu.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+
+      const cash = await post(
+        s.auth,
+        '/sales',
+        {
+          lines: [{ productId: s.productId, qty: 1 }],
+          paid: 10_000,
+        },
+        randomUUID(),
+      ).expect(201);
+      const r = await renew(s.auth, cash.body.id, { attempt: 1 }).expect(409);
+      expect(r.body.code).toBe('already_paid');
     });
   });
 
