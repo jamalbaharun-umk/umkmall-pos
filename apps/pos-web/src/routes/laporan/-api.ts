@@ -1,6 +1,7 @@
 import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
+import type { KasbonDetail, KasbonFilter, KasbonReport, KasbonSummary } from './-kasbon'
 
 // Server functions for U5 reports. pos-api computes every number (integer rupiah); these only relay.
 
@@ -104,5 +105,18 @@ export type ProfitLoss = {
 export const loadProfitLoss = createServerFn()
   .validator((p: 'today' | 'week' | 'month') => p)
   .handler(({ data }) => load<ProfitLoss>(`/reports/profit-loss?period=${encodeURIComponent(data)}`))
+
+/** UMK-1964 "Laporan kasbon": summary and the customers who still owe (needs reports.view). */
+export const loadKasbon = createServerFn()
+  .validator((f: KasbonFilter) => f)
+  .handler(({ data }) => load<KasbonReport>(`/reports/receivables?filter=${encodeURIComponent(data)}`))
+
+/** One customer's open kasbon with their payments; 404 when the customer is not this store's. */
+export const loadKasbonCustomer = createServerFn()
+  .validator((memberId: string) => memberId)
+  .handler(({ data }) => load<KasbonDetail>(`/reports/receivables/customers/${encodeURIComponent(data)}`))
+
+/** The dashboard card "Piutang belum dibayar". */
+export const loadKasbonSummary = createServerFn().handler(() => load<KasbonSummary>('/reports/receivables/summary'))
 
 export { rupiah } from '@/components/page'

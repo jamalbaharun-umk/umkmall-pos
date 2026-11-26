@@ -57,6 +57,9 @@ import { Route as KasirShiftIndexRouteImport } from './routes/kasir/shift/index'
 import { Route as KasirShiftIdRouteImport } from './routes/kasir/shift/$id'
 import { Route as KasirStrukIdRouteImport } from './routes/kasir/struk.$id'
 import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis'
+import { Route as LaporanCsvKasbonRouteImport } from './routes/laporan/csv.kasbon'
+import { Route as LaporanKasbonIndexRouteImport } from './routes/laporan/kasbon.index'
+import { Route as LaporanKasbonMemberIdRouteImport } from './routes/laporan/kasbon.$memberId'
 import { Route as PembelianIdUbahRouteImport } from './routes/pembelian/$id_.ubah'
 import { Route as StafPeranIndexRouteImport } from './routes/staf/peran/index'
 import { Route as StafPeranIdRouteImport } from './routes/staf/peran/$id'
@@ -306,6 +309,21 @@ const LaporanCsvJenisRoute = LaporanCsvJenisRouteImport.update({
   path: '/laporan/csv/$jenis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LaporanCsvKasbonRoute = LaporanCsvKasbonRouteImport.update({
+  id: '/laporan/csv/kasbon',
+  path: '/laporan/csv/kasbon',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LaporanKasbonIndexRoute = LaporanKasbonIndexRouteImport.update({
+  id: '/laporan/kasbon/',
+  path: '/laporan/kasbon/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LaporanKasbonMemberIdRoute = LaporanKasbonMemberIdRouteImport.update({
+  id: '/laporan/kasbon/$memberId',
+  path: '/laporan/kasbon/$memberId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PembelianIdUbahRoute = PembelianIdUbahRouteImport.update({
   id: '/pembelian/$id_/ubah',
   path: '/pembelian/$id/ubah',
@@ -389,12 +407,15 @@ export interface FileRoutesByFullPath {
   '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/laporan/csv/kasbon': typeof LaporanCsvKasbonRoute
+  '/laporan/kasbon/$memberId': typeof LaporanKasbonMemberIdRoute
   '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
   '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
   '/kasir/shift/': typeof KasirShiftIndexRoute
+  '/laporan/kasbon/': typeof LaporanKasbonIndexRoute
   '/staf/peran/': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
@@ -446,12 +467,15 @@ export interface FileRoutesByTo {
   '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/laporan/csv/kasbon': typeof LaporanCsvKasbonRoute
+  '/laporan/kasbon/$memberId': typeof LaporanKasbonMemberIdRoute
   '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products': typeof CatalogProductsIndexRoute
   '/kasir/riwayat': typeof KasirRiwayatIndexRoute
   '/kasir/shift': typeof KasirShiftIndexRoute
+  '/laporan/kasbon': typeof LaporanKasbonIndexRoute
   '/staf/peran': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id': typeof CatalogProductsIdIndexRoute
@@ -504,12 +528,15 @@ export interface FileRoutesById {
   '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
+  '/laporan/csv/kasbon': typeof LaporanCsvKasbonRoute
+  '/laporan/kasbon/$memberId': typeof LaporanKasbonMemberIdRoute
   '/pembelian/$id_/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
   '/catalog/products/': typeof CatalogProductsIndexRoute
   '/kasir/riwayat/': typeof KasirRiwayatIndexRoute
   '/kasir/shift/': typeof KasirShiftIndexRoute
+  '/laporan/kasbon/': typeof LaporanKasbonIndexRoute
   '/staf/peran/': typeof StafPeranIndexRoute
   '/catalog/products/$id/ubah': typeof CatalogProductsIdUbahRoute
   '/catalog/products/$id/': typeof CatalogProductsIdIndexRoute
@@ -563,12 +590,15 @@ export interface FileRouteTypes {
     | '/kasir/shift/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/laporan/csv/kasbon'
+    | '/laporan/kasbon/$memberId'
     | '/pembelian/$id/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
     | '/catalog/products/'
     | '/kasir/riwayat/'
     | '/kasir/shift/'
+    | '/laporan/kasbon/'
     | '/staf/peran/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
@@ -620,12 +650,15 @@ export interface FileRouteTypes {
     | '/kasir/shift/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/laporan/csv/kasbon'
+    | '/laporan/kasbon/$memberId'
     | '/pembelian/$id/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
     | '/catalog/products'
     | '/kasir/riwayat'
     | '/kasir/shift'
+    | '/laporan/kasbon'
     | '/staf/peran'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id'
@@ -677,12 +710,15 @@ export interface FileRouteTypes {
     | '/kasir/shift/$id'
     | '/kasir/struk/$id'
     | '/laporan/csv/$jenis'
+    | '/laporan/csv/kasbon'
+    | '/laporan/kasbon/$memberId'
     | '/pembelian/$id_/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
     | '/catalog/products/'
     | '/kasir/riwayat/'
     | '/kasir/shift/'
+    | '/laporan/kasbon/'
     | '/staf/peran/'
     | '/catalog/products/$id/ubah'
     | '/catalog/products/$id/'
@@ -735,12 +771,15 @@ export interface RootRouteChildren {
   KasirShiftIdRoute: typeof KasirShiftIdRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
+  LaporanCsvKasbonRoute: typeof LaporanCsvKasbonRoute
+  LaporanKasbonMemberIdRoute: typeof LaporanKasbonMemberIdRoute
   PembelianIdUbahRoute: typeof PembelianIdUbahRoute
   StafPeranIdRoute: typeof StafPeranIdRoute
   StafPeranBaruRoute: typeof StafPeranBaruRoute
   CatalogProductsIndexRoute: typeof CatalogProductsIndexRoute
   KasirRiwayatIndexRoute: typeof KasirRiwayatIndexRoute
   KasirShiftIndexRoute: typeof KasirShiftIndexRoute
+  LaporanKasbonIndexRoute: typeof LaporanKasbonIndexRoute
   StafPeranIndexRoute: typeof StafPeranIndexRoute
   CatalogProductsIdUbahRoute: typeof CatalogProductsIdUbahRoute
   CatalogProductsIdIndexRoute: typeof CatalogProductsIdIndexRoute
@@ -1085,6 +1124,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaporanCsvJenisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/laporan/csv/kasbon': {
+      id: '/laporan/csv/kasbon'
+      path: '/laporan/csv/kasbon'
+      fullPath: '/laporan/csv/kasbon'
+      preLoaderRoute: typeof LaporanCsvKasbonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/laporan/kasbon/': {
+      id: '/laporan/kasbon/'
+      path: '/laporan/kasbon'
+      fullPath: '/laporan/kasbon/'
+      preLoaderRoute: typeof LaporanKasbonIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/laporan/kasbon/$memberId': {
+      id: '/laporan/kasbon/$memberId'
+      path: '/laporan/kasbon/$memberId'
+      fullPath: '/laporan/kasbon/$memberId'
+      preLoaderRoute: typeof LaporanKasbonMemberIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pembelian/$id_/ubah': {
       id: '/pembelian/$id_/ubah'
       path: '/pembelian/$id/ubah'
@@ -1183,12 +1243,15 @@ const rootRouteChildren: RootRouteChildren = {
   KasirShiftIdRoute: KasirShiftIdRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
+  LaporanCsvKasbonRoute: LaporanCsvKasbonRoute,
+  LaporanKasbonMemberIdRoute: LaporanKasbonMemberIdRoute,
   PembelianIdUbahRoute: PembelianIdUbahRoute,
   StafPeranIdRoute: StafPeranIdRoute,
   StafPeranBaruRoute: StafPeranBaruRoute,
   CatalogProductsIndexRoute: CatalogProductsIndexRoute,
   KasirRiwayatIndexRoute: KasirRiwayatIndexRoute,
   KasirShiftIndexRoute: KasirShiftIndexRoute,
+  LaporanKasbonIndexRoute: LaporanKasbonIndexRoute,
   StafPeranIndexRoute: StafPeranIndexRoute,
   CatalogProductsIdUbahRoute: CatalogProductsIdUbahRoute,
   CatalogProductsIdIndexRoute: CatalogProductsIdIndexRoute,

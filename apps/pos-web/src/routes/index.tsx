@@ -9,7 +9,7 @@ import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
 import { devSignInUser } from '@/lib/sign-in'
 import { OwnerSignIn } from './-owner-sign-in'
-import { MetricWidgets } from './laporan/-dashboard-widgets'
+import { MetricWidgets, ReceivablesCard } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
   const devSignIn = Boolean(devSignInUser())
@@ -62,6 +62,7 @@ function Dashboard({ products }: { products: number }) {
   return (
     <Page title="Dashboard">
       <MetricWidgets />
+      <ReceivablesCard />
       <Panel>
         {products === 0 ? (
           <Empty

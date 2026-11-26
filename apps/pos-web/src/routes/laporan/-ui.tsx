@@ -20,6 +20,9 @@ export function ReportLayout({ title, children }: { title: string; children: Rea
         <Link to="/laporan/untung-rugi" search={{ period: 'today' }} className="whitespace-nowrap rounded-lg px-3 py-2 hover:bg-weak-brand" activeProps={{ className: 'bg-weak-brand font-medium text-default-brand' }} inactiveProps={{ className: 'text-default-primary' }}>
           Untung rugi
         </Link>
+        <Link to="/laporan/kasbon" className="whitespace-nowrap rounded-lg px-3 py-2 hover:bg-weak-brand" activeProps={{ className: 'bg-weak-brand font-medium text-default-brand' }} inactiveProps={{ className: 'text-default-primary' }}>
+          Laporan kasbon
+        </Link>
       </nav>
       {children}
     </Page>

@@ -185,6 +185,31 @@ function Printable({ def, report }: { def: ReportDef; report: Report }) {
           </div>
         ))}
       </dl>
+      {def.kind === 'sales' && report.totals.creditSales !== undefined && <SalesSplit totals={report.totals} />}
     </Card>
+  )
+}
+
+/**
+ * UMK-1964: the revenue split into Lunas and Kasbon (they add up to it), and the kasbon instalments received in the
+ * range on their own line: money in, not new revenue.
+ */
+function SalesSplit({ totals }: { totals: Record<string, number> }) {
+  const line = (label: string, value: number, sub = false) => (
+    <div className={`flex justify-between gap-4 ${sub ? 'pl-4' : ''}`}>
+      <dt className={sub ? 'text-default-secondary' : 'font-medium text-default-primary'}>{label}</dt>
+      <dd className="font-medium tabular-nums text-default-primary">{rupiah(value)}</dd>
+    </div>
+  )
+  return (
+    <section aria-label="Lunas dan kasbon" className="mt-4 border-t border-default-secondary pt-4">
+      <dl className="grid max-w-md gap-y-1">
+        {line('Pendapatan', totals.revenue ?? 0)}
+        {line('Lunas', totals.settledSales ?? 0, true)}
+        {line('Kasbon', totals.creditSales ?? 0, true)}
+        {line('Piutang dibayar (uang masuk)', totals.receivablePaid ?? 0)}
+      </dl>
+      <p className="mt-2 text-sm text-default-secondary">Pembayaran piutang bukan penjualan baru; omzet tidak dihitung dua kali.</p>
+    </section>
   )
 }
