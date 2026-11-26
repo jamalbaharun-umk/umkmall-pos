@@ -17,12 +17,14 @@ import { tenants } from './tenants';
 /**
  * What the work is about; `ref_id` is that row's id (pos.sales, pos.receivable_payments, pos.sale_voids).
  * `refund` is a pos.sale_voids row whose PG refund is still pending and is being followed.
+ * `receivable_reversal` is a reversal row of pos.receivable_payments whose original payment is still to be voided.
  */
 export const PAYMENT_SYNC_KINDS = [
   'sale',
   'receivable_payment',
   'void',
   'refund',
+  'receivable_reversal',
 ] as const;
 export type PaymentSyncKind = (typeof PAYMENT_SYNC_KINDS)[number];
 

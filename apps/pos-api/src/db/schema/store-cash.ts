@@ -33,12 +33,16 @@ export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
  *   the cash given back goes to the store, the closed shift never changes (owner ruling 2026-11-25).
  * - purchase_payment_void (in): ref_id = pos.purchase_payments.id, a voided drawer supplier payment whose shift
  *   was already closed (UMK-1970), the same rule as expense_void.
+ * - receivable_reversal (out): ref_id = the reversal row in pos.receivable_payments (UMK-1971), a corrected cash
+ *   instalment that was collected outside a shift: it lowers what that collector holds (the original payment's
+ *   actor, not this row's), never below what they deposited.
  */
 export const STORE_CASH_KINDS = [
   'receivable_payment',
   'collector_deposit',
   'expense_void',
   'purchase_payment_void',
+  'receivable_reversal',
 ] as const;
 
 export const storeCashEntries = pos
@@ -76,7 +80,7 @@ export const storeCashEntries = pos
 // UMK-1924 U3 the handover of a collector's outside-shift cash: who handed over (the collector), who
 // received (the actor who recorded it), how much, and the shift drawer it went into. Its ledger lines are
 // the `collector_deposit` entries (store ledger out, shift ledger in) whose ref_id is this row. Append-only.
-// A collector's outstanding = Σ their `receivable_payment` entries − Σ their deposits.
+// A collector's outstanding = Σ their `receivable_payment` entries − Σ the reversals of those (UMK-1971) − Σ their deposits.
 export const storeCashDeposits = pos
   .table(
     'store_cash_deposits',

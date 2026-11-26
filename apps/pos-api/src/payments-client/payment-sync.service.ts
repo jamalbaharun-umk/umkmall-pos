@@ -22,6 +22,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
   type CancelReason,
+  type CorrectionReason,
   type PaymentSyncKind,
   paymentSyncIssues,
   receivablePayments,
@@ -165,6 +166,8 @@ export type TickResult = {
   cancelled: number;
   recorded: number;
   voided: number;
+  /** Corrected kasbon payments voided in payment-api (UMK-1971). */
+  reversed: number;
   /** Pending PG refunds that settled (succeeded or refused). */
   refunds: number;
   /** Rows payment-api refused (counted towards parking) or that failed here. */
@@ -1082,6 +1085,54 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  /**
+   * UMK-1971: voids, in payment-api, the kasbon payment that a correction reversed (recording it first when it was
+   * not recorded yet), with the correction's reason, actor and PIN-verified approver. The new payment of the
+   * correction is recorded as any instalment (`recordReceivablePayment`). True when nothing is left to do.
+   */
+  async syncReceivableReversal(
+    tenantId: string,
+    reversalId: string,
+  ): Promise<boolean> {
+    if (!this.enabled) return false;
+    const mine = and(
+      eq(receivablePayments.tenantId, tenantId),
+      eq(receivablePayments.id, reversalId),
+    );
+    const [r] = await this.db
+      .select({
+        reversesId: receivablePayments.reversesId,
+        reasonCode: receivablePayments.reasonCode,
+        note: receivablePayments.note,
+        actorId: receivablePayments.actorId,
+        actorKind: receivablePayments.actorKind,
+        approvedBy: receivablePayments.approvedBy,
+        approvedByKind: receivablePayments.approvedByKind,
+        pending: receivablePayments.paymentSyncPending,
+      })
+      .from(receivablePayments)
+      .where(mine);
+    if (!r?.reversesId || !r.reasonCode || !r.approvedBy || !r.approvedByKind)
+      return false;
+    if (!r.pending) return true;
+    // Null: the original was taken while payment-api was off, so there is nothing to void there.
+    const paymentId = await this.recordKasbon(tenantId, r.reversesId);
+    if (paymentId) {
+      // Idempotent at payment-api: a payment already voided is answered unchanged.
+      const payment = await this.client.void(tenantId, paymentId, {
+        ...correctionCancel(r.reasonCode, r.note),
+        actorRef: actorRef(r.actorKind, r.actorId),
+        approvedBy: actorRef(r.approvedByKind, r.approvedBy),
+      });
+      if (payment.status !== 'voided') throw refused('payment_mismatch');
+    }
+    await this.db
+      .update(receivablePayments)
+      .set({ paymentSyncPending: false })
+      .where(mine);
+    return true;
+  }
+
   /** The refund record of a sale (a void whose money goes back through the PG) and the sale's payment. */
   private async refundOf(tenantId: string, saleId: string) {
     const [row] = await this.db
@@ -1309,6 +1360,29 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         },
       },
       {
+        // UMK-1971: after the payments above are recorded, so a reversed payment is usually there already.
+        kind: 'receivable_reversal',
+        rows: () =>
+          this.db
+            .select({
+              id: receivablePayments.id,
+              tenantId: receivablePayments.tenantId,
+            })
+            .from(receivablePayments)
+            .where(
+              and(
+                eq(receivablePayments.paymentSyncPending, true),
+                notParked('receivable_reversal', receivablePayments.id),
+              ),
+            )
+            .orderBy(asc(receivablePayments.createdAt))
+            .limit(SWEEP_LIMIT),
+        work: async (row) => {
+          if (await this.syncReceivableReversal(row.tenantId, row.id))
+            result.reversed += 1;
+        },
+      },
+      {
         kind: 'void',
         rows: () =>
           this.db
@@ -1493,10 +1567,46 @@ const EMPTY: TickResult = {
   cancelled: 0,
   recorded: 0,
   voided: 0,
+  reversed: 0,
   refunds: 0,
   failed: 0,
   stopped: false,
 };
+
+/**
+ * A correction's reason as payment-api's cancel reason (UMK-1971). payment-api has no "wrong amount" or "wrong
+ * customer": those go as `other`, whose note payment-api requires, with the store's own note after it.
+ */
+const CORRECTION_CANCEL: Record<
+  CorrectionReason,
+  {
+    reasonCode: 'wrong_payment_method' | 'duplicate_transaction' | 'other';
+    label: string;
+  }
+> = {
+  wrong_amount: { reasonCode: 'other', label: 'Koreksi kasbon: salah jumlah' },
+  wrong_method: {
+    reasonCode: 'wrong_payment_method',
+    label: 'Koreksi kasbon: salah cara bayar',
+  },
+  wrong_customer: {
+    reasonCode: 'other',
+    label: 'Koreksi kasbon: salah pelanggan',
+  },
+  duplicate: {
+    reasonCode: 'duplicate_transaction',
+    label: 'Koreksi kasbon: tercatat dua kali',
+  },
+  other: { reasonCode: 'other', label: 'Koreksi kasbon' },
+};
+
+function correctionCancel(reason: CorrectionReason, note: string | null) {
+  const c = CORRECTION_CANCEL[reason];
+  return {
+    reasonCode: c.reasonCode,
+    note: (note ? `${c.label}: ${note}` : c.label).slice(0, 500),
+  };
+}
 
 /** An error for a log line: its class, and payment-api's code and status when it has them. Nothing else. */
 function describe(error: unknown): string {

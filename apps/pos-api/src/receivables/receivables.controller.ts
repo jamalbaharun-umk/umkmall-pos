@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Headers,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   and,
@@ -18,6 +19,7 @@ import {
   eq,
   gt,
   ilike,
+  inArray,
   isNotNull,
   isNull,
   or,
@@ -45,6 +47,7 @@ import {
   saleLines,
   sales,
   shiftCashEntries,
+  shifts,
   staff,
 } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -54,8 +57,14 @@ import { paymentMethodCode } from '../payments-client/payments.client';
 import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
 import { recordStoreCash } from '../store-cash/store-cash-ledger';
+import { StoreCashDepositsService } from '../store-cash/store-cash-deposits.service';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
+import { VoidPins } from '../void/void-pin';
+import {
+  CorrectionInput,
+  ReceivableCorrectionsService,
+} from './receivable-corrections.service';
 
 const PaymentInput = z
   .object({
@@ -95,6 +104,14 @@ const outsideShiftCollected = sql<string>`(
   where ${receivablePayments.tenantId} = ${receivables.tenantId}
     and ${receivablePayments.receivableId} = ${receivables.id}
     and ${receivablePayments.collectedOutsideShift})`.mapWith(Number);
+
+/**
+ * A payment that still stands (UMK-1971): not a reversal row and not reversed by one. Only these are given back
+ * when the kasbon's sale is voided; the book's Σ amount already nets a reversed payment and its reversal to 0.
+ */
+export const standingPayment = sql`(${receivablePayments.reversesId} is null and not exists (
+  select 1 from ${receivablePayments} x
+  where x.tenant_id = ${receivablePayments.tenantId} and x.reverses_id = ${receivablePayments.id}))`;
 
 const columns = {
   id: receivables.id,
@@ -198,6 +215,7 @@ export async function cancelReceivable(
       and(
         eq(receivablePayments.tenantId, tenantId),
         eq(receivablePayments.receivableId, r.id),
+        standingPayment,
       ),
     )
     .orderBy(asc(receivablePayments.createdAt), asc(receivablePayments.id));
@@ -330,6 +348,21 @@ export class ReceivablesService {
             else coalesce(${staff.name}, 'Staf') end`,
           collectedOutsideShift: receivablePayments.collectedOutsideShift,
           shiftId: shiftCashEntries.shiftId,
+          // UMK-1971: the drawer's shift is closed (a correction's cash then goes through the shift open now).
+          shiftClosed: sql<boolean>`${shifts.closedAt} is not null`,
+          isCash: paymentMethods.isCash,
+          // The kasbon's down payment: part of its sale (the only row without a key), corrected by a void only.
+          downPayment: sql<boolean>`${receivablePayments.idempotencyKey} is null`,
+          // A correction: a reversal row names the payment it cancels, a new payment the one it replaces; a
+          // reversed payment is named by its reversal (`reversedById`).
+          reversesId: receivablePayments.reversesId,
+          replacesId: receivablePayments.replacesId,
+          reversedById: sql<
+            string | null
+          >`(select x.id from ${receivablePayments} x
+            where x.tenant_id = ${receivablePayments.tenantId} and x.reverses_id = ${receivablePayments.id})`,
+          reasonCode: receivablePayments.reasonCode,
+          note: receivablePayments.note,
           createdAt: receivablePayments.createdAt,
         })
         .from(receivablePayments)
@@ -348,8 +381,18 @@ export class ReceivablesService {
           shiftCashEntries,
           and(
             eq(shiftCashEntries.tenantId, receivablePayments.tenantId),
-            eq(shiftCashEntries.kind, 'receivable_payment'),
+            inArray(shiftCashEntries.kind, [
+              'receivable_payment',
+              'receivable_reversal',
+            ]),
             eq(shiftCashEntries.refId, receivablePayments.id),
+          ),
+        )
+        .leftJoin(
+          shifts,
+          and(
+            eq(shifts.tenantId, shiftCashEntries.tenantId),
+            eq(shifts.id, shiftCashEntries.shiftId),
           ),
         )
         .where(
@@ -358,9 +401,32 @@ export class ReceivablesService {
             eq(receivablePayments.receivableId, id),
           ),
         )
-        .orderBy(asc(receivablePayments.createdAt)),
+        // A correction's reversal and its new payment share one instant: the reversal is listed first.
+        .orderBy(
+          asc(receivablePayments.createdAt),
+          sql`${receivablePayments.reversesId} is null`,
+          asc(receivablePayments.id),
+        ),
     ]);
-    return { ...row, lines, payments };
+    return {
+      ...row,
+      lines,
+      payments: payments.map((p) => ({
+        ...p,
+        // `active` stands; `reversed` was cancelled by a correction (its reversal is `reversedById`); `reversal`
+        // is the minus line of a correction.
+        status: p.reversesId
+          ? ('reversal' as const)
+          : p.reversedById
+            ? ('reversed' as const)
+            : ('active' as const),
+        correctable:
+          !p.reversesId &&
+          !p.reversedById &&
+          !p.downPayment &&
+          row.cancelledAt === null,
+      })),
+    };
   }
 
   async pay(s: PosSession, id: string, key: string, input: PaymentInput) {
@@ -491,7 +557,7 @@ export class ReceivablesService {
   }
 
   /** A live, non-credit method of this store (a kasbon is not paid with another kasbon). */
-  private async method(tx: Tx, tenantId: string, id?: string) {
+  async method(tx: Tx, tenantId: string, id?: string) {
     if (!id)
       await tx
         .insert(paymentMethods)
@@ -538,7 +604,10 @@ export class ReceivablesService {
 
 @Controller('receivables')
 export class ReceivablesController {
-  constructor(private readonly receivables: ReceivablesService) {}
+  constructor(
+    private readonly receivables: ReceivablesService,
+    private readonly corrections: ReceivableCorrectionsService,
+  ) {}
 
   @AgentRoute()
   @Get()
@@ -574,10 +643,45 @@ export class ReceivablesController {
       validate(PaymentInput, body),
     );
   }
+
+  /**
+   * "Koreksi pembayaran" (UMK-1971): a reversal of the payment plus, unless `replacement` is null, the payment as it
+   * should have been. For the owner and staff holding `sales.void` (as a void), approved by a void PIN. Not an
+   * agent route.
+   */
+  @Post(':id/payments/:paymentId/correction')
+  @RequirePermission('sales.void')
+  correct(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    // The kasbon itself is read with `receivables.manage`; a void permission alone does not open it.
+    if (!hasPermission(s, 'receivables.manage')) throw new ForbiddenException();
+    const { idempotencyKey } = validate(
+      z.object({ idempotencyKey: IdempotencyKey }),
+      { idempotencyKey: key },
+    );
+    return this.corrections.correct(
+      s,
+      parseId(id),
+      parseId(paymentId),
+      idempotencyKey,
+      validate(CorrectionInput, body),
+    );
+  }
 }
 
 @Module({
   controllers: [ReceivablesController],
-  providers: [ReceivablesService],
+  providers: [
+    ReceivablesService,
+    ReceivableCorrectionsService,
+    // Stateless readers of their own tables, also provided by the void and store cash modules.
+    VoidPins,
+    StoreCashDepositsService,
+  ],
 })
 export class ReceivablesModule {}

@@ -83,7 +83,10 @@ export type CollectorCash = {
   collectorId: string;
   collectorKind: 'owner' | 'cashier';
   collectorName: string;
-  /** Cash taken outside every shift (store ledger `in`, kind `receivable_payment`). */
+  /**
+   * Cash taken outside every shift (store ledger `in`, kind `receivable_payment`), minus the corrected ones (store
+   * ledger `out`, kind `receivable_reversal`, UMK-1971).
+   */
   collected: number;
   /** Of that, handed over to the store safe. */
   handedOver: number;
@@ -231,10 +234,20 @@ export class StoreCashDepositsService {
              case when x.actor_kind = 'owner' then true
                   else coalesce(st.active and st.deleted_at is null, false) end as active
         from (
-          select e.actor_id, e.actor_kind, sum(e.amount) as collected
-            from pos.store_cash_entries e
-           where e.tenant_id = ${tenantId} and e.direction = 'in' and e.kind = 'receivable_payment'
-           group by e.actor_id, e.actor_kind) x
+          select c.actor_id, c.actor_kind, sum(c.amount) as collected
+            from (
+              select e.actor_id, e.actor_kind, e.amount
+                from pos.store_cash_entries e
+               where e.tenant_id = ${tenantId} and e.direction = 'in' and e.kind = 'receivable_payment'
+              union all
+              -- UMK-1971: a corrected outside-shift instalment leaves the collector who took it (the reversed
+              -- payment's actor), not whoever recorded the correction.
+              select p.actor_id, p.actor_kind, -e.amount
+                from pos.store_cash_entries e
+                join pos.receivable_payments r on r.tenant_id = e.tenant_id and r.id = e.ref_id
+                join pos.receivable_payments p on p.tenant_id = r.tenant_id and p.id = r.reverses_id
+               where e.tenant_id = ${tenantId} and e.direction = 'out' and e.kind = 'receivable_reversal') c
+           group by c.actor_id, c.actor_kind) x
         left join pos.staff st on st.tenant_id = ${tenantId} and st.id = x.actor_id
         left join lateral (
           select sum(dep.amount) as handed_over from pos.store_cash_deposits dep
