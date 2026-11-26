@@ -115,8 +115,13 @@ export function refundLabel(r: Pick<ReviewReceipt, 'refundStatus' | 'needsReview
 
 /** What the owner does about one row. */
 export function receiptTodo(r: Pick<ReviewReceipt, 'refundStatus' | 'needsReview'>): string {
-  if (r.refundStatus === 'refunded') return 'Tidak perlu tindakan.'
-  if (r.refundStatus === 'pending') return 'Gateway sedang mengembalikan uangnya. Tidak perlu tindakan.'
+  // A row listed under "Perlu ditinjau" never says "Tidak perlu tindakan", whatever the refund's state.
+  if (r.refundStatus === 'refunded')
+    return r.needsReview ? 'Uang sudah dikembalikan. Periksa catatan pengembaliannya di gateway.' : 'Tidak perlu tindakan.'
+  if (r.refundStatus === 'pending')
+    return r.needsReview
+      ? 'Gateway sedang mengembalikan uangnya. Tunggu sampai selesai, lalu periksa lagi.'
+      : 'Gateway sedang mengembalikan uangnya. Tidak perlu tindakan.'
   if (r.refundStatus === 'failed') return 'Kembalikan uang ke pelanggan secara manual, lalu catat di gateway.'
   return r.needsReview ? 'Hubungi pelanggan dan kembalikan uangnya.' : 'Tidak perlu tindakan.'
 }

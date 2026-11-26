@@ -43,6 +43,10 @@ describe('"Perlu ditinjau" (UMK-2041)', () => {
     expect(refundLabel({ refundStatus: 'none', needsReview: true }).text).toBe('Belum dikembalikan')
     expect(receiptTodo({ refundStatus: 'failed', needsReview: true })).toMatch(/manual/)
     expect(receiptTodo({ refundStatus: 'refunded', needsReview: false })).toBe('Tidak perlu tindakan.')
+    // an item listed for review never reads "Tidak perlu tindakan"
+    for (const refundStatus of ['refunded', 'pending', 'failed', 'none'] as const)
+      expect(receiptTodo({ refundStatus, needsReview: true })).not.toMatch(/Tidak perlu tindakan/)
+    expect(receiptTodo({ refundStatus: 'none', needsReview: false })).toBe('Tidak perlu tindakan.')
     expect(kindLabel('duplicate')).toBe('Pembayaran ganda')
     expect(kindLabel('amount_mismatch')).toBe('Jumlah tidak cocok')
   })

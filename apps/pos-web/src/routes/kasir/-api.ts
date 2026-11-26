@@ -4,7 +4,7 @@ import { api } from '@/lib/api.server'
 import type { Quote, SaleUnit } from './-helpers'
 import type { SalePayment } from './-online'
 import { parseWaitingSales, type WaitingSale } from './-shift-helpers'
-import { parseOnlineMethods, type Bank, type OnlineMethods } from './-pay-step'
+import { parseOnlineMethods, type Bank, type OnlineMethodsResult } from './-pay-step'
 import type { CashTotals } from './-shift-helpers'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
@@ -175,7 +175,7 @@ export const loadCashier = createServerFn().handler(async () => {
   const { shift } = await load<{ shift: (Shift & { expectedCash: number }) | null }>('/shifts/current')
   const noQris = { configured: false, version: '' }
   if (!shift)
-    return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[], banks: {} as Record<string, Bank[]> }
+    return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[], onlineUnavailable: false, banks: {} as Record<string, Bank[]> }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
   const [page, settings, methods, profile, chargeable] = await Promise.all([
     load<{ data: Product[] }>('/catalog/products?perPage=100'),
@@ -193,14 +193,17 @@ export const loadCashier = createServerFn().handler(async () => {
     methods: methods.data,
     qris: { configured: profile.qrisConfigured, version: profile.updatedAt ?? '' },
     chargeable: chargeable.methods,
+    onlineUnavailable: chargeable.unavailable,
     banks: chargeable.banks,
   }
 })
 
-async function chargeableMethods(): Promise<OnlineMethods> {
+async function chargeableMethods(): Promise<OnlineMethodsResult> {
   const res = await api('/online-payments/methods').catch(() => null)
-  if (!res?.ok) return { methods: [], banks: {} }
-  return parseOnlineMethods(await res.json().catch(() => null))
+  // no answer at all or a 5xx (payment-api down): say so, not "not active"
+  if (!res || res.status >= 500) return { methods: [], banks: {}, unavailable: true }
+  if (!res.ok) return { methods: [], banks: {}, unavailable: false }
+  return { ...parseOnlineMethods(await res.json().catch(() => null)), unavailable: false }
 }
 
 export const openShift = createServerFn({ method: 'POST' })

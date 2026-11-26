@@ -441,14 +441,15 @@ export function paidFigures(raw: unknown): { paid: number; change: number } | nu
 // ---- A refused sale request ----
 // (The Idempotency-Key and the memory of unfinished sales are decided in `-pending.ts`.)
 
-/** A refused sale request: what the error dialog is told. Only an ONLINE sale that was written but not charged is "sale_waiting". */
+/** A refused sale request: what the error dialog is told. A sale that was written but not charged is "sale_waiting" (online) or "sale_saved_unpaid" (cash, EDC). */
 export function saleFailure(
   status: number,
   code: string | undefined,
   saleId: string | undefined,
   online: boolean,
 ): { status: number; code: string | undefined } {
-  if (status === 503) return { status, code: saleId && online ? 'sale_waiting' : undefined }
+  // a cash/EDC sale that got 503 IS saved (awaiting_payment, stock taken): never the generic "nothing was saved" text
+  if (status === 503) return { status, code: saleId ? (online ? 'sale_waiting' : 'sale_saved_unpaid') : undefined }
   return { status, code }
 }
 

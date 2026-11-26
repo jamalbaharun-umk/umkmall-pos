@@ -54,6 +54,7 @@ import {
 import {
   confirmButtonLabel,
   isStaticQris,
+  hiddenOnlineNote,
   offeredMethods,
   payStepOf,
   qrisScanHint,
@@ -119,10 +120,10 @@ export const Route = createFileRoute('/kasir/')({
 })
 
 function CashierPage() {
-  const { shift, products, taxBps, methods, qris, chargeable, banks } = Route.useLoaderData()
+  const { shift, products, taxBps, methods, qris, chargeable, onlineUnavailable, banks } = Route.useLoaderData()
   const { menunggu } = Route.useSearch()
   return shift ? (
-    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} banks={banks} open={menunggu} />
+    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} open={menunggu} />
   ) : (
     <OpenShift />
   )
@@ -191,6 +192,7 @@ function Register({
   methods,
   qris,
   chargeable,
+  onlineUnavailable,
   banks,
   open: openWaiting,
 }: {
@@ -200,6 +202,8 @@ function Register({
   qris: Qris
   /** UMK-1991: the gateway methods the store may charge now; an online method not in it is not offered. */
   chargeable: string[]
+  /** payment-api gave no answer when the methods were read (so a missing online method is not "belum aktif"). */
+  onlineUnavailable: boolean
   /** UMK-2037: by gateway method, the banks to choose from before a virtual account is made. */
   banks: Record<string, Bank[]>
   /** `?menunggu=` of the URL: `daftar` opens the waiting list, a sale id opens that sale (the shift close links here). */
@@ -739,6 +743,7 @@ function Register({
           pend={pend}
           methods={methods}
           chargeable={onlineBlocked(pend.state) ? [] : chargeable}
+          onlineUnavailable={onlineUnavailable}
           banks={banks}
           onlineBlocked={onlineBlocked(pend.state)}
           qris={qris}
@@ -962,6 +967,7 @@ function PayDialog({
   pend,
   methods: allMethods,
   chargeable,
+  onlineUnavailable,
   banks,
   qris,
   member,
@@ -983,6 +989,7 @@ function PayDialog({
   pend: PendingHandle
   methods: PaymentMethod[]
   chargeable: string[]
+  onlineUnavailable: boolean
   banks: Record<string, Bank[]>
   qris: Qris
   member: MemberOption | null
@@ -1002,6 +1009,7 @@ function PayDialog({
     () => offeredMethods(allMethods, chargeable),
     [allMethods, chargeable],
   )
+  const hiddenNote = hiddenOnlineNote(hiddenOnline, onlineUnavailable)
   const [paidText, setPaidText] = useState('')
   const [methodId, setMethodId] = useState(() => methods.find((m) => m.kind === 'cash')?.id ?? methods[0]?.id ?? '')
   const method = methods.find((m) => m.id === methodId)
@@ -1274,9 +1282,14 @@ function PayDialog({
               Pembayaran online ditahan sampai penjualan online sebelumnya selesai diperiksa. Tunai tetap bisa dipakai.
             </p>
           )}
-          {!onlineBlocked && hiddenOnline > 0 && (
-            <p className="text-xs text-default-secondary">
-              {hiddenOnline} metode online tidak tampil karena belum aktif di Pembayaran Online toko ini.
+          {!onlineBlocked && hiddenNote && (
+            <p className="text-xs text-default-secondary" role="status">
+              {hiddenNote.text}{' '}
+              {hiddenNote.retry && (
+                <Button type="text" size="small" width="auto" onClick={() => void router.invalidate()}>
+                  Coba lagi
+                </Button>
+              )}
             </p>
           )}
           {step !== 'confirm' && step !== 'online' && (

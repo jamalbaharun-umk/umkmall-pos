@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { devSignInUser, failureText, landingPath, parseNativeSession, sessionKind } from './sign-in'
+import { devSignInUser, failureText, landingPath, parseNativeSession, sessionKind, whatsappNotSetUp, WHATSAPP_NOT_SET_UP_TEXT } from './sign-in'
 
 const token = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`
 
@@ -38,5 +38,13 @@ describe('sign-in helpers', () => {
     expect(landingPath(undefined)).toBe('/?masuk=1')
     expect(landingPath('toString')).toBe('/?masuk=1')
     expect(landingPath('/pengaturan/keamanan?lupa=1')).toBe('/?masuk=1')
+  })
+})
+
+describe('WhatsApp sign-in availability', () => {
+  it('reads a bare 404 from pos-api as "not set up", never as missing data', () => {
+    expect(whatsappNotSetUp(404)).toBe(true)
+    for (const s of [0, 200, 401, 422, 429, 503]) expect(whatsappNotSetUp(s)).toBe(false)
+    expect(WHATSAPP_NOT_SET_UP_TEXT).toBe('Masuk lewat WhatsApp belum diatur di lingkungan ini.')
   })
 })
