@@ -13,6 +13,11 @@ const CashInput = z
   .object({ paid: z.number().int().nonnegative().max(1_000_000_000_000) })
   .strict();
 
+/** The attempt the cashier's screen shows: the bill a new one replaces (UMK-2042). */
+const RenewInput = z
+  .object({ attempt: z.number().int().min(1).max(1000) })
+  .strict();
+
 /**
  * The payment of one sale, for the cashier's waiting screen (UMK-1991). The tenant is the session's; the
  * sale is the actor's own, or any of the store's with `sales.void`; anything else answers 404.
@@ -51,6 +56,20 @@ export class SalePaymentController {
     assertPersonAtTill(s.kind);
     const saleId = parseId(id);
     return this.payments.payCash(s, saleId, validate(CashInput, body).paid);
+  }
+
+  /** "Buat QR baru": the current bill is closed and a new one is made for the same sale (UMK-2042). */
+  @Post('renew')
+  @HttpCode(200)
+  @RequirePermission('sales.create')
+  renew(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    assertPersonAtTill(s.kind);
+    const saleId = parseId(id);
+    return this.payments.renew(s, saleId, validate(RenewInput, body).attempt);
   }
 
   /** Gives the sale up before it is paid. No PIN: it is not a void. */

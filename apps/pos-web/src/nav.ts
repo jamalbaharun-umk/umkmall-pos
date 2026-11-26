@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import {
+  AlertTriangle,
   Archive,
   Banknote,
   Globe,
@@ -77,6 +78,8 @@ export const NAV: NavGroup[] = [
       // UMK-1962: each admin's own void PIN; owners hold every permission, so they always see it.
       // UMK-2020: the store's account at a payment gateway; owner only (Admin lacks payments.manage).
       { to: '/pengaturan/pembayaran-online', label: 'Pembayaran Online', icon: Globe, permission: 'payments.manage' },
+      // UMK-2041: gateway money that paid no sale, and refused refunds; owner only.
+      { to: '/perlu-ditinjau', label: 'Perlu ditinjau', icon: AlertTriangle, permission: 'payments.manage' },
       { to: '/pengaturan/keamanan', label: 'Keamanan', icon: ShieldCheck, permission: 'sales.void' },
     ],
   },

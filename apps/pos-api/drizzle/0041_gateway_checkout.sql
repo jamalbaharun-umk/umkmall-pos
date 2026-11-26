@@ -1,0 +1,2 @@
+ALTER TABLE "pos"."payment_methods" DROP CONSTRAINT "payment_methods_gateway_method_ck";--> statement-breakpoint
+ALTER TABLE "pos"."payment_methods" ADD CONSTRAINT "payment_methods_gateway_method_ck" CHECK ("pos"."payment_methods"."gateway_method" is null or "pos"."payment_methods"."gateway_method" in ('fake_qris', 'fake_va', 'fake_checkout'));

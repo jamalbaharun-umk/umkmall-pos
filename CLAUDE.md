@@ -258,10 +258,11 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **A PG sale waits for its payment** (plan
   [2026-11-25-006](docs/plans/2026-11-25-006-feat-umk-1991-pg-cashier-flow-plan.md), the routes and their shapes are
   there). A payment method of kind `online` carries payment-api's method (`ONLINE_METHODS` in `payments.client.ts`:
-  only the fake gateway's `fake_qris` and `fake_va`, also a database check). Online payments are on only with
+  only the fake gateway's `fake_qris`, `fake_va` and `fake_checkout`, also a database check). Online payments are on only with
   payment-api on and `NODE_ENV` explicitly `development` or `test` (`PaymentSync.onlineEnabled`; production and an
   unset `NODE_ENV` refuse them, UMK-1977), asked when a method is created AND at every sale.
-  `POST /sales` answers `awaiting_payment` with `payment` (QR or VA, `expiresAt`). pos-api learns the outcome by the
+  `POST /sales` answers `awaiting_payment` with `payment` (QR, VA or payment-page link, `expiresAt`; a link reaches
+  the screen only as an `https:` URL without credentials, `paymentUrlOf`). pos-api learns the outcome by the
   screen's poll (`GET /sales/:id/payment`), the manual check (`POST …/payment/check`, the PG is asked) and the job;
   payment-api pushes nothing. Statuses shown are payment-api's own; pos-api never decides `expired` by its clock.
   A charge payment-api refuses because the store may not charge there (`GATE_REFUSALS`) closes the charge key and
@@ -281,6 +282,23 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   back an intent whose bill ended by itself or never existed, then cancels the sale. Late money on the closed bill is
   payment-api's (unmatched receipt, auto-refund); pos-api only shows it. Cancelling an awaiting sale needs no PIN
   and writes no void.
+- **"Buat QR baru" is written before anything is closed, like the switch to cash** (UMK-2042, plan
+  [2026-11-26-004](docs/plans/2026-11-26-004-feat-umk-1991-review-list-new-qr-checkout-plan.md)):
+  this supersedes the 2026-11-25 ruling "no new QR for the same sale" (plan 006 D12).
+  `POST /sales/:id/payment/renew` `{ attempt }` (the attempt the screen shows; a sale past it answers its current
+  bill, so a repeat makes nothing new) writes `sales.payment_renew_at`, closes the old bill, and only on payment-api's
+  "closed unpaid" moves the sale to attempt + 1 (`turnToNextAttempt`, under the row lock) and charges
+  `<saleId>:<attempt>` with the same method, bank and amount. The new bill is never charged before the old one is
+  closed. Nobody but that request acts on the intent and nobody cancels a sale that has it (`applyToSale` answers
+  `stale`). The intent is the request's ticket (`RenewTicket`, the `payment_renew_at` it wrote): a second request
+  is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMs`: the job's wait plus four
+  payment-api timeouts), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
+  a failed request its own, the job the one it read; only a cancel drops any). Cash drops a
+  renew intent; a cancel drops both. At most `MAX_PAYMENT_ATTEMPTS` bills per sale (open owner question). A cash
+  sale past attempt 1 is read from its method (`!isOnlineMethod(method) && attempt > 1`), not from the attempt alone.
+- **"Perlu ditinjau"** (UMK-2041) is `GET /payment-review` (`payments.manage`): payment-api's
+  `GET /unmatched-receipts` copied field by field (no payment id, gateway reference, fee or actor), its order
+  reference shown as a sale only when it is a sale of the session's store, plus the store's refused PG refunds.
 - **An answer is applied only to the sale that was read:** `applyToSale` takes the attempt the payment belongs to
   and answers `stale` (read again) when the sale is at another attempt, or would be cancelled with a switch to cash
   asked. A new write of a sale's step 2 keeps both checks.

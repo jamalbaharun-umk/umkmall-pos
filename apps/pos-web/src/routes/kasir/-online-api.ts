@@ -13,7 +13,7 @@ import { retryFailure, voidFailure, type VoidFailure } from './-void-helpers'
 export type Fail = { ok: false; failure: FailureLike; error: string }
 export type Answer<T> = { ok: true; data: T } | Fail
 
-type Route = 'poll' | 'check' | 'cash' | 'cancel' | 'refund' | 'retry' | 'manual'
+type Route = 'poll' | 'check' | 'cash' | 'cancel' | 'refund' | 'retry' | 'manual' | 'renew'
 
 const OFFLINE = 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.'
 
@@ -80,6 +80,16 @@ export const paySaleInCash = createServerFn({ method: 'POST' })
   .validator((d: { id: string; paid: number }) => d)
   .handler(({ data }) =>
     payment('cash', `/sales/${enc(data.id)}/payment/cash`, { method: 'POST', body: { paid: data.paid } }),
+  )
+
+/**
+ * "Buat QR baru" (UMK-2042): the old bill is closed and a new one made for the same sale. `attempt` is the one this
+ * screen shows: a repeat (double tap, retry) answers the new bill instead of making a third.
+ */
+export const renewSalePayment = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; attempt: number }) => d)
+  .handler(({ data }) =>
+    payment('renew', `/sales/${enc(data.id)}/payment/renew`, { method: 'POST', body: { attempt: data.attempt } }),
   )
 
 /** "Batalkan": no PIN, not a void. */

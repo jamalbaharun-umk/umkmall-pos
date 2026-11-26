@@ -11,6 +11,7 @@ import {
   checkSalePayment,
   getSalePayment,
   paySaleInCash,
+  renewSalePayment,
 } from './-online-api'
 import {
   OPEN_PAST_CODE_TIME,
@@ -38,6 +39,8 @@ import {
   receiptLabel,
   lateReceiptText,
   outcomeOf,
+  renewLabel,
+  showRenew,
   type AwaitingSale,
   holdDisambiguation,
   type SalePayment,
@@ -53,7 +56,7 @@ export type OnlineFinish =
   | { kind: 'closed'; saleId: string; again: boolean }
 
 /** The QR of a dynamic QRIS, drawn from its string on a white card (a scanner needs the light margin in dark mode too). */
-export function QrCode({ value }: { value: string }) {
+export function QrCode({ value, label = 'Kode QRIS pembayaran' }: { value: string; label?: string }) {
   const drawn = useMemo(() => {
     try {
       const m = qrMatrix(value)
@@ -73,7 +76,7 @@ export function QrCode({ value }: { value: string }) {
   return (
     <svg
       role="img"
-      aria-label="Kode QRIS pembayaran"
+      aria-label={label}
       viewBox={`${-pad} ${-pad} ${box} ${box}`}
       shapeRendering="crispEdges"
       className="mx-auto aspect-square w-full max-w-64 rounded-lg bg-white text-black"
@@ -104,7 +107,7 @@ export function OnlineWait({
   const id = initial.saleId
   const [payment, setPayment] = useState(initial)
   const [now, setNow] = useState(() => Date.now())
-  const [busy, setBusy] = useState<null | 'check' | 'cancel' | 'cash'>(null)
+  const [busy, setBusy] = useState<null | 'check' | 'cancel' | 'cash' | 'renew'>(null)
   // A sale pos-api already turned into cash (reload after the intent) goes straight to the cash form.
   const [mode, setMode] = useState<'wait' | 'cash'>(initial.method === 'cash' ? 'cash' : 'wait')
   const [cashText, setCashText] = useState('')
@@ -213,6 +216,30 @@ export function OnlineWait({
     apply(r.data)
     setFails(0)
     if (outcomeOf(r.data).kind === 'waiting') notifySuccess('Status diperiksa. Belum ada pembayaran masuk.')
+  }
+
+  // "Buat QR baru" (UMK-2042): the old bill is closed first and a new one made for this same sale; the cart and the
+  // stock stay. The attempt this screen shows makes a repeat (double tap, retry) answer the new bill, never a third.
+  async function renew() {
+    if (lock.current) return
+    lock.current = true
+    setBusy('renew')
+    const r = await renewSalePayment({ data: { id, attempt: payment.attempt } }).catch(lost)
+    lock.current = false
+    setBusy(null)
+    if (!r || !r.ok) {
+      const failure = r?.failure ?? { status: 0 }
+      // The customer paid the old code first, or the sale ended: show the true state next to the explanation.
+      if (['already_paid', 'not_awaiting', 'renew_unanswered', 'renew_in_progress'].includes(failure.code ?? '')) await refetch()
+      return showError(failure, {
+        action: 'membuat kode bayar baru',
+        retry: failure.status === 0 || failure.code === 'renew_pending' ? () => void renew() : undefined,
+      })
+    }
+    apply(r.data)
+    setFails(0)
+    setNow(Date.now())
+    notifySuccess('Kode bayar baru dibuat. Tagihan lama sudah ditutup.')
   }
 
   async function refetch() {
@@ -412,8 +439,9 @@ export function OnlineWait({
                 <QrCode value={payment.checkout.qrString} />
               ) : isLink(payment.checkout) ? (
                 <div className="space-y-2 rounded-lg border border-default-primary p-4" aria-label="Halaman bayar gateway">
-                  <p className="text-sm text-default-secondary">Bayar lewat halaman gateway</p>
-                  <p className="break-all font-semibold">{payment.checkout.paymentUrl}</p>
+                  <p className="text-sm text-default-secondary">Bayar lewat halaman gateway: pelanggan scan kode ini atau buka tautannya</p>
+                  <QrCode value={payment.checkout.paymentUrl} label="Kode QR tautan halaman bayar" />
+                  <p className="break-all text-sm font-semibold">{payment.checkout.paymentUrl}</p>
                   <div className="flex flex-wrap gap-2">
                     <Button asChild type="outline" color="light" size="small" width="auto">
                       <a href={payment.checkout.paymentUrl} target="_blank" rel="noopener noreferrer">
@@ -504,7 +532,9 @@ export function OnlineWait({
                   ? 'Pelanggan memasukkan nomor ini di aplikasi bank; nominalnya sudah terisi. '
                   : isQris(payment.checkout)
                     ? 'Pelanggan scan dari aplikasi bank atau e-wallet mana pun. '
-                    : ''}
+                    : isLink(payment.checkout)
+                      ? 'Pelanggan membayar di halaman gateway dengan cara yang dipilihnya di sana. '
+                      : ''}
                 Status dicek otomatis tiap {POLL_MS / 1000} detik
                 {ago ? `. Terakhir dicek ${ago}` : ''}. Jangan tutup layar ini.
               </p>
@@ -622,7 +652,20 @@ export function OnlineWait({
           <div className="flex flex-col gap-2">
             {waiting && mode === 'wait' && (
               <>
-                <Button width="auto" className="w-full" isLoading={busy === 'check'} disabled={busy !== null} onClick={() => void check()}>
+                {showRenew(payment, left) && (
+                  <Button width="auto" className="w-full" isLoading={busy === 'renew'} disabled={busy !== null} onClick={() => void renew()}>
+                    <Icon name="rotate-cw" size="sm" /> {renewLabel(payment)}
+                  </Button>
+                )}
+                <Button
+                  width="auto"
+                  className="w-full"
+                  type={showRenew(payment, left) ? 'outline' : 'primary'}
+                  color={showRenew(payment, left) ? 'light' : 'primary'}
+                  isLoading={busy === 'check'}
+                  disabled={busy !== null}
+                  onClick={() => void check()}
+                >
                   Cek status pembayaran
                 </Button>
                 {!notMine && (

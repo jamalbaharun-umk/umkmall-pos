@@ -11,11 +11,13 @@ const KINDS: { value: PaymentKind; label: string }[] = [
   { value: 'credit', label: 'Kasbon (kredit)' },
   { value: 'wallet', label: 'Dompet digital' },
   // UMK-1991: paid through the payment gateway; the customer gets a QR or a VA number and the till waits for the payment.
-  { value: 'online', label: 'Online (QRIS / VA)' },
+  { value: 'online', label: 'Online (QRIS / VA / link)' },
 ]
 const GATEWAY_METHODS = [
   { value: 'fake_qris', label: gatewayLabel('fake_qris') },
   { value: 'fake_va', label: gatewayLabel('fake_va') },
+  // UMK-2043: the customer pays on the gateway's own page, by link or by scanning the link's QR.
+  { value: 'fake_checkout', label: gatewayLabel('fake_checkout') },
 ]
 const kindLabel = (m: PaymentMethod) =>
   m.kind === 'online' ? gatewayLabel(m.gatewayMethod) : (KINDS.find((x) => x.value === m.kind)?.label ?? m.kind)

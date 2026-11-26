@@ -47,6 +47,20 @@ export type UnmatchedReceipt = {
   refundStatus: string | null;
 };
 
+/**
+ * A row of payment-api's `GET /unmatched-receipts` (UMK-2041), with the order reference of the bill the
+ * money came in on. Only these fields are copied: no payment id, no gateway reference, no fee, no actor.
+ */
+export type ReviewReceipt = {
+  id: string;
+  orderRef: string;
+  kind: string;
+  grossAmount: number;
+  needsReview: boolean;
+  refundStatus: string | null;
+  createdAt: string | null;
+};
+
 /** A payment as payment-api answers it (the fields pos-api uses). */
 export type Payment = {
   id: string;
@@ -312,6 +326,59 @@ export class PaymentsClient {
     if (!page || !Array.isArray(page.items))
       throw new PaymentApiError('unavailable', null, 'bad_answer');
     return page.items.map((item) => this.payment(item));
+  }
+
+  /** The store's money that paid no payment (late, duplicate, another amount), newest first. */
+  async unmatchedReceipts(
+    tenantId: string,
+    q: { needsReview?: boolean; page: number; perPage: number },
+  ): Promise<{
+    items: ReviewReceipt[];
+    page: number;
+    perPage: number;
+    total: number;
+  }> {
+    const query = new URLSearchParams({
+      page: String(q.page),
+      perPage: String(q.perPage),
+      ...(q.needsReview === undefined
+        ? {}
+        : { needsReview: String(q.needsReview) }),
+    });
+    const body = (await this.call(
+      tenantId,
+      'GET',
+      `/unmatched-receipts?${query.toString()}`,
+      'GET /unmatched-receipts',
+    )) as { items?: unknown[]; total?: unknown } | null;
+    if (
+      !body ||
+      !Array.isArray(body.items) ||
+      !Number.isSafeInteger(body.total)
+    )
+      throw new PaymentApiError('unavailable', null, 'bad_answer');
+    return {
+      items: (body.items as (Record<string, unknown> | null)[])
+        .filter(
+          (r): r is Record<string, unknown> =>
+            !!r &&
+            typeof r.id === 'string' &&
+            typeof r.orderRef === 'string' &&
+            Number.isSafeInteger(r.grossAmount),
+        )
+        .map((r) => ({
+          id: r.id as string,
+          orderRef: r.orderRef as string,
+          kind: text(r.kind) ?? 'unknown',
+          grossAmount: r.grossAmount as number,
+          needsReview: r.needsReview === true,
+          refundStatus: text(r.refundStatus),
+          createdAt: isoTime(r.createdAt),
+        })),
+      page: q.page,
+      perPage: q.perPage,
+      total: body.total as number,
+    };
   }
 
   /** Manual status check: payment-api asks the PG (at most once per its interval) and answers the payment. */

@@ -31,6 +31,10 @@ import {
   paidLater,
   parsePayment,
   paymentFailure,
+  renewLabel,
+  showRenew,
+  gatewayLabel,
+  RENEW_WINDOW_MS,
   type SalePayment,
 } from './-online'
 import { describeError } from '../../lib/describe-error'
@@ -465,5 +469,47 @@ describe('parseAwaiting (the waiting list)', () => {
     expect(parseAwaiting([row({ onlinePayment: false }), row({ id: 3 }), row({ total: 1.5 }), 'x'])).toEqual([])
     expect(parseAwaiting([row({ mine: undefined })])[0].mine).toBe(false)
     expect(parseAwaiting(null)).toEqual([])
+  })
+})
+
+describe('"Buat QR baru" (UMK-2042)', () => {
+  const end = new Date('2026-11-25T10:15:00.000Z').getTime()
+  const at = (msBeforeEnd: number) => countdown('2026-11-25T10:15:00.000Z', end - msBeforeEnd)
+
+  it('is offered in the code’s last minute or once its time is over, only when pos-api allows it', () => {
+    expect(showRenew(pay({ canRenew: true }), at(5 * 60_000))).toBe(false)
+    expect(showRenew(pay({ canRenew: true }), at(RENEW_WINDOW_MS))).toBe(true)
+    expect(showRenew(pay({ canRenew: true }), at(0))).toBe(true)
+    expect(showRenew(pay({ canRenew: true, checkoutExpired: true }), null)).toBe(true)
+    expect(showRenew(pay({ canRenew: false, checkoutExpired: true }), at(0))).toBe(false)
+    expect(showRenew(pay({ checkoutExpired: true }), at(0))).toBe(false) // the server did not say
+    expect(showRenew(pay({ canRenew: true, switchingToCash: true }), at(0))).toBe(false)
+    expect(showRenew(pay({ canRenew: true, saleStatus: 'completed', status: 'paid' }), at(0))).toBe(false)
+    expect(showRenew(pay({ canRenew: true, saleStatus: 'cancelled', status: 'expired' }), at(0))).toBe(false)
+  })
+
+  it('names what the customer gets: a QR, a VA number or a link', () => {
+    expect(renewLabel(pay())).toBe('Buat QR baru')
+    expect(renewLabel(pay({ method: 'fake_va', checkout: { bank: 'FAKE', vaNumber: '1' } }))).toBe('Buat nomor VA baru')
+    expect(renewLabel(pay({ method: 'fake_checkout', checkout: { paymentUrl: 'https://x.invalid/p/1' } }))).toBe('Buat link baru')
+    expect(renewLabel(pay({ method: 'fake_checkout', checkout: null }))).toBe('Buat link baru')
+    expect(gatewayLabel('fake_checkout')).toBe('Link pembayaran')
+  })
+
+  it('a renew without an answer says to check first; one that moved says to press again', () => {
+    expect(paymentFailure('renew', 503, { code: 'payment_unavailable' })).toEqual({ status: 503, code: 'renew_unanswered' })
+    expect(paymentFailure('renew', 503, null)).toEqual({ status: 503, code: 'renew_unanswered' })
+    expect(paymentFailure('renew', 503, { code: 'renew_pending' })).toEqual({ status: 503, code: 'renew_pending' })
+    expect(describeError(paymentFailure('renew', 503, null), 'x').primary).toBe('none')
+    expect(describeError(paymentFailure('renew', 503, { code: 'renew_pending' }), 'x').primary).toBe('retry')
+    expect(describeError(paymentFailure('renew', 409, { code: 'attempt_limit', message: 'm' }), 'x').what).toMatch(/terlalu sering/)
+    expect(describeError(paymentFailure('renew', 409, { code: 'renew_in_progress', message: 'm' }), 'x').what).toMatch(/sedang dibuat/)
+  })
+
+  it('a payment-page link is read only as https', () => {
+    expect(pay({ method: 'fake_checkout', checkout: { paymentUrl: 'https://x.invalid/p/1' } }).checkout).toEqual({ paymentUrl: 'https://x.invalid/p/1' })
+    expect(pay({ method: 'fake_checkout', checkout: { paymentUrl: 'javascript:alert(1)' } }).checkout).toBeNull()
+    expect(pay({ canRenew: true }).canRenew).toBe(true)
+    expect(pay().canRenew).toBe(false)
   })
 })

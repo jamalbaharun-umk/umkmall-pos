@@ -128,6 +128,34 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
     todo: 'Muat ulang untuk melihat status refund terbaru.',
     primary: 'reload',
   },
+  // UMK-2042 "Buat QR baru": the request got no answer before the sale moved, so the old bill may be closed
+  renew_unanswered: {
+    what: 'Layanan pembayaran tidak menjawab, jadi kode baru belum dibuat.',
+    todo: 'Tekan Cek status dulu. Bila tagihan lama sudah tertutup, penjualan ini dibatalkan dan harus dibuat ulang.',
+    primary: 'none',
+  },
+  // the old bill is closed and the sale moved to its new attempt; only the new bill is missing
+  renew_pending: {
+    what: 'Tagihan lama sudah ditutup, tetapi kode baru belum dibuat.',
+    todo: 'Tekan lagi tombol buat kode baru sampai berhasil. Jangan membuat penjualan baru.',
+    primary: 'retry',
+  },
+  // another tap or tab is making the new code right now
+  renew_in_progress: {
+    what: 'Kode baru untuk penjualan ini sedang dibuat dari layar lain atau tekanan sebelumnya.',
+    todo: 'Tunggu sebentar, lalu tekan Cek status pembayaran.',
+    primary: 'none',
+  },
+  switching_to_cash: {
+    what: 'Penjualan ini sedang dialihkan ke tunai, jadi kode baru tidak dibuat.',
+    todo: 'Selesaikan pembayaran tunainya, atau batalkan penjualan ini.',
+    primary: 'none',
+  },
+  attempt_limit: {
+    what: 'Penjualan ini sudah terlalu sering dibuatkan kode baru.',
+    todo: 'Batalkan penjualan ini, lalu buat penjualan baru dari keranjang.',
+    primary: 'none',
+  },
   merchant_not_active: {
     what: 'Pembayaran online belum aktif untuk toko ini. Penjualan dibatalkan dan stok kembali.',
     todo: 'Pilih cara bayar lain. Pemilik bisa mengaktifkannya di Pembayaran Online.',

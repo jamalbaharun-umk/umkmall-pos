@@ -1,6 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { StockModule } from '../stock/stock.module';
 import { OnlinePaymentsController } from './online-payments.controller';
+import { PaymentReviewController } from './payment-review.controller';
+import { PaymentReview } from './payment-review.service';
 import { PaymentSyncController } from './payment-sync.controller';
 import { PaymentSync } from './payment-sync.service';
 import { SalePaymentController } from './sale-payment.controller';
@@ -19,6 +21,7 @@ import {
     PaymentSyncController,
     OnlinePaymentsController,
     SalePaymentController,
+    PaymentReviewController,
   ],
   providers: [
     {
@@ -28,6 +31,7 @@ import {
     PaymentsClient,
     PaymentSync,
     SalePayments,
+    PaymentReview,
   ],
   exports: [PaymentsClient, PaymentSync, SalePayments],
 })
