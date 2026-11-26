@@ -347,6 +347,88 @@ describe('staff audit log (UMK-1969, design 32)', () => {
     for (const r of all) expect(AUDIT_EVENT_CODES).toContain(r.event);
   });
 
+  it('records approval PIN changes and a discount approved by PIN', async () => {
+    const s = await shop();
+    const productId = await s.product('Teh Botol', 50);
+    const put = (auth: string, body: object) =>
+      http().put('/void-pin').set('Authorization', auth).send(body);
+    await put(s.freshAuth, { pin: '482913' }).expect(200);
+    await put(s.freshAuth, { pin: '913482', currentPin: '482913' }).expect(200);
+    await put(s.freshAuth, { pin: '111222', currentPin: 'wrong1' }).expect(422); // refused: no row
+    const sets = await rows(s.tenantId, 'approval_pin_set');
+    expect(sets.map((r) => r.details)).toEqual([
+      { first: true },
+      { first: false },
+    ]);
+    expect(sets[0]).toMatchObject({
+      actor_id: s.userId,
+      actor_kind: 'owner',
+      target_type: 'approver',
+      target_id: s.userId,
+    });
+
+    const c = await createCashier(app, s, ['sales.create', 'sales.void']);
+    await put(c.auth, { pin: '555666' }).expect(200);
+    await http()
+      .post(`/void-pin/${c.staffId}/unlock`)
+      .set('Authorization', s.auth)
+      .expect(200);
+    await http()
+      .delete(`/void-pin/${c.staffId}`)
+      .set('Authorization', s.auth)
+      .expect(200);
+    expect(await rows(s.tenantId, 'approval_pin_set')).toHaveLength(3);
+    expect((await rows(s.tenantId, 'approval_pin_unlock'))[0]).toMatchObject({
+      actor_id: s.userId,
+      target_id: c.staffId,
+    });
+    expect((await rows(s.tenantId, 'approval_pin_reset'))[0]).toMatchObject({
+      actor_id: s.userId,
+      target_id: c.staffId,
+    });
+    await http()
+      .post(`/void-pin/${randomUUID()}/unlock`)
+      .set('Authorization', s.auth)
+      .expect(404);
+    expect(await rows(s.tenantId, 'approval_pin_unlock')).toHaveLength(1);
+
+    // A 40% line discount, approved by the owner's PIN.
+    await post(s.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+    const approval = await post(s.auth, '/sales/discount-approvals', {
+      approverId: s.userId,
+      pin: '913482',
+      productId,
+      maxBps: 4000,
+    }).expect(201);
+    expect(await rows(s.tenantId, 'discount_approval')).toHaveLength(0); // the grant alone is not the discount
+    const sale = await keyed(s.auth, '/sales', {
+      lines: [
+        {
+          productId,
+          qty: 4,
+          discountPercent: 40,
+          discountApprovalId: approval.body.id,
+        },
+      ],
+      paid: 12_000,
+    }).expect(201);
+    const [row] = await rows(s.tenantId, 'discount_approval');
+    expect(row).toMatchObject({
+      target_type: 'product',
+      target_id: productId,
+      target_label: 'Teh Botol',
+    });
+    expect(row.details).toMatchObject({
+      saleId: sale.body.id,
+      productId,
+      discount: 8000,
+      approvedBy: s.userId,
+    });
+    const text = JSON.stringify((await rows(s.tenantId)).map((r) => r.details));
+    for (const pin of ['482913', '913482', '555666', '111222'])
+      expect(text).not.toContain(pin);
+  });
+
   it('records a device paired by code', async () => {
     const s = await createStore();
     const started = await http()
@@ -418,7 +500,10 @@ describe('staff audit log (UMK-1969, design 32)', () => {
       const s = await createStore();
       const c = await createCashier(app, s);
       // The cashier's own setup rows predate everything below.
-      await admin`delete from pos.audit_log where tenant_id = ${s.tenantId}`;
+      await admin.begin(async (tx) => {
+        await tx`select set_config('pos.purging', ${s.tenantId}, true)`;
+        await tx`delete from pos.audit_log where tenant_id = ${s.tenantId}`;
+      });
       for (let i = 0; i < 45; i++)
         await insert(
           s.tenantId,
@@ -648,7 +733,65 @@ describe('staff audit log (UMK-1969, design 32)', () => {
     });
   });
 
-  it('is deleted with the store by the purge (tenant_id column)', async () => {
+  describe('delete and truncate', () => {
+    it('refuses a plain DELETE and a TRUNCATE, also by the app role', async () => {
+      const s = await createStore();
+      await createCashier(app, s);
+      const before = (await rows(s.tenantId)).length;
+      expect(before).toBeGreaterThan(0);
+      await expect(
+        admin`delete from pos.audit_log where tenant_id = ${s.tenantId}`,
+      ).rejects.toThrow(/append only/);
+      await expect(
+        appDb`delete from pos.audit_log where tenant_id = ${s.tenantId}`,
+      ).rejects.toThrow(/append only/);
+      await expect(appDb`truncate pos.audit_log`).rejects.toThrow(
+        /append only/,
+      );
+      // The purge's setting is for ITS tenant only, and not for TRUNCATE.
+      await expect(
+        appDb.begin(async (tx) => {
+          await tx`select set_config('pos.purging', ${randomUUID()}, true)`;
+          await tx`delete from pos.audit_log where tenant_id = ${s.tenantId}`;
+        }),
+      ).rejects.toThrow(/append only/);
+      await expect(
+        appDb.begin(async (tx) => {
+          await tx`select set_config('pos.purging', ${s.tenantId}, true)`;
+          await tx`truncate pos.audit_log`;
+        }),
+      ).rejects.toThrow(/append only/);
+      expect(await rows(s.tenantId)).toHaveLength(before);
+    });
+
+    it('lets the purge delete a store log and no other', async () => {
+      const a = await createStore();
+      const b = await createStore();
+      await createCashier(app, a);
+      await createCashier(app, b);
+      const kept = (await rows(b.tenantId)).length;
+      expect((await rows(a.tenantId)).length).toBeGreaterThan(0);
+      await admin`update public.users set delete_status_flag = 'to_delete',
+        delete_date = now() - make_interval(days => 31) where id = ${a.userId}`;
+      await http()
+        .post('/internal/tenants/purge')
+        .set('x-pos-service-key', process.env.POS_SERVICE_KEY!)
+        .send({ userId: a.userId })
+        .expect(200, { purged: true });
+      expect(await rows(a.tenantId)).toHaveLength(0);
+      expect(await rows(b.tenantId)).toHaveLength(kept);
+    });
+
+    it('answers the default timezone when the stored one is unknown', async () => {
+      const s = await createStore();
+      await admin`insert into pos.report_settings (tenant_id, timezone) values (${s.tenantId}, 'Bukan/Zona')
+        on conflict (tenant_id) do update set timezone = excluded.timezone`;
+      const res = await get(s.auth, '/audit-log?days=7').expect(200);
+      expect(res.body.timezone).toBe('Asia/Jakarta');
+    });
+  });
+
+  it('has the table with RLS and a tenant_id column (the purge finds it)', async () => {
     const [col] = await admin`select 1 from information_schema.columns
       where table_schema = 'pos' and table_name = 'audit_log' and column_name = 'tenant_id'`;
     expect(col).toBeDefined();

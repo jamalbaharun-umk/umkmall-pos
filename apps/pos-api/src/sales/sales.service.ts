@@ -679,6 +679,18 @@ export class SalesService {
         discountApprovedBy: approvals.get(l.index)?.approverId ?? null,
         costTotal: cost,
       });
+      const approval = approvals.get(l.index);
+      if (approval)
+        await recordAudit(tx, s, 'discount_approval', {
+          target: { type: 'product', id: l.productId, label: l.name },
+          details: {
+            saleId: sale.id,
+            productId: l.productId,
+            discount: discounts[l.index].discount,
+            discountPercent: discounts[l.index].discountPercent,
+            approvedBy: approval.approverId,
+          },
+        });
       if (l.priceOverriddenBy)
         await recordAudit(tx, s, 'price_override', {
           target: { type: 'product', id: l.productId, label: l.name },

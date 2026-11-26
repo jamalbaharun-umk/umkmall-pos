@@ -78,11 +78,13 @@ silent, follow the monorepo's principles.
   `hasPermission(session, key)` (U3: a client price counts only with `sales.price_override`).
 - **Staff audit log** (UMK-1969, design 32): `recordAudit(tx, session, event, { target, details })` (`src/audit/record.ts`)
   appends one row to `pos.audit_log` **inside the transaction of the action**, so no action commits without its row and a
-  rollback leaves none. Events are only those in `src/audit/events.ts` (sign-in, price override, void/refund, refund marked
-  manual, shift open/close, drawer cash by hand, staff/role/device/session changes); a new money or access action adds its
+  rollback leaves none. Events are only those in `src/audit/events.ts` (sign-in, price override, void/refund, refund retried or marked
+  manual, discount approved by PIN, approval PIN changes, shift open/close, drawer cash by hand, staff/role/device/session changes); a new money or access action adds its
   event there and one call at its site. `details` is ids, amounts and reason codes: never a note, PIN, token, phone number
   or customer name (`scrub.ts` removes such keys and masks such values as the second wall). Append only: no route or code
-  outside `src/audit/` writes the table, a trigger refuses UPDATE (the purge is the one DELETE). Read by `GET /audit-log`
+  outside `src/audit/` writes the table; a trigger refuses UPDATE, DELETE and TRUNCATE (the purge alone may DELETE, by
+  setting `pos.purging` to its tenant in its transaction). `refund_manual` and `refund_retry` are written BEFORE the
+  payment-api call (it cannot run in a transaction), so a refused call leaves a row and a crash leaves no gap. Read by `GET /audit-log`
   behind `staff.manage` (held by Pemilik only by default); pos-web: Pengaturan, Log aktivitas.
 - **Validate at the boundary with zod;** a bad input answers 422 (never 500). Errors never echo internals.
 - **POS tokens are signed and verified only in `src/tenancy/session.ts`** (guard test). The POS never holds

@@ -16,12 +16,18 @@ ALTER TABLE "pos"."audit_log" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "pos"."audit_log" ADD CONSTRAINT "audit_log_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "pos"."tenants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "audit_log_tenant_time_idx" ON "pos"."audit_log" USING btree ("tenant_id","occurred_at" DESC NULLS LAST,"seq" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_tenant_actor_idx" ON "pos"."audit_log" USING btree ("tenant_id","actor_id");--> statement-breakpoint
--- Append only (UMK-1969): a row is never changed. DELETE stays possible for the erasure purge only (no route
--- deletes; test/audit.e2e-spec.ts).
-CREATE FUNCTION "pos"."audit_log_no_update"() RETURNS trigger LANGUAGE plpgsql AS $$
+-- Append only (UMK-1969): a row is never changed, and is deleted only by the erasure purge, which sets
+-- `pos.purging` to the tenant it is erasing inside its transaction (src/purge/purge.service.ts). TRUNCATE is
+-- never allowed. This guards against a bug or a stray statement of the application; the table's owner role could
+-- still drop the trigger, as with any trigger.
+CREATE FUNCTION "pos"."audit_log_guard"() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+	IF TG_OP = 'DELETE' AND OLD.tenant_id::text = current_setting('pos.purging', true) THEN
+		RETURN OLD;
+	END IF;
 	RAISE EXCEPTION 'pos.audit_log is append only';
 END
 $$;
 --> statement-breakpoint
-CREATE TRIGGER "audit_log_no_update" BEFORE UPDATE ON "pos"."audit_log" FOR EACH ROW EXECUTE FUNCTION "pos"."audit_log_no_update"();
+CREATE TRIGGER "audit_log_no_update" BEFORE UPDATE OR DELETE ON "pos"."audit_log" FOR EACH ROW EXECUTE FUNCTION "pos"."audit_log_guard"();--> statement-breakpoint
+CREATE TRIGGER "audit_log_no_truncate" BEFORE TRUNCATE ON "pos"."audit_log" FOR EACH STATEMENT EXECUTE FUNCTION "pos"."audit_log_guard"();

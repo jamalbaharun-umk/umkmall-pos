@@ -112,7 +112,13 @@ export class AuditController {
     const rows = (await this.db.execute(
       sql`select timezone from pos.report_settings where tenant_id = ${tenantId}`,
     )) as unknown as { timezone?: string }[];
-    return rows[0]?.timezone ?? DEFAULT_TIMEZONE;
+    const tz = rows[0]?.timezone;
+    if (!tz) return DEFAULT_TIMEZONE;
+    // A name Postgres does not know would make every `at time zone` below fail with 500: use the default.
+    const known = (await this.db.execute(
+      sql`select 1 as ok from pg_timezone_names where name = ${tz}`,
+    )) as unknown as unknown[];
+    return known.length ? tz : DEFAULT_TIMEZONE;
   }
 
   private from(staffRows = true) {

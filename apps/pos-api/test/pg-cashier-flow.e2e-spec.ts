@@ -357,6 +357,12 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     body: object = { approverId: as.userId ?? randomUUID(), pin: OWNER_PIN },
   ) => post(as.auth, `/sales/${saleId}/refund/retry`, body);
 
+  /** UMK-1969: the audit rows of one event about this sale. */
+  const auditOf = (saleId: string, event: string) =>
+    admin<{ actor_kind: string; details: Record<string, unknown> }[]>`
+      select actor_kind, details from pos.audit_log
+      where event = ${event} and target_id = ${saleId}`;
+
   const onHand = async (s: Shop) =>
     (await get(s.auth, `/stock/products/${s.productId}`).expect(200)).body
       .onHand as number;
@@ -2266,6 +2272,11 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
 
       const retried = await retry(s, saleId).expect(200);
       expect(retried.body).toMatchObject({ saleId, refundStatus: 'pending' });
+      // UMK-1969: each accepted retry is logged once (the 403s above and the first answer wrote none before it).
+      const retries = await auditOf(saleId, 'refund_retry');
+      expect(retries.length).toBeGreaterThanOrEqual(2);
+      expect(retries[0].actor_kind).toBe('owner');
+      expect(retries[0].details).toMatchObject({ saleId });
       const [payment] = await paymentsOf(saleId);
       expect(payment.status).toBe('refund_pending');
       const [event] = await pay.sql<
@@ -2439,10 +2450,19 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       }).expect(200);
       expect(res.body.refundStatus).toBe('succeeded');
       expect((await paymentsOf(saleId))[0].status).toBe('refunded');
+      // UMK-1969: refused requests (403, 422) wrote no row; the mark wrote one, with no note in it.
+      const marks = await auditOf(saleId, 'refund_manual');
+      expect(marks).toHaveLength(1);
+      expect(marks[0]).toMatchObject({
+        actor_kind: 'owner',
+        details: { saleId },
+      });
+      expect(JSON.stringify(marks[0].details)).not.toContain('tunai');
       const again = await post(s.auth, `/sales/${saleId}/refund/manual`, {
         note: 'lagi',
       }).expect(200);
       expect(again.body.refundStatus).toBe('succeeded');
+      expect(await auditOf(saleId, 'refund_manual')).toHaveLength(1); // a repeat is not a second mark
       const view = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
       expect(view.body).toMatchObject({
         status: 'refunded',
