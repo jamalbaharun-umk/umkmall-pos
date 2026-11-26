@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -366,7 +366,15 @@ export class VoidPins {
       })
       .onConflictDoUpdate({
         target: [voidPins.tenantId, voidPins.actorId],
-        set: { pinHash, failures: 0, lockedUntil: null, updatedAt: new Date() },
+        set: {
+          pinHash,
+          failures: 0,
+          lockedUntil: null,
+          // The lock it clears is recorded as `unlock` records it.
+          unlockedAt: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then now() else ${voidPins.unlockedAt} end`,
+          unlockedBy: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then ${s.actorId}::uuid else ${voidPins.unlockedBy} end`,
+          updatedAt: new Date(),
+        },
       });
     return this.status(s);
   }

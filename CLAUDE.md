@@ -291,6 +291,7 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   `sales.switch_cash_paid` first, then that request (`settle` mode `cash`) closes the PG bill, turns the sale into a
   cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
   `already_paid`). A request without a usable answer takes the intent back (`abandonCashSwitch`) and says so; a
+  request that finds its switch taken back (by a cancel) stops and claims no new one (409 `cancel_refused`); a
   poll, a check or a repeat of the sale never switches and never cancels a sale that has an intent; the job
   closes nothing for a switch: it finishes one only when the bill is already `cancelled` (closed for it), and takes
   back an intent whose bill ended by itself or never existed, then cancels the sale. Late money on the closed bill is
@@ -308,7 +309,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMsOf`: the job's wait plus four
   payment-api timeouts, read on the database's clock by the request and the job alike; it assumes the holder waits on
   at most `RENEW_INTENT_CALLS` calls, guarded by tests: a new call under the intent keeps that), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
-  a failed request its own, the job the one it read; only a cancel drops any). Cash drops a
+  a failed request its own, the job the one it read; only a cancel drops any). A request whose own intent is gone (a cancel, cash or a
+  take-over dropped it) never claims another: it stops, so a cancel during a renewal wins (PR 51 review). Cash drops a
   renew intent; a cancel drops both. At most `MAX_PAYMENT_ATTEMPTS` bills per sale (open owner question). A cash
   sale past attempt 1 is read from its method (`!isOnlineMethod(method) && attempt > 1`), not from the attempt alone.
 - **"Perlu ditinjau"** (UMK-2041) is `GET /payment-review` (`payments.manage`): payment-api's
