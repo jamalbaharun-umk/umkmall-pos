@@ -111,7 +111,7 @@ online-payments controller), `src/sales/` (schemas, service), `src/db/schema/sal
 - **Minors.** The banks of a store are kept in memory for 30 s (`PaymentSync.banksOf`; an answer only, never "no
   answer"), so a busy till does not ask payment-api before every online sale. A repeat of a sale that payment-api
   refused for its bank answers the same 422 and code (worked out again from the sale's bank and the method's
-  banks; 409 as before when payment-api cannot say). Superseded by plan 2026-11-26-005: the code is stored on the sale and a repeat answers it.
+  banks; 409 as before when payment-api cannot say). Superseded by plan 2026-11-26-007: the code is stored on the sale and a repeat answers it.
 - `[test]` each of the above; revert-red on the owner check of the approver, the four statuses, the name's
   cleaning and the repeat's 422.
 

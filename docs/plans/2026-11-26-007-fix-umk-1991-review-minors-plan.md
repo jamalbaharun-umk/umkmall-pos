@@ -1,5 +1,7 @@
 # UMK-1991: review minors of PR 34 (UMK-2055), PR 44 and UMK-2054
 
+(Numbered 007: main's 005 and 006 landed first.)
+
 Date: 2026-11-26. Epic UMK-1924, payment-api UMK-1991. Server-side follow-ups only; pos-web is touched only in
 `routes/masuk`, `routes/pengaturan/keamanan` (its server functions) and `lib/session.server`. The web half of
 UMK-2055 (the retry dialog offers only the owner) is another change.
@@ -38,16 +40,18 @@ fixes, one replay answer made exact, one legacy field dropped, one CSRF check an
    (`afterMs` ≥ 2 timeouts, plus 4) leaves at least three timeouts of slack. Tests: a stranded intent is taken over
    by a new request; the A/B case (a live renew, a second one refused, then taken over once stranded: one live
    bill, the held request answers the new bill).
-7. **UMK-2054 minors (pos-web).**
-   - The landing (`/` without a POS session) stamps `signIn` only when the owner asked to sign in again
-     (`pos_kembali` set by `/masuk/ulang`); a plain page load opens a session that is not fresh. The sign-in
-     button (`POST /masuk`) stays a sign-in.
+7. **UMK-2054 minors (pos-web), after UMK-2065** (WhatsApp OTP sign-in, merged while this was in work).
+   - The landing no longer signs in from a UMKMall cookie at all: only `POST /auth/otp/verify` (a code typed by the
+     owner) and the dev sign-in stamp a sign-in, and `refreshOwner` (`/auth/umkmall/refresh`) never does. The
+     planned landing change (stamp only after "Masuk lagi") is moot and dropped. The "Limit" of the UMK-2054 plan
+     (a held UMKMall cookie counted as a fresh sign-in) is gone too: a fresh session now needs the WhatsApp code.
    - `POST /masuk/ulang` answers 403 unless the request is same-origin (`Sec-Fetch-Site: same-origin`, or without
-     that header an `Origin` equal to the POS origin), so another site cannot drop the session and set the
+     that header an `Origin` equal to the POS origin), so another site cannot end the owner's sessions and set the
      marker.
    - "Buat PIN baru" after "Lupa PIN" is one pos-api call: `PUT /void-pin/forgotten` `{ pin }` (owner only, fresh
      sign-in, `sales.void`), which replaces or makes the owner's PIN and clears its lock in one statement. The old
-     window (PIN removed, new one refused) is gone.
+     window (PIN removed, new one refused) is gone. The flow: Keamanan → `/masuk/ulang` → the WhatsApp code on `/`
+     → `verifyOtp` lands on `/pengaturan/keamanan?lupa=1` → that one call.
 
 ## Definition of Done
 
@@ -59,7 +63,7 @@ fixes, one replay answer made exact, one legacy field dropped, one CSRF check an
 - `[test]` `test/pg-cashier-flow.e2e-spec.ts`: a repeat of a bank-refused sale answers its code even when the
   banks changed; a gate-refused sale's repeat answers 409 with its code; stranded take-over; A/B.
 - `[test]` `test/sale-numbers.e2e-spec.ts`, `pg-cashier-flow`: no `saleNumbers`.
-- `[test]` pos-web: the same-origin helper, the landing's sign-in rule, `replaceForgottenPin` one call.
+- `[test]` pos-web: the same-origin helper (`replaceForgottenPin` is one call; its route is tested in pos-api).
 - `[test]` revert-red: the new marks, the code-point cut, the owner copy, the stored refusal code, the DB-clock
   check, the cache's "no answer is not kept", the same-origin check, the fresh check of `forgotten`.
 - `[cmd]` root lint, typecheck, build; payment-api suite; pos-api `jest --runInBand` (payment suites first); pos-web
