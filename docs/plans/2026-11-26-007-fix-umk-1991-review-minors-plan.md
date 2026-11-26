@@ -78,6 +78,12 @@ fixes, one replay answer made exact, one legacy field dropped, one CSRF check an
   "cash and renew exclude each other; a cancel during a renewal wins" is made deterministic: the renewal's close
   answer and the cancel's lookup are held, so the old interleaving is forced. `[test]` revert-red: without the
   rule the renewal makes a bill for attempt 2.
+- **Cancel during a switch to cash** (same shape, CI hit it as `[409, 503]`). `settle` in mode `cash` re-wrote the
+  switch each round while a cancel dropped it. The cash request writes its switch once, before `settle`; found gone
+  while the sale is still the PG attempt, it stops (409 `cancel_refused`) and the cancel wins. The test "a cancel
+  and a switch to cash at once" forces both orders with holds (cash closed then cancel drops: cancel wins; cancel
+  closed then cash: cash wins, cancel 409 `already_paid`). `[test]` revert-red: with the re-claim, cash answers 200
+  in the first order.
 - **`PUT /void-pin/forgotten`** records the lock it clears (`unlocked_at`, `unlocked_by`) as `unlock` does; a PIN
   with nothing locked records no unlock. `[test]` revert-red.
 - Not changed: the order 422-before-403 for a cashier with a bad body (review minor 2); pos-web's texts for

@@ -349,17 +349,17 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (sale.status !== 'awaiting_payment' || !this.enabled)
         return { outcome: sale.status, payment: null };
       if (!sale.method) throw refused('no_method_code');
-      // The cashier's request keeps its own intent alive: another request that failed may have taken it back.
+      // The cashier's cash request wrote its switch before calling (`requestCashSwitch`). Found gone while the
+      // sale is still the PG attempt, it was taken back (by a cancel, or a request that failed): the request
+      // stops and claims no new one, else a cancel that drops it each round could never win (PR 51 review).
+      // The caller answers what the sale is now.
       if (
         mode === 'cash' &&
         cashPaid !== undefined &&
         isOnlineMethod(sale.method) &&
         sale.switchCashPaid === null
-      ) {
-        await this.requestCashSwitch(tenantId, saleId, cashPaid);
-        sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
-        if (sale.status !== 'awaiting_payment' || !sale.method) continue;
-      }
+      )
+        return { outcome: 'awaiting_payment', payment: null };
       // So does the request for a new bill, while the sale is still at the attempt its screen shows, but
       // only while it has written none: an intent it wrote and lost was taken back by a cancel (or a switch
       // to cash, or a take-over), and claiming a new one each round would keep a cancel from ever winning.

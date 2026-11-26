@@ -1732,25 +1732,74 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     }
 
     it('a cancel and a switch to cash at once: one of them wins, the sale is cancelled or a cash sale, never both', async () => {
-      for (let i = 0; i < 3; i += 1) {
+      // Each order is forced with holds (PR 51 review: no timing luck).
+      // 1. Cash X closed the bill (its answer held); cancel C took the switch back and is held before it looks the
+      //    bill up. X finds its switch gone: it stops and claims no new one (409), C cancels.
+      {
         const s = await shop();
         const saleId = (await sell(s).expect(201)).body.id as string;
-        const [cancel, cash] = await Promise.all([
-          post(s.auth, `/sales/${saleId}/payment/cancel`),
-          post(s.auth, `/sales/${saleId}/payment/cash`, { paid: 5200 }),
-        ]);
-        let sale = await saleRow(saleId);
-        // Neither got through (each took the other's step back): the cashier asks again.
-        if (sale.status === 'awaiting_payment') {
-          expect([cancel.status, cash.status]).toEqual([409, 409]);
-          await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
+        const xClosed = hold(isCancel, 'after');
+        const x = post(s.auth, `/sales/${saleId}/payment/cash`, {
+          paid: 5200,
+        }).then((r) => r);
+        await xClosed.held;
+        expect((await saleRow(saleId)).switch_cash_paid).not.toBeNull();
+        const cLooks = hold(isFindByKey, 'before');
+        const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
+          (r) => r,
+        );
+        await cLooks.held;
+        expect((await saleRow(saleId)).switch_cash_paid).toBeNull();
+        let cash: request.Response;
+        try {
+          xClosed.release();
+          cash = await x;
+        } finally {
+          xClosed.release();
+          cLooks.release();
         }
-        sale = await settled(s, saleId);
-        if (cash.status === 200) expect(sale.status).toBe('completed');
-        if (cancel.status === 200) expect(sale.status).toBe('cancelled');
-        expect(await shift(s.auth)).toMatchObject({
-          cashSales: sale.status === 'completed' ? 5200 : 0,
+        expect(cash.status).toBe(409);
+        expect(cash.body.code).toBe('cancel_refused');
+        expect(await saleRow(saleId)).toMatchObject({
+          status: 'awaiting_payment',
+          payment_attempt: 1,
+          switch_cash_paid: null,
         });
+        expect((await c).status).toBe(200);
+        expect((await settled(s, saleId)).status).toBe('cancelled');
+        expect(
+          (await paymentsOf(saleId)).map((p) => [p.idempotency_key, p.status]),
+        ).toEqual([[`${saleId}:1`, 'cancelled']]);
+        expect(await shift(s.auth)).toMatchObject({ cashSales: 0 });
+      }
+      // 2. C closed the bill (its answer held) before X asked for cash: X turns the closed bill into a cash sale
+      //    and completes it; C's answer is then stale and it finds the sale paid (409 already_paid).
+      {
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        const cClosed = hold(isCancel, 'after');
+        const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
+          (r) => r,
+        );
+        await cClosed.held;
+        let cash: request.Response;
+        try {
+          cash = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+            paid: 5200,
+          });
+        } finally {
+          cClosed.release();
+        }
+        expect(cash.status).toBe(200);
+        expect(cash.body).toMatchObject({
+          saleStatus: 'completed',
+          method: 'cash',
+        });
+        const cancel = await c;
+        expect(cancel.status).toBe(409);
+        expect(cancel.body.code).toBe('already_paid');
+        expect((await settled(s, saleId)).status).toBe('completed');
+        expect(await shift(s.auth)).toMatchObject({ cashSales: 5200 });
       }
     });
 
