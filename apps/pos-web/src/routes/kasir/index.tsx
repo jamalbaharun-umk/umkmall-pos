@@ -77,11 +77,14 @@ import {
   OWN_SALE_OPEN_TEXT,
   RECORDED_TEXT,
   recordedDescription,
+  REQUEST_OUT_TEXT,
+  requestOut,
   resumePlan,
   saleAnswerEvent,
   toCheck,
   type PendingEvent,
   type SaleAnswer,
+  WAITING_ANSWER_HINT,
 } from './-pending'
 import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
@@ -234,6 +237,23 @@ function Register({
     if (lastOrderSig.current !== null && lastOrderSig.current !== orderSig) pend.dispatch({ type: 'cart_edited' })
     lastOrderSig.current = orderSig
   }, [restored, orderSig])
+  // A paid answer for the cart's own key finishes this screen, also when the request was sent from a screen that is
+  // gone by now (UMK-2048): the answer lands in the tab's one store, and every register that opened before it reacts.
+  const seenPaid = useRef(0)
+  useEffect(() => {
+    seenPaid.current = pend.current().completed?.seq ?? 0
+  }, [])
+  useEffect(() => {
+    const done = pend.current().completed
+    if (!done || done.seq <= seenPaid.current) return
+    seenPaid.current = done.seq
+    void router.invalidate() // fresh prices and products for the next order
+    if (done.clearCart) {
+      clearOrder()
+      setPaying(false)
+    }
+    if (done.sale) setPaid(done.sale)
+  }, [pend.state.completed?.seq])
   const clearOrder = () => {
     setCart([])
     setNote('')
@@ -465,6 +485,11 @@ function Register({
             </Button>
           </div>
         </div>
+        {!pend.durable && (
+          <Alert variant="warning" size="small" role="alert">
+            {NOT_STORED_TEXT}
+          </Alert>
+        )}
         <div className="flex items-center justify-between">
           <Text as="h2" variant="h6" weight="bold">
             Pesanan
@@ -677,19 +702,11 @@ function Register({
             setPaying(false)
             track(payment, ev)
           }}
-          onPaid={(sale) => {
-            void router.invalidate() // fresh prices and products for the next order
-            setPaying(false)
-            setPaid(sale)
-            clearOrder()
-            // Also when this screen is gone by the time the answer came (the cashier left mid-request): the stored
-            // bill of a paid order must not come back to be rung again.
-            writeCart({ lines: [], note: '' })
-          }}
         />
       )}
       <SuccessDialog sale={paid} onClose={() => setPaid(undefined)} />
       <AwaitingList
+        durable={pend.durable}
         open={listing}
         onClose={() => setListing(false)}
         onPick={(payment) => track(payment, { type: 'sale_picked', saleId: payment.saleId })}
@@ -883,6 +900,8 @@ function NoteDialog({
 // Lakasir's payment numpad: 7-8-9 on top, 000 for round notes, backspace.
 const NUMPAD = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '000', '0', 'hapus'] as const
 
+const BLOCKED_TEXT = { recorded: RECORDED_TEXT, request_out: REQUEST_OUT_TEXT, own_sale_open: OWN_SALE_OPEN_TEXT }
+
 function PayDialog({
   subtotal,
   discount,
@@ -899,7 +918,6 @@ function PayDialog({
   onMemberChange,
   voucher,
   onClose,
-  onPaid,
   onAwaiting,
   onlineBlocked,
 }: {
@@ -919,7 +937,6 @@ function PayDialog({
   onMemberChange: (m: MemberOption | null) => void
   voucher: AppliedVoucher | null
   onClose: () => void
-  onPaid: (sale: PaidSale) => void
   /** UMK-1991: the sale was written and now waits for its QRIS or VA payment (`ev` is that fact for the memory). */
   onAwaiting: (payment: SalePayment, ev: PendingEvent) => void
   /** A sale remembered before a reload is still unchecked: online methods wait (cash is never blocked). */
@@ -968,7 +985,7 @@ function PayDialog({
     // older closure of this function, and must still send the key of the sale that was last written.
     const online = step === 'online'
     const plan = pend.send(methodId)
-    if ('blocked' in plan) return setError(plan.blocked === 'recorded' ? RECORDED_TEXT : OWN_SALE_OPEN_TEXT)
+    if ('blocked' in plan) return setError(BLOCKED_TEXT[plan.blocked])
     const sendKey = plan.key
     lock.current = true
     setBusy(true)
@@ -1040,13 +1057,15 @@ function PayDialog({
       pend.dispatch(ev)
       return onClose()
     }
-    pend.dispatch(ev)
-    notifySuccess('Pembayaran berhasil')
-    onPaid({
-      id: res.data.id,
-      change: Math.max(res.data.change, 0),
-      receivableRest: res.data.receivableRest ?? null,
+    // The register's effect finishes the screen from the store (receipt, cart, fresh prices), also a new screen when
+    // this one was left mid-request. The stored bill of a paid order must not come back to be rung again.
+    pend.dispatch({
+      type: 'sale_paid',
+      key: sendKey,
+      sale: { id: res.data.id, change: Math.max(res.data.change, 0), receivableRest: res.data.receivableRest ?? null },
     })
+    if (pend.current().completed?.clearCart) writeCart({ lines: [], note: '' })
+    notifySuccess('Pembayaran berhasil')
   }
   const notice = orderNotice(pend.state)
 
@@ -1256,6 +1275,11 @@ function PayDialog({
                   >
                     Sudah saya cek: buat penjualan baru
                   </Button>
+                  {!canAck(pend.state) && (
+                    <span className="self-center text-xs" role="status">
+                      {WAITING_ANSWER_HINT}
+                    </span>
+                  )}
                 </span>
               )}
             </Alert>
@@ -1268,7 +1292,7 @@ function PayDialog({
             </p>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <Button width="auto" htmlType="submit" size="large" isLoading={busy}>
+            <Button width="auto" htmlType="submit" size="large" isLoading={busy} disabled={requestOut(pend.state)}>
               {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind, method?.gatewayMethod)}
             </Button>
             <Button width="auto" size="large" type="outline" color="light" disabled={busy} onClick={onClose}>

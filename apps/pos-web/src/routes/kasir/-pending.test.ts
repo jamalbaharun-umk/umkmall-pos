@@ -22,11 +22,13 @@ import {
   reduce,
   rehydrate,
   reopened,
+  requestOut,
   resumePlan,
   saleAnswerEvent,
   sendPlan,
   serialize,
   toCheck,
+  WAITING_ANSWER_HINT,
   type PendingEvent,
   type PendingState,
 } from './-pending'
@@ -75,6 +77,11 @@ function till(start: PendingState = initialState(K1)) {
     },
     reload() {
       state = rehydrate(serialize(state), null, next())
+      return state
+    },
+    /** The cashier left the register and came back in the same page load. */
+    reopen() {
+      state = reopened(state, next())
       return state
     },
   }
@@ -129,6 +136,7 @@ describe('online 503 with a sale id (written, not charged)', () => {
     expect(isOwn(t.state, A)).toBe(true)
     expect(holdsStock(t.state)).toBe(true)
     expect(t.send(QRIS)).toBe(K1)
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
     expect(t.send(QRIS)).toBe(K1)
     // nothing to poll and nothing blocked: no code was shown
     expect(toCheck(t.state)).toEqual([])
@@ -148,6 +156,7 @@ describe('online 503 with a sale id (written, not charged)', () => {
     t.do({ type: 'sale_held', key: k2, saleId: B, methodId: CASH, online: false })
     // the retry is an older closure of pay(): it holds nothing, the key is read from the state when it runs
     expect(t.send(CASH)).toBe(k2)
+    t.do({ type: 'sale_held', key: k2, saleId: B, methodId: CASH, online: false })
     expect(t.send(CASH)).toBe(k2)
     // and QRIS then VA: the VA sale's key is repeated too
     const u = held()
@@ -245,7 +254,7 @@ describe('the next customer\'s identical order is never answered with a lost sal
     expect(t.send(CASH)).toBe('blocked')
     // the late answer settles it: paid means that order is done, and a new one starts
     t.do({ type: 'sale_paid', key: K1 })
-    expect(t.state).toEqual(initialState(t.state.key))
+    expect(t.state).toEqual({ ...initialState(t.state.key), completed: { seq: 1, clearCart: true, sale: null } })
     expect(t.state.key).not.toBe(K1)
   })
   it('the corrected amount or method of the same order (422 of a used key) asks for the same check (review 3, major 4)', () => {
@@ -390,7 +399,26 @@ describe('cash 503 with a sale id (the job completes it)', () => {
     expect(t.peek(DEBIT)).toBe(K1)
     expect(t.peek(QRIS)).toBe(K1)
     expect(t.reload().held).toEqual({ saleId: A, methodId: CASH, online: false })
-    expect(t.peek(CASH)).toBe(K1)
+    // UMK-2049: after a reload the job may have completed it: Bayar never replays it, the cashier checks first
+    expect(t.peek(CASH)).toBe('recorded')
+  })
+  it('a held cash sale with an untouched cart is not replayed after the register is reopened either (UMK-2049)', () => {
+    const t = held()
+    t.reopen()
+    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false })
+    expect(t.state.recorded).toBe(true)
+    expect(orderNotice(t.state)).toBe('recorded')
+    expect(t.send(CASH)).toBe('blocked')
+    expect(t.send(DEBIT)).toBe('blocked')
+    // the cashier checked: a new order
+    t.do({ type: 'recorded_acked' })
+    expect(t.send(CASH)).not.toBe(K1)
+  })
+  it('an online held sale is still repeated after a reload: its charge is repeated under the same key (UMK-2049)', () => {
+    const t = till()
+    t.send(QRIS)
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
+    expect(rehydrate(serialize(t.state), null, id(9)).recorded).toBe(false)
   })
   it('a cart edited by hand (the minus button, not Hapus semua) is no longer surely that sale\'s order: nothing is sent under its key until the cashier checked (review 5, major A)', () => {
     // the job completes sale 1; the next customer's order, edited into the same items, must not be answered with it
@@ -448,7 +476,7 @@ describe('paid', () => {
     const t = till()
     t.send(CASH)
     t.do({ type: 'sale_paid', key: K1 })
-    expect(t.state).toEqual(initialState(id(3)))
+    expect(t.state).toEqual({ ...initialState(id(3)), completed: { seq: 1, clearCart: true, sale: null } })
   })
   it('a cash sale that is paid never forgets another sale (review 3, major 2)', () => {
     const t = till()
@@ -896,6 +924,19 @@ describe('guard: one place remembers unfinished sales', () => {
     .filter((f) => /\.tsx?$/.test(f) && !f.endsWith('.test.ts'))
     .map((f) => ({ f, text: readFileSync(join(dir, f), 'utf8') }))
   const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+  it('the disabled "Sudah saya cek" says what it waits for (UMK-2051)', () => {
+    const text = code(sources.find((s) => s.f === 'index.tsx')!.text)
+    expect(text).toMatch(/!canAck\(pend\.state\) && \([\s\S]{0,120}WAITING_ANSWER_HINT/)
+    expect(WAITING_ANSWER_HINT).toBe('Menunggu jawaban permintaan sebelumnya')
+  })
+  it('the register page and the waiting list warn when the storage failed, not only the pay dialog (UMK-2052)', () => {
+    const index = code(sources.find((s) => s.f === 'index.tsx')!.text)
+    const list = code(sources.find((s) => s.f === '-online-pay.tsx')!.text)
+    // pay dialog + register page
+    expect(index.match(/!pend\.durable && \(/g)?.length).toBe(2)
+    expect(index).toMatch(/<AwaitingList[^>]*durable=\{pend\.durable\}/)
+    expect(list).toMatch(/!durable && \([\s\S]{0,120}NOT_STORED_TEXT/)
+  })
   it('only the pending store and the open bill touch browser storage', () => {
     const users = sources.filter((s) => /\b(sessionStorage|localStorage)\b/.test(code(s.text))).map((s) => s.f)
     expect(users.sort()).toEqual(['-cart.ts', '-pending-store.ts'])
@@ -926,5 +967,93 @@ describe('guard: one place remembers unfinished sales', () => {
   it('the reducer is pure: no storage, clock or random in it', () => {
     const text = code(sources.find((s) => s.f === '-pending.ts')!.text)
     expect(text).not.toMatch(/sessionStorage|localStorage|randomUUID|Date\.now|new Date|Math\.random|from 'react'/)
+  })
+})
+
+describe('rehydrate takes a fresh key when nothing may exist under the stored one (UMK-2050)', () => {
+  it('a clean state: a reload or a reopened register sends a new key', () => {
+    const s = initialState(K1)
+    expect(rehydrate(serialize(s), null, id(2)).key).toBe(id(2))
+    expect(reopened(s, id(3)).key).toBe(id(3))
+  })
+  it('keeps the key with doubt, a held sale or a tracked sale', () => {
+    const t = till()
+    t.send(CASH)
+    expect(rehydrate(serialize(t.state), null, id(9)).key).toBe(K1) // a request was out
+    t.do({ type: 'sale_unanswered', key: K1 })
+    expect(rehydrate(serialize(t.state), null, id(9)).key).toBe(K1)
+    const h = till()
+    h.send(QRIS)
+    h.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
+    expect(rehydrate(serialize(h.state), null, id(9)).key).toBe(K1)
+    const w = till()
+    w.send(QRIS)
+    w.do({ type: 'sale_awaiting', key: K1, saleId: A, readable: true })
+    w.do({ type: 'sale_finished', saleId: A })
+    const open = till()
+    open.send(QRIS)
+    open.do({ type: 'sale_awaiting', key: K1, saleId: A, readable: true })
+    expect(rehydrate(serialize(open.state), null, id(9)).key).toBe(K1)
+  })
+  it('keeps the key of a sale of the earlier storage format', () => {
+    expect(rehydrate(serialize(initialState(K1)), JSON.stringify({ id: A, own: true }), id(9)).key).toBe(K1)
+  })
+  it('a recorded state keeps its key too', () => {
+    expect(rehydrate(serialize({ ...initialState(K1), recorded: true }), null, id(9)).key).toBe(K1)
+  })
+})
+
+describe('a paid answer after the register was left and opened again (UMK-2048)', () => {
+  const SALE = { id: A, change: 500, receivableRest: null }
+  it('while an old request is out nothing goes out under its key, not even after the check was acked', () => {
+    const t = till()
+    t.send(CASH)
+    t.reopen()
+    expect(t.state.recorded).toBe(true)
+    expect(requestOut(t.state)).toBe(true)
+    expect(orderNotice(t.state)).toBe('recorded') // the notice stays; its button waits (canAck)
+    expect(t.send(CASH)).toBe('blocked')
+    expect(planSend(t.state, CASH, id(40)).plan).toEqual({ blocked: 'request_out' })
+    expect(canAck(t.state)).toBe(false)
+  })
+  it("the late paid answer for the cart's own key finishes the screen: clear the cart, show the sale, renew the key", () => {
+    const t = till()
+    t.send(CASH)
+    t.reopen() // the cashier left mid-request and came back; the cart on the new screen is untouched
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(t.state.completed).toEqual({ seq: 1, clearCart: true, sale: SALE })
+    expect(t.state.key).not.toBe(K1)
+    expect(t.state.recorded).toBe(false)
+    expect(t.state.out).toBeNull()
+    expect(t.send(CASH)).toBe(t.state.key)
+  })
+  it('an order edited meanwhile keeps its cart: the paid answer was for the old order', () => {
+    const t = till()
+    t.send(CASH)
+    t.reopen()
+    t.do({ type: 'cart_edited' })
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(t.state.completed?.clearCart).toBe(false)
+    expect(t.state.completed?.sale).toEqual(SALE)
+  })
+  it('a paid answer for another key never finishes this cart', () => {
+    const t = till()
+    t.do({ type: 'sale_paid', key: id(77), sale: SALE })
+    expect(t.state.completed).toBeNull()
+  })
+  it('the record survives reopening, and every paid answer counts up', () => {
+    const t = till()
+    t.send(CASH)
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(t.reopen().completed?.seq).toBe(1)
+    const k = t.send(CASH)
+    t.do({ type: 'sale_paid', key: k as string })
+    expect(t.state.completed).toEqual({ seq: 2, clearCart: true, sale: null })
+  })
+  it('is never stored', () => {
+    const t = till()
+    t.send(CASH)
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(serialize(t.state)).not.toMatch(/completed|change/)
   })
 })

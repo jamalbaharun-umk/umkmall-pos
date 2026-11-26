@@ -26,12 +26,18 @@ function tab(seed: Record<string, string> = {}) {
 }
 
 describe('createPendingStore', () => {
-  it('starts with a key and stores it at once, so a reload sends the same key', () => {
+  it('starts with a key and stores it at once; a reload of a clean state takes a fresh key (UMK-2050)', () => {
     const t = tab()
     const s = createPendingStore(t.io)
     const key = s.current().key
     expect(t.stored()?.key).toBe(key)
-    expect(createPendingStore(t.io).current().key).toBe(key)
+    expect(createPendingStore(t.io).current().key).not.toBe(key)
+  })
+  it('a reload with a request out keeps the key (UMK-2050)', () => {
+    const t = tab()
+    const s = createPendingStore(t.io)
+    const plan = s.send('m-cash')
+    expect(createPendingStore(t.io).current().key).toBe('key' in plan ? plan.key : '')
   })
   it('stores "a request is out" BEFORE send() returns the key: a reload in the middle of the request finds the doubt', () => {
     const t = tab()

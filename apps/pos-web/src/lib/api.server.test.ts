@@ -35,6 +35,35 @@ describe('api() page status', () => {
     expect(statuses).toEqual([503])
   })
 
+  it('a pos-api that never answers is cut off by the timeout and reads as "no answer" (UMK-2051)', async () => {
+    process.env.POS_API_TIMEOUT_MS = '30'
+    try {
+      vi.stubGlobal(
+        'fetch',
+        (_: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('timeout', 'TimeoutError')))),
+      )
+      await expect(api('/x', { method: 'POST' })).rejects.toThrow(API_DOWN)
+      expect(statuses).toEqual([503])
+    } finally {
+      delete process.env.POS_API_TIMEOUT_MS
+    }
+  })
+
+  it('passes a signal to every request, and keeps the caller\'s own abort', async () => {
+    let seen: AbortSignal | undefined
+    vi.stubGlobal('fetch', async (_: string, init: RequestInit) => {
+      seen = init.signal ?? undefined
+      return new Response('{}', { status: 200 })
+    })
+    await api('/x')
+    expect(seen).toBeInstanceOf(AbortSignal)
+    const own = new AbortController()
+    await api('/x', { signal: own.signal })
+    own.abort()
+    expect(seen?.aborted).toBe(true)
+  })
+
   it('sets 503 when the owner refresh finds UMKMall down', async () => {
     vi.stubGlobal('fetch', async () => new Response('{}', { status: 401 }))
     await expect(api('/x')).rejects.toThrow(UMKMALL_DOWN)

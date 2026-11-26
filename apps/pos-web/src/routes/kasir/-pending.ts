@@ -84,6 +84,16 @@ export type Tracked = {
 
 export type Held = { saleId: string; methodId: string; online: boolean }
 
+/** The sale of a paid answer, for the receipt (never stored). */
+export type PaidSaleInfo = { id: string; change: number | null; receivableRest: number | null }
+
+/**
+ * The last paid answer of the key the cart is for (UMK-2048). It is in the state, not in the screen that sent the
+ * request: that screen may be gone (the cashier left and came back) and the cart on the new one must still finish.
+ * Never stored. `seq` grows with every one, so a screen acts on the ones that came after it opened.
+ */
+export type Completed = { seq: number; clearCart: boolean; sale: PaidSaleInfo | null }
+
 export type PendingState = {
   /** The Idempotency-Key of the next POST /sales. */
   key: string
@@ -106,6 +116,8 @@ export type PendingState = {
   recorded: boolean
   /** The cart was changed after its own sale was written: that sale's end no longer clears the cart. */
   edited: boolean
+  /** The last paid answer for the cart's own key (see `Completed`). */
+  completed: Completed | null
   /** Online sales that are not finished, in the order they were first seen. */
   sales: Tracked[]
   /** The sale on the waiting screen. */
@@ -116,7 +128,7 @@ export type PendingState = {
 
 export type PendingEvent =
   | { type: 'sale_sending'; methodId: string }
-  | { type: 'sale_paid'; key: string }
+  | { type: 'sale_paid'; key: string; sale?: PaidSaleInfo }
   | { type: 'sale_awaiting'; key: string; saleId: string; readable: boolean }
   | { type: 'sale_held'; key: string; saleId: string; methodId: string; online: boolean }
   | { type: 'sale_cancelled'; key: string; saleId: string }
@@ -139,6 +151,7 @@ export const initialState = (fresh: string): PendingState => ({
   unanswered: false,
   recorded: false,
   edited: false,
+  completed: null,
   sales: [],
   showing: null,
   aside: false,
@@ -159,6 +172,8 @@ export const inDoubt = (s: PendingState): boolean => s.sending || s.unanswered
 /** A cash or EDC sale written under the key that the job will complete: it exists, whatever happens to the order. */
 const heldOffline = (s: PendingState): boolean => s.held !== null && !s.held.online
 /** "Sudah saya cek" waits while this page load's own request under the key is still out: its answer comes first. */
+/** A request under the current key went out in this page load and has not answered yet. */
+export const requestOut = (s: PendingState): boolean => s.out !== null && s.out === s.key
 export const canAck = (s: PendingState): boolean => s.recorded && s.out !== s.key
 /** A sale written but never charged that the order moved on from: asked in the background, never gating, never shown. */
 const leftBehind = (s: PendingState, t: Tracked) => t.phase === 'held' && t.key !== s.key
@@ -174,7 +189,7 @@ export function gateOf(s: PendingState): 'none' | 'checking' | 'unreachable' {
 /** An online sale written but never charged still holds its stock until the job closes it. */
 export const holdsStock = (s: PendingState): boolean => s.sales.some((t) => t.phase === 'held')
 
-export type SendPlan = { key: string } | { blocked: 'own_sale_open'; saleId: string } | { blocked: 'recorded' }
+export type SendPlan = { key: string } | { blocked: 'own_sale_open'; saleId: string } | { blocked: 'recorded' } | { blocked: 'request_out' }
 
 /**
  * The key of a sale request, read when the request is sent (never kept in a closure). Refused while the order's own
@@ -190,6 +205,9 @@ export function sendPlan(s: PendingState): SendPlan {
 
 /** What a sale request does to the state and which key it sends: both a pure function of the state. */
 export function planSend(s: PendingState, methodId: string, fresh: string): { state: PendingState; plan: SendPlan } {
+  // A request under this key of this page load is still out (the cashier left the register and came back): its
+  // answer comes first, so no second one goes out under the same key.
+  if (requestOut(s)) return { state: s, plan: { blocked: 'request_out' } }
   const state = reduce(s, { type: 'sale_sending', methodId }, fresh)
   return { state, plan: sendPlan(state) }
 }
@@ -208,6 +226,10 @@ export const OWN_SALE_OPEN_TEXT =
   'Pesanan ini sudah punya penjualan yang masih menunggu pembayaran. Buka dari Menunggu untuk menyelesaikan atau membatalkannya. Untuk pelanggan lain, tekan Hapus semua lalu buat pesanan baru.'
 export const HELD_SAME_TEXT =
   'Penjualan ini sudah tersimpan, tetapi pembayarannya belum tercatat. Tekan tombol bayar lagi dengan cara bayar dan jumlah yang sama: penjualan tidak akan tercatat dua kali.'
+export const REQUEST_OUT_TEXT =
+  'Permintaan pembayaran sebelumnya masih menunggu jawaban dari server. Tunggu sebentar: hasilnya akan muncul di sini.'
+/** Shown beside "Sudah saya cek" while it waits for the request of this page load (`canAck`). */
+export const WAITING_ANSWER_HINT = 'Menunggu jawaban permintaan sebelumnya'
 export const RECORDED_TEXT =
   'Penjualan sebelumnya mungkin sudah tercatat. Cek Riwayat (dan Menunggu) dulu. Bila sudah tercatat, jangan dibuat ulang. Setelah Anda cek, tekan "Sudah saya cek: buat penjualan baru" untuk melanjutkan.'
 export const NOT_STORED_TEXT =
@@ -326,7 +348,7 @@ export function reduce(state: PendingState, ev: PendingEvent, fresh: string): Pe
  * reload, except that a request of this page load that is still out is still known to be out.
  */
 export function reopened(s: PendingState, fresh: string): PendingState {
-  return { ...rehydrate(serialize(s), null, fresh), out: s.out }
+  return { ...rehydrate(serialize(s), null, fresh), out: s.out, completed: s.completed }
 }
 
 function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
@@ -340,7 +362,10 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
     }
     case 'sale_paid': {
       const next = { ...s, sales: s.sales.filter((t) => t.key !== ev.key) }
-      return ev.key === s.key ? newOrder(next, fresh) : next
+      if (ev.key !== s.key) return next
+      // The cart is this sale's order unless it was edited since (an edit while a request may be out sets `edited`).
+      const completed: Completed = { seq: (s.completed?.seq ?? 0) + 1, clearCart: !s.edited, sale: ev.sale ?? null }
+      return { ...newOrder(next, fresh), completed }
     }
     case 'sale_awaiting': {
       const sales = upsert(s, { id: ev.saleId, key: ev.key, shown: true, phase: ev.readable ? 'open' : 'unchecked' })
@@ -371,8 +396,10 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
       if (s.held?.online && !ownSale(s)?.shown) return newOrder(s, fresh)
       // A sale may exist under the key and the order is now another one: an order that happens to equal the lost one
       // must not be answered with it.
-      if ((inDoubt(s) || heldOffline(s)) && !s.recorded) return { ...s, recorded: true }
-      if (ownSale(s) && !s.edited) return { ...s, edited: true }
+      const doubtful = inDoubt(s) || heldOffline(s)
+      if (doubtful && !s.recorded) return { ...s, recorded: true, edited: true }
+      // `edited` also under doubt or `recorded`: a paid answer that comes later must not clear another order's cart
+      if ((ownSale(s) || doubtful || s.recorded) && !s.edited) return { ...s, edited: true }
       return s
     }
     case 'order_cleared': {
@@ -446,6 +473,8 @@ function parse(text: string | null): unknown {
  */
 export function rehydrate(text: string | null, legacyText: string | null, fresh: string): PendingState {
   const raw = parse(text)
+  const legacy = parse(legacyText)
+  const old = uuid(legacy) ? { id: legacy, own: true } : isObject(legacy) && uuid(legacy.id) ? { id: legacy.id, own: legacy.own !== false } : null
   let state = initialState(fresh)
   if (isObject(raw) && raw.v === 1 && uuid(raw.key)) {
     const h = raw.held
@@ -463,10 +492,14 @@ export function rehydrate(text: string | null, legacyText: string | null, fresh:
     // A request that was out when the page went away, or one that was never answered: a sale may exist under the key
     // and nobody can say the order on screen is still that one. The cashier checks before anything is sent.
     const doubt = raw.sending === true || raw.unanswered === true
-    state = { ...state, key: raw.key, held, unanswered: doubt, recorded: raw.recorded === true || doubt, edited: raw.edited === true, sales }
+    // A cash or EDC sale held for the job exists whatever this screen knows (it may be completed by now): Bayar must
+    // not replay it after a reload or reopen, the cashier checks Riwayat first (UMK-2049).
+    const recorded = raw.recorded === true || doubt || (held !== null && !held.online)
+    // Clean (nothing may exist under the stored key: no doubt, no held sale, no tracked sale): a fresh key, so the
+    // next sale never meets an old one (UMK-2050). With any of those the key stays.
+    const clean = !recorded && held === null && sales.length === 0 && !old
+    state = { ...state, key: clean ? state.key : raw.key, held, unanswered: doubt, recorded, edited: clean ? false : raw.edited === true, sales }
   }
-  const legacy = parse(legacyText)
-  const old = uuid(legacy) ? { id: legacy, own: true } : isObject(legacy) && uuid(legacy.id) ? { id: legacy.id, own: legacy.own !== false } : null
   if (old && !find(state, old.id) && state.sales.length < MAX_TRACKED)
     state = { ...state, sales: [...state.sales, { id: old.id, key: old.own ? state.key : null, shown: true, phase: 'unchecked' }] }
   return settle(state)
