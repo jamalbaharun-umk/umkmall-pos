@@ -2072,6 +2072,16 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         },
       });
       expect(await sync.tick()).toMatchObject({ refunds: 0, failed: 0 });
+      // The reprinted receipt is reversed, but not "refunded" while the gateway has not returned the money.
+      const pendingReceipt = await get(
+        s.auth,
+        `/sales/${saleId}/receipt`,
+      ).expect(200);
+      expect(pendingReceipt.body).toMatchObject({
+        status: 'void',
+        refunded: false,
+        refundStatus: 'pending',
+      });
 
       // The gateway returns the money: the job reads it.
       await gateway(
@@ -2091,6 +2101,14 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
       const record = await get(s.auth, `/sales/${saleId}/void`).expect(200);
       expect(record.body.refundStatus).toBe('succeeded');
+      const doneReceipt = await get(s.auth, `/sales/${saleId}/receipt`).expect(
+        200,
+      );
+      expect(doneReceipt.body).toMatchObject({
+        status: 'void',
+        refunded: true,
+        refundStatus: 'succeeded',
+      });
       // A void of a cash sale has no refund status.
       const cash = await sell(s, {
         paymentMethodId: undefined,
@@ -2132,7 +2150,16 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         randomUUID(),
       ).expect(201);
       expect(res.body.refundStatus).toBe('failed');
-      // The sale stays reversed (V8); the money is still owed to the customer.
+      // The sale stays reversed (V8); the money is still owed to the customer, so the receipt is not "refunded".
+      const failedReceipt = await get(
+        s.auth,
+        `/sales/${saleId}/receipt`,
+      ).expect(200);
+      expect(failedReceipt.body).toMatchObject({
+        status: 'void',
+        refunded: false,
+        refundStatus: 'failed',
+      });
       expect((await saleRow(saleId)).status).toBe('void');
       const failed = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
       expect(failed.body).toMatchObject({

@@ -1131,9 +1131,10 @@ export class SalesService {
         .where(and(eq(staff.tenantId, s.tenantId), eq(staff.id, sale.actorId)));
       cashier = row?.name ?? 'Kasir';
     }
-    // The void record of a voided or refunded sale: its reason and whether the money went back by a gateway refund.
+    // The void record of a voided or refunded sale: its reason and where its gateway refund stands. `refunded` only
+    // once the gateway says the money went back: a pending or refused refund still owes the customer.
     let voidReasonCode: string | null = null;
-    let refunded = false;
+    let refundStatus: (typeof saleVoids.$inferSelect)['refundStatus'] = null;
     if (sale.status === 'void') {
       const [v] = await this.db
         .select({
@@ -1145,7 +1146,7 @@ export class SalesService {
           and(eq(saleVoids.tenantId, s.tenantId), eq(saleVoids.saleId, id)),
         );
       voidReasonCode = v?.reasonCode ?? null;
-      refunded = v?.refundStatus != null;
+      refundStatus = v?.refundStatus ?? null;
     }
     return {
       number: sale.receiptNumber,
@@ -1184,7 +1185,8 @@ export class SalesService {
       status: sale.status,
       voidedAt: sale.voidedAt,
       voidReasonCode,
-      refunded,
+      refunded: refundStatus === 'succeeded',
+      refundStatus,
     };
   }
 

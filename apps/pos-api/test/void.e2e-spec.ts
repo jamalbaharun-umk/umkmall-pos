@@ -226,6 +226,7 @@ describe('void a full sale (UMK-1962)', () => {
       expect(receipt.body.status).toBe('void');
       expect(receipt.body.voidReasonCode).toBe(res.body.reasonCode);
       expect(receipt.body.refunded).toBe(false);
+      expect(receipt.body.refundStatus).toBeNull();
       const audit = await get(s.auth, `/sales/${sale.body.id}/void`);
       expect(audit.body).toEqual(res.body);
 

@@ -96,8 +96,10 @@ export type Receipt = {
   voidedAt: string | null
   /** Why it was voided (pos-api's reason code); null unless voided. */
   voidReasonCode?: string | null
-  /** The money went back by a gateway refund, not a plain void. */
+  /** The gateway says the money went back (refund succeeded); false for a plain void or a refund not done yet. */
   refunded?: boolean
+  /** UMK-1991: where the gateway refund of a reversed PG sale stands; null for a plain void or a valid receipt. */
+  refundStatus?: 'pending' | 'succeeded' | 'failed' | null
 }
 export type Result<T = undefined> =
   | { ok: true; data: T }
