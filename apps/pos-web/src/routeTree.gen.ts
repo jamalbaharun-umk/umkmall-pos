@@ -24,6 +24,7 @@ import { Route as LaporanJenisRouteImport } from './routes/laporan/$jenis'
 import { Route as LaporanUntungRugiRouteImport } from './routes/laporan/untung-rugi'
 import { Route as MasukIndexRouteImport } from './routes/masuk/index'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
+import { Route as MasukUlangRouteImport } from './routes/masuk/ulang'
 import { Route as MetodePembayaranIndexRouteImport } from './routes/metode-pembayaran/index'
 import { Route as PelangganIndexRouteImport } from './routes/pelanggan/index'
 import { Route as PemasokIndexRouteImport } from './routes/pemasok/index'
@@ -137,6 +138,11 @@ const MasukIndexRoute = MasukIndexRouteImport.update({
 const MasukDevRoute = MasukDevRouteImport.update({
   id: '/masuk/dev',
   path: '/masuk/dev',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MasukUlangRoute = MasukUlangRouteImport.update({
+  id: '/masuk/ulang',
+  path: '/masuk/ulang',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetodePembayaranIndexRoute = MetodePembayaranIndexRouteImport.update({
@@ -348,6 +354,7 @@ export interface FileRoutesByFullPath {
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
+  '/masuk/ulang': typeof MasukUlangRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
@@ -404,6 +411,7 @@ export interface FileRoutesByTo {
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
+  '/masuk/ulang': typeof MasukUlangRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
@@ -461,6 +469,7 @@ export interface FileRoutesById {
   '/laporan/$jenis': typeof LaporanJenisRoute
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
+  '/masuk/ulang': typeof MasukUlangRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
@@ -519,6 +528,7 @@ export interface FileRouteTypes {
     | '/laporan/$jenis'
     | '/laporan/untung-rugi'
     | '/masuk/dev'
+    | '/masuk/ulang'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
@@ -575,6 +585,7 @@ export interface FileRouteTypes {
     | '/laporan/$jenis'
     | '/laporan/untung-rugi'
     | '/masuk/dev'
+    | '/masuk/ulang'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
@@ -631,6 +642,7 @@ export interface FileRouteTypes {
     | '/laporan/$jenis'
     | '/laporan/untung-rugi'
     | '/masuk/dev'
+    | '/masuk/ulang'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
@@ -688,6 +700,7 @@ export interface RootRouteChildren {
   LaporanJenisRoute: typeof LaporanJenisRoute
   LaporanUntungRugiRoute: typeof LaporanUntungRugiRoute
   MasukDevRoute: typeof MasukDevRoute
+  MasukUlangRoute: typeof MasukUlangRoute
   PembelianIdRoute: typeof PembelianIdRoute
   PembelianBaruRoute: typeof PembelianBaruRoute
   PengaturanKeamananRoute: typeof PengaturanKeamananRoute
@@ -839,6 +852,13 @@ declare module '@tanstack/react-router' {
       path: '/masuk/dev'
       fullPath: '/masuk/dev'
       preLoaderRoute: typeof MasukDevRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/masuk/ulang': {
+      id: '/masuk/ulang'
+      path: '/masuk/ulang'
+      fullPath: '/masuk/ulang'
+      preLoaderRoute: typeof MasukUlangRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metode-pembayaran/': {
@@ -1128,6 +1148,7 @@ const rootRouteChildren: RootRouteChildren = {
   LaporanJenisRoute: LaporanJenisRoute,
   LaporanUntungRugiRoute: LaporanUntungRugiRoute,
   MasukDevRoute: MasukDevRoute,
+  MasukUlangRoute: MasukUlangRoute,
   PembelianIdRoute: PembelianIdRoute,
   PembelianBaruRoute: PembelianBaruRoute,
   PengaturanKeamananRoute: PengaturanKeamananRoute,

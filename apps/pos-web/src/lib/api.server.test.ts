@@ -7,10 +7,14 @@ vi.mock('./session.server', () => ({
   getSessionToken: () => 'h.eyJraW5kIjoib3duZXIifQ.s',
   clearSessionToken: () => {},
   posApiUrl: () => 'http://pos-api.test',
-  umkmallSession: async () => refresh,
+  umkmallSession: async (...args: unknown[]) => {
+    refreshArgs.push(args)
+    return refresh
+  },
   umkmallLoginUrl: () => 'https://umkmall.id/login?next=https%3A%2F%2Fpos.umkmall.id%2F',
 }))
 let refresh: string | number = 503
+const refreshArgs: unknown[][] = []
 
 const { api, API_DOWN, UMKMALL_DOWN } = await import('./api.server')
 
@@ -87,6 +91,16 @@ describe('api() page status', () => {
     })
     expect((await api('/x')).status).toBe(200)
     expect(seen).toEqual(['Bearer h.eyJraW5kIjoib3duZXIifQ.s', 'Bearer fresh'])
+    refresh = 503
+  })
+
+  it('UMK-2054 the refresh after a 401 is never a sign-in: it passes no signIn, so the new session is not fresh', async () => {
+    refresh = 'h.eyJraW5kIjoib3duZXIifQ.new'
+    refreshArgs.length = 0
+    let n = 0
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: n++ === 0 ? 401 : 200 }))
+    expect((await api('/void-pin')).status).toBe(200)
+    expect(refreshArgs).toEqual([[]])
     refresh = 503
   })
 })
