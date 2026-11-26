@@ -99,7 +99,7 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
         size="small"
         centered
       >
-        <form noValidate onSubmit={mark} className="flex flex-col gap-4 px-6 pb-6">
+        <form noValidate onSubmit={mark} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
           <p className="text-sm text-default-secondary">
             Struk #{saleVoid.saleNumber} · {rupiah(amount)}. Gunakan hanya bila uang sudah Anda kembalikan ke pelanggan di
             luar gateway, misalnya transfer langsung. Sistem menanyakan gateway dulu; bila refund ternyata sudah

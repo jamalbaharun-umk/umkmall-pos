@@ -137,7 +137,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
       size="small"
       centered
     >
-      <form noValidate onSubmit={submit} className="flex flex-col gap-4 px-6 pb-6">
+      <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
         <p className="text-sm text-default-secondary">
           {online
             ? 'Refund hanya penuh dan hanya sekali. Penjualan dibatalkan dan stok serta voucher kembali sekarang; struk tetap ada dengan tanda VOID. Dana kembali ke pelanggan saat gateway memastikan.'

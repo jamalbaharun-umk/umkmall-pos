@@ -219,7 +219,7 @@ function CashEntryDialog({
       closeDisabled={busy}
       keyboardAware
     >
-      <form noValidate onSubmit={submit} className="flex flex-col gap-4 px-6 pt-2 pb-6">
+      <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pt-2 pb-6">
         <TextField
           label={out ? 'Jumlah yang diambil' : 'Jumlah yang ditambahkan'}
           prefix="Rp"
