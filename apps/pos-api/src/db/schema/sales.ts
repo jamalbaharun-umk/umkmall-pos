@@ -218,6 +218,9 @@ export const sales = pos
       // payment-api's method for this sale, fixed when the sale was made: a later edit of the payment
       // method's kind never changes what is charged. Null exactly when the sale takes no payment there.
       paymentMethodCode: text('payment_method_code'),
+      // UMK-2037: the bank the customer chose for a PG method that needs one (a virtual account), as the
+      // cashier sent it and payment-api knows it. Sent with every charge of the PG attempt; null otherwise.
+      paymentBank: text('payment_bank'),
       // Which try at paying this sale: the charge key at payment-api is `<sale id>:<attempt>`. Only the switch
       // from a PG method to cash starts a new one, and `payment_attempt_at` is when it started (the job waits
       // from then before it gives an unanswered charge up).

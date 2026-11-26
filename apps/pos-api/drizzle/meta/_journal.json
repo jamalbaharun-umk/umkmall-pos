@@ -267,6 +267,13 @@
       "when": 1795662737040,
       "tag": "0037_hold_number_daily",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795663650616,
+      "tag": "0038_sale_payment_bank",
+      "breakpoints": true
     }
   ]
 }
