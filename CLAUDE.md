@@ -296,8 +296,9 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   `<saleId>:<attempt>` with the same method, bank and amount. The new bill is never charged before the old one is
   closed. Nobody but that request acts on the intent and nobody cancels a sale that has it (`applyToSale` answers
   `stale`). The intent is the request's ticket (`RenewTicket`, the `payment_renew_at` it wrote): a second request
-  is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMs`: the job's wait plus four
-  payment-api timeouts), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
+  is refused (409 `renew_in_progress`) unless the intent is stranded (`renewStrandedMsOf`: the job's wait plus four
+  payment-api timeouts, read on the database's clock by the request and the job alike; it assumes the holder waits on
+  at most `RENEW_INTENT_CALLS` calls, guarded by tests: a new call under the intent keeps that), and every drop clears only the value it owns (`where payment_renew_at = <that value>`;
   a failed request its own, the job the one it read; only a cancel drops any). Cash drops a
   renew intent; a cancel drops both. At most `MAX_PAYMENT_ATTEMPTS` bills per sale (open owner question). A cash
   sale past attempt 1 is read from its method (`!isOnlineMethod(method) && attempt > 1`), not from the attempt alone.

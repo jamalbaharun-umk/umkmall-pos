@@ -1,4 +1,10 @@
-import { BANKS_CACHE_MS, PaymentSync } from './payment-sync.service';
+import { loadEnv } from '../config';
+import {
+  BANKS_CACHE_MS,
+  PaymentSync,
+  RENEW_INTENT_CALLS,
+  renewStrandedMsOf,
+} from './payment-sync.service';
 import { PaymentApiError, type PaymentsClient } from './payments.client';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -87,5 +93,43 @@ describe('PaymentSync.banksOf: the banks cache (UMK-2037, UMK-2055)', () => {
   it('an error that is not payment-api\'s answer is thrown, not taken for "no answer"', async () => {
     const sync = syncWith(jest.fn(() => Promise.reject(new TypeError('bug'))));
     await expect(sync.banksOf(TENANT, 'fake_va')).rejects.toThrow('bug');
+  });
+});
+
+describe('renewStrandedMsOf: the bound of a request for a new bill (UMK-2042, PR 44 review)', () => {
+  const BASE = {
+    DATABASE_URL: 'postgres://u:p@localhost:5544/pos',
+    POS_SESSION_SECRET: 'x'.repeat(32),
+    UMKMALL_WEB_URL: 'http://127.0.0.1:9',
+    POS_SERVICE_KEY: 'k'.repeat(16),
+    PAYMENT_API_URL: 'http://payment.internal:3001/',
+    PAYMENT_SERVICE_KEY: 'service-key-0123456789',
+  };
+
+  it('at the smallest settings loadEnv allows, the intent outlives every call it waits on, with slack', () => {
+    for (const timeoutMs of [1000, 5000, 30_000]) {
+      const smallestAfterSeconds = Math.ceil((2 * timeoutMs) / 1000);
+      const env = loadEnv({
+        ...BASE,
+        PAYMENT_API_TIMEOUT_MS: String(timeoutMs),
+        POS_PAYMENT_RECONCILE_AFTER_SECONDS: String(smallestAfterSeconds),
+      });
+      const bound = renewStrandedMsOf(
+        env.POS_PAYMENT_RECONCILE_AFTER_SECONDS * 1000,
+        env.PAYMENT_API_TIMEOUT_MS,
+      );
+      // Every call the holder waits on runs to its timeout, and two more timeouts are left for the database.
+      expect(bound - RENEW_INTENT_CALLS * timeoutMs).toBeGreaterThanOrEqual(
+        2 * timeoutMs,
+      );
+      // The assumption under it: a shorter wait than two timeouts does not boot.
+      expect(() =>
+        loadEnv({
+          ...BASE,
+          PAYMENT_API_TIMEOUT_MS: String(timeoutMs),
+          POS_PAYMENT_RECONCILE_AFTER_SECONDS: String(smallestAfterSeconds - 1),
+        }),
+      ).toThrow('POS_PAYMENT_RECONCILE_AFTER_SECONDS');
+    }
   });
 });
