@@ -117,15 +117,15 @@ const GATE_REFUSALS = new Set([
   'merchant_mode_mismatch',
 ]);
 
+/** How long a store's banks are kept in memory, and for how many stores at most. */
+export const BANKS_CACHE_MS = 30_000;
+const BANKS_CACHE_STORES = 1000;
+
 /**
  * payment-api's refusals of a charge whose bank does not fit the method (UMK-2037). pos-api checks the bank
  * before the sale is written; these are payment-api's own answer when that check could not be made or its
  * list has changed since. No bill exists after one of these either.
  */
-/** How long a store's banks are kept in memory, and for how many stores at most. */
-const BANKS_CACHE_MS = 30_000;
-const BANKS_CACHE_STORES = 1000;
-
 export const BANK_REFUSALS = new Set([
   'bank_required',
   'bank_unknown',
@@ -215,8 +215,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * check of the charge decides (`BANK_REFUSALS`). Called before the sale's transaction, never inside one.
    *
    * Kept per store for `BANKS_CACHE_MS`, so a busy till does not ask payment-api before every online sale.
-   * A list that changed meanwhile costs nothing: payment-api checks the charge itself. Only an answer is
-   * kept, never "no answer".
+   * The price of a list that changed meanwhile, for at most that long: a bank the gateway added is refused
+   * here (422 on `bank`, nothing written), and one it removed passes here and is refused by payment-api's own
+   * check of the charge, after the sale is written (it is then cancelled at once with its stock back). Only an
+   * answer is kept, never "no answer".
    */
   private readonly banksCache = new Map<
     string,
@@ -239,7 +241,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         if (!(error instanceof PaymentApiError)) throw error;
         return null;
       }
-      // Bounded: a store that sells online asks again within the minute anyway.
+      // Bounded: emptied when full; a store that sells online asks again after BANKS_CACHE_MS anyway.
       if (this.banksCache.size >= BANKS_CACHE_STORES) this.banksCache.clear();
       this.banksCache.set(tenantId, known);
     }
