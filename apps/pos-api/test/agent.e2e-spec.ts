@@ -1408,6 +1408,7 @@ describe('UMKMall agent: session and MCP tools', () => {
           kind: string;
           label: string;
           amount: number;
+          receiptNumber: number | null;
         }[];
       };
       const byKind = data.entries
@@ -1434,6 +1435,16 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(data.entries.find((e) => e.kind === 'expense')?.label).toBe(
         'Sewa',
       );
+      // The voided sale stays as money that came in, and its refund is money that went out, both on its receipt.
+      const voided = cash.body.number as number;
+      expect(
+        data.entries
+          .filter((e) => e.receiptNumber === voided)
+          .map((e) => [e.kind, e.direction, e.amount]),
+      ).toEqual([
+        ['sale', 'in', 10000],
+        ['refund', 'out', 10000],
+      ]);
       // the same pull again: the same ids
       const again = await call(client, 'ledger_entries', {
         from: today,
@@ -1453,6 +1464,44 @@ describe('UMKMall agent: session and MCP tools', () => {
         },
       );
       expect((theirs.data as typeof data).entries).toEqual([]);
+    });
+
+    it('ledger_entries stops at 2000 entries and says truncated', async () => {
+      const store = await createStore();
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jakarta',
+      }).format(new Date());
+      await appDb`
+        insert into pos.expenses (tenant_id, kind, category, amount, expense_date, source, actor_id, actor_kind,
+                                  idempotency_key, request_hash)
+        select ${store.tenantId}, 'expense', 'lainnya', 1000, ${today}::date, 'outside', ${store.userId}, 'owner',
+               'bulk-' || g, 'h'
+          from generate_series(1, 2001) g`;
+      const client = await mcp(await agentToken(store.userId, ['pos.read']));
+      const r = await call(client, 'ledger_entries', {
+        from: today,
+        to: today,
+      });
+      const data = r.data as { truncated: boolean; entries: unknown[] };
+      expect(data.truncated).toBe(true);
+      expect(data.entries).toHaveLength(2000);
+    });
+
+    it('caps the photos the agent may add to one product', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await appDb`
+        insert into pos.product_images (tenant_id, product_id, storage_key, content_type, size_bytes)
+        select ${store.tenantId}, ${kopi.id}, 'tenants/x/' || g, 'image/png', 10
+          from generate_series(1, 10) g`;
+      const client = await mcp(await agentToken(store.userId));
+      const r = await call(client, 'add_product_photo', {
+        productId: kopi.id,
+        imageBase64: PNG.toString('base64'),
+        idempotencyKey: 'photo-cap-0001',
+        confirm: true,
+      });
+      expect(r.error).toMatch(/sudah punya 10 foto/);
     });
 
     it('add_product_photo appends a photo once per key, needs pos.write, and refuses a bad file', async () => {

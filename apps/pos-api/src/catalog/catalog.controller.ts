@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import { fieldError } from '../common/validation';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
@@ -75,6 +76,9 @@ export class CategoriesController {
     await this.catalog.deleteCategory(s.tenantId, idOf(id));
   }
 }
+
+/** Photos UMKMall's agent may add to one product (the owner can add more in the POS). */
+export const AGENT_MAX_IMAGES = 10;
 
 /** Cost price is margin data: only actors who manage the catalog, read reports or buy stock see it. */
 function withoutCost<T extends Record<string, unknown>>(s: PosSession, p: T) {
@@ -151,11 +155,21 @@ export class ProductsController {
       limits: { fileSize: 2 * 1024 * 1024 + 1, files: 1 },
     }),
   )
-  addImage(
+  async addImage(
     @CurrentSession() s: PosSession,
     @Param('id') id: string,
     @UploadedFile() file: { buffer: Buffer } | undefined,
   ) {
+    // UMKMall's agent may add photos up to a cap per product, so a looping agent cannot fill the storage.
+    // shortcut: counted before the insert, so two agent uploads at once can pass the cap by one; lock if it matters.
+    if (s.kind === 'agent') {
+      const p = await this.catalog.getProduct(s.tenantId, idOf(id));
+      if ((p.images as unknown[]).length >= AGENT_MAX_IMAGES)
+        throw fieldError(
+          'file',
+          `Produk ini sudah punya ${AGENT_MAX_IMAGES} foto; agent tidak bisa menambah lagi`,
+        );
+    }
     return this.catalog.addImage(s.tenantId, idOf(id), file);
   }
 
