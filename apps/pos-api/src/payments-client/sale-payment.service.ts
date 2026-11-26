@@ -274,6 +274,13 @@ export class SalePayments {
     const view = await this.view(s, saleId, payment, true);
     if (view.saleStatus === 'awaiting_payment') {
       await this.sync.abandonCashSwitch(s.tenantId, saleId);
+      // Still waiting: the bill is not closed yet, or the switch was taken back under this request (by a
+      // cancel, by the job giving the sale up, or by another cash request that failed). One code for all of
+      // them, `cancel_refused`: nothing records who took a switch back (each only clears `switch_cash_paid`;
+      // telling them apart would need a new column written by each), the bill does not tell them apart either
+      // (after a cancel and after the job alike it is `cancelled`, closed by either, or `expired`/`failed`,
+      // ended by itself), and the cashier's next step is the same: the sale did not become cash, so check its
+      // status (a cancel or the job cancels it soon) before taking money.
       throw (await this.isCashNow(s, saleId))
         ? cashPending()
         : refusal('cancel_refused');
