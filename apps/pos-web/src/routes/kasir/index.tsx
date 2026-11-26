@@ -92,6 +92,7 @@ import {
   resumePlan,
   saleAnswerEvent,
   toCheck,
+  type PaidSaleInfo,
   type PendingEvent,
   type SaleAnswer,
   WAITING_ANSWER_HINT,
@@ -312,7 +313,14 @@ function Register({
         clearOrder()
         setPaying(false)
       }
-      setPaid({ id: d.saleId, change: null, receivableRest: null })
+      setPaid({
+        id: d.saleId,
+        change: null,
+        receivableRest: null,
+        receiptNumber: d.receiptNumber,
+        amount: d.amount,
+        method: d.paymentMethodName,
+      })
     }
     if (d.do === 'ended')
       notifySuccess(
@@ -1144,6 +1152,8 @@ function PayDialog({
         <div className="space-y-3">
           <SegmentedControl
             aria-label="Metode pembayaran"
+            // Six methods are wider than a phone: wrap them instead of pushing the sheet sideways (UMK-2056).
+            className="flex max-w-full flex-wrap rounded-ds-xl"
             options={methods.map((m) => ({ value: m.id, label: m.name }))}
             value={methodId}
             onChange={(v) => {
@@ -1400,7 +1410,7 @@ function PayDialog({
 }
 
 /** `change` is null when it is not known here (a sale found paid after a reload): the receipt has it. */
-type PaidSale = { id: string; change: number | null; receivableRest: number | null }
+type PaidSale = PaidSaleInfo
 
 function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void }) {
   const navigate = useNavigate()
@@ -1419,6 +1429,14 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
               ? 'Penjualan sudah dibayar'
               : `Kembalian: ${rupiah(sale.change)}`}
         </Text>
+        {/* A sale found paid after the till was away: say which sale it is, for how much and its receipt (UMK-2058). */}
+        {sale && (sale.receiptNumber != null || sale.amount != null) && (
+          <dl className="w-full space-y-1 text-sm" aria-label="Rincian penjualan">
+            {sale.receiptNumber != null && <Row label="Struk" value={`#${sale.receiptNumber}`} />}
+            {sale.amount != null && <Row label="Total dibayar" value={rupiah(sale.amount)} />}
+            {sale.method && <Row label="Cara bayar" value={sale.method} />}
+          </dl>
+        )}
         <div className="mt-4 grid w-full grid-cols-2 gap-2">
           <Button
             width="auto"

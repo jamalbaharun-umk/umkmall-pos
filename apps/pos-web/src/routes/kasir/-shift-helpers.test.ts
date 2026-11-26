@@ -35,7 +35,7 @@ describe('drawerRows', () => {
   it('lists opening, sales, each ledger line and the expected cash, and adds up', () => {
     const rows = drawerRows(shift)
     expect(rows.map((r) => r.key)).toEqual(['opening', 'sales', 'receivables', 'expenses', 'voids', 'expected'])
-    expect(rows.find((r) => r.key === 'sales')?.label).toBe('Penjualan tunai (12)')
+    expect(rows.find((r) => r.key === 'sales')?.label).toBe('Penjualan tunai (dari 12 penjualan semua metode)')
     expect(drawerAddsUp(rows)).toBe(true)
   })
 

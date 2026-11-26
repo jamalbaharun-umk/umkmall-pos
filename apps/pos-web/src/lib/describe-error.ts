@@ -150,6 +150,20 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
   },
 }
 
+/**
+ * A shift close refused because sales still wait for payment (UMK-2058): name them as the waiting list does
+ * ("Menunggu #3", not a bare "#3") and say what to do. The sales are listed with links on the closing screen.
+ */
+export function awaitingCloseText(serverText?: string): ErrorDescription {
+  const named = serverText?.replace(/#(\d+)/g, 'Menunggu #$1')
+  return {
+    what: named ?? 'Shift belum bisa ditutup karena masih ada penjualan yang menunggu pembayaran.',
+    todo: 'Selesaikan pembayarannya atau batalkan penjualan yang menunggu lewat daftar di halaman Tutup shift (tombol Buka atau Ke kasir), lalu tutup shift lagi.',
+    code: 'SALES_AWAITING_PAYMENT',
+    primary: 'none',
+  }
+}
+
 const browserOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false
 
 /** A thrown value that means "no connection" (the browser's fetch error, or the server function's own text). */
@@ -202,6 +216,7 @@ export function describeError(error: unknown, fallback: string): ErrorDescriptio
       primary: 'retry',
     }
   }
+  if (f.code === 'sales_awaiting_payment' && status === 409) return awaitingCloseText(text)
   const paymentCode = typeof f.code === 'string' ? PAYMENT_CODES[f.code] : undefined
   // A bad permission or a missing sale keeps its own, stricter text below; every other status takes the payment code's.
   if (paymentCode && status !== 401 && status !== 403 && status !== 404 && status !== 422 && status !== 429) {

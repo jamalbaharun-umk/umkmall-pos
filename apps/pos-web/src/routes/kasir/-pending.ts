@@ -87,7 +87,15 @@ export type Tracked = {
 export type Held = { saleId: string; methodId: string; online: boolean; bank: string | null }
 
 /** The sale of a paid answer, for the receipt (never stored). */
-export type PaidSaleInfo = { id: string; change: number | null; receivableRest: number | null }
+/** `receiptNumber`, `amount` and `method` are set for a sale found paid after the till was away (UMK-2058): what the dialog shows then. */
+export type PaidSaleInfo = {
+  id: string
+  change: number | null
+  receivableRest: number | null
+  receiptNumber?: number | null
+  amount?: number
+  method?: string
+}
 
 /**
  * The last paid answer of the key the cart is for (UMK-2048). It is in the state, not in the screen that sent the

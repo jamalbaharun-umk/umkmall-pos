@@ -129,4 +129,15 @@ describe('payment gateway codes (UMK-1991)', () => {
   it('an unknown code is ignored', () => {
     expect(describeError({ status: 409, code: 'whatever' }, FALLBACK).what).toMatch(/bentrok/)
   })
+
+  it('a shift close refused for waiting sales names them "Menunggu #n" and says what to do (UMK-2058)', () => {
+    const d = describeError(
+      { status: 409, code: 'sales_awaiting_payment', error: 'Masih ada penjualan yang menunggu pembayaran: #3, #1 (25/11)' },
+      FALLBACK,
+    )
+    expect(d.what).toBe('Masih ada penjualan yang menunggu pembayaran: Menunggu #3, Menunggu #1 (25/11)')
+    expect(d.todo).toMatch(/batalkan/)
+    expect(d.todo).toMatch(/Tutup shift/)
+    expect(d.primary).toBe('none')
+  })
 })

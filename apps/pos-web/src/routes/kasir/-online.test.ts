@@ -23,6 +23,8 @@ import {
   isQris,
   keepPolling,
   vaGroups,
+  vaChunks,
+  bankName,
   waitingFor,
   lateReceiptText,
   outcomeOf,
@@ -292,7 +294,16 @@ describe('design 26 details', () => {
   })
   it('writes a VA number in groups of four', () => {
     expect(vaGroups('8077123456789012')).toBe('8077 1234 5678 9012')
-    expect(vaGroups('80771')).toBe('8077 1')
+    expect(vaGroups('807712')).toBe('8077 12')
+    // a lone last digit joins the group before it, so it never wraps onto a line of its own
+    expect(vaChunks('80771')).toEqual(['80771'])
+    expect(vaChunks('')).toEqual([])
+  })
+  it('names a bank by its code, or shows the code when unknown', () => {
+    expect(bankName('FAKE2')).toBe('Bank Fake Dua')
+    expect(bankName('bca')).toBe('BCA')
+    expect(bankName('XYZ')).toBe('XYZ')
+    expect(bankName('')).toBe('-')
   })
   it('says how long ago the last check was', () => {
     const now = new Date('2026-11-25T10:00:10Z').getTime()
@@ -360,6 +371,8 @@ describe('resumeDecision: what a reload does with the remembered sale', () => {
       do: 'completed',
       saleId: ID,
       receiptNumber: 12,
+      amount: 5123,
+      paymentMethodName: expect.any(String),
     })
   })
   it('a cancelled sale is only "ended"', () => {

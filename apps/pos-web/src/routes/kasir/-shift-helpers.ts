@@ -45,7 +45,8 @@ export function drawerRows(
     { key: 'opening', label: 'Uang awal di laci', amount: s.openingCash, sign: '' },
     {
       key: 'sales',
-      label: s.salesCount == null ? 'Penjualan tunai' : `Penjualan tunai (${s.salesCount})`,
+      // The count is of every sale of the shift (any method), the amount is cash only (UMK-2057).
+      label: s.salesCount == null ? 'Penjualan tunai' : `Penjualan tunai (dari ${s.salesCount} penjualan semua metode)`,
       amount: s.cashSales ?? 0,
       sign: '+',
     },
