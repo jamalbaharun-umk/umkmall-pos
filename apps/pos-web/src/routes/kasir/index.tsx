@@ -68,7 +68,7 @@ import {
   type Bank,
 } from './-pay-step'
 import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
-import { parsePayment, saleFailure, type ResumeDecision, type SalePayment } from './-online'
+import { holdLabel, parsePayment, receiptLabel, saleFailure, type ResumeDecision, type SalePayment } from './-online'
 import {
   canAck,
   finishPlan,
@@ -291,8 +291,8 @@ function Register({
     if (d.do === 'ended')
       notifySuccess(
         d.reversed
-          ? `Penjualan #${d.saleNumber} sudah dibatalkan dan dananya dikembalikan selagi kasir ini terputus. Lihat di Riwayat.`
-          : `Penjualan #${d.saleNumber} sudah ditutup tanpa pembayaran. Stok kembali.`,
+          ? `${receiptLabel(d.receiptNumber)} sudah dibatalkan dan dananya dikembalikan selagi kasir ini terputus. Lihat di Riwayat.`
+          : `Penjualan ${holdLabel(d.holdNumber)} sudah ditutup tanpa pembayaran. Stok kembali.`,
       )
   }
   const checks = useResumeChecks(toCheck(pend.state), onResume)
