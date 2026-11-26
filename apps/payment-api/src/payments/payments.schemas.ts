@@ -12,6 +12,12 @@ export const ChargeBody = z.object({
   // Checked against the adapter registry, not an enum here: a new adapter needs no schema change.
   method: z.string().trim().min(1, 'Required').max(50),
   amount: Rupiah,
+  // UMK-2037: the bank the payer chose, for a method whose adapter declares banks (a virtual account). One of
+  // the adapter's codes, checked against the adapter like `method`; a method without banks takes none.
+  bank: z
+    .string({ invalid_type_error: 'Must be a bank code' })
+    .regex(/^[A-Za-z0-9_-]{1,30}$/, 'Must be a bank code')
+    .optional(),
   // Which try at paying this order (1, 2, …). The caller's Idempotency-Key is the order reference plus this
   // number; a new attempt is accepted only once the previous payment is closed.
   attempt: z

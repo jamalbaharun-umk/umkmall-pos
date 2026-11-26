@@ -9,6 +9,7 @@ const ref = {
   method: 'cash',
   amount: 1,
   providerRef: null,
+  bank: null,
   expiresAt: null,
 };
 const context = {

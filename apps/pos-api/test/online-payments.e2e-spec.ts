@@ -186,6 +186,7 @@ describe('online payments: onboarding through pos-api (UMK-2019)', () => {
     expect((await account(s)).status).toBe('verified');
     expect((await call('get', '/methods', s.auth).expect(200)).body).toEqual({
       methods: [],
+      banks: {},
     });
 
     const on = await call('put', '/fake/methods/fake_qris', s.auth, {
@@ -194,7 +195,35 @@ describe('online payments: onboarding through pos-api (UMK-2019)', () => {
     expect(on.body.status).toBe('active');
     expect((await call('get', '/methods', s.auth).expect(200)).body).toEqual({
       methods: ['fake_qris'],
+      banks: {},
     });
+    // UMK-2037: a method that needs a bank answers the banks the customer chooses from; a QR answers none.
+    await call('put', '/fake/methods/fake_va', s.auth, {
+      enabled: true,
+    }).expect(200);
+    const withVa = await call('get', '/methods', s.auth).expect(200);
+    expect(withVa.body).toEqual({
+      methods: ['fake_qris', 'fake_va'],
+      banks: {
+        fake_va: [
+          { code: 'FAKE', name: 'Bank Fake' },
+          { code: 'FAKE2', name: 'Bank Fake Dua' },
+        ],
+      },
+    });
+    // The owner's page carries them per method too, and nothing else of the gateway's.
+    const va = ((await account(s)).methods as { method: string }[]).find(
+      (m) => m.method === 'fake_va',
+    );
+    expect(va).toEqual({
+      method: 'fake_va',
+      enabled: true,
+      chargeable: true,
+      banks: withVa.body.banks.fake_va,
+    });
+    await call('put', '/fake/methods/fake_va', s.auth, {
+      enabled: false,
+    }).expect(200);
     const off = await call('put', '/fake/methods/fake_qris', s.auth, {
       enabled: false,
     }).expect(200);
@@ -225,6 +254,7 @@ describe('online payments: onboarding through pos-api (UMK-2019)', () => {
     // Suspended: the cashier is offered nothing, though the toggle is still on.
     expect((await call('get', '/methods', s.auth).expect(200)).body).toEqual({
       methods: [],
+      banks: {},
     });
 
     const r = await createStore();
@@ -318,6 +348,7 @@ describe('online payments: onboarding through pos-api (UMK-2019)', () => {
     });
     expect((await call('get', '/methods', b.auth).expect(200)).body).toEqual({
       methods: [],
+      banks: {},
     });
     // B's own actions land on B's account: A's stays as it was.
     await call('put', '/fake/methods/fake_qris', b.auth, {
@@ -370,7 +401,7 @@ describe('online payments: onboarding through pos-api (UMK-2019)', () => {
       .get('/online-payments/methods')
       .set('Authorization', s.auth)
       .expect(200);
-    expect(methods.body).toEqual({ methods: [] });
+    expect(methods.body).toEqual({ methods: [], banks: {} });
     await off()
       .put('/online-payments/fake/draft')
       .set('Authorization', s.auth)

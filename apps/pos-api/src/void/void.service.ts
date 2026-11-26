@@ -34,7 +34,7 @@ import { StockService, type Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
 import { restoreVoucher } from '../vouchers/vouchers.controller';
 import { type Approver, VoidPins } from './void-pin';
-import type { VoidInput } from './void.schemas';
+import type { RefundRetryInput, VoidInput } from './void.schemas';
 
 const NO_SHIFT = 'Buka shift dulu untuk membatalkan struk tunai';
 const ALREADY_VOID = 'Struk ini sudah dibatalkan';
@@ -410,11 +410,26 @@ export class VoidService {
     return this.view(s, row.id);
   }
 
-  /** `POST /sales/:id/refund/retry`: asks a refund the gateway refused again (V4). */
-  async retryRefund(s: PosSession, saleId: string) {
+  /**
+   * `POST /sales/:id/refund/retry`: asks a refund the gateway refused again (V4). The owner only, approved by
+   * a PIN like the refund was (UMK-2040): an unknown sale answers 404 before the PIN is checked, so it costs
+   * no attempt; the PIN is checked (and committed) before payment-api is called.
+   */
+  async retryRefund(s: PosSession, saleId: string, input: RefundRetryInput) {
+    if (s.kind !== 'owner') throw new ForbiddenException();
     await this.refundView(s, saleId);
+    const approver = await this.pins.verify(
+      s.tenantId,
+      input.approverId,
+      input.pin,
+    );
     await this.payments
-      .retryRefund(s.tenantId, saleId, actorRef(s.kind, s.actorId))
+      .retryRefund(
+        s.tenantId,
+        saleId,
+        actorRef(s.kind, s.actorId),
+        actorRef(approver.kind, approver.id),
+      )
       .catch((error: unknown) => {
         throw paymentHttpError(error);
       });

@@ -13,6 +13,25 @@ describe('environment', () => {
     });
   });
 
+  it('UMK-2039 a QR is valid for 15 minutes and a VA for 60 by default, each set by its own variable', () => {
+    expect(loadEnv(base)).toMatchObject({
+      PAYMENT_QR_TTL_SECONDS: 900,
+      PAYMENT_VA_TTL_SECONDS: 3600,
+    });
+    expect(loadEnv({ ...base, PAYMENT_VA_TTL_SECONDS: '86400' })).toMatchObject(
+      {
+        PAYMENT_QR_TTL_SECONDS: 900,
+        PAYMENT_VA_TTL_SECONDS: 86400,
+      },
+    );
+    expect(() => loadEnv({ ...base, PAYMENT_VA_TTL_SECONDS: '-1' })).toThrow(
+      'Invalid environment: PAYMENT_VA_TTL_SECONDS',
+    );
+    expect(() => loadEnv({ ...base, PAYMENT_VA_TTL_SECONDS: '1.5' })).toThrow(
+      'Invalid environment: PAYMENT_VA_TTL_SECONDS',
+    );
+  });
+
   it('refuses to boot when the late-money sweep ends before the expiry grace does, naming the variable and no value', () => {
     expect(() =>
       loadEnv({

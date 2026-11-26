@@ -675,6 +675,11 @@ export class MerchantsService {
         method,
         enabled: enabled.includes(method),
         chargeable: takesCharges && enabled.includes(method),
+        // UMK-2037: what the payer chooses from before a bill of this method is made; empty when it needs none.
+        banks: (this.adapters.get(method)?.banks ?? []).map((b) => ({
+          code: b.code,
+          name: b.name,
+        })),
       })),
       lastSyncedAt: row?.lastSyncedAt ?? null,
       updatedAt: row?.updatedAt ?? null,

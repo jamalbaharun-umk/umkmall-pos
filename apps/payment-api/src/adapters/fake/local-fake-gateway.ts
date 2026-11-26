@@ -2,6 +2,8 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Clock } from '../../config';
 import {
+  Bank,
+  BillValidity,
   ChargeResult,
   GatewayUnreachableError,
   PaymentAdapter,
@@ -85,6 +87,18 @@ export class FakeGatewayRefusal extends Error {
     this.name = 'FakeGatewayRefusal';
   }
 }
+
+/**
+ * The banks a `fake_va` bill can be made at (UMK-2037). Made-up names: the fake gateway stands for no bank.
+ * `vaPrefix` is the start of the VA numbers of that bank, so a bill shows which one was chosen.
+ */
+export const FAKE_BANKS = [
+  { code: 'FAKE', name: 'Bank Fake', vaPrefix: '8808' },
+  { code: 'FAKE2', name: 'Bank Fake Dua', vaPrefix: '8809' },
+] as const;
+
+/** What a payer's bank would show as the holder of a fake VA. */
+export const FAKE_VA_ACCOUNT_NAME = 'FAKE GATEWAY';
 
 const CLOSED: readonly FakeBillStatus[] = ['failed', 'expired', 'cancelled'];
 const PREFIX: Record<FakeMethod, string> = {
@@ -171,10 +185,7 @@ export class LocalFakeGateway {
             ? { qrString: `FAKEQRIS.${serial}.${payment.amount}` }
             : method === 'fake_checkout'
               ? { paymentUrl: `https://fake-gateway.invalid/pay/${serial}` }
-              : {
-                  bank: 'FAKE',
-                  vaNumber: `8808${BigInt(`0x${serial}`).toString().padStart(15, '0').slice(-12)}`,
-                },
+              : this.virtualAccount(payment.bank, serial),
         receipts: [],
         refunds: [],
         createdAt: this.clock.now(),
@@ -187,6 +198,18 @@ export class LocalFakeGateway {
       providerRef: bill.providerRef,
       expiresAt: bill.expiresAt ?? undefined,
       checkout: bill.checkout,
+    };
+  }
+
+  /** The VA at the bank the payer chose. payment-api sends only a declared bank; anything else is a bug. */
+  private virtualAccount(bank: string | null, serial: string) {
+    const chosen = FAKE_BANKS.find((b) => b.code === bank);
+    if (!chosen) throw new Error('fake gateway: a VA needs one of its banks');
+    return {
+      bank: chosen.code,
+      // UMK-2045: the holder name a bank shows for the VA. A fixed label: the fake gateway knows no store.
+      accountName: FAKE_VA_ACCOUNT_NAME,
+      vaNumber: `${chosen.vaPrefix}${BigInt(`0x${serial}`).toString().padStart(15, '0').slice(-12)}`,
     };
   }
 
@@ -469,12 +492,21 @@ class FakeAdapter implements PaymentAdapter {
   readonly supportsVoid = false;
   readonly supportsRefund = true;
   readonly canCancel = true;
+  readonly validity: BillValidity;
+  readonly banks?: readonly Bank[];
 
   constructor(
     private readonly gateway: LocalFakeGateway,
     readonly method: FakeMethod,
     readonly singleUseQr: boolean,
-  ) {}
+  ) {
+    // A virtual account is paid from a bank app, not at the till: it lives longer than a QR (UMK-2039).
+    this.validity = method === 'fake_va' ? 'va' : 'qr';
+    this.banks =
+      method === 'fake_va'
+        ? FAKE_BANKS.map(({ code, name }) => ({ code, name }))
+        : undefined;
+  }
 
   charge(payment: PaymentRef): Promise<ChargeResult> {
     return this.gateway.charge(payment, this.method);

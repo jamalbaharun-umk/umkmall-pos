@@ -69,6 +69,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   let mangle: ((payment: Record<string, unknown>) => void) | null = null;
   /** The answer of the first matching call is lost: payment-api did it, pos-api never hears. */
   let loseAnswerOf: ((c: Call) => boolean) | null = null;
+  /** payment-api's answer to a matching call, made up by the test; the call never reaches payment-api. */
+  let answerInstead: ((c: Call) => Response | null) | null = null;
   function hold(match: Hold['match'], when: Hold['when'] = 'before') {
     let release!: () => void;
     let reached!: () => void;
@@ -108,6 +110,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
             h.reached();
             await h.gate;
           }
+          const made = answerInstead?.(call);
+          if (made) return made;
           let res = await fetch(url, init);
           if (mangle && res.ok) {
             const body = (await res.json()) as Record<string, unknown>;
@@ -201,6 +205,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     link = 'ok';
     holds = [];
     loseAnswerOf = null;
+    answerInstead = null;
     mangle = null;
     await gatewaySettings('pending');
   });
@@ -321,6 +326,12 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   });
   const refund = (s: Store, saleId: string, key: string = randomUUID()) =>
     post(s.auth, `/sales/${saleId}/refund`, approval(s), key);
+  /** The retry of a refused refund (UMK-2040): by `as`, approved by the owner's PIN unless `body` says otherwise. */
+  const retry = (
+    as: { auth: string; userId?: string },
+    saleId: string,
+    body: object = { approverId: as.userId ?? randomUUID(), pin: OWNER_PIN },
+  ) => post(as.auth, `/sales/${saleId}/refund/retry`, body);
 
   const onHand = async (s: Shop) =>
     (await get(s.auth, `/stock/products/${s.productId}`).expect(200)).body
@@ -633,18 +644,182 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       }).expect(200);
     });
 
-    it('a VA sale answers the bank and the VA number', async () => {
+    it('UMK-2037 a VA sale is made at the bank the customer chose, and answers that bank and its VA number', async () => {
       const s = await shop();
       const va = await method(s, 'VA', 'fake_va');
-      const res = await sell(s, { paymentMethodId: va }).expect(201);
-      expect(res.body.payment).toMatchObject({ method: 'fake_va' });
+      const res = await sell(s, { paymentMethodId: va, bank: 'FAKE2' }).expect(
+        201,
+      );
+      expect(res.body.payment).toMatchObject({
+        method: 'fake_va',
+        checkout: {
+          bank: 'FAKE2',
+          vaNumber: expect.stringMatching(/^8809\d{12}$/),
+        },
+      });
+      // UMK-2045: with the name the customer's bank will show for the VA ("a.n."), the gateway's label.
+      expect(res.body.payment.checkout.accountName).toBe('FAKE GATEWAY');
       expect(Object.keys(res.body.payment.checkout).sort()).toEqual([
+        'accountName',
         'bank',
         'vaNumber',
       ]);
+      const poll = await get(s.auth, `/sales/${res.body.id}/payment`).expect(
+        200,
+      );
+      expect(poll.body.checkout).toEqual(res.body.payment.checkout);
+      // Only the known keys reach the screen: whatever else a gateway answers about the account stays behind.
+      mangle = (p) => {
+        p.checkout = {
+          ...(p.checkout as object),
+          accountNumber: '1234567890',
+          holderIdentityNumber: '3171234567890001',
+        };
+      };
+      const strict = await get(s.auth, `/sales/${res.body.id}/payment`).expect(
+        200,
+      );
+      expect(strict.body.checkout).toEqual(res.body.payment.checkout);
+      mangle = null;
+      const [row] = await admin<{ payment_bank: string | null }[]>`
+        select payment_bank from pos.sales where id = ${res.body.id}`;
+      expect(row.payment_bank).toBe('FAKE2');
+      const [payment] = await pay.sql<{ bank: string | null }[]>`
+        select bank from payment.payments where order_ref = ${res.body.id}`;
+      expect(payment.bank).toBe('FAKE2');
       await onBill(s, res.body.id, 'pay');
       await get(s.auth, `/sales/${res.body.id}/payment`).expect(200);
       expect((await saleRow(res.body.id)).status).toBe('completed');
+    });
+
+    it('UMK-2037 a VA sale without a bank, with an unknown one, or a QR or cash sale with one: 422 on `bank`, and nothing is written or taken', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      const sales = async () =>
+        (
+          await admin<{ n: number }[]>`
+            select count(*)::int as n from pos.sales where tenant_id = ${s.tenantId}`
+        )[0].n;
+      const banks = [
+        { code: 'FAKE', name: 'Bank Fake' },
+        { code: 'FAKE2', name: 'Bank Fake Dua' },
+      ];
+      const none = await sell(s, { paymentMethodId: va }).expect(422);
+      expect(none.body).toMatchObject({
+        errors: { bank: 'Pilih bank untuk virtual account' },
+        banks,
+      });
+      const unknown = await sell(s, {
+        paymentMethodId: va,
+        bank: 'BCA',
+      }).expect(422);
+      expect(unknown.body).toMatchObject({
+        errors: { bank: 'Bank tidak tersedia untuk metode ini' },
+        banks,
+      });
+      for (const bank of ['', 'a b', 7, null]) {
+        const bad = await sell(s, { paymentMethodId: va, bank }).expect(422);
+        expect(Object.keys(bad.body.errors)).toEqual(['bank']);
+      }
+      // A QR and a cash sale choose no bank.
+      const qr = await sell(s, { bank: 'FAKE' }).expect(422);
+      expect(qr.body.errors).toEqual({
+        bank: 'Metode pembayaran ini tidak memakai bank',
+      });
+      const cash = await sell(s, {
+        paymentMethodId: undefined,
+        paid: 10_000,
+        bank: 'FAKE',
+      }).expect(422);
+      expect(cash.body.errors).toEqual({
+        bank: 'Metode pembayaran ini tidak memakai bank',
+      });
+      expect(await sales()).toBe(0);
+      expect(await onHand(s)).toBe(20);
+      expect(await bills(s.tenantId)).toEqual([]);
+      expect(
+        await pay.sql`select 1 from payment.payments where tenant_id = ${s.tenantId}`,
+      ).toHaveLength(0);
+    });
+
+    it('UMK-2037 the same key answers the same VA; the same key with another bank is another request (422)', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      const key = randomUUID();
+      const body = { paymentMethodId: va, bank: 'FAKE' };
+      const first = await sell(s, body, key).expect(201);
+      const again = await sell(s, body, key).expect(201);
+      expect(again.body.id).toBe(first.body.id);
+      expect(again.body.payment.checkout).toEqual(first.body.payment.checkout);
+      await sell(s, { ...body, bank: 'FAKE2' }, key).expect(422);
+      expect(await bills(s.tenantId)).toHaveLength(1);
+      await post(s.auth, `/sales/${first.body.id}/payment/cancel`).expect(200);
+    });
+
+    it('UMK-2037 a VA sale whose charge got no answer is given up by the job with the bank it was asked for; switched to cash it is charged without one', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      // The charge never reaches payment-api; the bank check before the sale did.
+      link = 'no_charge';
+      const lost = await sell(s, { paymentMethodId: va, bank: 'FAKE2' }).expect(
+        503,
+      );
+      link = 'ok';
+      const lostId = lost.body.saleId as string;
+      expect(await sync.tick(later())).toMatchObject({ cancelled: 1 });
+      expect((await saleRow(lostId)).status).toBe('cancelled');
+      // The key was closed with the charge's own body: the charge that arrives late answers that payment.
+      const [closed] = await pay.sql<{ status: string; bank: string | null }[]>`
+        select status, bank from payment.payments where order_ref = ${lostId}`;
+      expect(closed).toEqual({ status: 'cancelled', bank: 'FAKE2' });
+
+      const res = await sell(s, { paymentMethodId: va, bank: 'FAKE' }).expect(
+        201,
+      );
+      const cash = await post(s.auth, `/sales/${res.body.id}/payment/cash`, {
+        paid: 5200,
+      }).expect(200);
+      expect(cash.body).toMatchObject({
+        saleStatus: 'completed',
+        method: 'cash',
+      });
+      const rows = await pay.sql<
+        { method: string; bank: string | null; status: string }[]
+      >`select method, bank, status from payment.payments
+        where order_ref = ${res.body.id} order by attempt`;
+      expect(rows).toEqual([
+        { method: 'fake_va', bank: 'FAKE', status: 'cancelled' },
+        { method: 'cash', bank: null, status: 'paid' },
+      ]);
+    });
+
+    it('UMK-2037 payment-api is the authority on the bank: when the check before the sale cannot be made and it refuses the charge, the sale is cancelled at once (422) with its stock back', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      // The list of banks cannot be read, so the sale goes on; the charge itself is answered.
+      answerInstead = (c) =>
+        c.init.method === 'GET' && c.url.endsWith('/merchant-accounts')
+          ? new Response('{}', { status: 500 })
+          : null;
+      const res = await sell(s, { paymentMethodId: va, bank: 'BCA' }).expect(
+        422,
+      );
+      expect(res.body).toMatchObject({
+        code: 'bank_unknown',
+        status: 'cancelled',
+        errors: { bank: expect.any(String) },
+      });
+      const missing = await sell(s, { paymentMethodId: va }).expect(422);
+      expect(missing.body.code).toBe('bank_required');
+      answerInstead = null;
+      for (const id of [res.body.saleId, missing.body.saleId] as string[]) {
+        expect((await saleRow(id)).status).toBe('cancelled');
+        expect((await paymentsOf(id)).map((p) => p.status)).toEqual([
+          'cancelled',
+        ]);
+      }
+      expect(await onHand(s)).toBe(20);
+      expect(await bills(s.tenantId)).toEqual([]);
     });
 
     it('M11 the gateway refuses the bill: 409, the sale is cancelled and stock is back at once', async () => {
@@ -1076,6 +1251,68 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
     });
 
+    it('payment-api answers the close with a 4xx that is no refusal of the bill (400, 401, 429): 409 payment_refused, not "no answer"; a 500 stays 503', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      const answer = (status: number, code: string) => {
+        answerInstead = (c) =>
+          isCancel(c)
+            ? new Response(JSON.stringify({ message: 'x', code }), {
+                status,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            : null;
+      };
+      const unchanged = async () => {
+        // The switch is taken back, and nothing was closed: the bill is still open at the gateway.
+        expect(await saleRow(saleId)).toMatchObject({
+          status: 'awaiting_payment',
+          payment_attempt: 1,
+          payment_method_code: 'fake_qris',
+          switch_cash_paid: null,
+        });
+        expect((await billOf(s, saleId)).status).toBe('pending');
+      };
+      for (const [status, code] of [
+        [400, 'invalid'],
+        [401, 'invalid_service_key'],
+        [429, 'too_many_requests'],
+      ] as const) {
+        answer(status, code);
+        const res = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+          paid: 6000,
+        }).expect(409);
+        // payment-api answered: this is its refusal, and the message does not say it gave no answer.
+        expect(res.body.code).toBe('payment_refused');
+        expect(res.body.message).not.toMatch(/tidak menjawab/);
+        await unchanged();
+      }
+      // A clear refusal of the bill keeps its own code.
+      answer(409, 'cancel_not_supported');
+      const refusedBill = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(409);
+      expect(refusedBill.body.code).toBe('cancel_refused');
+      await unchanged();
+      // No usable answer (5xx): the close may have happened, so the cashier is told to check first.
+      answer(500, 'internal');
+      const none = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(503);
+      expect(none.body.code).toBe('payment_unavailable');
+      expect(none.body.message).toMatch(/tidak menjawab/);
+      await unchanged();
+
+      answerInstead = null;
+      const done = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(200);
+      expect(done.body).toMatchObject({
+        saleStatus: 'completed',
+        method: 'cash',
+      });
+    });
+
     it('M2 the close reached payment-api but its answer was lost: 503, and the sale is then cancelled, never a cash sale', async () => {
       const s = await shop();
       const saleId = (await sell(s).expect(201)).body.id as string;
@@ -1471,8 +1708,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await gatewaySettings('pending');
       const before = (await billOf(s, saleId)).refunds.length;
       const [a, b, tick] = await Promise.all([
-        post(s.auth, `/sales/${saleId}/refund/retry`),
-        post(s.auth, `/sales/${saleId}/refund/retry`),
+        retry(s, saleId),
+        retry(s, saleId),
         sync.tick(later()),
       ]);
       expect([a.status, b.status]).toEqual([200, 200]);
@@ -1495,10 +1732,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       link = 'down';
       await refund(s, saleId).expect(201);
       link = 'ok';
-      const [a, b] = await Promise.all([
-        sync.tick(later()),
-        post(s.auth, `/sales/${saleId}/refund/retry`),
-      ]);
+      const [a, b] = await Promise.all([sync.tick(later()), retry(s, saleId)]);
       expect(a.failed).toBe(0);
       expect(b.status).toBe(200);
       expect((await billOf(s, saleId)).refunds).toHaveLength(1);
@@ -1732,10 +1966,10 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         randomUUID(),
       ).expect(201);
       expect(voided.body.refundStatus).toBeNull();
-      await post(s.auth, `/sales/${cash.body.id}/refund/retry`).expect(404);
+      await retry(s, cash.body.id).expect(404);
     });
 
-    it('V4 the gateway refuses the refund: refund_failed, a retry by someone with sales.void asks again, and it succeeds', async () => {
+    it('V4 the gateway refuses the refund: refund_failed, a retry by the owner with an admin PIN asks again, and it succeeds', async () => {
       const s = await shop();
       const saleId = await paidSale(s);
       await gatewaySettings('fail');
@@ -1750,25 +1984,36 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
 
       const cashier = await createCashier(app, s);
-      await post(cashier.auth, `/sales/${saleId}/refund/retry`).expect(403);
+      await retry(cashier, saleId).expect(403);
       await post(cashier.auth, `/sales/${saleId}/refund/manual`, {
         note: 'tunai',
       }).expect(403);
       // Still refused by the gateway: failed again, asked again.
-      const still = await post(s.auth, `/sales/${saleId}/refund/retry`).expect(
-        200,
-      );
+      const still = await retry(s, saleId).expect(200);
       expect(still.body.refundStatus).toBe('failed');
 
       await gatewaySettings('pending');
+      // UMK-2040: `sales.void` is not enough to retry; the owner does, and a supervisor's PIN may approve it.
       const supervisor = await createCashier(app, s, [
         'sales.create',
         'sales.void',
       ]);
-      const retried = await post(
-        supervisor.auth,
-        `/sales/${saleId}/refund/retry`,
-      ).expect(200);
+      const SUPERVISOR_PIN = '271828';
+      await http()
+        .put('/void-pin')
+        .set('Authorization', supervisor.auth)
+        .send({ pin: SUPERVISOR_PIN })
+        .expect(200);
+      const before = (await billOf(s, saleId)).refunds.length;
+      const approvedBySupervisor = {
+        approverId: supervisor.staffId,
+        pin: SUPERVISOR_PIN,
+      };
+      await retry(supervisor, saleId, approvedBySupervisor).expect(403);
+      // 403 before the body is read: a supervisor learns nothing about it.
+      await retry(supervisor, saleId, {}).expect(403);
+      expect((await billOf(s, saleId)).refunds).toHaveLength(before);
+      const retried = await retry(s, saleId, approvedBySupervisor).expect(200);
       expect(retried.body).toMatchObject({ saleId, refundStatus: 'pending' });
       const [payment] = await paymentsOf(saleId);
       expect(payment.status).toBe('refund_pending');
@@ -1776,14 +2021,14 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         { actor_ref: string; approved_by: string }[]
       >`select actor_ref, approved_by from payment.payment_events
         where payment_id = ${payment.id} and to_status = 'refund_pending' order by created_at desc limit 1`;
-      // Who retried, and the approver whose PIN approved the refund.
+      // Who retried, and the approver whose PIN approved this retry.
       expect(event).toEqual({
-        actor_ref: `cashier:${supervisor.staffId}`,
-        approved_by: `owner:${s.userId}`,
+        actor_ref: `owner:${s.userId}`,
+        approved_by: `cashier:${supervisor.staffId}`,
       });
       // A retry of a refund that is on its way asks nothing new.
       const refunds = (await billOf(s, saleId)).refunds.length;
-      await post(s.auth, `/sales/${saleId}/refund/retry`).expect(200);
+      await retry(s, saleId).expect(200);
       expect((await billOf(s, saleId)).refunds).toHaveLength(refunds);
 
       await gateway(
@@ -1791,24 +2036,82 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         'POST',
         `/refunds/${payment.refund_key}/succeed`,
       );
-      const done = await post(s.auth, `/sales/${saleId}/refund/retry`).expect(
-        200,
-      );
+      const done = await retry(s, saleId).expect(200);
       expect(done.body.refundStatus).toBe('succeeded');
       expect((await paymentsOf(saleId))[0].status).toBe('refunded');
       expect(await onHand(s)).toBe(20);
+    });
+
+    it('UMK-2040 a retry needs the PIN of an approver: no body 422, a wrong PIN 422 and nothing asked, the 5th wrong PIN locks (429) like a void', async () => {
+      const s = await shop();
+      const saleId = await paidSale(s);
+      await gatewaySettings('fail');
+      await refund(s, saleId).expect(201);
+      await gatewaySettings('pending');
+      const asked = async () => (await billOf(s, saleId)).refunds.length;
+      const before = await asked();
+
+      const none = await retry(s, saleId, {}).expect(422);
+      expect(Object.keys(none.body.errors).sort()).toEqual([
+        'approverId',
+        'pin',
+      ]);
+      // Strict like a void: nothing but the approver and the PIN.
+      await retry(s, saleId, {
+        approverId: s.userId,
+        pin: OWNER_PIN,
+        reasonCode: 'other',
+      }).expect(422);
+      // Someone who may not approve gets the wrong-PIN answer and counts nowhere.
+      const cashier = await createCashier(app, s);
+      const notApprover = await retry(s, saleId, {
+        approverId: cashier.staffId,
+        pin: OWNER_PIN,
+      }).expect(422);
+      expect(notApprover.body.errors).toEqual({ pin: 'PIN salah' });
+
+      const wrong = { approverId: s.userId, pin: '000000' };
+      for (let i = 0; i < 4; i++) {
+        const res = await retry(s, saleId, wrong).expect(422);
+        expect(res.body.errors).toEqual({ pin: 'PIN salah' });
+      }
+      const fifth = await retry(s, saleId, wrong).expect(429);
+      expect(fifth.headers['retry-after']).toBe('300');
+      expect(fifth.body.retryAfter).toBe(300);
+      // Locked: the right PIN is refused too, and the lock is the void's own (a refund is refused as well).
+      const lockedOut = await retry(s, saleId).expect(429);
+      expect(lockedOut.body.errors.pin).toMatch(/Terlalu banyak PIN salah/);
+      const other = await paidSale(s);
+      await refund(s, other).expect(429);
+      expect(await asked()).toBe(before);
+      expect((await voidsOf(saleId))[0].refund_status).toBe('failed');
+
+      await http()
+        .post(`/void-pin/${s.userId}/unlock`)
+        .set('Authorization', s.auth)
+        .expect(200);
+      const ok = await retry(s, saleId).expect(200);
+      expect(ok.body.refundStatus).toBe('pending');
+      expect(await asked()).toBe(before + 1);
+      // Leave nothing in flight for the file's balance check.
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/refunds/${(await paymentsOf(saleId))[0].refund_key}/succeed`,
+      );
+      await sync.tick(later());
     });
 
     it('V4 a refused refund is marked returned by hand by the owner only, with a note; a refund that was not refused is not', async () => {
       const s = await shop();
       const pending = await paidSale(s);
       await refund(s, pending).expect(201);
-      // `sales.void` retries a refund; saying the money went back by hand is the owner's alone.
+      // Retrying and saying the money went back by hand are the owner's alone, also for `sales.void`.
       const supervisor = await createCashier(app, s, [
         'sales.create',
         'sales.void',
       ]);
-      await post(supervisor.auth, `/sales/${pending}/refund/retry`).expect(200);
+      await retry(supervisor, pending).expect(403);
       await post(supervisor.auth, `/sales/${pending}/refund/manual`, {
         note: 'tunai',
       }).expect(403);
@@ -2084,6 +2387,87 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   });
 
   describe('who may act', () => {
+    /** `GET /sales?status=awaiting_payment` as `auth` sees it. */
+    const awaitingIds = async (auth: string) => {
+      const res = await get(auth, '/sales?status=awaiting_payment').expect(200);
+      const data = res.body.data as {
+        id: string;
+        actorId: string;
+        mine: boolean;
+      }[];
+      return {
+        ids: data.map((x) => x.id).sort(),
+        total: res.body.total as number,
+        data,
+      };
+    };
+
+    it('UMK-2047 the waiting list holds what the caller may act on: their own, or all with sales.void; reports.view alone is not enough', async () => {
+      const s = await shop();
+      const ayu = await createCashier(app, s);
+      const budi = await createCashier(app, s);
+      const reader = await createCashier(app, s, [
+        'sales.create',
+        'reports.view',
+      ]);
+      const supervisor = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+      ]);
+      for (const c of [ayu, reader])
+        await post(c.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const sale = async (auth: string) =>
+        (await sell(s, {}, randomUUID(), auth).expect(201)).body.id as string;
+      const ofAyu = await sale(ayu.auth);
+      const ofReader = await sale(reader.auth);
+      const ofOwner = await sale(s.auth);
+      const all = [ofAyu, ofReader, ofOwner].sort();
+
+      const mineOnly = await awaitingIds(ayu.auth);
+      expect(mineOnly).toMatchObject({ ids: [ofAyu], total: 1 });
+      expect(mineOnly.data[0]).toMatchObject({
+        actorId: ayu.staffId,
+        mine: true,
+      });
+      expect(await awaitingIds(budi.auth)).toMatchObject({ ids: [], total: 0 });
+      // `reports.view` reads every receipt, but a waiting sale of someone else is not theirs to act on:
+      // its payment route answers 404, so the list does not offer it.
+      expect(await awaitingIds(reader.auth)).toMatchObject({
+        ids: [ofReader],
+        total: 1,
+      });
+      await get(reader.auth, `/sales/${ofAyu}/payment`).expect(404);
+      // `sales.void` (no `reports.view`) recovers any stuck payment of the store.
+      const seen = await awaitingIds(supervisor.auth);
+      expect(seen).toMatchObject({ ids: all, total: 3 });
+      expect(seen.data.every((x) => !x.mine)).toBe(true);
+      await get(supervisor.auth, `/sales/${ofAyu}/payment`).expect(200);
+      const owner = await awaitingIds(s.auth);
+      expect(owner.ids).toEqual(all);
+      expect(owner.data.map((x) => [x.id, x.actorId, x.mine]).sort()).toEqual(
+        [
+          [ofAyu, ayu.staffId, false],
+          [ofReader, reader.staffId, false],
+          [ofOwner, s.userId, true],
+        ].sort(),
+      );
+      // Receipts keep their scope: a reader still lists every completed sale of the store.
+      await onBill(s, ofAyu, 'pay');
+      await get(ayu.auth, `/sales/${ofAyu}/payment`).expect(200);
+      const receipts = await get(reader.auth, '/sales').expect(200);
+      expect(
+        (receipts.body.data as { id: string; mine: boolean }[]).map((x) => [
+          x.id,
+          x.mine,
+        ]),
+      ).toEqual([[ofAyu, false]]);
+      for (const [auth, id] of [
+        [reader.auth, ofReader],
+        [s.auth, ofOwner],
+      ])
+        await post(auth, `/sales/${id}/payment/cancel`).expect(200);
+    });
+
     it('cross-tenant: store B gets 404 on every payment route of store A’s sale, and nothing of A changes', async () => {
       const a = await shop();
       const b = await shop();
@@ -2105,11 +2489,14 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         approval(b),
         randomUUID(),
       ).expect(404);
-      await post(b.auth, `/sales/${refunded}/refund/retry`).expect(404);
+      await retry(b, refunded).expect(404);
       await post(b.auth, `/sales/${refunded}/refund/manual`, {
         note: 'x',
       }).expect(404);
       await get(b.auth, `/sales/${refunded}/void`).expect(404);
+      // UMK-2047: the waiting list is the session's store only.
+      expect((await awaitingIds(b.auth)).ids).toEqual([]);
+      expect((await awaitingIds(a.auth)).ids).toEqual([waiting]);
 
       expect(await saleRow(waiting)).toMatchObject({
         status: 'awaiting_payment',
@@ -2157,7 +2544,13 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       ).expect(200);
       expect(seen.body.checkout.qrString).toEqual(expect.any(String));
 
-      await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      // UMK-2047: the payment says whose sale it is, so the screen offers the cash switch to its cashier only.
+      expect(seen.body).toMatchObject({ actorId: ayu.staffId, mine: false });
+      const own = await get(ayu.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(own.body).toMatchObject({ actorId: ayu.staffId, mine: true });
+
+      const asOwner = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(asOwner.body).toMatchObject({ actorId: ayu.staffId, mine: false });
       const notOwn = await post(s.auth, `/sales/${saleId}/payment/cash`, {
         paid: 10_000,
       }).expect(409);
@@ -2195,7 +2588,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await get(s.auth, `/sales/${id}/payment`).expect(404);
       await post(s.auth, `/sales/${id}/payment/cancel`).expect(404);
       await get(s.auth, '/sales/not-a-uuid/payment').expect(404);
-      await post(s.auth, `/sales/${id}/refund/retry`).expect(404);
+      await retry(s, id).expect(404);
     });
   });
 

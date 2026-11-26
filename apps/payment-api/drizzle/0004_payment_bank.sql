@@ -1,0 +1,1 @@
+ALTER TABLE "payment"."payments" ADD COLUMN "bank" text;

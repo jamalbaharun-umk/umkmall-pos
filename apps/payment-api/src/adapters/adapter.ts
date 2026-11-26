@@ -11,6 +11,8 @@
  * that must never create a second bill or a second refund.
  */
 export type AdapterKind = 'cashac' | 'online';
+/** How long a bill is payable: a QR at the till is short-lived, a virtual account is paid from a bank app. */
+export type BillValidity = 'qr' | 'va';
 
 /** What an adapter is told about a payment. Amount is integer rupiah, always the full amount. */
 export interface PaymentRef {
@@ -20,7 +22,9 @@ export interface PaymentRef {
   method: string;
   amount: number;
   providerRef: string | null;
-  /** When the bill should stop accepting payment (the configured QR lifetime). */
+  /** The bank the payer chose: one of the adapter's `banks` codes, null for a method that declares none. */
+  bank: string | null;
+  /** When the bill should stop accepting payment (the configured validity of the method). */
   expiresAt: Date | null;
 }
 
@@ -29,10 +33,22 @@ export interface PaymentRef {
  * - `qrString`: a QR to draw at the till (dynamic QRIS);
  * - `paymentUrl`: the PG's own payment page to open or show as a link (a PG that offers a method for a
  *   sub-account only through its hosted checkout);
- * - `vaNumber` and `bank`: a virtual account.
+ * - `vaNumber` and `bank`: a virtual account;
+ * - `accountName`: the name the payer's bank shows for that virtual account ("a.n. …"), so the payer can check
+ *   it before sending. It is the gateway's label for the account, as the gateway answers it: never a bank
+ *   account or identity data of the store that payment-api holds (it holds none).
  * A charge answers at least one of `qrString`, `paymentUrl` or `vaNumber`; a caller shows what it finds.
  */
 export type Checkout = Record<string, string>;
+
+/**
+ * A bank a method can make a bill at (UMK-2037). `code` is what a charge carries and what `checkout.bank`
+ * answers; `name` is what the payer is shown. The gateway's list, never a bank account.
+ */
+export interface Bank {
+  code: string;
+  name: string;
+}
 
 export interface ChargeResult {
   /** `pending`: the bill exists and the payer has not paid yet. `failed`: the PG refused it. */
@@ -121,6 +137,17 @@ export interface PaymentAdapter {
   readonly canCancel: boolean;
   /** The PG rejects a second payment on the same QR. When false, a duplicate receipt is possible. */
   readonly singleUseQr: boolean;
+  /**
+   * Which configured validity a bill of this method gets (UMK-2039): `va` is PAYMENT_VA_TTL_SECONDS, `qr`
+   * (the default) PAYMENT_QR_TTL_SECONDS. Only the bill's lifetime: every window after it counts from the
+   * bill's own expiry.
+   */
+  readonly validity?: BillValidity;
+  /**
+   * The banks the payer chooses from BEFORE the bill is made (a virtual account). A method that declares
+   * banks is charged with one of their codes (`PaymentRef.bank`); a method that declares none takes none.
+   */
+  readonly banks?: readonly Bank[];
 
   /**
    * Throws GatewayUnreachableError when the request certainly never reached the PG; any other error means

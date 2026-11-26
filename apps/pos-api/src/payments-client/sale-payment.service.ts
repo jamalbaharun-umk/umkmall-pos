@@ -215,6 +215,10 @@ export class SalePayments {
           : refusal('payment_refused');
       // payment-api would not close the bill: the sale still waits for the PG payment.
       if (error.kind === 'rejected') throw refusal('cancel_refused');
+      // payment-api did answer, and refused the request itself (400, 401, 403, 429): it closed nothing, so
+      // this is a refusal, not a call that went unanswered.
+      if (error.status !== null && error.status >= 400 && error.status < 500)
+        throw refusal('payment_refused');
       // No answer: the close may or may not have reached payment-api. The cashier must look before acting.
       throw new ServiceUnavailableException({
         message: MESSAGES.cash_switch_unanswered,
@@ -319,7 +323,9 @@ export class SalePayments {
     const checkout =
       payment && waiting && payment.checkout
         ? Object.fromEntries(
-            ['qrString', 'bank', 'vaNumber']
+            // `accountName` (UMK-2045): the holder name the customer's bank shows for the VA, as the gateway
+            // labels it. Only these keys reach the screen, whatever else a gateway may answer.
+            ['qrString', 'bank', 'vaNumber', 'accountName']
               .filter((k) => k in payment.checkout!)
               .map((k) => [k, payment.checkout![k]]),
           )
@@ -333,6 +339,10 @@ export class SalePayments {
       receiptNumber: numbers.receiptNumber,
       holdNumber: numbers.holdNumber,
       saleStatus: sale.status,
+      // UMK-2047: who rang the sale up. Only they switch it to cash (`not_own_sale`); a `sales.void` holder
+      // may still check, cancel and refund it.
+      actorId: sale.actorId,
+      mine: sale.actorId === s.actorId,
       status,
       online,
       method: sale.method,

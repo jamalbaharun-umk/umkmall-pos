@@ -165,6 +165,19 @@ test per resource, idempotent money changes), with these differences:
   (`credentials_encrypted` is written and answered by nothing). The PG's account reference and every secret stay
   in payment-api: no route answers them. `POST /webhooks/:provider/accounts` follows the webhook rule below (the
   status is read again from the PG; the body is not stored).
+- **A bill's validity is per method** (UMK-2039): an adapter declares `validity` (`qr`, the default, or `va`) and
+  `PaymentSettings.ttlMs(adapter)` reads `PAYMENT_QR_TTL_SECONDS` (900) or `PAYMENT_VA_TTL_SECONDS` (3600: the
+  design's sample, **not yet an owner decision**). It sets `expires_at` at the charge; every window after it (the
+  automatic `expired`, the late-money sweep) counts from the bill's own `expires_at`, never from a setting.
+- **The bank of a virtual account is chosen before the bill is made** (UMK-2037): an adapter declares `banks`
+  (`{ code, name }`) for a method that needs one; a charge of such a method carries one of the codes (`bank`, 422
+  `bank_required` / `bank_unknown`; `bank_not_supported` for a method without banks), kept in `payments.bank`,
+  handed to the adapter in `PaymentRef.bank` and part of the key's fingerprint only when sent. A key that already has
+  a payment still answers it. A merchant account's methods answer their `banks`.
+- **`checkout` has well-known keys** (`adapter.ts`): `qrString`, `paymentUrl`, `vaNumber`, `bank`, and
+  `accountName` (UMK-2045), the name the payer's bank shows for a VA: the gateway's label as it answers it, never
+  bank account or identity data of the store. pos-api passes only `qrString`, `bank`, `vaNumber` and `accountName`
+  on to the screen (`SalePayment.checkout`).
 - **Modes:** `PAYMENT_GATEWAY_MODE` (`fake` default, `sandbox`, `live`), one per environment. `live` needs
   `PAYMENT_LIVE_ENABLED` (default off; a boot error without it) and stays off until the legal gate (UMK-1977).
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;
@@ -222,6 +235,12 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   payment-api pushes nothing. Statuses shown are payment-api's own; pos-api never decides `expired` by its clock.
   A charge payment-api refuses because the store may not charge there (`GATE_REFUSALS`) closes the charge key and
   cancels the sale at once (409 with the `code`).
+- **A VA sale names its bank** (UMK-2037): `GET /online-payments/methods` answers `banks` by method,
+  `POST /sales` takes `bank` (422 on `bank` when a method with banks gets none or an unknown one, or another method
+  gets one), checked against payment-api's list BEFORE the sale's transaction (`SalesService.checkBank`,
+  `PaymentSync.banksOf`); the sale keeps it in `sales.payment_bank` and every charge and close of the PG attempt
+  sends it. With no answer to that check the sale goes on and payment-api's own refusal (`BANK_REFUSALS`) cancels it
+  at once, like a gate refusal (422).
 - **Switch to cash is written before anything is closed, and only the cashier's request does it:**
   `sales.switch_cash_paid` first, then that request (`settle` mode `cash`) closes the PG bill, turns the sale into a
   cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
@@ -234,12 +253,18 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **An answer is applied only to the sale that was read:** `applyToSale` takes the attempt the payment belongs to
   and answers `stale` (read again) when the sale is at another attempt, or would be cancelled with a switch to cash
   asked. A new write of a sale's step 2 keeps both checks.
+- **The waiting list follows the payment routes** (UMK-2047): `GET /sales?status=awaiting_payment` lists the caller's
+  own sales, or all of the store's with `sales.void` (`reports.view` alone is not enough); list rows and
+  `SalePayment` carry `actorId` and `mine`.
 - **A sale's payment routes are for its cashier or a `sales.void` holder** (the answer carries the QR), and every
   action on them, and every refund route, starts with `assertPersonAtTill(s.kind)` (guard test).
 - **A paid PG sale is refunded, never voided** (`POST /sales/:id/refund`; a void answers 409 `use_refund`, a refund
   of a CASHAC sale 409 `use_void`, both before the PIN is checked). The refund is the void record with
   `sale_voids.refund_status` (`pending`, `succeeded`, `failed`): same reasons, same PIN approver, the sale reversed at
-  once, the refund asked after the commit and followed by the job. Retry needs `sales.void`; "dikembalikan manual" is the owner's alone.
+  once, the refund asked after the commit and followed by the job. Retry (`POST /sales/:id/refund/retry`) and
+  "dikembalikan manual" are the owner's alone (403 for anyone else); a retry is approved again by a PIN
+  (`{ approverId, pin }`, a `sales.void` holder, the void's lockout: wrong PIN 422, locked 429), checked before
+  payment-api is asked (UMK-2040).
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
   exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
   answer only while it still awaits payment. Every transaction of `payments-client/` is in `payment-sync.service.ts`.

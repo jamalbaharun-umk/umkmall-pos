@@ -29,6 +29,13 @@
       "when": 1795630299556,
       "tag": "0003_merchant_answer_order",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795660368395,
+      "tag": "0004_payment_bank",
+      "breakpoints": true
     }
   ]
 }
