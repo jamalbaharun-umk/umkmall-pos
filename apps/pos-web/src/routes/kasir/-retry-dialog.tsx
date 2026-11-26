@@ -2,7 +2,7 @@ import { Alert, Button, Dialog } from '@umkmall/ui/primitives'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { rupiah } from '@/components/page'
 import { notifySuccess, showError } from '@/lib/feedback'
-import { ApproverPinFields, ApproverStatus, useApprovers } from './-approver-fields'
+import { ApproverStatus, PinField, useApprovers } from './-approver-fields'
 import { retryRefund } from './-online-api'
 import { useLost } from './-use-lost'
 import type { SaleVoid } from './-void-api'
@@ -23,8 +23,7 @@ type Props = {
  */
 export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
   const lost = useLost()
-  const { approvers, reload, list, anyApprover } = useApprovers(open)
-  const [approverId, setApproverId] = useState('')
+  const { approvers, reload, list } = useApprovers(open)
   const [pin, setPin] = useState('')
   const [errors, setErrors] = useState<VoidFormErrors>({})
   const [busy, setBusy] = useState(false)
@@ -38,22 +37,22 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
 
   useEffect(() => {
     if (!open) return
-    setApproverId('')
     setPin('')
     setErrors({})
   }, [open])
 
-  // The owner is the one at the till, so their own entry is the first choice (they can pick another admin).
-  useEffect(() => {
-    if (approvers.state !== 'ready') return
-    setApproverId((cur) => cur || approvers.list.find((a) => a.kind === 'owner' && approverBlock(a) === null)?.id || '')
-  }, [approvers])
+  // UMK-2040 (owner decision): only the store owner's own PIN approves a retry, so the approver is the owner, never a pick.
+  const owner = list.find((a) => a.kind === 'owner')
+  const ownerBlock = owner ? approverBlock(owner) : 'Belum ada PIN pembatalan pemilik'
+  const approverId = owner?.id ?? ''
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (lock.current) return
     const form = { approverId, pin }
     const bad = retryFormErrors(form)
+    if (bad.approverId) bad.pin = ownerBlock ?? 'PIN pemilik belum tersedia'
+    delete bad.approverId
     setErrors(bad)
     if (Object.keys(bad).length > 0) return
     lock.current = true
@@ -70,8 +69,7 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
       return
     }
     const f = answer.failure
-    if (isWrongPin(f)) setErrors({ pin: 'PIN salah. Periksa PIN lalu coba lagi.' })
-    else if (f.errors.approverId) setErrors({ approverId: f.errors.approverId })
+    if (isWrongPin(f)) setErrors({ pin: 'PIN salah. Periksa PIN pemilik lalu coba lagi.' })
     // Every refusal is also explained in the error dialog: a wrong PIN, a lock (with the wait), a 403, a 409.
     showError(answer.code ? { ...failureOf(f), code: answer.code } : failureOf(f), 'mengajukan refund lagi')
     // A lock or a PIN count changed: show who can still approve.
@@ -96,27 +94,29 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
       <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
         <p className="text-sm text-default-secondary">
           Refund {rupiah(sale.amount)} diminta lagi ke gateway dengan alasan dan catatan yang sama. Ini hanya bisa
-          dilakukan pemilik dan perlu PIN admin. Dana kembali ke pelanggan saat gateway memastikan.
+          dilakukan pemilik dan perlu PIN pemilik. Dana kembali ke pelanggan saat gateway memastikan.
         </p>
         <Alert variant="info" size="small">
           Bila uang sudah Anda kembalikan di luar gateway, jangan coba lagi: tandai refund ini dikembalikan manual.
         </Alert>
-        <ApproverStatus approvers={approvers} anyApprover={anyApprover} reload={reload} />
-        <ApproverPinFields
-          approvers={approvers}
-          list={list}
-          approverId={approverId}
+        {approvers.state !== 'ready' && <ApproverStatus approvers={approvers} anyApprover reload={reload} />}
+        {ownerBlock && approvers.state === 'ready' && (
+          <Alert variant="warning" size="small" role="alert">
+            {ownerBlock}.{owner?.hasPin ? '' : ' Buat PIN pembatalan di menu Keamanan.'}
+          </Alert>
+        )}
+        <PinField
+          label="PIN pemilik (6 angka)"
           pin={pin}
-          errors={errors}
-          onApprover={(v) => {
-            setApproverId(v)
-            setErrors((x) => ({ ...x, approverId: undefined }))
-          }}
+          error={errors.pin}
           onPin={(v) => {
             setPin(v)
             setErrors((x) => ({ ...x, pin: undefined }))
           }}
         />
+        <p className="-mt-2 text-xs text-default-secondary">
+          PIN tidak ditampilkan dan tidak disimpan. Salah 5 kali mengunci PIN pemilik 5 menit.
+        </p>
         <div className="flex justify-end gap-2">
           <Button
             type="outline"
@@ -136,7 +136,7 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
             width="auto"
             htmlType="submit"
             isLoading={busy}
-            disabled={approvers.state !== 'ready' || !anyApprover}
+            disabled={approvers.state !== 'ready' || ownerBlock !== null}
           >
             Coba lagi refund
           </Button>

@@ -65,7 +65,23 @@ type FieldProps = {
   onPin: (pin: string) => void
 }
 
-/** The approver picker and the 6-digit PIN field. The PIN is never stored beyond the parent's state. */
+/** The 6-digit PIN field. The PIN is never stored beyond the parent's state. */
+export function PinField({ pin, error, onPin, label = 'PIN admin (6 angka)' }: { pin: string; error?: string; onPin: (pin: string) => void; label?: string }) {
+  return (
+    <TextField
+      label={label}
+      type="password"
+      inputMode="numeric"
+      autoComplete="off"
+      maxLength={6}
+      value={pin}
+      onChange={(e) => onPin(pinDigits(e.target.value))}
+      error={error}
+    />
+  )
+}
+
+/** The approver picker and the 6-digit PIN field. */
 export function ApproverPinFields({ approvers, list, approverId, pin, errors, onApprover, onPin }: FieldProps) {
   return (
     <>
@@ -79,16 +95,7 @@ export function ApproverPinFields({ approvers, list, approverId, pin, errors, on
         disabled={approvers.state !== 'ready'}
         error={errors.approverId}
       />
-      <TextField
-        label="PIN admin (6 angka)"
-        type="password"
-        inputMode="numeric"
-        autoComplete="off"
-        maxLength={6}
-        value={pin}
-        onChange={(e) => onPin(pinDigits(e.target.value))}
-        error={errors.pin}
-      />
+      <PinField pin={pin} error={errors.pin} onPin={onPin} />
       <p className="-mt-2 text-xs text-default-secondary">
         Minta admin mengetik PIN di perangkat ini. PIN tidak ditampilkan dan tidak disimpan. Salah 5 kali mengunci admin
         itu 5 menit.
