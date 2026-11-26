@@ -15,10 +15,11 @@ npm run build -w pos-api
 DATABASE_URL=postgres://pos_app:<key>@localhost:5544/pos npm run db:migrate -w pos-api
 ```
 
-Then start it with the variables below ([full local setup](../../README.md#-installation)):
+Then build and start it with the variables below ([full local setup](../../README.md#-installation)):
 
 ```bash
-npm run start -w pos-api
+npm run build -w pos-api
+NODE_ENV=development DATABASE_URL=... POS_SESSION_SECRET=... UMKMALL_WEB_URL=... POS_SERVICE_KEY=... npm run start -w pos-api
 ```
 
 | Variable | Meaning |
@@ -27,6 +28,8 @@ npm run start -w pos-api
 | `POS_SESSION_SECRET` | At least 32 characters; signs POS sessions |
 | `UMKMALL_WEB_URL` | Owner sign-in asks `/api/auth/me` there |
 | `POS_SERVICE_KEY` | Authenticates the tenant purge call |
+| `POS_AGENT_SERVICE_KEY` | Optional, at least 32 characters, never the purge key. UMKMall's agent backend sends it on `POST /auth/agent/session` ([agent integration](../../docs/agent-integration.md)); unset = no agent sessions |
+| `NODE_ENV` | `production` in production. `development` or `test` explicitly for the dev sign-in routes (unset refuses them) |
 | `PAYMENT_API_URL`, `PAYMENT_SERVICE_KEY` | Optional. Without the URL, payments are not sent and sales finish in one step |
 | `POS_TRUSTED_PROXIES` | Number of proxy hops in front, for device-pairing limits |
 | `POS_STORAGE_DIR`, `PORT` | Image storage folder, port (default 3000) |
@@ -46,6 +49,7 @@ See [`.env.example`](../../.env.example) for the rest.
 | `payment-methods`, `payments-client` | `/payment-methods`, `/online-payments`, `/sales/:id/payment`, `/payment-sync/issues` |
 | `store-cash`, `expenses`, `reports`, `store` | `/store-cash`, `/expenses`, `/reports/*`, `/store/profile` |
 | `purge` | `/internal/tenants/purge` |
+| `agent` | `/mcp`, `/agent/activity`, `/agent/access*` (UMKMall's agent, MCP) |
 
 ## Test
 

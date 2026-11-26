@@ -10,6 +10,14 @@ export function sessionKind(token: string): 'owner' | 'cashier' | undefined {
   }
 }
 
+/**
+ * The local "Masuk (pengembangan)" sign-in: shown and served only where pos-api would also accept it, an explicit
+ * development or test NODE_ENV (an unset one refuses) with POS_DEV_USER_ID set.
+ */
+export function devSignInUser(env: Record<string, string | undefined> = process.env): string | undefined {
+  return ['development', 'test'].includes(env.NODE_ENV ?? '') && env.POS_DEV_USER_ID ? env.POS_DEV_USER_ID : undefined
+}
+
 /** Why the last sign-in failed, from the status `/masuk*` put in `?gagal=`. */
 export function failureText(status: number): string {
   if (status === 0 || status >= 500) return 'UMKMall sedang tidak bisa dihubungi. Coba lagi sebentar lagi.'
