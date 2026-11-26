@@ -17,6 +17,7 @@ import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   IdempotencyKey,
+  PaidSinceQuery,
   QuoteInput,
   SaleInput,
   SalesQuery,
@@ -55,6 +56,15 @@ export class SalesController {
   @Get()
   list(@CurrentSession() s: PosSession, @Query() query: unknown) {
     return this.sales.list(s, validate(SalesQuery, query));
+  }
+
+  /**
+   * UMK-2046: the sales that waited for a payment gateway and were completed after `since`, for a till that
+   * was off or away. The actor's own, or the store's with `sales.void`.
+   */
+  @Get('paid-since')
+  paidSince(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    return this.sales.paidSince(s, validate(PaidSinceQuery, query).since);
   }
 
   @Get('settings')

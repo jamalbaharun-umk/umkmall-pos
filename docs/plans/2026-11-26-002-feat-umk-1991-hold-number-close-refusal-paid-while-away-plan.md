@@ -66,7 +66,7 @@ completed after `since`.
   the job learns of late is dated at the customer's paid time, which can be before the till last looked.
 - Whose: the actor's own sales, or all of the store's with `sales.void` (the same people who may open a sale's
   payment). Tenant from the session.
-- Which: paid through a PG (`payment_method_code` is an online method) and created waiting. A sale switched to
+- Which: paid through a PG (`payment_method_code` is an online method). A sale switched to
   cash is not listed (the cashier did that at the till). A sale refunded since is listed with `status: 'void'`.
 - Answer: `{ data: [{ id, number, receiptNumber, holdNumber, status, total, amountDue, paymentMethod, paidAt,
   completedAt, createdAt }], asOf }`, newest first, at most 50. `asOf` is the server's time less 10 seconds: a

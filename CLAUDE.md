@@ -257,6 +257,10 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   (`sales.hold_number`, "Menunggu #n") and has `number` null until it is completed; a cancelled sale never gets
   one. Answers carry `receiptNumber`, `holdNumber` and `number`/`saleNumber` (the one to show now). A new way to
   complete a sale must take the number in that same write.
+- **`sales.completed_at` is when pos-api wrote the completion** (its clock; never a reporting date, that is
+  `paid_at`). `GET /sales/paid-since?since=` (UMK-2046: PG sales completed while a till was away; own sales, or
+  the store's with `sales.void`) compares it, because a payment learned late is dated in the past by `paid_at`.
+  A shift that cannot close for waiting sales answers 409 `sales_awaiting_payment` with those sales (UMK-2044).
 - **A sale is dated by `sales.paid_at`, not `created_at`,** in every day-based figure and in the sales list (owner
   ruling 2026-11-25): the time it was rung up when paid at once; for a sale that waited for a PG, payment-api's paid
   time (validated by `isoTime`, kept between creation and now, else the time it is applied); the switch to cash;

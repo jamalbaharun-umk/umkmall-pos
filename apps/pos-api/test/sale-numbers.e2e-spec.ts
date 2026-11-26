@@ -821,4 +821,150 @@ describe('hold number and receipt number (UMK-2038)', () => {
       await close(a.auth).expect(200);
     });
   });
+
+  describe('sales paid while the till was away (UMK-2046)', () => {
+    const paidSince = (auth: string, since: string) =>
+      get(auth, `/sales/paid-since?since=${encodeURIComponent(since)}`);
+    const idsOf = (res: { body: { data: { id: string }[] } }) =>
+      res.body.data.map((x) => x.id);
+    const pause = (ms = 25) => new Promise((r) => setTimeout(r, ms));
+    const sellAs = (s: Shop, auth: string) =>
+      post(
+        auth,
+        '/sales',
+        {
+          lines: [{ productId: s.productId, qty: 1 }],
+          paymentMethodId: s.qris,
+          paid: PRICE,
+        },
+        randomUUID(),
+      );
+
+    it('lists a PG sale completed after `since`, with both numbers, and not one completed before; cash sales and sales switched to cash are not listed', async () => {
+      const s = await shop();
+      const before = (await sell(s).expect(201)).body.id as string;
+      await onBill(s, before, 'pay');
+      await poll(s, before).expect(200);
+      await sellCash(s).expect(201);
+      await pause();
+      const since = new Date().toISOString();
+      await pause();
+      expect((await paidSince(s.auth, since).expect(200)).body.data).toEqual(
+        [],
+      );
+
+      // The till goes away with two sales waiting. One is paid, and the job (not the till) learns of it.
+      const paid = (await sell(s).expect(201)).body.id as string;
+      const open = (await sell(s).expect(201)).body.id as string;
+      const switched = (await sell(s).expect(201)).body.id as string;
+      await onBill(s, paid, 'pay');
+      expect(await sync.tick(later())).toMatchObject({ completed: 1 });
+      await post(s.auth, `/sales/${switched}/payment/cash`, {
+        paid: 5200,
+      }).expect(200);
+      await sellCash(s).expect(201);
+
+      const res = await paidSince(s.auth, since).expect(200);
+      expect(res.body.data).toEqual([
+        {
+          id: paid,
+          number: 3,
+          receiptNumber: 3,
+          holdNumber: 3,
+          status: 'completed',
+          total: PRICE,
+          amountDue: PRICE,
+          paymentMethod: 'QRIS Dinamis',
+          paidAt: expect.any(String),
+          completedAt: expect.any(String),
+          createdAt: expect.any(String),
+        },
+      ]);
+      // `asOf` is behind the clock, so the next request overlaps this one: the till drops what it has shown.
+      const asOf = new Date(res.body.asOf as string).getTime();
+      expect(Date.now() - asOf).toBeGreaterThanOrEqual(9_000);
+      expect(Date.now() - asOf).toBeLessThan(60_000);
+      expect(idsOf(await paidSince(s.auth, res.body.asOf).expect(200))).toEqual(
+        [paid, before],
+      );
+      // Nothing after the completion.
+      await pause();
+      expect(
+        idsOf(await paidSince(s.auth, new Date().toISOString()).expect(200)),
+      ).toEqual([]);
+
+      await post(s.auth, `/sales/${open}/payment/cancel`).expect(200);
+      await gapFree(s.tenantId);
+    });
+
+    it('a payment learned late is listed although the customer paid before `since`', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      // Paid: payment-api knows, pos-api does not yet (payment-api pushes nothing; the till is off).
+      await onBill(s, saleId, 'pay');
+      await pause(1100);
+      const since = new Date().toISOString();
+      await pause();
+      await poll(s, saleId).expect(200);
+      const res = await paidSince(s.auth, since).expect(200);
+      expect(idsOf(res)).toEqual([saleId]);
+      // Dated when the customer paid, which is before the till last looked.
+      const [sale] = res.body.data as { paidAt: string; completedAt: string }[];
+      expect(new Date(sale.paidAt).getTime()).toBeLessThan(
+        new Date(since).getTime(),
+      );
+      expect(new Date(sale.completedAt).getTime()).toBeGreaterThan(
+        new Date(since).getTime(),
+      );
+    });
+
+    it('a cashier sees their own, another cashier nothing, a `sales.void` holder the store’s; store B sees nothing of store A', async () => {
+      const a = await shop();
+      const b = await shop();
+      const mine = await createCashier(app, a, ['sales.create']);
+      const other = await createCashier(app, a, ['sales.create']);
+      const supervisor = await createCashier(app, a, [
+        'sales.create',
+        'sales.void',
+      ]);
+      // `reports.view` reads the sales list, but not this: the payment routes are not theirs either.
+      const reader = await createCashier(app, a, ['reports.view']);
+      await post(mine.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const since = new Date(Date.now() - MINUTES).toISOString();
+      const owners = (await sell(a).expect(201)).body.id as string;
+      const cashiers = (await sellAs(a, mine.auth).expect(201)).body
+        .id as string;
+      for (const id of [owners, cashiers]) await onBill(a, id, 'pay');
+      await poll(a, owners).expect(200);
+      await poll(a, cashiers).expect(200);
+
+      expect(idsOf(await paidSince(mine.auth, since).expect(200))).toEqual([
+        cashiers,
+      ]);
+      expect(idsOf(await paidSince(other.auth, since).expect(200))).toEqual([]);
+      expect(idsOf(await paidSince(reader.auth, since).expect(200))).toEqual(
+        [],
+      );
+      expect(
+        idsOf(await paidSince(supervisor.auth, since).expect(200)),
+      ).toEqual([cashiers, owners]);
+      expect(idsOf(await paidSince(a.auth, since).expect(200))).toEqual([
+        cashiers,
+        owners,
+      ]);
+      expect(idsOf(await paidSince(b.auth, since).expect(200))).toEqual([]);
+    });
+
+    it('needs a session and a time with an offset: 401, 422', async () => {
+      const s = await shop();
+      await http()
+        .get('/sales/paid-since?since=2026-11-26T00:00:00Z')
+        .expect(401);
+      const missing = await get(s.auth, '/sales/paid-since').expect(422);
+      expect(missing.body.errors).toHaveProperty('since');
+      for (const bad of ['kemarin', '2026-11-26', '2026-11-26T10:00:00'])
+        await paidSince(s.auth, bad).expect(422);
+      await paidSince(s.auth, '2026-11-26T10:00:00+07:00').expect(200);
+    });
+  });
 });

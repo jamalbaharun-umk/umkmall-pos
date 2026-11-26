@@ -78,6 +78,13 @@ export const SalesQuery = z.object({
   perPage: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/** `GET /sales/paid-since` (UMK-2046): the time the till last looked, with its offset. */
+export const PaidSinceQuery = z.object({
+  since: z
+    .string({ required_error: 'Wajib diisi' })
+    .datetime({ offset: true, message: 'Waktu tidak valid' }),
+});
+
 export const SettingsInput = z
   .object({ taxBps: z.number().int().min(0).max(10_000) })
   .strict();
@@ -85,3 +92,4 @@ export const SettingsInput = z
 export type SaleInput = z.infer<typeof SaleInput>;
 export type QuoteInput = z.infer<typeof QuoteInput>;
 export type SalesQuery = z.infer<typeof SalesQuery>;
+export type PaidSinceQuery = z.infer<typeof PaidSinceQuery>;

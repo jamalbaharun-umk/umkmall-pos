@@ -12,6 +12,7 @@ import {
   count,
   desc,
   eq,
+  gt,
   gte,
   inArray,
   lt,
@@ -44,6 +45,7 @@ import {
 import {
   isInFlight,
   isOnlineMethod,
+  ONLINE_METHODS,
   PaymentApiError,
   paymentMethodCode,
 } from '../payments-client/payments.client';
@@ -60,6 +62,10 @@ import {
   evaluateVoucher,
 } from '../vouchers/vouchers.controller';
 import type { QuoteInput, SaleInput, SalesQuery } from './sales.schemas';
+
+/** `paid-since` answers at most this many sales, and its `asOf` is this far behind the clock. */
+const PAID_SINCE_LIMIT = 50;
+const PAID_SINCE_OVERLAP_SECONDS = 10;
 
 const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps every product in safe-integer range
 
@@ -707,6 +713,69 @@ export class SalesService {
       })),
       total: rung.count,
       summary,
+    };
+  }
+
+  /**
+   * `GET /sales/paid-since` (UMK-2046): PG sales completed after `since`, newest first. A till that was off
+   * asks with the `asOf` of its last answer and learns which of its waiting sales were paid meanwhile.
+   *
+   * By `completed_at` (when pos-api wrote the completion), never `paid_at`: a payment learned late is dated
+   * at the customer's paid time, which can be before the till last looked. Whose: the actor's own sales, or
+   * the store's with `sales.void`, as on a sale's payment routes. A sale switched to cash is not listed (its
+   * method is cash: the cashier did that at the till); one refunded since is, as `void`.
+   *
+   * `asOf` is the database's time less PAID_SINCE_OVERLAP_SECONDS: a completion is stamped when its
+   * transaction starts and seen when it ends, so the next request overlaps this one and the till drops the
+   * ids it already has.
+   */
+  async paidSince(s: PosSession, since: string) {
+    const [rows, [{ asOf }]] = await Promise.all([
+      this.db
+        .select({
+          id: sales.id,
+          number: sales.number,
+          holdNumber: sales.holdNumber,
+          status: sales.status,
+          total: sales.total,
+          rounding: sales.rounding,
+          paymentMethod: paymentMethods.name,
+          paidAt: sales.paidAt,
+          completedAt: sales.completedAt,
+          createdAt: sales.createdAt,
+        })
+        .from(sales)
+        .innerJoin(
+          paymentMethods,
+          and(
+            eq(paymentMethods.tenantId, sales.tenantId),
+            eq(paymentMethods.id, sales.paymentMethodId),
+          ),
+        )
+        .where(
+          and(
+            eq(sales.tenantId, s.tenantId),
+            hasPermission(s, 'sales.void')
+              ? undefined
+              : eq(sales.actorId, s.actorId),
+            inArray(sales.status, [...FINAL_SALE_STATUSES]),
+            inArray(sales.paymentMethodCode, [...ONLINE_METHODS]),
+            gt(sales.completedAt, new Date(since)),
+          ),
+        )
+        .orderBy(desc(sales.completedAt), desc(sales.number))
+        .limit(PAID_SINCE_LIMIT),
+      this.db.execute<{ asOf: Date }>(
+        sql`select now() - make_interval(secs => ${PAID_SINCE_OVERLAP_SECONDS}) as "asOf"`,
+      ),
+    ]);
+    return {
+      data: rows.map(({ rounding, ...r }) => ({
+        ...r,
+        ...saleNumbers(r),
+        amountDue: r.total + rounding,
+      })),
+      asOf: new Date(asOf).toISOString(),
     };
   }
 
