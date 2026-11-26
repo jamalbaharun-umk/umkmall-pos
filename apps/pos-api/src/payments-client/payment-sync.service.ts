@@ -343,16 +343,17 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         await this.dropCashSwitch(tenantId, saleId);
         await this.dropRenew(tenantId, saleId);
       }
-      let sale = await this.saleForSettle(tenantId, saleId);
+      const sale = await this.saleForSettle(tenantId, saleId);
       if (!sale) return { outcome: 'not_found', payment: null };
       // Completed, voided or cancelled already: nothing is asked and nothing moves (M16).
       if (sale.status !== 'awaiting_payment' || !this.enabled)
         return { outcome: sale.status, payment: null };
       if (!sale.method) throw refused('no_method_code');
       // The cashier's cash request wrote its switch before calling (`requestCashSwitch`). Found gone while the
-      // sale is still the PG attempt, it was taken back (by a cancel, or a request that failed): the request
-      // stops and claims no new one, else a cancel that drops it each round could never win (PR 51 review).
-      // The caller answers what the sale is now.
+      // sale is still the PG attempt, it was taken back (by a cancel, by the job, which can give the sale up
+      // under a request still at work, see below, or by a request that failed): the request stops and claims no
+      // new one, else a cancel that drops it each round could never win (PR 51 review). The caller answers
+      // what the sale is now.
       if (
         mode === 'cash' &&
         cashPaid !== undefined &&
@@ -360,24 +361,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         sale.switchCashPaid === null
       )
         return { outcome: 'awaiting_payment', payment: null };
-      // So does the request for a new bill, while the sale is still at the attempt its screen shows, but
-      // only while it has written none: an intent it wrote and lost was taken back by a cancel (or a switch
-      // to cash, or a take-over), and claiming a new one each round would keep a cancel from ever winning.
-      if (
-        mode === 'renew' &&
-        ticket !== undefined &&
-        ticket.at === null &&
-        sale.attempt === renewFrom &&
-        sale.renewAt === null &&
-        sale.switchCashPaid === null
-      ) {
-        const asked = await this.requestRenew(tenantId, saleId, renewFrom);
-        if (asked.result === 'requested') ticket.at = asked.at;
-        sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
-        if (sale.status !== 'awaiting_payment' || !sale.method) continue;
-      }
-      // The request's own intent is gone and the sale is still at its attempt: it stops, acting on nothing
-      // (the caller answers what the sale is now: cancelled, or another request's new bill under way).
+      // So does the request for a new bill (it wrote its intent before calling, `requestRenew`): its own intent
+      // is gone and the sale is still at its attempt, so it was taken back (by a cancel, a switch to cash or a
+      // take-over), and claiming a new one each round would keep a cancel from ever winning. It stops, acting
+      // on nothing (the caller answers what the sale is now: cancelled, or another request's new bill under way).
       if (
         mode === 'renew' &&
         ticket?.at != null &&
@@ -468,6 +455,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           if (!giveUp) return { outcome: 'awaiting_payment', payment: null };
           // The job gives the sale up. It closes nothing FOR a switch to cash: one that was asked and
           // never got as far as a bill is taken back first, so the sale is cancelled, not made a cash sale.
+          // As below, a cash request still at work then stops (409) and the sale is cancelled under it.
           if (mode === 'reconcile' && switching) {
             await this.dropCashSwitch(tenantId, saleId);
             continue;
@@ -541,14 +529,16 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       // cash sale, and so does the job when the bill was closed for the switch (`cancelled`: only the
       // cashier's request closes a bill of a sale that has an intent; that request died after it).
       if (mode === 'reconcile' && payment.status !== 'cancelled') {
-        // The bill ended by itself (expired, failed) and the request that asked for cash is gone: the
-        // intent would keep the sale waiting for ever. The job takes it back and the next round cancels
-        // the sale. A request that is still at work asks again (see above) or finds the sale cancelled.
+        // The bill ended by itself (expired, failed): left alone, an intent whose request is gone would keep
+        // the sale waiting for ever. The job takes it back and the next round cancels the sale. The job cannot
+        // tell a dead request from one still at work, so it can beat a cashier who holds the cash: that request
+        // claims no new switch (see the top of the round), it stops and answers 409 (`cancel_refused`), or
+        // `not_awaiting` once the sale is cancelled, and the cashier rings the sale up again.
         await this.dropCashSwitch(tenantId, saleId);
         continue;
       }
-      // A poll or a check leaves the sale as it is: the switch is not theirs to do, and the sale is not
-      // cancelled under a cashier who holds the customer's cash.
+      // A poll or a check leaves the sale as it is: the switch is not theirs to do, and they never cancel the
+      // sale under a cashier who holds the customer's cash (the job can, above and when no bill was ever made).
       if (mode !== 'cash' && mode !== 'reconcile')
         return { outcome: 'awaiting_payment', payment };
       // The next round charges the cash attempt.

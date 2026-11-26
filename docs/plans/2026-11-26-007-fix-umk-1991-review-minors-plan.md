@@ -88,3 +88,22 @@ fixes, one replay answer made exact, one legacy field dropped, one CSRF check an
   with nothing locked records no unlock. `[test]` revert-red.
 - Not changed: the order 422-before-403 for a cashier with a bad body (review minor 2); pos-web's texts for
   `owner_pin_*` (web's change).
+
+## Follow-up of the PR 53 and PR 54 reviews (2026-11-26)
+
+- **Receipt of a refund that is not done.** `receipt()` set `refunded` for any refund status, so a pending or refused
+  gateway refund printed DIKEMBALIKAN. `refunded` is true only for `succeeded`, and the receipt carries
+  `refundStatus`; the web mark says "Refund diproses" (pending) or "Refund gagal, hubungi pemilik" (failed), each
+  still with "Struk ini tidak berlaku". `[test]` pg-cashier-flow V3/V4, void.e2e (plain void), web vitest for the
+  three states; revert-red both sides.
+- **The job can beat a cashier who holds a cash switch.** The comments in `settle` and CLAUDE.md said a request still
+  at work "asks again"; since PR 53 it stops (409) and the job cancels the sale. Wording only. `[manual]`
+- **Error code when the job took the switch back.** Not distinguishable from a cancel or a failed request (nothing
+  records who cleared `switch_cash_paid`, the bill's state overlaps): one code, `cancel_refused`, documented in
+  `payCash`. `[manual]`
+- **Dead renew claim in `settle`.** The claim of an intent inside `settle` (mode `renew`, ticket without one, sale at
+  the ticket's attempt) is unreachable: `renew()` claims before `settle`, and the attempt never goes back nor an
+  ended sale back to waiting. Removed. `[cmd]` pg-cashier-flow green.
+- **Test holds released in `finally`** in pg-cashier-flow, so a failing assertion cannot leave a gate held. `[cmd]`
+- **Forgotten PIN with nothing locked.** `PUT /void-pin/forgotten` when no count or lock exists: no unlock audit
+  fields, same answer as the existing rule. `[test]`
