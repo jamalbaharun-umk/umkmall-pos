@@ -22,6 +22,7 @@ import {
   reduce,
   rehydrate,
   reopened,
+  requestOut,
   resumePlan,
   saleAnswerEvent,
   sendPlan,
@@ -134,6 +135,7 @@ describe('online 503 with a sale id (written, not charged)', () => {
     expect(isOwn(t.state, A)).toBe(true)
     expect(holdsStock(t.state)).toBe(true)
     expect(t.send(QRIS)).toBe(K1)
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
     expect(t.send(QRIS)).toBe(K1)
     // nothing to poll and nothing blocked: no code was shown
     expect(toCheck(t.state)).toEqual([])
@@ -153,6 +155,7 @@ describe('online 503 with a sale id (written, not charged)', () => {
     t.do({ type: 'sale_held', key: k2, saleId: B, methodId: CASH, online: false })
     // the retry is an older closure of pay(): it holds nothing, the key is read from the state when it runs
     expect(t.send(CASH)).toBe(k2)
+    t.do({ type: 'sale_held', key: k2, saleId: B, methodId: CASH, online: false })
     expect(t.send(CASH)).toBe(k2)
     // and QRIS then VA: the VA sale's key is repeated too
     const u = held()
@@ -250,7 +253,7 @@ describe('the next customer\'s identical order is never answered with a lost sal
     expect(t.send(CASH)).toBe('blocked')
     // the late answer settles it: paid means that order is done, and a new one starts
     t.do({ type: 'sale_paid', key: K1 })
-    expect(t.state).toEqual(initialState(t.state.key))
+    expect(t.state).toEqual({ ...initialState(t.state.key), completed: { seq: 1, clearCart: true, sale: null } })
     expect(t.state.key).not.toBe(K1)
   })
   it('the corrected amount or method of the same order (422 of a used key) asks for the same check (review 3, major 4)', () => {
@@ -472,7 +475,7 @@ describe('paid', () => {
     const t = till()
     t.send(CASH)
     t.do({ type: 'sale_paid', key: K1 })
-    expect(t.state).toEqual(initialState(id(3)))
+    expect(t.state).toEqual({ ...initialState(id(3)), completed: { seq: 1, clearCart: true, sale: null } })
   })
   it('a cash sale that is paid never forgets another sale (review 3, major 2)', () => {
     const t = till()
@@ -983,5 +986,60 @@ describe('rehydrate takes a fresh key when nothing may exist under the stored on
   })
   it('a recorded state keeps its key too', () => {
     expect(rehydrate(serialize({ ...initialState(K1), recorded: true }), null, id(9)).key).toBe(K1)
+  })
+})
+
+describe('a paid answer after the register was left and opened again (UMK-2048)', () => {
+  const SALE = { id: A, change: 500, receivableRest: null }
+  it('while an old request is out nothing goes out under its key, not even after the check was acked', () => {
+    const t = till()
+    t.send(CASH)
+    t.reopen()
+    expect(t.state.recorded).toBe(true)
+    expect(requestOut(t.state)).toBe(true)
+    expect(orderNotice(t.state)).toBe('recorded') // the notice stays; its button waits (canAck)
+    expect(t.send(CASH)).toBe('blocked')
+    expect(planSend(t.state, CASH, id(40)).plan).toEqual({ blocked: 'request_out' })
+    expect(canAck(t.state)).toBe(false)
+  })
+  it("the late paid answer for the cart's own key finishes the screen: clear the cart, show the sale, renew the key", () => {
+    const t = till()
+    t.send(CASH)
+    t.reopen() // the cashier left mid-request and came back; the cart on the new screen is untouched
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(t.state.completed).toEqual({ seq: 1, clearCart: true, sale: SALE })
+    expect(t.state.key).not.toBe(K1)
+    expect(t.state.recorded).toBe(false)
+    expect(t.state.out).toBeNull()
+    expect(t.send(CASH)).toBe(t.state.key)
+  })
+  it('an order edited meanwhile keeps its cart: the paid answer was for the old order', () => {
+    const t = till()
+    t.send(CASH)
+    t.reopen()
+    t.do({ type: 'cart_edited' })
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(t.state.completed?.clearCart).toBe(false)
+    expect(t.state.completed?.sale).toEqual(SALE)
+  })
+  it('a paid answer for another key never finishes this cart', () => {
+    const t = till()
+    t.do({ type: 'sale_paid', key: id(77), sale: SALE })
+    expect(t.state.completed).toBeNull()
+  })
+  it('the record survives reopening, and every paid answer counts up', () => {
+    const t = till()
+    t.send(CASH)
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(t.reopen().completed?.seq).toBe(1)
+    const k = t.send(CASH)
+    t.do({ type: 'sale_paid', key: k as string })
+    expect(t.state.completed).toEqual({ seq: 2, clearCart: true, sale: null })
+  })
+  it('is never stored', () => {
+    const t = till()
+    t.send(CASH)
+    t.do({ type: 'sale_paid', key: K1, sale: SALE })
+    expect(serialize(t.state)).not.toMatch(/completed|change/)
   })
 })
