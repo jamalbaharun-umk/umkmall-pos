@@ -46,12 +46,18 @@ export async function callRoute(
         ...options.headers,
         authorization: ctx.authorization,
         accept: 'application/json',
-        ...(options.body !== undefined && {
-          'content-type': 'application/json',
-        }),
+        // A FormData body (a photo) sets its own multipart content type.
+        ...(options.body !== undefined &&
+          !(options.body instanceof FormData) && {
+            'content-type': 'application/json',
+          }),
       },
       body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
+        options.body === undefined
+          ? undefined
+          : options.body instanceof FormData
+            ? options.body
+            : JSON.stringify(options.body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch {

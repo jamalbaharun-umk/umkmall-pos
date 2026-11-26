@@ -47,6 +47,7 @@ describe('repo guards', () => {
     expect(reached.sort()).toEqual(
       [
         'GET /agent/activity',
+        'GET /agent/ledger',
         'GET /catalog/categories',
         'GET /catalog/products',
         'GET /catalog/products/:id',
@@ -59,6 +60,7 @@ describe('repo guards', () => {
         'GET /store/profile',
         'POST /catalog/categories',
         'POST /catalog/products',
+        'POST /catalog/products/:id/images',
         'POST /mcp',
         // UMK-1981
         'GET /members/picker',
@@ -331,6 +333,7 @@ describe('repo guards', () => {
       path.join('reports', 'reports.service.ts'),
       path.join('shifts', 'shifts.service.ts'),
       path.join('sales', 'sales.service.ts'),
+      path.join('agent', 'ledger.controller.ts'),
     ]) {
       const text = files.find((x) => x.f === f)!.text;
       expect(text).toContain('FINAL_SALE_STATUSES');
@@ -343,6 +346,8 @@ describe('repo guards', () => {
       .map(({ f }) => f)
       .sort();
     expect(readers).toEqual([
+      // The ledger feed: receipts only (`status in FINAL_SALE_STATUSES`).
+      path.join('agent', 'ledger.controller.ts'),
       path.join('payments-client', 'payment-sync.service.ts'),
       // One sale by id, of any status: the payment screen of a sale that still waits.
       path.join('payments-client', 'sale-payment.service.ts'),

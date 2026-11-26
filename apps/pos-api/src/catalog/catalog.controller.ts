@@ -141,6 +141,8 @@ export class ProductsController {
     await this.catalog.deleteProduct(s.tenantId, idOf(id));
   }
 
+  // UMKMall's agent may ADD a photo (append only): it never deletes or replaces one, and never edits the product.
+  @AgentRoute()
   @Post(':id/images')
   @RequirePermission('catalog.manage')
   // Multer stops at 2 MB + 1 byte; the service refuses anything over 2 MB with 422.

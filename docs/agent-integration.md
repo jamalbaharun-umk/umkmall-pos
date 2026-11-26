@@ -242,7 +242,31 @@ confirm does.
 ### `create_supplier`
 In: `name`, `phone?`, `address?` + write controls.
 
+### `ledger_entries`
+The POS's money movements for UMKMall's Catatan Keuangan, cash basis (`GET /agent/ledger`, `reports.view`). In:
+`from`, `to`. Out: `entries`, each `{ id, date, direction, kind, category, label, amount, method, receiptNumber, note }`
+with a stable `id` (`sale:`, `kasbon_payment:`, `refund:`, `expense:`, `cash:` + the POS row id), so a repeated pull
+can be deduplicated; `totals` (in, out, net); `truncated` past 2000 entries (ask shorter periods). Kinds:
+
+| kind | direction | What it is |
+|---|---|---|
+| `sale` | in | a sale paid by a non-kasbon method: the money received (paid minus change) |
+| `kasbon_payment` | in | a kasbon payment, the down payment included |
+| `refund` | out | money given back when a sale was voided, per payment returned |
+| `expense`, `supplier_payment` | out | live (not voided) expenses and supplier payments, `category` from the POS list |
+| `cash_in`, `cash_out` | in, out | drawer cash put in or taken out by hand, `category` = the reason (`tambah_modal`, `setor_bank`, `ambil_pemilik`, `lainnya`) |
+
+A kasbon sale itself brings in no money (only its payments do). The POS categories are the POS's; UMKMall maps them
+to its own (for example `ambil_pemilik` → uang pribadi, `setor_bank` → a transfer). Data only: nothing is written.
+
+### `add_product_photo`
+In: `productId`, `imageBase64` (JPG, PNG or WebP, at most 2 MB, no `data:` prefix) + write controls. Adds a photo to
+the product (`POST /catalog/products/:id/images`), e.g. the result of Upgrade Foto Produk. **Append only**: the agent
+never deletes or replaces a photo and never edits the product; the owner manages photos in the POS. The preview checks
+the product and the size; the idempotency record keeps the photo's sha256, not the photo. `/mcp` accepts bodies up to
+3 MB for this tool (every other route keeps 100 kB).
+
 ## 6. Not yet
 
 Online payment methods through the agent; supplier payments and expenses "outside the drawer"; purchase order and
-stock count drafts (rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982); product photos from UMKMall into the catalog.
+stock count drafts (rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982).

@@ -132,6 +132,10 @@ usage record and provenance on every tool.
   the server's amount due from `POST /sales/quote`. The sale refuses an online method for an agent session. After a lost
   answer, `record_sale` and `record_receivable_payment` replay the exact call under the route's derived key (never a new key). The agent opens a shift only through `open_shift`, on the owner's
   word.
+- **The one change the agent makes to an existing product is adding a photo** (`add_product_photo`, append only: no
+  delete, no replace). `/mcp` alone takes JSON bodies up to 3 MB (`src/http.ts`, `configureBody`); create an app with
+  `bodyParser: false` and call it. `GET /agent/ledger` (`ledger_entries`) is the cash-basis feed for UMKMall's
+  Catatan Keuangan: receipts only, stable entry ids.
 - **HPP import sends `cogs`, never UMKMall's `hpp`** (which adds allocated fixed costs, booked as expenses here).
 
 ## payment-api (UMK-1991)
