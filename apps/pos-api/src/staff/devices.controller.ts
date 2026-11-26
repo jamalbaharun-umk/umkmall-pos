@@ -16,6 +16,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { devices, staff, staffSessions } from '../db/schema';
 import type { Response } from 'express';
+import { recordAudit } from '../audit/record';
 import { fieldError } from '../common/validation';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
@@ -71,10 +72,17 @@ export class DevicesController {
   async bind(@CurrentSession() s: PosSession, @Body() body: unknown) {
     const { name } = parseBody(BindDevice, body);
     const secret = newDeviceSecret();
-    const [device] = await this.db
-      .insert(devices)
-      .values({ tenantId: s.tenantId, name, secretHash: hashSecret(secret) })
-      .returning(deviceView);
+    const device = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(devices)
+        .values({ tenantId: s.tenantId, name, secretHash: hashSecret(secret) })
+        .returning(deviceView);
+      await recordAudit(tx, s, 'device_bind', {
+        target: { type: 'device', id: row.id, label: name },
+        details: { deviceId: row.id },
+      });
+      return row;
+    });
     return { device, deviceToken: `${device.id}.${secret}` };
   }
 
@@ -91,7 +99,7 @@ export class DevicesController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { code, name } = parseBody(PairDevice, body);
-    const outcome = await this.pairing.claim(s.tenantId, code, name);
+    const outcome = await this.pairing.claim(s.tenantId, code, name, s);
     if (outcome.ok) return { device: outcome.device };
     if (outcome.retryAfter) {
       res.setHeader('Retry-After', String(outcome.retryAfter));
@@ -116,8 +124,12 @@ export class DevicesController {
         .update(devices)
         .set({ revokedAt: sql`coalesce(${devices.revokedAt}, now())` })
         .where(and(eq(devices.tenantId, s.tenantId), eq(devices.id, id)))
-        .returning({ id: devices.id });
+        .returning({ id: devices.id, name: devices.name });
       if (!row) throw new NotFoundException();
+      await recordAudit(tx, s, 'device_revoke', {
+        target: { type: 'device', id, label: row.name },
+        details: { deviceId: id },
+      });
       await this.access.revokeSessions(tx, s.tenantId, { deviceId: id });
     });
   }
@@ -159,13 +171,24 @@ export class StaffSessionsController {
   @HttpCode(204)
   async revoke(@CurrentSession() s: PosSession, @Param('id') rawId: string) {
     const id = parseId(rawId);
-    const [row] = await this.db
-      .select({ id: staffSessions.id })
-      .from(staffSessions)
-      .where(
-        and(eq(staffSessions.tenantId, s.tenantId), eq(staffSessions.id, id)),
-      );
-    if (!row) throw new NotFoundException();
-    await this.access.revokeSessions(this.db, s.tenantId, { id });
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({
+          id: staffSessions.id,
+          staffId: staffSessions.staffId,
+          name: staff.name,
+        })
+        .from(staffSessions)
+        .innerJoin(staff, eq(staff.id, staffSessions.staffId))
+        .where(
+          and(eq(staffSessions.tenantId, s.tenantId), eq(staffSessions.id, id)),
+        );
+      if (!row) throw new NotFoundException();
+      await recordAudit(tx, s, 'session_revoke', {
+        target: { type: 'staff', id: row.staffId, label: row.name },
+        details: { staffId: row.staffId, sessionId: id },
+      });
+      await this.access.revokeSessions(tx, s.tenantId, { id });
+    });
   }
 }

@@ -15,6 +15,7 @@ import type { Db } from '../db/db.module';
 import { fieldError } from '../common/validation';
 import { InjectDb } from '../db/db.module';
 import { pinAttempts, roles, staff, staffRoles } from '../db/schema';
+import { recordAudit } from '../audit/record';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { isUniqueViolation, parseBody, parseId } from './http';
@@ -102,6 +103,14 @@ export class StaffController {
           })
           .returning({ id: staff.id });
         await this.setRoles(tx, s.tenantId, row.id, input.roleIds);
+        await recordAudit(tx, s, 'staff_create', {
+          target: { type: 'staff', id: row.id, label: input.name },
+          details: {
+            staffId: row.id,
+            active: input.active,
+            roleIds: input.roleIds,
+          },
+        });
         return row.id;
       }),
     );
@@ -133,8 +142,27 @@ export class StaffController {
             updatedAt: sql`now()`,
           })
           .where(this.mine(s.tenantId, id))
-          .returning({ id: staff.id });
+          .returning({ id: staff.id, name: staff.name });
         if (!row) throw new NotFoundException();
+        // What changed, by field name: never the new PIN, which is also not a value of this log.
+        await recordAudit(tx, s, 'staff_update', {
+          target: { type: 'staff', id, label: row.name },
+          details: {
+            staffId: id,
+            changed: (
+              [
+                ['name', input.name !== undefined],
+                ['active', input.active !== undefined],
+                ['credential', pinHash !== undefined],
+                ['roles', input.roleIds !== undefined],
+              ] as const
+            )
+              .filter(([, on]) => on)
+              .map(([field]) => field),
+            ...(input.active !== undefined && { active: input.active }),
+            ...(input.roleIds && { roleIds: input.roleIds }),
+          },
+        });
         if (input.roleIds)
           await this.setRoles(tx, s.tenantId, id, input.roleIds);
         // A new PIN clears the lockout; deactivation ends live sessions.
@@ -163,8 +191,12 @@ export class StaffController {
         .update(staff)
         .set({ deletedAt: sql`now()`, active: false })
         .where(this.mine(s.tenantId, id))
-        .returning({ id: staff.id });
+        .returning({ id: staff.id, name: staff.name });
       if (!row) throw new NotFoundException();
+      await recordAudit(tx, s, 'staff_delete', {
+        target: { type: 'staff', id, label: row.name },
+        details: { staffId: id },
+      });
       await this.access.revokeSessions(tx, s.tenantId, { staffId: id });
     });
   }

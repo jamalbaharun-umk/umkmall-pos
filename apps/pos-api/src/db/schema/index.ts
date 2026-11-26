@@ -17,3 +17,4 @@ export * from './voids';
 export * from './payment-sync';
 export * from './store';
 export * from './agent';
+export * from './audit';

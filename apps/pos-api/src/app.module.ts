@@ -1,4 +1,5 @@
 import { AgentModule } from './agent/agent.module';
+import { AuditModule } from './audit/audit.controller';
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ErrorFilter } from './common/error.filter';
@@ -50,6 +51,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     StoreModule,
     VoidModule,
     PaymentsModule,
+    AuditModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [

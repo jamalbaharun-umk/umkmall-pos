@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { fieldError } from '../common/validation';
+import { recordAudit } from '../audit/record';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
@@ -339,6 +340,11 @@ export class VoidPins {
           })
           .onConflictDoNothing()
           .returning({ actorId: voidPins.actorId });
+        if (made.length)
+          await recordAudit(tx, s, 'approval_pin_set', {
+            target: { type: 'approver', id: s.actorId },
+            details: { first: true },
+          });
         return made.length ? { ok: true } : { ok: false, attemptsLeft: -1 };
       }
       if (currentPin === undefined) return { ok: false, attemptsLeft: -1 };
@@ -348,6 +354,11 @@ export class VoidPins {
           .update(voidPins)
           .set({ pinHash, updatedAt: new Date() })
           .where(this.where(s.tenantId, s.actorId));
+      if (checked.ok)
+        await recordAudit(tx, s, 'approval_pin_set', {
+          target: { type: 'approver', id: s.actorId },
+          details: { first: false },
+        });
       return checked;
     });
     if (!outcome.ok) {
@@ -369,26 +380,32 @@ export class VoidPins {
     this.ownerOnly(s);
     this.needsFreshSignIn(s);
     const pinHash = await hashPin(pin);
-    await this.db
-      .insert(voidPins)
-      .values({
-        tenantId: s.tenantId,
-        actorId: s.actorId,
-        actorKind: s.kind,
-        pinHash,
-      })
-      .onConflictDoUpdate({
-        target: [voidPins.tenantId, voidPins.actorId],
-        set: {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .insert(voidPins)
+        .values({
+          tenantId: s.tenantId,
+          actorId: s.actorId,
+          actorKind: s.kind,
           pinHash,
-          failures: 0,
-          lockedUntil: null,
-          // The lock it clears is recorded as `unlock` records it.
-          unlockedAt: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then now() else ${voidPins.unlockedAt} end`,
-          unlockedBy: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then ${s.actorId}::uuid else ${voidPins.unlockedBy} end`,
-          updatedAt: new Date(),
-        },
+        })
+        .onConflictDoUpdate({
+          target: [voidPins.tenantId, voidPins.actorId],
+          set: {
+            pinHash,
+            failures: 0,
+            lockedUntil: null,
+            // The lock it clears is recorded as `unlock` records it.
+            unlockedAt: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then now() else ${voidPins.unlockedAt} end`,
+            unlockedBy: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then ${s.actorId}::uuid else ${voidPins.unlockedBy} end`,
+            updatedAt: new Date(),
+          },
+        });
+      await recordAudit(tx, s, 'approval_pin_set', {
+        target: { type: 'approver', id: s.actorId },
+        details: { forgotten: true },
       });
+    });
     return this.status(s);
   }
 
@@ -403,17 +420,23 @@ export class VoidPins {
   async unlock(s: PosSession, actorId: string) {
     this.ownerOnly(s);
     if (sameId(actorId, s.actorId)) this.needsFreshSignIn(s);
-    const rows = await this.db
-      .update(voidPins)
-      .set({
-        failures: 0,
-        lockedUntil: null,
-        unlockedAt: new Date(),
-        unlockedBy: s.actorId,
-      })
-      .where(this.where(s.tenantId, actorId))
-      .returning({ actorId: voidPins.actorId });
-    if (!rows.length) throw new NotFoundException();
+    await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .update(voidPins)
+        .set({
+          failures: 0,
+          lockedUntil: null,
+          unlockedAt: new Date(),
+          unlockedBy: s.actorId,
+        })
+        .where(this.where(s.tenantId, actorId))
+        .returning({ actorId: voidPins.actorId });
+      if (!rows.length) throw new NotFoundException();
+      await recordAudit(tx, s, 'approval_pin_unlock', {
+        target: { type: 'approver', id: actorId },
+        details: { approverId: actorId },
+      });
+    });
     return { actorId, hasPin: true, lockedUntil: null };
   }
 
@@ -421,11 +444,17 @@ export class VoidPins {
   async reset(s: PosSession, actorId: string) {
     this.ownerOnly(s);
     if (sameId(actorId, s.actorId)) this.needsFreshSignIn(s);
-    const rows = await this.db
-      .delete(voidPins)
-      .where(this.where(s.tenantId, actorId))
-      .returning({ actorId: voidPins.actorId });
-    if (!rows.length) throw new NotFoundException();
+    await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .delete(voidPins)
+        .where(this.where(s.tenantId, actorId))
+        .returning({ actorId: voidPins.actorId });
+      if (!rows.length) throw new NotFoundException();
+      await recordAudit(tx, s, 'approval_pin_reset', {
+        target: { type: 'approver', id: actorId },
+        details: { approverId: actorId },
+      });
+    });
     return { actorId, hasPin: false, lockedUntil: null };
   }
 }

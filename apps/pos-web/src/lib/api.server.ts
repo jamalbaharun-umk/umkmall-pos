@@ -40,7 +40,7 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
 
   if (sessionKind(token) === 'cashier') {
     clearSessionToken()
-    throw redirect({ to: '/kasir/masuk' })
+    throw redirect({ to: '/kasir/masuk', search: { berakhir: 1 } })
   }
   const fresh = await refreshOwner()
   if (typeof fresh === 'string') return pageStatus(await send(path, init, fresh), init)

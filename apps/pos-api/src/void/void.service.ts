@@ -21,6 +21,7 @@ import {
   shifts,
   staff,
 } from '../db/schema';
+import { recordAudit } from '../audit/record';
 import { cancelReceivable } from '../receivables/receivables.controller';
 import { actorRef, PaymentSync } from '../payments-client/payment-sync.service';
 import { isOnlineMethod } from '../payments-client/payments.client';
@@ -386,6 +387,19 @@ export class VoidService {
       // The gateway has the money: the refund is asked after this commit and can still be refused (V4).
       refundStatus: online ? 'pending' : null,
     });
+    await recordAudit(tx, s, mode === 'refund' ? 'refund' : 'void', {
+      target: {
+        type: 'sale',
+        id: saleId,
+        label: sale.number ? `#${sale.number}` : undefined,
+      },
+      details: {
+        saleId,
+        reasonCode: input.reasonCode,
+        total: sale.total,
+        approvedBy: approver.id,
+      },
+    });
     if (returns.length)
       await tx
         .insert(saleVoidReturns)
@@ -427,6 +441,9 @@ export class VoidService {
       input.approverId,
       input.pin,
     );
+    await this.auditSale(s, saleId, 'refund_retry', {
+      approvedBy: approver.id,
+    });
     await this.payments
       .retryRefund(
         s.tenantId,
@@ -438,6 +455,27 @@ export class VoidService {
         throw paymentHttpError(error);
       });
     return this.refundView(s, saleId);
+  }
+
+  /** One audit row about a sale (committed on its own, see the callers). */
+  private async auditSale(
+    s: PosSession,
+    saleId: string,
+    event: 'refund_manual' | 'refund_retry',
+    details: Record<string, unknown> = {},
+  ) {
+    const [sale] = await this.db
+      .select({ number: sales.number })
+      .from(sales)
+      .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, saleId)));
+    await recordAudit(this.db, s, event, {
+      target: {
+        type: 'sale',
+        id: saleId,
+        label: sale?.number ? `#${sale.number}` : undefined,
+      },
+      details: { saleId, ...details },
+    });
   }
 
   /** `POST /sales/:id/refund/manual`: the store returned the money of a refused refund by hand (V4). */
@@ -455,6 +493,11 @@ export class VoidService {
     // Only a refund the gateway refused; one already marked answers as it stands.
     if (refund.refundStatus === 'succeeded') return refund;
     if (refund.refundStatus !== 'failed') throw refusal('not_refund_failed');
+    // Write-ahead: payment-api cannot be called inside a transaction (a rule of this module), so the log row is
+    // committed BEFORE the call. A crash or a failed insert then stops the correction instead of leaving it
+    // done and unlogged; a call payment-api refuses leaves a row for a request that changed nothing. The
+    // note is free text and never stored here.
+    await this.auditSale(s, saleId, 'refund_manual');
     await this.payments
       .markRefundManual(s.tenantId, saleId, note, actorRef(s.kind, s.actorId))
       .catch((error: unknown) => {

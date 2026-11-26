@@ -68,6 +68,10 @@ export class PurgeService {
       // First, so UMKMall's function takes the row lock (FOR SHARE) and holds it to our commit: a
       // reactivation waits for the purge, or the purge sees it and rolls back.
       await this.assertBeingDeleted(tx, userId);
+      // The audit log's guard trigger lets a DELETE through only for this tenant, inside this transaction.
+      await tx.execute(
+        sql`select set_config('pos.purging', ${tenant.id}, true)`,
+      );
       const tables = (
         await tx.execute<{ name: string }>(sql`
           select c.relname as name from pg_class c
