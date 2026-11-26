@@ -20,9 +20,9 @@ own commit. The legal lock (UMK-1977) stays: the only gateway is the local fake 
    reason and note stay those of the refund; payment-api's audit row of the new refund request names the owner as
    actor and this retry's approver.
 
-   Open gap: the owner PIN can be reset/unlocked by a signed-in session without the old PIN — UMK-2054
-   (https://linear.app/umkmall/issue/UMK-2054); decided: change needs the old PIN, reset/unlock needs a fresh UMKMall
-   re-login; not built yet.
+   The owner PIN could be reset/unlocked by a signed-in session without the old PIN: UMK-2054
+   (https://linear.app/umkmall/issue/UMK-2054). Decided: change needs the old PIN, reset/unlock needs a fresh UMKMall
+   re-login. Built, see "UMK-2054" at the end of this plan.
 2. **UMK-2047: the cashier on the payment and on the list.** `SalePayment` and every row of `GET /sales` carry
    `actorId` and `mine` (the caller rang it up). `GET /sales?status=awaiting_payment` lists what the caller may act
    on, the rule of the payment routes: their own sales, or every waiting sale of the store with `sales.void`.
@@ -114,3 +114,52 @@ online-payments controller), `src/sales/` (schemas, service), `src/db/schema/sal
   banks; 409 as before when payment-api cannot say).
 - `[test]` each of the above; revert-red on the owner check of the approver, the four statuses, the name's
   cleaning and the repeat's 422.
+
+## UMK-2054: the owner's own PIN is not changed by the session alone (2026-11-26)
+
+The retry of a refused refund asks the owner's own PIN, but an owner session could remove that PIN
+(`DELETE /void-pin/<ownerId>`), make a new one (`PUT /void-pin` without `currentPin`) and clear its lock
+(`POST /void-pin/<ownerId>/unlock`). So the PIN added nothing to the session.
+
+Decided and built:
+
+- **Changing the owner's PIN needs the old PIN** (`VoidPins.set`, as before): a missing one answers 422 on
+  `currentPin`, a wrong one 422 "PIN salah" and counts toward the PIN's own lock (the void's: the 5th locks, 429).
+  Nothing changes. A fresh sign-in does not stand in for the old PIN.
+- **Without the old PIN, the owner's own PIN row needs a fresh sign-in:** removing it (forgot PIN), clearing its
+  lock, and making the first PIN (there is no old one to ask for; without this the removal guard would only move the
+  hole to stores whose owner has no PIN yet). Otherwise 403 `{ code: 'fresh_sign_in_required' }` and nothing changes.
+- **Fresh** = an owner session whose sign-in is at most 5 minutes old (`FRESH_SIGN_IN_SECONDS`, `freshSignIn` in
+  `src/tenancy/session.ts`). The token carries the sign-in time (`auth_time`, `PosSession.signedInAt`).
+  `POST /auth/umkmall/session` stamps it only when the body says `{ signIn: true }`; pos-web sends that from the
+  sign-in page (`POST /masuk`) and the landing after UMKMall's login (`/` without a POS session), never from the
+  refresh in `api()`. A refreshed session carries no sign-in time, so a refresh is never fresh, also seconds after
+  a sign-in. The dev sign-in (development and test only) is always a sign-in.
+- **Admin PINs are as before.** First PIN without a fresh sign-in; the owner unlocks and removes an admin's PIN from
+  any owner session. Judged not the same hole: the owner cannot set an admin's PIN (`set` is the actor's own), an
+  admin's PIN never approves an owner-only action (`verifyOwner`), and for a plain void the owner session already
+  holds `staff.manage` (it can make a new admin), so an admin's PIN was never a barrier against the owner.
+- **pos-web** (Pengaturan, Keamanan): the change form asks "PIN lama"; a wrong one says the PIN did not change.
+  "Lupa PIN?" (also the first PIN and "Buka kunci" on the owner's own row, when pos-api asks) opens "Masuk lagi":
+  `POST /masuk/ulang` drops the POS session, remembers where to land (`pos_kembali`, a key of `RETURN_PATHS`, never a
+  path) and goes to UMKMall's login; the sign-in that follows lands on `/pengaturan/keamanan?lupa=1`, where "Buat
+  PIN baru" removes the old PIN and saves the new one.
+
+**Limit, for the owner to rule on.** pos-api learns only "UMKMall accepts this cookie" from `/api/auth/me`; it cannot
+see whether UMKMall asked for the password just now. While the browser still holds a valid UMKMall cookie, UMKMall's
+login may send the owner straight back, and that sign-in counts as fresh. So this closes the hole for a POS session
+or token on its own and for the plain routes, not for someone who holds the owner's UMKMall cookie. Closing that
+needs UMKMall (its own process): `/api/auth/me` answering the time of the last password login, and a login that
+asks again (`prompt=login`). pos-api would then take the sign-in time from UMKMall's answer instead of the relay's
+`signIn`.
+
+- `[test]` `test/void.e2e-spec.ts` "the owner's own PIN (UMK-2054)": old PIN missing/wrong and the lock; remove,
+  first PIN and unlock refused without a fresh sign-in (no sign-in time, 301 s old, in the future) and done with one;
+  admins as before; another store's fresh owner gets 404. `test/auth.e2e-spec.ts` "fresh sign-in": a sign-in is
+  fresh, the refresh after it is not, the body takes only `signIn: true`, the dev sign-in.
+  `test/pg-cashier-flow.e2e-spec.ts`: the reported way in ends in "PIN salah" on the retry; the owner's lock is
+  cleared only by a fresh session; an admin's PIN is still refused for the retry (V4).
+- `[test]` revert-red, each red then restored: the fresh check in `reset`, in `unlock`, in the first `set`; the old
+  PIN in `set`; `signIn` ignored in the session route (every session stamped); the 5-minute window.
+- `[test]` pos-web: `-keamanan-helpers.test.ts`, `session.server.test.ts` (a refresh sends `{}`, the landing cookie
+  is a listed key and used once), `api.server.test.ts` (the refresh passes no sign-in), `sign-in.test.ts`.

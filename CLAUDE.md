@@ -289,6 +289,13 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   admin's with `sales.void`, answers the generic "PIN salah" and counts nowhere; the owner's count and lock are the
   void's (wrong PIN 422, locked 429). Checked before payment-api is asked; `sale_voids.approved_by` stays the
   refund's approver (UMK-2040).
+- **The owner's own PIN is never changed by the session alone** (UMK-2054, `src/void/void-pin.ts`): changing it needs
+  the old PIN; making the first one, removing it and clearing its lock need a fresh sign-in (`freshSignIn` in
+  `src/tenancy/session.ts`: the token's `auth_time` is at most `FRESH_SIGN_IN_SECONDS` old), else 403
+  `fresh_sign_in_required`. Only a sign-in stamps `auth_time` (`POST /auth/umkmall/session` with `{ signIn: true }`,
+  the dev sign-in); **a refresh never does**, and pos-web's `api()` refresh must never pass `signIn`. A new route
+  that touches the owner's `void_pins` row keeps both rules. Admin PINs are not gated. In tests `createStore`'s
+  `auth` is a refreshed session and `freshAuth` a just-signed-in one.
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
   exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
   answer only while it still awaits payment. Every transaction of `payments-client/` is in `payment-sync.service.ts`.
