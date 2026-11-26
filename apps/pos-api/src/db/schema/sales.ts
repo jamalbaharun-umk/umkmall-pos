@@ -28,7 +28,7 @@ const tenantId = () =>
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
-export const ACTOR_KINDS = ['owner', 'cashier'] as const;
+export const ACTOR_KINDS = ['owner', 'cashier', 'agent'] as const;
 
 export const shifts = pos
   .table(

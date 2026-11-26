@@ -32,6 +32,16 @@ const MeAnswer = z.object({
   user: z.object({ id: z.string().uuid() }),
 });
 const DevBody = z.object({ userId: z.string().uuid() });
+// A JWT or any opaque token: no character that could end the cookie or add another one.
+const AgentBody = z
+  .object({
+    token: z
+      .string()
+      .min(16)
+      .max(4096)
+      .regex(/^[A-Za-z0-9._~+/-]+$/),
+  })
+  .strict();
 
 const parse = validate;
 /** The `Cookie` header cut down to UMKMall's two auth cookies, or undefined when neither is there. */
@@ -67,42 +77,12 @@ export class AuthController {
   ) {
     const forwarded = authCookies(cookie);
     if (!forwarded) throw new UnauthorizedException();
-    let me: globalThis.Response;
-    try {
-      me = await fetch(
-        `${this.env.UMKMALL_WEB_URL.replace(/\/$/, '')}/api/auth/me`,
-        {
-          headers: { cookie: forwarded, accept: 'application/json' },
-          redirect: 'manual',
-          signal: AbortSignal.timeout(UMKMALL_TIMEOUT_MS),
-        },
-      );
-    } catch (error) {
-      this.logger.warn(
-        `UMKMall /auth/me unreachable: ${(error as Error).name}`,
-      );
-      throw new ServiceUnavailableException();
-    }
-    const setCookies = me.headers.getSetCookie();
+    const { userId, setCookies, unavailable } =
+      await this.askUmkmall(forwarded);
     if (setCookies.length > 0) res.setHeader('set-cookie', setCookies);
-    if (me.status === 401) throw new UnauthorizedException();
-    if (me.status !== 200) {
-      this.logger.warn(`UMKMall /auth/me answered ${me.status}`);
-      throw new ServiceUnavailableException();
-    }
-    const answer = MeAnswer.safeParse(await me.json().catch(() => null));
-    if (!answer.success) throw new UnauthorizedException();
-    const userId = answer.data.user.id;
-    const tenantId = await this.findOrCreateTenant(this.db, userId).catch(
-      (error: unknown) => {
-        // A UMKMall account with no users row in this database: refuse cleanly instead of a 500.
-        if (isMissingUser(error))
-          throw new UnauthorizedException({
-            message: 'Akun UMKMall tidak ditemukan',
-          });
-        throw error;
-      },
-    );
+    if (unavailable) throw new ServiceUnavailableException();
+    if (!userId) throw new UnauthorizedException();
+    const tenantId = await this.tenantOfUmkmallUser(userId);
     return this.issue({ tenantId, actorId: userId, kind: 'owner' });
   }
 
@@ -122,6 +102,95 @@ export class AuthController {
         throw fieldError('userId', 'Pengguna tidak ditemukan');
       throw error;
     }
+  }
+
+  /**
+   * UMKMall's agent acting for a signed-in owner (UMK-1978) → 15-minute agent session for that owner's store. The
+   * owner's UMKMall access token goes to `/api/auth/me` as the `auth_token` cookie, the only thing that route reads.
+   * A Set-Cookie it answers is not relayed: the agent holds no browser, and without `auth_refresh` no refresh cookie
+   * is minted. The token is never logged.
+   */
+  @Public()
+  @Post('agent/session')
+  @HttpCode(200)
+  async agentSession(@Body() body: unknown) {
+    const { token } = parse(AgentBody, body);
+    const { userId, unavailable } = await this.askUmkmall(
+      `auth_token=${token}`,
+    );
+    if (unavailable) throw new ServiceUnavailableException();
+    if (!userId) throw new UnauthorizedException();
+    const tenantId = await this.tenantOfUmkmallUser(userId);
+    return this.issue({ tenantId, actorId: userId, kind: 'agent' });
+  }
+
+  /** The agent session for local work and tests (no UMKMall). Refused in production. */
+  @Public()
+  @Post('dev/agent-session')
+  @HttpCode(200)
+  async devAgentSession(@Body() body: unknown) {
+    if (process.env.NODE_ENV === 'production') throw new NotFoundException();
+    const { userId } = parse(DevBody, body);
+    try {
+      const tenantId = await this.findOrCreateTenant(this.db, userId);
+      return this.issue({ tenantId, actorId: userId, kind: 'agent' });
+    } catch (error) {
+      if (isMissingUser(error))
+        throw fieldError('userId', 'Pengguna tidak ditemukan');
+      throw error;
+    }
+  }
+
+  /**
+   * Asks UMKMall's `/api/auth/me` with the given Cookie header (5 s). 401 or a bad body → no user; another status →
+   * `unavailable`; an unreachable UMKMall or a timeout → 503 at once. The Set-Cookie lines come back for a caller
+   * that relays them, whatever the status.
+   */
+  private async askUmkmall(cookie: string): Promise<{
+    userId: string | null;
+    setCookies: string[];
+    unavailable: boolean;
+  }> {
+    let me: globalThis.Response;
+    try {
+      me = await fetch(
+        `${this.env.UMKMALL_WEB_URL.replace(/\/$/, '')}/api/auth/me`,
+        {
+          headers: { cookie, accept: 'application/json' },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(UMKMALL_TIMEOUT_MS),
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `UMKMall /auth/me unreachable: ${(error as Error).name}`,
+      );
+      throw new ServiceUnavailableException();
+    }
+    const setCookies = me.headers.getSetCookie();
+    if (me.status === 401)
+      return { userId: null, setCookies, unavailable: false };
+    if (me.status !== 200) {
+      this.logger.warn(`UMKMall /auth/me answered ${me.status}`);
+      return { userId: null, setCookies, unavailable: true };
+    }
+    const answer = MeAnswer.safeParse(await me.json().catch(() => null));
+    return {
+      userId: answer.success ? answer.data.user.id : null,
+      setCookies,
+      unavailable: false,
+    };
+  }
+
+  private tenantOfUmkmallUser(userId: string): Promise<string> {
+    return this.findOrCreateTenant(this.db, userId).catch((error: unknown) => {
+      // A UMKMall account with no users row in this database: refuse cleanly instead of a 500.
+      if (isMissingUser(error))
+        throw new UnauthorizedException({
+          message: 'Akun UMKMall tidak ditemukan',
+        });
+      throw error;
+    });
   }
 
   private async findOrCreateTenant(

@@ -4,7 +4,7 @@ import { Uuid } from '../catalog/catalog.schemas';
 import { validate } from '../common/validation';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { StockService } from './stock.service';
 
@@ -39,6 +39,7 @@ export class StockController {
     return this.stock.movements(s.tenantId, parseId(id));
   }
 
+  @AgentRoute()
   @Get('products/:id')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return this.stock.productStock(s.tenantId, parseId(id));

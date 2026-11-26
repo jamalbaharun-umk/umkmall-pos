@@ -107,6 +107,20 @@ silent, follow the monorepo's principles.
   the route ids in `BARE_ROUTES`. Screens use `components/page.tsx` (`Page`, `Panel`, `Empty`, `PageLoading`,
   `PageError`) for Lakasir's page layout.
 
+## UMKMall agent (MCP, UMK-1978..1982)
+
+Plan [2026-11-26-001](docs/plans/2026-11-26-001-feat-umk-1978-agent-mcp-plan.md), contract
+[docs/agent-integration.md](docs/agent-integration.md).
+
+- **An agent session (`kind: 'agent'`) reaches only routes marked `@AgentRoute()`** (allow-list in the session guard),
+  with `AGENT_PERMISSIONS`. A new route stays closed to the agent until it is marked; mark only what a tool needs.
+- **Tools call the REST routes over loopback** with the caller's token (`src/agent/loopback.ts`): never a service
+  method, never a tenant id of their own. A new tool is one entry in `AGENT_TOOL_NAMES` plus its section in
+  `docs/agent-integration.md` (the e2e test compares the server, the constant and the doc).
+- **Every write tool previews without `confirm: true` and runs once per `idempotencyKey`** (`pos.agent_requests`).
+- **HPP import sends `cogs`, never UMKMall's `hpp`** (which adds allocated fixed costs, booked as expenses here); SKU
+  `UMK-<ref>` links the product to its UMKMall HPP product.
+
 ## payment-api (UMK-1991)
 
 `apps/payment-api` is the one service that records payments and, later, talks to a payment gateway (PG). Plan:

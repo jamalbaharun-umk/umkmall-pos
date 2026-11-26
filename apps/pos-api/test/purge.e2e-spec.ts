@@ -258,6 +258,9 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     // UMK-1991: a refusal payment-api gave for that sale (written by the job only with payment-api on).
     await admin`insert into pos.payment_sync_issues (tenant_id, kind, ref_id, attempts, last_error)
       values (${s.tenantId}, 'sale', ${voided.body.id}, 1, 'payment_mismatch')`;
+    // UMK-1980: a write UMKMall's agent confirmed (its idempotency record).
+    await admin`insert into pos.agent_requests (tenant_id, idempotency_key, tool, request_hash, answer)
+      values (${s.tenantId}, ${randomUUID()}, 'create_category', 'h', '{}'::jsonb)`;
     return s;
   }
 

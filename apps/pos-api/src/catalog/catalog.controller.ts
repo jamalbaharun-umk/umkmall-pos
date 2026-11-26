@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
@@ -37,11 +37,13 @@ const idOf = (raw: string) => {
 export class CategoriesController {
   constructor(private readonly catalog: CatalogService) {}
 
+  @AgentRoute()
   @Get()
   async list(@CurrentSession() s: PosSession) {
     return { data: await this.catalog.listCategories(s.tenantId) };
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
@@ -88,6 +90,7 @@ function withoutCost<T extends Record<string, unknown>>(s: PosSession, p: T) {
 export class ProductsController {
   constructor(private readonly catalog: CatalogService) {}
 
+  @AgentRoute()
   @Get()
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
     const page = await this.catalog.listProducts(
@@ -97,17 +100,20 @@ export class ProductsController {
     return { ...page, data: page.data.map((p) => withoutCost(s, p)) };
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
     return this.catalog.createProduct(s.tenantId, parse(ProductCreate, body));
   }
 
+  @AgentRoute()
   @Get(':id')
   async get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return withoutCost(s, await this.catalog.getProduct(s.tenantId, idOf(id)));
   }
 
+  @AgentRoute()
   @Patch(':id')
   @RequirePermission('catalog.manage')
   update(

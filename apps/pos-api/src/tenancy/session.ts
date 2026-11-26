@@ -9,15 +9,16 @@ const AUDIENCE = 'pos-api';
 
 const ClaimsSchema = z.object({
   tid: z.string().uuid(), // tenant id — the only source of tenancy for a request
-  sub: z.string().min(1), // actor: UMKMall user id (owner) or POS staff id (cashier)
-  kind: z.enum(['owner', 'cashier']),
+  sub: z.string().min(1), // actor: UMKMall user id (owner, agent) or POS staff id (cashier)
+  kind: z.enum(['owner', 'cashier', 'agent']),
   csid: z.string().uuid().optional(), // cashier session row (U4); the guard checks it is still live
 });
 
 export type PosSession = {
   tenantId: string;
   actorId: string;
-  kind: 'owner' | 'cashier';
+  /** `agent`: UMKMall's agent acting for the owner (UMK-1978); it reaches only `@AgentRoute()` routes. */
+  kind: 'owner' | 'cashier' | 'agent';
   cashierSessionId?: string;
   /** Set by the session guard per request, never from the token (U4). Owners hold every permission. */
   permissions?: readonly string[];

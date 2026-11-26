@@ -11,6 +11,7 @@ import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  ACTOR_KINDS,
   paymentMethods,
   receivablePayments,
   receivables,
@@ -575,7 +576,7 @@ export class VoidService {
           ),
         ),
     ]);
-    const nameOf = (actorId: string, kind: 'owner' | 'cashier') =>
+    const nameOf = (actorId: string, kind: (typeof ACTOR_KINDS)[number]) =>
       kind === 'owner'
         ? 'Pemilik'
         : (names.find((n) => n.id === actorId)?.name ?? 'Staf');

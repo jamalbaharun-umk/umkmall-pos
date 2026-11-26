@@ -11,6 +11,11 @@ export const IS_PUBLIC = 'pos:isPublic';
 /** Opts a route out of the global session guard (health checks, owner sign-in). */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
+export const AGENT_ROUTE = 'pos:agentRoute';
+
+/** A route UMKMall's agent session may call (UMK-1978). Every other route answers it 403: new routes stay closed. */
+export const AgentRoute = () => SetMetadata(AGENT_ROUTE, true);
+
 export type SessionRequest = Request & { posSession?: PosSession };
 
 /** The verified session. Take the tenant id from here, never from the body, query or path. */

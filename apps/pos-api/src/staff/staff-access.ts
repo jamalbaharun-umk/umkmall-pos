@@ -11,7 +11,7 @@ import {
   staffSessions,
 } from '../db/schema';
 import type { PosSession } from '../tenancy/session';
-import { DEFAULT_ROLES, PERMISSIONS } from './permissions';
+import { AGENT_PERMISSIONS, DEFAULT_ROLES, PERMISSIONS } from './permissions';
 import { secretMatches } from './secrets';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -28,6 +28,8 @@ export class StaffAccess {
   async resolve(session: PosSession): Promise<PosSession | null> {
     if (session.kind === 'owner')
       return { ...session, permissions: PERMISSIONS };
+    if (session.kind === 'agent')
+      return { ...session, permissions: AGENT_PERMISSIONS };
     if (!session.cashierSessionId) return null;
     const [live] = await this.db
       .select({ id: staffSessions.id })
