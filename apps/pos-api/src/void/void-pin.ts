@@ -32,6 +32,9 @@ type Check =
 
 const WRONG_PIN = 'PIN salah';
 
+/** Uuids compared as Postgres does: an upper-case spelling of the owner's id is still the owner's row. */
+const sameId = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
 /** The refusal of a change to the owner's own PIN that needs a sign-in of the last minutes (UMK-2054). */
 export const FRESH_SIGN_IN_REQUIRED = 'fresh_sign_in_required';
 
@@ -316,7 +319,7 @@ export class VoidPins {
    */
   async unlock(s: PosSession, actorId: string) {
     this.ownerOnly(s);
-    if (actorId === s.actorId) this.needsFreshSignIn(s);
+    if (sameId(actorId, s.actorId)) this.needsFreshSignIn(s);
     const rows = await this.db
       .update(voidPins)
       .set({
@@ -334,7 +337,7 @@ export class VoidPins {
   /** Owner only: removes a forgotten PIN, so its holder sets a new one. The owner's own needs a fresh sign-in. */
   async reset(s: PosSession, actorId: string) {
     this.ownerOnly(s);
-    if (actorId === s.actorId) this.needsFreshSignIn(s);
+    if (sameId(actorId, s.actorId)) this.needsFreshSignIn(s);
     const rows = await this.db
       .delete(voidPins)
       .where(this.where(s.tenantId, actorId))

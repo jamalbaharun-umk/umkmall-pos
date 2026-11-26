@@ -1218,6 +1218,7 @@ describe('void a full sale (UMK-1962)', () => {
         s.auth, // no sign-in time: a refreshed session
         await signedIn(s, 301), // signed in more than 5 minutes ago
         await signedIn(s, -60), // a sign-in time in the future
+        await signedIn(s, -10), // ahead of this clock by more than the skew allowed
       ];
       for (const auth of stale) {
         const res = await reset(auth, s.userId).expect(403);
@@ -1225,7 +1226,18 @@ describe('void a full sale (UMK-1962)', () => {
       }
       expect((await pinRow(s.userId)).pin_hash).toBe(hash);
 
-      await reset(await signedIn(s, 290), s.userId).expect(200);
+      // An upper-case spelling of the owner's id is the same row, and the same refusal.
+      const upper = s.userId.toUpperCase();
+      expect(upper).not.toBe(s.userId);
+      for (const auth of stale) {
+        expect((await reset(auth, upper).expect(403)).body).toEqual(FRESH);
+        expect((await unlock(auth, upper).expect(403)).body).toEqual(FRESH);
+      }
+      expect((await pinRow(s.userId)).pin_hash).toBe(hash);
+      // A sign-in a few seconds ahead of this clock (another instance's) is still fresh.
+      await unlock(await signedIn(s, -3), upper).expect(200);
+
+      await reset(await signedIn(s, 290), upper).expect(200);
       expect(await pinRow(s.userId)).toBeUndefined();
       // The first PIN after it has no old PIN to ask for: it needs the fresh sign-in too.
       for (const auth of stale) {

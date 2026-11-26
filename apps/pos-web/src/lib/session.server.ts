@@ -119,7 +119,7 @@ export function setReturnTo(key: ReturnKey): void {
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
-    maxAge: 15 * 60,
+    maxAge: 5 * 60,
   })
 }
 

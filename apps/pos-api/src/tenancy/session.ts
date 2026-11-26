@@ -41,19 +41,22 @@ export type PosSession = {
   permissions?: readonly string[];
 };
 
+/** Clocks of two pos-api instances may differ by this much: a sign-in this far ahead is still now. */
+export const SIGN_IN_SKEW_SECONDS = 5;
+
 /** How long after a sign-in an owner session counts as fresh (UMK-2054). */
 export const FRESH_SIGN_IN_SECONDS = 5 * 60;
 
 /**
  * True for an owner session whose sign-in is at most `FRESH_SIGN_IN_SECONDS` old: what resetting or unlocking the
  * owner's own PIN asks for. A refreshed session carries no sign-in time and is never fresh; nor is a sign-in time
- * in the future.
+ * more than `SIGN_IN_SKEW_SECONDS` in the future.
  */
 export function freshSignIn(session: PosSession, now = Date.now()): boolean {
   if (session.kind !== 'owner' || session.signedInAt === undefined)
     return false;
   const age = Math.floor(now / 1000) - session.signedInAt;
-  return age >= 0 && age <= FRESH_SIGN_IN_SECONDS;
+  return age >= -SIGN_IN_SKEW_SECONDS && age <= FRESH_SIGN_IN_SECONDS;
 }
 
 export async function signSession(
