@@ -11,6 +11,7 @@ import { PAYMENT_FETCH } from '../src/payments-client/payments.client';
 import { seedMerchant } from '../../payment-api/test/support/merchants';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
+import { createCashier } from './support/staff';
 import { PaymentApi, startPaymentApi } from './support/payment-api';
 
 type Store = Awaited<ReturnType<typeof createStore>>;
@@ -727,6 +728,97 @@ describe('hold number and receipt number (UMK-2038)', () => {
       expect((await poll(s, second).expect(200)).body.receiptNumber).toBe(3);
       await post(other.auth, `/sales/${theirs}/payment/cancel`).expect(200);
       expect(await gapFree(s.tenantId)).toBe(3);
+    });
+  });
+
+  describe('closing a shift while sales await payment (UMK-2044)', () => {
+    it('409 sales_awaiting_payment lists the shift’s waiting sales by hold number with what is owed; the shift closes once they are settled', async () => {
+      const s = await shop();
+      await sellCash(s).expect(201);
+      const qr = (await sell(s).expect(201)).body.id as string;
+      // A cash sale between its two steps blocks the close too.
+      link = 'down';
+      const held = (await sellCash(s).expect(503)).body.saleId as string;
+      link = 'ok';
+      const close = () =>
+        post(s.auth, '/shifts/current/close', { countedCash: 100_000 });
+      const refused = await close().expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'sales_awaiting_payment',
+        message: 'Masih ada penjualan yang menunggu pembayaran: #2, #3',
+        saleNumbers: [2, 3],
+      });
+      expect(refused.body.sales).toEqual([
+        {
+          id: qr,
+          holdNumber: 2,
+          amountDue: PRICE,
+          paymentMethod: 'QRIS Dinamis',
+          onlinePayment: true,
+          createdAt: expect.any(String),
+        },
+        {
+          id: held,
+          holdNumber: 3,
+          // Cash: Rp5.123 rounded up to Rp5.200.
+          amountDue: 5200,
+          paymentMethod: 'Tunai',
+          onlinePayment: false,
+          createdAt: expect.any(String),
+        },
+      ]);
+      // Nothing was closed.
+      expect(
+        (await get(s.auth, '/shifts/current').expect(200)).body.shift,
+      ).toMatchObject({ closedAt: null });
+
+      await post(s.auth, `/sales/${qr}/payment/cancel`).expect(200);
+      const one = await close().expect(409);
+      expect((one.body.sales as { id: string }[]).map((x) => x.id)).toEqual([
+        held,
+      ]);
+      await post(s.auth, `/sales/${held}/payment/cancel`).expect(200);
+      await close().expect(200);
+      await gapFree(s.tenantId);
+    });
+
+    it('only the closing actor’s own shift in their own store: another cashier’s and another store’s waiting sales neither block nor show', async () => {
+      const a = await shop();
+      const b = await shop();
+      const cashier = await createCashier(app, a, ['sales.create']);
+      await post(cashier.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const owners = (await sell(a).expect(201)).body.id as string;
+      const cashiers = (
+        await post(
+          cashier.auth,
+          '/sales',
+          {
+            lines: [{ productId: a.productId, qty: 1 }],
+            paymentMethodId: a.qris,
+            paid: PRICE,
+          },
+          randomUUID(),
+        ).expect(201)
+      ).body.id as string;
+      const theirs = (await sell(b).expect(201)).body.id as string;
+
+      const close = (auth: string) =>
+        post(auth, '/shifts/current/close', { countedCash: 0 });
+      const ids = (res: { body: { sales: { id: string }[] } }) =>
+        res.body.sales.map((x) => x.id);
+      expect(ids(await close(a.auth).expect(409))).toEqual([owners]);
+      expect(ids(await close(cashier.auth).expect(409))).toEqual([cashiers]);
+      expect(ids(await close(b.auth).expect(409))).toEqual([theirs]);
+
+      // Store B settles its own: its shift closes while store A's sales still wait.
+      await post(b.auth, `/sales/${theirs}/payment/cancel`).expect(200);
+      await close(b.auth).expect(200);
+      // The cashier settles theirs: their shift closes while the owner's sale still waits.
+      await post(cashier.auth, `/sales/${cashiers}/payment/cancel`).expect(200);
+      await close(cashier.auth).expect(200);
+      expect(ids(await close(a.auth).expect(409))).toEqual([owners]);
+      await post(a.auth, `/sales/${owners}/payment/cancel`).expect(200);
+      await close(a.auth).expect(200);
     });
   });
 });
