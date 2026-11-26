@@ -54,6 +54,17 @@ export function offeredMethods<M extends { kind: PayMethodKind; gatewayMethod?: 
   return { offered, hidden: methods.length - offered.length }
 }
 
+/**
+ * What the pay dialog says about the online methods it left out. A service that did not answer is not "belum aktif":
+ * the methods may well be on (the dialog then offers a retry).
+ */
+export function hiddenOnlineNote(hidden: number, unavailable: boolean): { text: string; retry: boolean } | null {
+  if (hidden <= 0) return null
+  if (unavailable)
+    return { text: 'Metode online tidak dapat dimuat sekarang (layanan pembayaran tidak menjawab). Coba lagi.', retry: true }
+  return { text: `${hidden} metode online tidak tampil karena belum aktif di Pembayaran Online toko ini.`, retry: false }
+}
+
 /** UMK-1992: the store's uploaded QRIS image; the version changes after a replace so the cache is not reused. */
 export const qrisSrc = (version: string | number) => `/pengaturan/qris?v=${encodeURIComponent(String(version))}`
 
@@ -64,6 +75,8 @@ export const QRIS_LOAD_ERROR = 'Kode QRIS tidak bisa dimuat. Coba lagi atau pili
 export type Bank = { code: string; name: string }
 /** `GET /online-payments/methods`: the methods the store may charge now, and by method the banks to choose from. */
 export type OnlineMethods = { methods: string[]; banks: Record<string, Bank[]> }
+/** `unavailable`: payment-api gave no answer (down, timeout, 5xx), as opposed to answering with no active method. */
+export type OnlineMethodsResult = OnlineMethods & { unavailable: boolean }
 
 const BANK_CODE = /^[A-Za-z0-9_-]{1,30}$/
 

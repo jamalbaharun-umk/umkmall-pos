@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bankError, bankRefusalText, bankToSend, banksFor, parseOnlineMethods, confirmButtonLabel, isStaticQris, offeredMethods, payStepOf, qrisScanHint, qrisSrc, saleToast } from './-pay-step'
+import { bankError, bankRefusalText, bankToSend, banksFor, parseOnlineMethods, confirmButtonLabel, hiddenOnlineNote, isStaticQris, offeredMethods, payStepOf, qrisScanHint, qrisSrc, saleToast } from './-pay-step'
 
 describe('payStepOf', () => {
   it('maps each kind to its step', () => {
@@ -53,6 +53,18 @@ describe('online (payment gateway) methods, UMK-1991', () => {
     expect(r.offered.map((m) => m.id)).toEqual(['a', 'b'])
     expect(r.hidden).toBe(2)
     expect(offeredMethods(methods, []).offered.map((m) => m.id)).toEqual(['a'])
+  })
+})
+
+describe('hiddenOnlineNote', () => {
+  it('says "belum aktif" only when the service answered, and offers a retry only when it did not', () => {
+    expect(hiddenOnlineNote(0, false)).toBeNull()
+    expect(hiddenOnlineNote(0, true)).toBeNull()
+    expect(hiddenOnlineNote(2, false)).toEqual({ text: '2 metode online tidak tampil karena belum aktif di Pembayaran Online toko ini.', retry: false })
+    const down = hiddenOnlineNote(2, true)!
+    expect(down.text).toBe('Metode online tidak dapat dimuat sekarang (layanan pembayaran tidak menjawab). Coba lagi.')
+    expect(down.text).not.toMatch(/belum aktif/)
+    expect(down.retry).toBe(true)
   })
 })
 
