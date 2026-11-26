@@ -2,9 +2,9 @@
 
 # 🏪 UMKMall POS
 
-### Your shop's cashier, stock book and cash notebook, in one place
+### UMKMall's cashier, and the data behind everything else UMKMall does for your shop
 
-**One of UMKMall's tools: the store's database, ledger and cashier inside the same ecosystem as the UMKMall app and web.**
+**UMKMall POS exists to support UMKMall. It is one of UMKMall's tools, and the main source of data for all its other features: the store's database, ledger and figures that the HPP calculator, UMKMall's agent (over MCP) and the reports read from. For the shop it is a cashier, a stock book and a cash notebook that run on a phone, tablet or computer.**
 
 [![CI](https://github.com/jamalbaharun-umk/umkmall-pos/actions/workflows/ci.yml/badge.svg)](https://github.com/jamalbaharun-umk/umkmall-pos/actions/workflows/ci.yml)
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
@@ -22,14 +22,15 @@
 
 ## 💡 Why UMKMall POS
 
-Sound familiar?
+UMKMall can only help a shop with the facts the shop has. The POS records them where they happen, at the counter,
+and hands them to the rest of UMKMall. For the owner, that starts with questions like these:
 
 - The shop was busy all day, yet the drawer feels light tonight.
 - A neighbour's *kasbon* lives in a notebook that nobody can find.
 - You learn the cooking oil is gone when a customer asks for it.
 - You know your sales, but not your **profit**.
 
-UMKMall POS answers each of these from a phone, tablet or computer:
+UMKMall POS answers each of them from a phone, tablet or computer:
 
 | Your question | The answer |
 |---|---|
@@ -45,7 +46,8 @@ UMKMall POS answers each of these from a phone, tablet or computer:
 ## 🧩 A tool of the UMKMall ecosystem
 
 UMKMall POS is not a separate product. It is **one of UMKMall's tools**, like the HPP calculator or the finance
-notebook in the UMKMall app and web, and it holds what the rest of UMKMall needs from a shop:
+notebook in the UMKMall app and web, and **the main source of data** for all of UMKMall's features. It holds what the
+rest of UMKMall needs from a shop:
 
 | UMKMall needs… | UMKMall POS is… |
 |---|---|
@@ -56,8 +58,8 @@ notebook in the UMKMall app and web, and it holds what the rest of UMKMall needs
 
 How it fits:
 
-- **One account, one ecosystem.** The owner signs in with their **UMKMall account** (shared login cookie on
-  `.umkmall.id`); no second password. One UMKMall account is one store. Cashiers are local POS users with a PIN on a
+- **One account, one ecosystem.** The owner signs in with their **UMKMall account** by a WhatsApp code (a one-time
+  password checked by UMKMall); no second password, and the POS never sees UMKMall's login cookie. One UMKMall account is one store. Cashiers are local POS users with a PIN on a
   paired device.
 - **UMKMall's agent works the POS for the owner** over MCP ([docs/agent-integration.md](docs/agent-integration.md)):
   it reads the catalog, stock, sales, margins and profit and loss, and fills the catalog, including importing HPP
@@ -195,8 +197,6 @@ for the admin, `222222` for the cashier.
 | Thrown back to the sign-in page | The development sign-in lasts 15 minutes; press **Masuk (pengembangan)** again |
 | Cashier cannot use a PIN | [Pair the device](#3-pair-a-cashier-device) first |
 | Online methods missing at the cashier | [Turn on online payments](#23-turn-on-online-payments), then add the payment method |
-| Cashier screen scrolls sideways, or **Tutup shift** is hidden | Known layout bug at about 1280 px and below, including phones: scroll sideways |
-| **Batalkan transaksi** or **Refund** buttons are off screen | Known bug on short screens: use a taller window or zoom out |
 
 ---
 
@@ -224,7 +224,8 @@ Before the first customer, the shop owner teaches the system who they are.
 > Bu Ani owns *Warung Berkah*. She does not want another password to forget, so she walks in with the UMKMall account she already has.
 
 1. Open the POS address.
-2. Press **Masuk dengan akun UMKMall** and sign in to UMKMall.
+2. Type the WhatsApp number of your UMKMall account (**Nomor WhatsApp**), press **Kirim kode** and enter the code you
+   receive. UMKMall checks the code; the POS keeps its own short session.
 3. You land on the **Dashboard**.
 
 On a local machine, use **Masuk (pengembangan)** instead.
@@ -327,7 +328,7 @@ movements.
 > Customers pay in different ways. Cash, debit, the QRIS sticker, or *"write it down first, Bu"*.
 
 Open **Metode pembayaran** and press **Tambah metode pembayaran**. Choose the type: cash, debit, **Kasbon (kredit)**,
-**Dompet digital** (your static QRIS) or **Pembayaran online (QRIS dinamis / VA)**.
+**Dompet digital** (your static QRIS) or **Online (QRIS / VA / link)**.
 
 <img src="docs/screenshots/23-metode-pembayaran.png" alt="Payment methods" width="48%" /> <img src="docs/screenshots/20-metode-online.png" alt="Online method" width="48%" />
 
@@ -591,7 +592,7 @@ flowchart LR
   A -->|service key + tenant header| P["payment-api<br/>NestJS · :3001"]
   A --> D1[("Postgres<br/>schema pos")]
   P --> D2[("Postgres database payment<br/>schema payment")]
-  A -->|"/api/auth/me"| U["UMKMall web<br/>owner sign-in"]
+  A -->|"WhatsApp OTP sign-in"| U["UMKMall API<br/>owner sign-in"]
   P -.->|adapter| G["Payment gateway<br/>fake, local only"]
   UI["@umkmall/ui"] --- W
 ```
