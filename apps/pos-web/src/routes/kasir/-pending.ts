@@ -228,6 +228,8 @@ export const HELD_SAME_TEXT =
   'Penjualan ini sudah tersimpan, tetapi pembayarannya belum tercatat. Tekan tombol bayar lagi dengan cara bayar dan jumlah yang sama: penjualan tidak akan tercatat dua kali.'
 export const REQUEST_OUT_TEXT =
   'Permintaan pembayaran sebelumnya masih menunggu jawaban dari server. Tunggu sebentar: hasilnya akan muncul di sini.'
+/** Shown beside "Sudah saya cek" while it waits for the request of this page load (`canAck`). */
+export const WAITING_ANSWER_HINT = 'Menunggu jawaban permintaan sebelumnya'
 export const RECORDED_TEXT =
   'Penjualan sebelumnya mungkin sudah tercatat. Cek Riwayat (dan Menunggu) dulu. Bila sudah tercatat, jangan dibuat ulang. Setelah Anda cek, tekan "Sudah saya cek: buat penjualan baru" untuk melanjutkan.'
 export const NOT_STORED_TEXT =

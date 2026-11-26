@@ -28,6 +28,7 @@ import {
   sendPlan,
   serialize,
   toCheck,
+  WAITING_ANSWER_HINT,
   type PendingEvent,
   type PendingState,
 } from './-pending'
@@ -923,6 +924,11 @@ describe('guard: one place remembers unfinished sales', () => {
     .filter((f) => /\.tsx?$/.test(f) && !f.endsWith('.test.ts'))
     .map((f) => ({ f, text: readFileSync(join(dir, f), 'utf8') }))
   const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+  it('the disabled "Sudah saya cek" says what it waits for (UMK-2051)', () => {
+    const text = code(sources.find((s) => s.f === 'index.tsx')!.text)
+    expect(text).toMatch(/!canAck\(pend\.state\) && \([\s\S]{0,120}WAITING_ANSWER_HINT/)
+    expect(WAITING_ANSWER_HINT).toBe('Menunggu jawaban permintaan sebelumnya')
+  })
   it('only the pending store and the open bill touch browser storage', () => {
     const users = sources.filter((s) => /\b(sessionStorage|localStorage)\b/.test(code(s.text))).map((s) => s.f)
     expect(users.sort()).toEqual(['-cart.ts', '-pending-store.ts'])

@@ -84,6 +84,7 @@ import {
   toCheck,
   type PendingEvent,
   type SaleAnswer,
+  WAITING_ANSWER_HINT,
 } from './-pending'
 import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
@@ -1268,6 +1269,11 @@ function PayDialog({
                   >
                     Sudah saya cek: buat penjualan baru
                   </Button>
+                  {!canAck(pend.state) && (
+                    <span className="self-center text-xs" role="status">
+                      {WAITING_ANSWER_HINT}
+                    </span>
+                  )}
                 </span>
               )}
             </Alert>
