@@ -140,4 +140,13 @@ describe('payment gateway codes (UMK-1991)', () => {
     expect(d.todo).toMatch(/Tutup shift/)
     expect(d.primary).toBe('none')
   })
+
+  it('a cash sale saved but not recorded (503 with a sale id) never says nothing was saved, and agrees with the banner', () => {
+    const d = describeError({ status: 503, code: 'sale_saved_unpaid' }, FALLBACK)
+    expect(d.what).toMatch(/sudah tersimpan/)
+    expect(d.what).not.toMatch(/tidak tersimpan/)
+    expect(d.todo).toMatch(/Menunggu/)
+    expect(d.primary).toBe('retry')
+    expect(d.code).toBe('PAYMENT_UNAVAILABLE')
+  })
 })

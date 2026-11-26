@@ -89,6 +89,13 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
     primary: 'retry',
     helpCode: 'PAYMENT_UNAVAILABLE',
   },
+  // a cash/EDC sale written as awaiting_payment, its payment record got no answer: it is saved, same as the banner says
+  sale_saved_unpaid: {
+    what: 'Penjualan ini sudah tersimpan dan menunggu pembayarannya dicatat, tetapi layanan pembayaran tidak menjawab.',
+    todo: 'Tekan bayar lagi dengan cara bayar dan jumlah yang sama: penjualan tidak akan tercatat dua kali. Anda juga bisa memeriksanya di daftar Menunggu.',
+    primary: 'retry',
+    helpCode: 'PAYMENT_UNAVAILABLE',
+  },
   already_paid: {
     what: 'Pelanggan sudah membayar. Gateway memastikan tagihan ini sudah lunas, jadi permintaan ditolak. Penjualan selesai dengan pembayaran online.',
     todo: 'Jika Anda sudah menerima uang tunai, kembalikan ke pelanggan.',

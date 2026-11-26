@@ -350,8 +350,9 @@ describe('cashPaidToSend', () => {
 describe('saleFailure', () => {
   it('only an online sale that was written but not charged is "sale_waiting"', () => {
     expect(saleFailure(503, undefined, ID, true).code).toBe('sale_waiting')
-    // a cash sale that got 503 has no bill: plain wording, not "pembayaran online"
-    expect(saleFailure(503, undefined, ID, false).code).toBeUndefined()
+    // a cash sale that got 503 is saved and waiting: it says so (never "nothing saved"), without "pembayaran online"
+    expect(saleFailure(503, undefined, ID, false).code).toBe('sale_saved_unpaid')
+    expect(saleFailure(503, undefined, undefined, false).code).toBeUndefined()
     expect(saleFailure(503, undefined, undefined, true).code).toBeUndefined()
     expect(saleFailure(409, 'method_disabled', ID, true)).toEqual({ status: 409, code: 'method_disabled' })
   })
