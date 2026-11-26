@@ -157,7 +157,32 @@ export const AGENT_TOOL_NAMES = [
   'create_supplier',
   'ledger_entries',
   'add_product_photo',
+  'stock_in',
 ] as const;
+
+/** The purchase route's line bounds (`purchasing.service.ts` Line, orderFields), for the stock_in preview. */
+const StockLines = z
+  .array(
+    z.object({
+      productId: z.string(),
+      qty: z
+        .number()
+        .int('Jumlah harus bilangan bulat')
+        .positive('Jumlah harus lebih dari 0')
+        .max(100_000, 'Jumlah maksimal 100.000'),
+      unitCost: z
+        .number()
+        .int('Harga beli harus bilangan bulat rupiah')
+        .nonnegative('Harga beli tidak boleh negatif')
+        .max(1_000_000_000, 'Harga beli maksimal Rp1.000.000.000'),
+    }),
+  )
+  .min(1)
+  .max(200, 'Maksimal 200 baris')
+  .refine(
+    (l) => new Set(l.map((x) => x.productId)).size === l.length,
+    'Satu produk cukup satu baris',
+  );
 
 const HppRow = z
   .object({
@@ -979,6 +1004,24 @@ export function buildAgentServer(
               unit: text(20)
                 .optional()
                 .describe('Another unit of the product, e.g. Dus'),
+              price: z
+                .number()
+                .optional()
+                .describe(
+                  'IGNORED: the server prices every line; a price sent here is echoed back in ignored, never used',
+                ),
+              discountPercent: z
+                .number()
+                .optional()
+                .describe(
+                  'IGNORED: no line discount from the agent; echoed back in ignored',
+                ),
+              discountAmount: z
+                .number()
+                .optional()
+                .describe(
+                  'IGNORED: no line discount from the agent; echoed back in ignored',
+                ),
             }),
           )
           .describe('1 or more cart lines'),
@@ -992,6 +1035,12 @@ export function buildAgentServer(
           .optional()
           .describe('Kasbon only: what the customer pays now, integer rupiah'),
         note: text(200).optional(),
+        discount: z
+          .number()
+          .optional()
+          .describe(
+            'IGNORED: the agent cannot give a discount; echoed back in ignored',
+          ),
         ...writeControls,
       },
       registry: writes(
@@ -1000,8 +1049,55 @@ export function buildAgentServer(
       ),
     },
     async (a, track) => {
+      // UMK-2069: a price or discount the agent sent is never used, and the answer says so (it was dropped silently).
+      const sent = a.lines as {
+        productId: string;
+        qty: number;
+        unit?: string;
+        price?: number;
+        discountPercent?: number;
+        discountAmount?: number;
+      }[];
+      const cart = sent.map(({ productId, qty, unit }) => ({
+        productId,
+        qty,
+        ...(unit !== undefined && { unit }),
+      }));
+      // Echoed only as whole numbers: anything else is not a price or discount at all, and is dropped as well.
+      const whole = (v: unknown) =>
+        typeof v === 'number' && Number.isSafeInteger(v) ? v : undefined;
+      const ignoredPrices = sent
+        .map((l) => ({
+          productId: l.productId,
+          sentPrice: whole(l.price),
+          sentDiscountPercent: whole(l.discountPercent),
+          sentDiscountAmount: whole(l.discountAmount),
+        }))
+        .filter(
+          (l) =>
+            l.sentPrice !== undefined ||
+            l.sentDiscountPercent !== undefined ||
+            l.sentDiscountAmount !== undefined,
+        )
+        .map((l) =>
+          Object.fromEntries(
+            Object.entries(l).filter(([, v]) => v !== undefined),
+          ),
+        );
+      const discount = whole(a.discount);
+      const ignored =
+        ignoredPrices.length > 0 || discount !== undefined
+          ? {
+              ignored: {
+                ...(ignoredPrices.length > 0 && { linePrices: ignoredPrices }),
+                ...(discount !== undefined && { discount }),
+                message:
+                  'Harga atau diskon dari agent diabaikan: POS memakai harga di katalog (lihat quote).',
+              },
+            }
+          : {};
       const quoteBody = {
-        lines: a.lines,
+        lines: cart,
         ...(a.voucherCode !== undefined && { voucherCode: a.voucherCode }),
       };
       type Quote = {
@@ -1060,6 +1156,7 @@ export function buildAgentServer(
             );
           return ok({
             preview: true,
+            ...ignored,
             quote: c.quote,
             wouldPay: m.isCredit
               ? down
@@ -1082,7 +1179,7 @@ export function buildAgentServer(
                 ? c.quote.amountDue
                 : c.quote.total;
             body = {
-              lines: a.lines,
+              lines: cart,
               ...(a.memberId !== undefined && { memberId: a.memberId }),
               ...(a.voucherCode !== undefined && {
                 voucherCode: a.voucherCode,
@@ -1103,7 +1200,7 @@ export function buildAgentServer(
           if (!r.ok)
             return { error: r.message, status: r.status, replay: body };
           const sale = r.data as { id: string };
-          return { data: sale, resultRefs: [sale.id] };
+          return { data: { ...sale, ...ignored }, resultRefs: [sale.id] };
         },
         true,
       );
@@ -1315,6 +1412,116 @@ export function buildAgentServer(
           const img = r.data as { id: string };
           return { data: { productId: id, ...img }, resultRefs: [img.id] };
         },
+      );
+    },
+  );
+
+  tool(
+    'stock_in',
+    {
+      description:
+        "Record goods received (stock in, UMK-2070): a purchase from a supplier (supplierId from list_suppliers, or create_supplier first) with lines { productId, qty, unitCost }, written as a purchase order and approved at once, which adds the stock at that cost (FIFO). Only stock-tracked products (type product). unitCost is what the store paid per unit, integer rupiah; it never changes a selling price. Preview without confirm shows each product's stock before and after.",
+      inputSchema: {
+        supplierId: text(64),
+        lines: z
+          .array(
+            z.object({
+              productId: text(64),
+              qty: z.number(),
+              unitCost: z.number(),
+            }),
+          )
+          .describe('1 to 200 lines, one per product'),
+        paymentMethod: text(60)
+          .optional()
+          .describe('How it was paid, e.g. Tunai, Transfer'),
+        note: text(500).optional(),
+        ...writeControls,
+      },
+      registry: writes(
+        'A delivery from a supplier, from a photo of the invoice',
+        '/pembelian',
+      ),
+    },
+    async (a, track) => {
+      const lines = a.lines as {
+        productId: string;
+        qty: number;
+        unitCost: number;
+      }[];
+      const ids = lines.map((l) => idParam(l.productId));
+      if (lines.length === 0 || ids.some((id) => !id)) return refused(BAD_ID);
+      // The route's own bounds, checked before the preview too, so a preview never shows what a confirm refuses.
+      const bounds = StockLines.safeParse(lines);
+      if (!bounds.success)
+        return refused(
+          bounds.error.issues
+            .map((i) =>
+              i.path.length > 0
+                ? `baris ${i.path.join('.')}: ${i.message}`
+                : i.message,
+            )
+            .join('; '),
+        );
+      const body = {
+        supplierId: a.supplierId,
+        lines,
+        ...(a.paymentMethod !== undefined && {
+          paymentMethod: a.paymentMethod,
+        }),
+        ...(a.note !== undefined && { note: a.note }),
+      };
+      return runWrite(
+        'stock_in',
+        a,
+        track,
+        async () => {
+          const rows = [];
+          for (const l of lines) {
+            const p = await get(`/catalog/products/${l.productId}`);
+            if (!p.ok) return refused(p.message);
+            const prod = p.data as { name: string; type: string };
+            if (prod.type !== 'product')
+              return refused(
+                `${prod.name} tidak dilacak stoknya (bukan tipe product).`,
+              );
+            const st = await get(`/stock/products/${l.productId}`);
+            if (!st.ok) return refused(st.message);
+            const onHand = (st.data as { onHand: number | null }).onHand ?? 0;
+            rows.push({
+              productId: l.productId,
+              name: prod.name,
+              qty: l.qty,
+              unitCost: l.unitCost,
+              stockBefore: onHand,
+              stockAfter: onHand + l.qty,
+            });
+          }
+          return ok({
+            preview: true,
+            lines: rows,
+            total: lines.reduce((n, l) => n + l.qty * l.unitCost, 0),
+          });
+        },
+        async () => {
+          // One route, one transaction, the route's own Idempotency-Key (derived from the agent key): a retry with the
+          // same key answers the first purchase, so stock never comes in twice.
+          const r = await callRoute(
+            ctx,
+            'POST',
+            '/purchasing/orders/stock-in',
+            {
+              headers: {
+                'idempotency-key': routeKey(a.idempotencyKey as string),
+              },
+              body,
+            },
+          );
+          if (!r.ok) return { error: r.message, status: r.status };
+          const order = r.data as { id: string };
+          return { data: order, resultRefs: [order.id] };
+        },
+        true,
       );
     },
   );

@@ -75,6 +75,8 @@ describe('repo guards', () => {
         'POST /sales/quote',
         'POST /shifts/open',
         'POST /suppliers',
+        // UMK-2070
+        'POST /purchasing/orders/stock-in',
       ].sort(),
     );
   });

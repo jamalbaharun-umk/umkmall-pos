@@ -17,7 +17,7 @@ import { ShiftsModule } from '../shifts/shifts.module';
 import { StockModule } from '../stock/stock.module';
 import { parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   PaymentInput,
@@ -69,6 +69,26 @@ export class PurchasingController {
     return this.orders.create(
       s.tenantId,
       s.actorId,
+      validate(OrderCreate, body),
+    );
+  }
+
+  /**
+   * UMK-2070: goods received in one step (written and approved in one transaction), once per Idempotency-Key. The
+   * one purchase route UMKMall's agent reaches: it can neither approve nor edit any other purchase.
+   */
+  @AgentRoute()
+  @Post('stock-in')
+  @RequirePermission('purchasing.manage')
+  stockIn(
+    @CurrentSession() s: PosSession,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    return this.orders.stockIn(
+      s.tenantId,
+      s.actorId,
+      keyOf(key),
       validate(OrderCreate, body),
     );
   }

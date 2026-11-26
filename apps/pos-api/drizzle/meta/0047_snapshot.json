@@ -1,5 +1,5 @@
 {
-  "id": "a3cc28d1-6b5a-403b-8d5a-33b6f0134b1a",
+  "id": "d75d1037-dabb-4c44-86da-9eb20d19e440",
   "prevId": "43745f1c-fd99-4934-a9ed-a69d9eb78021",
   "version": "7",
   "dialect": "postgresql",
@@ -2059,6 +2059,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_by": {
           "name": "created_by",
           "type": "uuid",
@@ -2125,6 +2137,27 @@
             },
             {
               "expression": "number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "purchase_orders_tenant_key_uq": {
+          "name": "purchase_orders_tenant_key_uq",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -4739,49 +4772,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "reverses_id": {
-          "name": "reverses_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "replaces_id": {
-          "name": "replaces_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reason_code": {
-          "name": "reason_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "approved_by": {
-          "name": "approved_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "approved_by_kind": {
-          "name": "approved_by_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payment_sync_pending": {
-          "name": "payment_sync_pending",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -4871,50 +4861,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "receivable_payments_reverses_uq": {
-          "name": "receivable_payments_reverses_uq",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "reverses_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"pos\".\"receivable_payments\".\"reverses_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "receivable_payments_replaces_uq": {
-          "name": "receivable_payments_replaces_uq",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "replaces_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"pos\".\"receivable_payments\".\"replaces_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -4963,38 +4909,6 @@
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
-        },
-        "receivable_payments_reverses_fk": {
-          "name": "receivable_payments_reverses_fk",
-          "tableFrom": "receivable_payments",
-          "tableTo": "receivable_payments",
-          "schemaTo": "pos",
-          "columnsFrom": [
-            "tenant_id",
-            "reverses_id"
-          ],
-          "columnsTo": [
-            "tenant_id",
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "receivable_payments_replaces_fk": {
-          "name": "receivable_payments_replaces_fk",
-          "tableFrom": "receivable_payments",
-          "tableTo": "receivable_payments",
-          "schemaTo": "pos",
-          "columnsFrom": [
-            "tenant_id",
-            "replaces_id"
-          ],
-          "columnsTo": [
-            "tenant_id",
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5012,7 +4926,7 @@
       "checkConstraints": {
         "receivable_payments_ck": {
           "name": "receivable_payments_ck",
-          "value": "(\"pos\".\"receivable_payments\".\"reverses_id\" is null and \"pos\".\"receivable_payments\".\"amount\" > 0 and \"pos\".\"receivable_payments\".\"amount\" <= \"pos\".\"receivable_payments\".\"rest_before\")\n          or (\"pos\".\"receivable_payments\".\"reverses_id\" is not null and \"pos\".\"receivable_payments\".\"amount\" < 0 and \"pos\".\"receivable_payments\".\"replaces_id\" is null and \"pos\".\"receivable_payments\".\"seq\" is null\n            and \"pos\".\"receivable_payments\".\"reason_code\" is not null and \"pos\".\"receivable_payments\".\"approved_by\" is not null and \"pos\".\"receivable_payments\".\"approved_by_kind\" is not null)"
+          "value": "\"pos\".\"receivable_payments\".\"amount\" > 0 and \"pos\".\"receivable_payments\".\"amount\" <= \"pos\".\"receivable_payments\".\"rest_before\""
         }
       },
       "isRLSEnabled": true
