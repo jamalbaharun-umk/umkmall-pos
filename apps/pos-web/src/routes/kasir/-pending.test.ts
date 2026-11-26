@@ -928,3 +928,36 @@ describe('guard: one place remembers unfinished sales', () => {
     expect(text).not.toMatch(/sessionStorage|localStorage|randomUUID|Date\.now|new Date|Math\.random|from 'react'/)
   })
 })
+
+describe('rehydrate takes a fresh key when nothing may exist under the stored one (UMK-2050)', () => {
+  it('a clean state: a reload or a reopened register sends a new key', () => {
+    const s = initialState(K1)
+    expect(rehydrate(serialize(s), null, id(2)).key).toBe(id(2))
+    expect(reopened(s, id(3)).key).toBe(id(3))
+  })
+  it('keeps the key with doubt, a held sale or a tracked sale', () => {
+    const t = till()
+    t.send(CASH)
+    expect(rehydrate(serialize(t.state), null, id(9)).key).toBe(K1) // a request was out
+    t.do({ type: 'sale_unanswered', key: K1 })
+    expect(rehydrate(serialize(t.state), null, id(9)).key).toBe(K1)
+    const h = till()
+    h.send(QRIS)
+    h.do({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
+    expect(rehydrate(serialize(h.state), null, id(9)).key).toBe(K1)
+    const w = till()
+    w.send(QRIS)
+    w.do({ type: 'sale_awaiting', key: K1, saleId: A, readable: true })
+    w.do({ type: 'sale_finished', saleId: A })
+    const open = till()
+    open.send(QRIS)
+    open.do({ type: 'sale_awaiting', key: K1, saleId: A, readable: true })
+    expect(rehydrate(serialize(open.state), null, id(9)).key).toBe(K1)
+  })
+  it('keeps the key of a sale of the earlier storage format', () => {
+    expect(rehydrate(serialize(initialState(K1)), JSON.stringify({ id: A, own: true }), id(9)).key).toBe(K1)
+  })
+  it('a recorded state keeps its key too', () => {
+    expect(rehydrate(serialize({ ...initialState(K1), recorded: true }), null, id(9)).key).toBe(K1)
+  })
+})

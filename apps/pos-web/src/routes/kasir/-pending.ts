@@ -446,6 +446,8 @@ function parse(text: string | null): unknown {
  */
 export function rehydrate(text: string | null, legacyText: string | null, fresh: string): PendingState {
   const raw = parse(text)
+  const legacy = parse(legacyText)
+  const old = uuid(legacy) ? { id: legacy, own: true } : isObject(legacy) && uuid(legacy.id) ? { id: legacy.id, own: legacy.own !== false } : null
   let state = initialState(fresh)
   if (isObject(raw) && raw.v === 1 && uuid(raw.key)) {
     const h = raw.held
@@ -463,10 +465,12 @@ export function rehydrate(text: string | null, legacyText: string | null, fresh:
     // A request that was out when the page went away, or one that was never answered: a sale may exist under the key
     // and nobody can say the order on screen is still that one. The cashier checks before anything is sent.
     const doubt = raw.sending === true || raw.unanswered === true
-    state = { ...state, key: raw.key, held, unanswered: doubt, recorded: raw.recorded === true || doubt, edited: raw.edited === true, sales }
+    const recorded = raw.recorded === true || doubt
+    // Clean (nothing may exist under the stored key: no doubt, no held sale, no tracked sale): a fresh key, so the
+    // next sale never meets an old one (UMK-2050). With any of those the key stays.
+    const clean = !recorded && held === null && sales.length === 0 && !old
+    state = { ...state, key: clean ? state.key : raw.key, held, unanswered: doubt, recorded, edited: clean ? false : raw.edited === true, sales }
   }
-  const legacy = parse(legacyText)
-  const old = uuid(legacy) ? { id: legacy, own: true } : isObject(legacy) && uuid(legacy.id) ? { id: legacy.id, own: legacy.own !== false } : null
   if (old && !find(state, old.id) && state.sales.length < MAX_TRACKED)
     state = { ...state, sales: [...state.sales, { id: old.id, key: old.own ? state.key : null, shown: true, phase: 'unchecked' }] }
   return settle(state)
