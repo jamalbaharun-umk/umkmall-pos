@@ -220,6 +220,9 @@ In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `payment
 
 - The sale goes into the owner's open shift; with none open the tool answers "Belum ada shift yang dibuka" and records
   nothing.
+- A `price` on a line or a `discount` the agent sends anyway is **ignored and said so** (UMK-2069): the preview and
+  the answer carry `ignored` (`linePrices` with each `sentPrice`, `discount`, and a sentence); the sale uses the
+  catalog price.
 - **The agent never sends a price or a discount** (an agent's `POST /sales` refuses `price` and `discount`, 422). The
   preview is the server's full quote (`POST /sales/quote` with the method: line prices with units and wholesale tiers,
   voucher discount, tax after discounts, total, cash rounding, amount due).
@@ -270,7 +273,15 @@ the product and the size; the idempotency record keeps the photo's sha256, not t
 the agent (the owner can add more in the POS); the 11th answers an error on `file`. `/mcp` accepts bodies up to
 3 MB for this tool (every other route keeps 100 kB).
 
+### `stock_in`
+Goods received from a supplier (UMK-2070). In: `supplierId`, `lines` (`productId`, `qty`, `unitCost`: what the store
+paid per unit, integer rupiah), `paymentMethod?`, `note?` + write controls. Written as a purchase order and approved
+at once (`POST /purchasing/orders`, then `/approve`), which receives the stock at that cost (FIFO). Only stock-tracked
+products (`type: product`); a cost never changes a selling price. The preview shows each product's `stockBefore` and
+`stockAfter`. After a lost answer send it again with the same key: the tool approves the order it already wrote
+(approving an approved order changes nothing), so stock is never received twice.
+
 ## 6. Not yet
 
-Online payment methods through the agent; supplier payments and expenses "outside the drawer"; purchase order and
-stock count drafts (rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982).
+Online payment methods through the agent; supplier payments and expenses "outside the drawer"; stock count drafts
+(rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982).

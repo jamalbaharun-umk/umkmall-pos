@@ -13,7 +13,7 @@ import { validate } from '../common/validation';
 import { StockModule } from '../stock/stock.module';
 import { parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   OrderCreate,
@@ -37,6 +37,7 @@ export class PurchasingController {
     };
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('purchasing.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
@@ -79,6 +80,7 @@ export class PurchasingController {
     await this.orders.remove(s.tenantId, parseId(id));
   }
 
+  @AgentRoute()
   @Post(':id/approve')
   @RequirePermission('purchasing.manage')
   @HttpCode(200)

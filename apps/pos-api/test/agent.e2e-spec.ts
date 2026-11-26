@@ -1561,6 +1561,177 @@ describe('UMKMall agent: session and MCP tools', () => {
     });
   });
 
+  describe('E2E findings (UMK-2069, UMK-2070)', () => {
+    it('record_sale says which price and discount it ignored, and sells at the catalog price', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', store.auth)
+        .send({ openingCash: 0 })
+        .expect(201);
+      const client = await mcp(await agentToken(store.userId));
+      const args = {
+        lines: [{ productId: kopi.id, qty: 1, price: 1 }],
+        discount: 5000,
+        idempotencyKey: 'sale-price-0001',
+      };
+      const preview = await call(client, 'record_sale', args);
+      expect(preview.data).toMatchObject({
+        ignored: {
+          linePrices: [{ productId: kopi.id, sentPrice: 1 }],
+          discount: 5000,
+        },
+        quote: { total: 10000 },
+      });
+      const made = await call(client, 'record_sale', {
+        ...args,
+        confirm: true,
+      });
+      expect(made.data).toMatchObject({
+        total: 10000,
+        ignored: { linePrices: [{ sentPrice: 1 }] },
+      });
+      const clean = await call(client, 'record_sale', {
+        lines: [{ productId: kopi.id, qty: 1 }],
+        idempotencyKey: 'sale-price-0002',
+      });
+      expect(clean.data).not.toHaveProperty('ignored');
+    });
+
+    async function stockStore() {
+      const store = await createStore();
+      const cat = await http()
+        .post('/catalog/categories')
+        .set('Authorization', store.auth)
+        .send({ name: 'Bahan' })
+        .expect(201);
+      const gula = await http()
+        .post('/catalog/products')
+        .set('Authorization', store.auth)
+        .send({
+          name: 'Gula',
+          categoryId: cat.body.id,
+          sellingPrice: 18000,
+          type: 'product',
+        })
+        .expect(201);
+      const sup = await http()
+        .post('/suppliers')
+        .set('Authorization', store.auth)
+        .send({ name: 'Toko Grosir' })
+        .expect(201);
+      const onHand = async () =>
+        (
+          await http()
+            .get(`/stock/products/${gula.body.id}`)
+            .set('Authorization', store.auth)
+            .expect(200)
+        ).body.onHand as number;
+      return {
+        store,
+        productId: gula.body.id as string,
+        supplierId: sup.body.id as string,
+        onHand,
+      };
+    }
+
+    it('stock_in previews stock before and after, then receives the stock once per key', async () => {
+      const { store, productId, supplierId, onHand } = await stockStore();
+      const client = await mcp(await agentToken(store.userId));
+      const args = {
+        supplierId,
+        lines: [{ productId, qty: 10, unitCost: 14000 }],
+        idempotencyKey: 'stock-in-0001',
+      };
+      expect((await call(client, 'stock_in', args)).data).toMatchObject({
+        preview: true,
+        lines: [{ name: 'Gula', stockBefore: 0, stockAfter: 10 }],
+        total: 140000,
+      });
+      expect(await onHand()).toBe(0);
+      await call(client, 'stock_in', { ...args, confirm: true });
+      await call(client, 'stock_in', { ...args, confirm: true });
+      expect(await onHand()).toBe(10);
+      const read = await mcp(await agentToken(store.userId, ['pos.read']));
+      expect(
+        (
+          await call(read, 'stock_in', {
+            ...args,
+            idempotencyKey: 'stock-in-0002',
+            confirm: true,
+          })
+        ).error,
+      ).toMatch(/izin pos\.write/);
+    });
+
+    it('stock_in after a lost approve answer replays the approve only: one order, stock once', async () => {
+      const { store, productId, supplierId, onHand } = await stockStore();
+      const client = await mcp(await agentToken(store.userId));
+      const realFetch = global.fetch;
+      let failed = false;
+      jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+        const res = await realFetch(input, init);
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (!failed && url.endsWith('/approve') && init?.method === 'POST') {
+          failed = true;
+          return new Response('{}', { status: 502 });
+        }
+        return res;
+      });
+      const args = {
+        supplierId,
+        lines: [{ productId, qty: 5, unitCost: 15000 }],
+        idempotencyKey: 'stock-lost-0001',
+        confirm: true,
+      };
+      expect((await call(client, 'stock_in', args)).error).toMatch(
+        /kunci yang SAMA/,
+      );
+      jest.restoreAllMocks();
+      expect((await call(client, 'stock_in', args)).data).toMatchObject({
+        status: 'approved',
+      });
+      expect(await onHand()).toBe(5);
+      const [n] = await appDb<{ n: number }[]>`
+        select count(*)::int as n from pos.purchase_orders where tenant_id = ${store.tenantId}`;
+      expect(n.n).toBe(1);
+    });
+
+    it("stock_in refuses a product without stock tracking and another store's supplier", async () => {
+      const { store, productId } = await stockStore();
+      const menu = await seedProduct(store.auth, 'Es Teh', 5000);
+      const client = await mcp(await agentToken(store.userId));
+      const other = await createStore();
+      const theirSup = await http()
+        .post('/suppliers')
+        .set('Authorization', other.auth)
+        .send({ name: 'Pemasok B' })
+        .expect(201);
+      const nonStock = await call(client, 'stock_in', {
+        supplierId: theirSup.body.id,
+        lines: [{ productId: menu.id, qty: 1, unitCost: 1000 }],
+        idempotencyKey: 'stock-bad-0001',
+      });
+      expect(nonStock.error).toMatch(/tidak dilacak stoknya/);
+      const foreign = await call(client, 'stock_in', {
+        supplierId: theirSup.body.id,
+        lines: [{ productId, qty: 1, unitCost: 1000 }],
+        idempotencyKey: 'stock-bad-0002',
+        confirm: true,
+      });
+      expect(foreign.error).toBeDefined();
+      const [n] = await appDb<{ n: number }[]>`
+        select count(*)::int as n from pos.purchase_orders where tenant_id = ${store.tenantId}`;
+      expect(n.n).toBe(0);
+    });
+  });
+
   describe('UMK-1981 review follow-ups', () => {
     it('keeps no customer name or phone in the stored answer; a replay answers without them', async () => {
       const store = await createStore();
