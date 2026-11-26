@@ -200,7 +200,7 @@ export function DiscountDialog({
               </Button>
             )}
             <Button width="auto" htmlType="submit">
-              {big ? 'Lanjut ke PIN admin' : 'Terapkan'}
+              {big ? 'Minta PIN admin' : 'Terapkan'}
             </Button>
           </ActionRow>
         </form>
@@ -250,7 +250,7 @@ export function DiscountDialog({
             onPin={setPin}
           />
           <p className="text-xs text-default-secondary">
-            Admin atau pemilik yang memegang izin diskon memasukkan PIN-nya sendiri.
+            Admin lain atau pemilik yang memegang izin diskon memasukkan PIN-nya sendiri.
           </p>
           <ActionRow>
             <Button width="auto" type="outline" color="light" disabled={busy} onClick={() => setStep('edit')}>
