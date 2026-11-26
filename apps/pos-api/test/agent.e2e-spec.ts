@@ -1312,6 +1312,206 @@ describe('UMKMall agent: session and MCP tools', () => {
     });
   });
 
+  describe('ledger feed and product photos (UMKMall Catatan Keuangan, Upgrade Foto)', () => {
+    const PIN = '482913';
+    // A 1x1 PNG.
+    const PNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+
+    it('ledger_entries lists every money movement once, with ids, on the local day', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      const kasbon = await http()
+        .post('/payment-methods')
+        .set('Authorization', store.auth)
+        .send({ name: 'Kasbon', kind: 'credit' })
+        .expect(201);
+      const member = await http()
+        .post('/members')
+        .set('Authorization', store.auth)
+        .send({ name: 'Bu Sari', code: 'BS01' })
+        .expect(201);
+      await http()
+        .put('/void-pin')
+        .set('Authorization', store.freshAuth)
+        .send({ pin: PIN })
+        .expect(200);
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', store.auth)
+        .send({ openingCash: 50000 })
+        .expect(201);
+      const sell = (body: object) =>
+        http()
+          .post('/sales')
+          .set('Authorization', store.auth)
+          .set('Idempotency-Key', `till-${randomUUID()}`)
+          .send({ lines: [{ productId: kopi.id, qty: 1 }], ...body })
+          .expect(201);
+      const cash = await sell({ paid: 20000 }); // change 10000: 10000 came in
+      await sell({ paid: 10000 });
+      await sell({
+        memberId: member.body.id,
+        paymentMethodId: kasbon.body.id,
+        paid: 3000,
+      });
+      const recs = await http()
+        .get('/receivables')
+        .set('Authorization', store.auth)
+        .expect(200);
+      await http()
+        .post(`/receivables/${recs.body.data[0].id}/payments`)
+        .set('Authorization', store.auth)
+        .set('Idempotency-Key', `pay-${randomUUID()}`)
+        .send({ amount: 2000 })
+        .expect(201);
+      await http()
+        .post(`/sales/${cash.body.id}/void`)
+        .set('Authorization', store.auth)
+        .set('Idempotency-Key', `void-${randomUUID()}`)
+        .send({
+          reasonCode: 'customer_cancelled',
+          approverId: store.userId,
+          pin: PIN,
+        })
+        .expect(201);
+      await http()
+        .post('/expenses')
+        .set('Authorization', store.auth)
+        .set('Idempotency-Key', `exp-${randomUUID()}`)
+        .send({ amount: 15000, category: 'sewa', source: 'outside' })
+        .expect(201);
+      await http()
+        .post('/shifts/current/cash-entries')
+        .set('Authorization', store.auth)
+        .set('Idempotency-Key', `cash-${randomUUID()}`)
+        .send({ direction: 'out', amount: 5000, reason: 'ambil_pemilik' })
+        .expect(201);
+
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jakarta',
+      }).format(new Date());
+      const client = await mcp(await agentToken(store.userId, ['pos.read']));
+      const r = await call(client, 'ledger_entries', {
+        from: today,
+        to: today,
+      });
+      const data = r.data as {
+        truncated: boolean;
+        totals: { in: number; out: number; net: number };
+        entries: {
+          id: string;
+          date: string;
+          direction: string;
+          kind: string;
+          label: string;
+          amount: number;
+        }[];
+      };
+      const byKind = data.entries
+        .map((e) => [e.kind, e.direction, e.amount])
+        .sort();
+      expect(byKind).toEqual(
+        [
+          ['cash_out', 'out', 5000],
+          ['expense', 'out', 15000],
+          ['kasbon_payment', 'in', 2000],
+          ['kasbon_payment', 'in', 3000],
+          ['refund', 'out', 10000],
+          ['sale', 'in', 10000],
+          ['sale', 'in', 10000],
+        ].sort(),
+      );
+      expect(data.totals).toEqual({ in: 25000, out: 30000, net: -5000 });
+      expect(data.truncated).toBe(false);
+      expect(new Set(data.entries.map((e) => e.id)).size).toBe(7);
+      expect(data.entries.every((e) => e.date === today)).toBe(true);
+      expect(data.entries.find((e) => e.kind === 'cash_out')?.label).toBe(
+        'Diambil pemilik',
+      );
+      expect(data.entries.find((e) => e.kind === 'expense')?.label).toBe(
+        'Sewa',
+      );
+      // the same pull again: the same ids
+      const again = await call(client, 'ledger_entries', {
+        from: today,
+        to: today,
+      });
+      expect((again.data as typeof data).entries.map((e) => e.id)).toEqual(
+        data.entries.map((e) => e.id),
+      );
+      // another store's agent sees none of it
+      const other = await createStore();
+      const theirs = await call(
+        await mcp(await agentToken(other.userId, ['pos.read'])),
+        'ledger_entries',
+        {
+          from: today,
+          to: today,
+        },
+      );
+      expect((theirs.data as typeof data).entries).toEqual([]);
+    });
+
+    it('add_product_photo appends a photo once per key, needs pos.write, and refuses a bad file', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      const client = await mcp(await agentToken(store.userId));
+      const args = {
+        productId: kopi.id,
+        imageBase64: PNG.toString('base64'),
+        idempotencyKey: 'photo-0001',
+      };
+      expect(
+        (await call(client, 'add_product_photo', args)).data,
+      ).toMatchObject({
+        preview: true,
+        product: 'Kopi',
+        sizeBytes: PNG.length,
+      });
+      const made = await call(client, 'add_product_photo', {
+        ...args,
+        confirm: true,
+      });
+      const again = await call(client, 'add_product_photo', {
+        ...args,
+        confirm: true,
+      });
+      expect(again.data).toEqual(made.data);
+      const product = await http()
+        .get(`/catalog/products/${kopi.id}`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(product.body.images).toHaveLength(1);
+      const bad = await call(client, 'add_product_photo', {
+        ...args,
+        imageBase64: Buffer.from('not an image').toString('base64'),
+        idempotencyKey: 'photo-0002',
+        confirm: true,
+      });
+      expect(bad.error).toMatch(/JPG, PNG atau WebP/);
+      const readOnly = await mcp(await agentToken(store.userId, ['pos.read']));
+      expect(
+        (
+          await call(readOnly, 'add_product_photo', {
+            ...args,
+            idempotencyKey: 'photo-0003',
+            confirm: true,
+          })
+        ).error,
+      ).toMatch(/izin pos\.write/);
+      // still no way to delete one
+      await http()
+        .delete(
+          `/catalog/products/${kopi.id}/images/${(made.data as { id: string }).id}`,
+        )
+        .set('Authorization', `Bearer ${await agentToken(store.userId)}`)
+        .expect(403);
+    });
+  });
+
   describe('UMK-1981 review follow-ups', () => {
     it('keeps no customer name or phone in the stored answer; a replay answers without them', async () => {
       const store = await createStore();
