@@ -36,7 +36,7 @@ function CustomerPage() {
             title="Pelanggan tidak ditemukan"
             action={
               <Button asChild type="outline" color="primary" size="small" width="auto">
-                <Link to="/laporan/kasbon">Kembali ke laporan kasbon</Link>
+                <Link to="/laporan/kasbon">Ke laporan kasbon</Link>
               </Button>
             }
           >
@@ -59,7 +59,7 @@ function CustomerPage() {
             title="Tidak ada kasbon yang belum lunas"
             action={
               <Button asChild type="outline" color="primary" size="small" width="auto">
-                <Link to="/laporan/kasbon">Kembali ke laporan kasbon</Link>
+                <Link to="/laporan/kasbon">Ke laporan kasbon</Link>
               </Button>
             }
           >
