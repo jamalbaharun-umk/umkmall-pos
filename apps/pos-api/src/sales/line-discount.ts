@@ -15,6 +15,8 @@ export const DISCOUNT_APPROVAL_TTL_SECONDS = 30 * 60;
 /** The `code` of every refusal of a line discount the screen shows in its error dialog. */
 export const DISCOUNT_INVALID = 'DISCOUNT_INVALID';
 export const DISCOUNT_APPROVAL_REQUIRED = 'DISCOUNT_APPROVAL_REQUIRED';
+/** A cashier named themself as the approver: the gate needs a second person (only the owner may confirm their own). */
+export const DISCOUNT_SELF_APPROVAL = 'DISCOUNT_SELF_APPROVAL';
 
 export type LineDiscountInput = {
   discountPercent?: number;

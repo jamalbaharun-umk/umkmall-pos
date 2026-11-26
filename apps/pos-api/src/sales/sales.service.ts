@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -61,6 +62,7 @@ import {
   DISCOUNT_APPROVAL_REQUIRED,
   DISCOUNT_APPROVAL_TTL_SECONDS,
   DISCOUNT_INVALID,
+  DISCOUNT_SELF_APPROVAL,
   lineDiscountOf,
   leavesSomething,
   needsApproval,
@@ -165,6 +167,10 @@ function assertMayDiscount(s: PosSession, lines: DiscountRequest[]) {
       code: 'DISCOUNT_FORBIDDEN',
     });
 }
+
+/** UMK-1990: the approver named is the asking actor, unless that actor is the owner (who may confirm their own). */
+const isSelf = (s: PosSession, approverId: string) =>
+  s.kind !== 'owner' && approverId.toLowerCase() === s.actorId.toLowerCase();
 
 /**
  * UMK-1990: each line's discount in rupiah, on its total at the price it is charged (the wholesale tier
@@ -333,8 +339,10 @@ export class SalesService {
         this.insert(tx, s, key, input, hash),
       );
     } catch (e) {
-      // A concurrent request with the same key won the unique index: return its sale (same body only).
-      if (isUniqueViolation(e)) {
+      // A concurrent request with the same key won: return its sale (same body only). It may have won the
+      // unique index, or committed first while this one waited on a lock and then found what it took gone
+      // (the discount approval used, the stock sold): a refusal is answered only when no such sale exists.
+      if (isUniqueViolation(e) || e instanceof HttpException) {
         const winner = await this.replay(s, key, hash);
         if (winner) return winner;
       }
@@ -743,9 +751,17 @@ export class SalesService {
   /**
    * UMK-1990: `POST /sales/discount-approvals`. The approver (the owner or staff holding sales.price_override)
    * types their own PIN on the till; the void PIN, with its count and lock. Answers the approval the sale names
-   * on its line. The product must be a live product of this store.
+   * on its line. The product must be a live product of this store. The approver is a second person: a cashier
+   * naming themself is refused before the PIN is checked (no attempt counted); only the owner may confirm their
+   * own discount with their PIN.
    */
   async approveDiscount(s: PosSession, input: DiscountApprovalInput) {
+    if (isSelf(s, input.approverId))
+      throw codedError(
+        DISCOUNT_SELF_APPROVAL,
+        'approverId',
+        'Diskon ini harus disetujui admin lain atau pemilik',
+      );
     const [product] = await this.db
       .select({ id: products.id })
       .from(products)
@@ -782,9 +798,13 @@ export class SalesService {
     return { ...row, approver: { id: approver.id, name: approver.name } };
   }
 
-  /** UMK-1990: who may approve a line discount above 30% by PIN (holders of sales.price_override). */
-  discountApprovers(s: PosSession) {
-    return this.pins.approvers(s.tenantId, 'sales.price_override');
+  /**
+   * UMK-1990: who may approve a line discount above 30% by PIN (holders of sales.price_override), never the
+   * asking cashier themself; the owner sees themself.
+   */
+  async discountApprovers(s: PosSession) {
+    const all = await this.pins.approvers(s.tenantId, 'sales.price_override');
+    return all.filter((a) => !isSelf(s, a.id));
   }
 
   /**

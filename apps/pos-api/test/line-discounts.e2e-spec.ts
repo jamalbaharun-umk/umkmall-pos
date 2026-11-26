@@ -489,6 +489,43 @@ describe('line discounts (UMK-1990)', () => {
         key,
       ).expect(422);
     });
+
+    it('idempotent under a double tap: two requests with one key at once both answer the first sale, the approval and stock taken once', async () => {
+      const s = await shop(0);
+      // A few rounds: the race is real only when both requests reach the database together.
+      for (let round = 0; round < 3; round++) {
+        const approval = await post(s.auth, '/sales/discount-approvals', {
+          approverId: s.userId,
+          pin: OWNER_PIN,
+          productId: s.teh,
+          maxBps: 4000,
+        }).expect(201);
+        const body = {
+          lines: [
+            {
+              productId: s.teh,
+              qty: 4,
+              discountPercent: 40,
+              discountApprovalId: approval.body.id,
+            },
+          ],
+          paid: 12_000,
+        };
+        const key = randomUUID();
+        const [a, b] = await Promise.all([
+          sell(s.auth, body, key),
+          sell(s.auth, body, key),
+        ]);
+        expect([a.status, b.status]).toEqual([201, 201]);
+        expect(b.body.id).toBe(a.body.id);
+      }
+      expect(await onHand(s, s.teh)).toBe(88);
+      expect(await salesCount(s)).toBe(3);
+      const used = await admin<{ n: string }[]>`
+        select count(*) as n from pos.discount_approvals
+        where tenant_id = ${s.tenantId} and used_at is not null`;
+      expect(Number(used[0].n)).toBe(3);
+    });
   });
 
   describe('above 30%: a PIN approval', () => {
@@ -523,7 +560,7 @@ describe('line discounts (UMK-1990)', () => {
       },
     ) => post(auth, '/sales/discount-approvals', body);
 
-    it('exactly 30% needs none; more needs one; the approvers are the holders of sales.price_override', async () => {
+    it('exactly 30% needs none; more needs one; the approvers are the holders of sales.price_override but the asking cashier', async () => {
       const { s, rina, tono, ayu } = await withAdmin();
       await sell(ayu.auth, {
         lines: [{ productId: s.teh, qty: 4, discountAmount: 6000 }],
@@ -554,11 +591,108 @@ describe('line discounts (UMK-1990)', () => {
         200,
       );
       const ids = (approvers.body as { id: string }[]).map((a) => a.id);
-      expect(ids).toEqual(
-        expect.arrayContaining([s.userId, rina.staffId, ayu.staffId]),
-      );
+      expect(ids).toEqual(expect.arrayContaining([s.userId, rina.staffId]));
       expect(ids).not.toContain(tono.staffId);
+      expect(ids).not.toContain(ayu.staffId);
       expect(JSON.stringify(approvers.body)).not.toMatch(/hash/i);
+    });
+
+    it('a cashier cannot approve their own discount: refused before the PIN (no attempt counted), hidden from their list; another admin or the owner can; the owner may confirm their own', async () => {
+      const { s, rina, ayu } = await withAdmin();
+      await post(rina.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const failures = async () =>
+        (
+          await admin<{ failures: number }[]>`
+            select failures from pos.void_pins where actor_id = ${rina.staffId}`
+        )[0].failures;
+      const own = {
+        approverId: rina.staffId,
+        pin: ADMIN_PIN,
+        productId: s.teh,
+        maxBps: 9999,
+      };
+      // Her right PIN and her wrong PIN read the same: refused, nothing counted against her PIN.
+      for (const pin of [ADMIN_PIN, '000000']) {
+        const self = await ask(rina.auth, { ...own, pin }).expect(422);
+        expect(self.body).toMatchObject({
+          code: 'DISCOUNT_SELF_APPROVAL',
+          errors: {
+            approverId: 'Diskon ini harus disetujui admin lain atau pemilik',
+          },
+        });
+      }
+      expect(await failures()).toBe(0);
+      expect(
+        await admin`select 1 from pos.discount_approvals where tenant_id = ${s.tenantId}`,
+      ).toHaveLength(0);
+      const listed = (
+        (await get(rina.auth, '/sales/discount-approvers').expect(200))
+          .body as { id: string }[]
+      ).map((a) => a.id);
+      expect(listed).toContain(s.userId);
+      expect(listed).not.toContain(rina.staffId);
+
+      // The owner's PIN approves Rina's discount; Rina's PIN approves Ayu's.
+      const byOwner = await ask(rina.auth, {
+        ...own,
+        approverId: s.userId,
+        pin: OWNER_PIN,
+        maxBps: 4000,
+      }).expect(201);
+      const sold = await sell(rina.auth, {
+        lines: [
+          {
+            productId: s.teh,
+            qty: 4,
+            discountPercent: 40,
+            discountApprovalId: byOwner.body.id,
+          },
+        ],
+        paid: 12_000,
+      }).expect(201);
+      expect(sold.body.lines[0].discountApprovedBy).toBe(s.userId);
+      await ask(ayu.auth, { ...own, maxBps: 4000 }).expect(201);
+
+      // The owner sees themself and may confirm their own discount with their PIN.
+      const ownerList = (
+        (await get(s.auth, '/sales/discount-approvers').expect(200)).body as {
+          id: string;
+        }[]
+      ).map((a) => a.id);
+      expect(ownerList).toEqual(
+        expect.arrayContaining([s.userId, rina.staffId]),
+      );
+      await ask(s.auth, {
+        ...own,
+        approverId: s.userId,
+        pin: OWNER_PIN,
+        maxBps: 4000,
+      }).expect(201);
+    });
+
+    it('two different sales on one approval at once: one goes through, the other is refused, the approval is used once', async () => {
+      const { s, rina, ayu } = await withAdmin();
+      const approval = await ask(ayu.auth, {
+        approverId: rina.staffId,
+        pin: ADMIN_PIN,
+        productId: s.teh,
+        maxBps: 4000,
+      }).expect(201);
+      const line = {
+        productId: s.teh,
+        qty: 4,
+        discountPercent: 40,
+        discountApprovalId: approval.body.id,
+      };
+      const results = await Promise.all([
+        sell(ayu.auth, { lines: [line], paid: 12_000 }),
+        sell(ayu.auth, { lines: [line], paid: 20_000 }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 422]);
+      const refused = results.find((r) => r.status === 422);
+      expect(refused?.body.code).toBe('DISCOUNT_APPROVAL_REQUIRED');
+      expect(await onHand(s, s.teh)).toBe(96);
+      expect(await salesCount(s)).toBe(1);
     });
 
     it('an admin approves with their own PIN: 40% goes through, the line records the approver, the approval is used once', async () => {
