@@ -176,3 +176,13 @@ export const loadPaidSince = createServerFn()
     const page = parsePaidSince(r.json)
     return page ? { ok: true, data: page } : { ok: false, failure: { status: 502 }, error: 'Kabar penjualan tidak bisa dibaca.' }
   })
+
+export type OwnPin = { hasPin: boolean; lockedUntil: string | null }
+
+/** The signed-in actor's own void-PIN state (`GET /void-pin`): is there a PIN, and is it locked. null when it cannot be read. */
+export const loadOwnPin = createServerFn().handler(async (): Promise<OwnPin | null> => {
+  const r = await call('poll', '/void-pin', { method: 'GET' })
+  if (!r.ok) return null
+  const o = r.json as { hasPin?: unknown; lockedUntil?: unknown } | null
+  return o && typeof o.hasPin === 'boolean' ? { hasPin: o.hasPin, lockedUntil: typeof o.lockedUntil === 'string' ? o.lockedUntil : null } : null
+})

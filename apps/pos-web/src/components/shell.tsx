@@ -34,6 +34,12 @@ export function useCan(permission: string): boolean {
   return me?.actor.permissions.includes(permission) ?? false
 }
 
+/** The signed-in actor's id (the owner's own id for a retry's approver); '' when nobody is signed in. */
+export function useActorId(): string {
+  const me = root.useLoaderData() as Me | null
+  return me?.actor.id ?? ''
+}
+
 /** Whether the signed-in actor is the store owner (UMK-1991: only the owner marks a refund "dikembalikan manual"). */
 export function useIsOwner(): boolean {
   const me = root.useLoaderData() as Me | null
