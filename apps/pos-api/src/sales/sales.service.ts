@@ -44,11 +44,13 @@ import {
 import {
   isInFlight,
   isOnlineMethod,
+  ONLINE_METHODS,
   PaymentApiError,
   paymentMethodCode,
 } from '../payments-client/payments.client';
 import { SalePayments } from '../payments-client/sale-payment.service';
 import { cashMethodId, cashRounding } from './cash';
+import { saleNumbers, takeNumber } from './numbers';
 import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -58,7 +60,19 @@ import {
   consumeVoucher,
   evaluateVoucher,
 } from '../vouchers/vouchers.controller';
-import type { QuoteInput, SaleInput, SalesQuery } from './sales.schemas';
+import type {
+  PaidSinceQuery,
+  QuoteInput,
+  SaleInput,
+  SalesQuery,
+} from './sales.schemas';
+
+/** `paid-since` answers at most this many sales a page, and its last page's `asOf` is this far behind the clock. */
+export const PAID_SINCE_LIMIT = 50;
+const PAID_SINCE_OVERLAP_SECONDS = 10;
+
+const isFinalSale = (status: string) =>
+  (FINAL_SALE_STATUSES as readonly string[]).includes(status);
 
 const MAX_TOTAL = 1_000_000_000_000; // Rp1 triliun: far above any till, keeps every product in safe-integer range
 
@@ -280,15 +294,17 @@ export class SalesService {
       : null;
     const method = await this.methodOf(tx, s.tenantId, input.paymentMethodId);
 
-    // One row per store: the next receipt number and the tax rate, in one statement.
-    const [settings] = await tx
-      .insert(salesSettings)
-      .values({ tenantId: s.tenantId, lastSaleNumber: 1 })
-      .onConflictDoUpdate({
-        target: salesSettings.tenantId,
-        set: { lastSaleNumber: sql`${salesSettings.lastSaleNumber} + 1` },
-      })
-      .returning();
+    // UMK-1991: with payment-api on, a sale that takes a payment waits for it (step 2 completes it).
+    // A kasbon sale takes none (its down payment is recorded apart) and completes here.
+    const charged = this.payments.enabled && !method.isCredit;
+    // One row per store: the sale's number and the tax rate, in one statement. A sale that completes in
+    // this transaction takes its receipt number now; one that waits for its payment takes a hold number,
+    // and its receipt number when it is completed (UMK-2038: a cancelled sale leaves no gap).
+    const settings = await takeNumber(
+      tx,
+      s.tenantId,
+      charged ? 'hold' : 'receipt',
+    );
     // Tax on the amount after the manual discount AND the voucher (Lakasir flaw 2).
     const tax = taxOf(subtotal - discount - voucherDiscount, settings.taxBps);
     const total = subtotal - discount - voucherDiscount + tax;
@@ -329,7 +345,6 @@ export class SalesService {
     }
     if (voucher) await consumeVoucher(tx, s.tenantId, voucher.id);
 
-    const charged = this.payments.enabled && !method.isCredit;
     const overrideBy =
       discount > 0 || lines.some((l) => l.priceOverriddenBy) ? s.actorId : null;
     // Inserting the sale claims the idempotency key: a concurrent duplicate fails here and rolls back.
@@ -337,7 +352,9 @@ export class SalesService {
       .insert(sales)
       .values({
         tenantId: s.tenantId,
-        number: settings.lastSaleNumber,
+        number: charged ? null : settings.number,
+        holdNumber: charged ? settings.number : null,
+        completedAt: charged ? null : sql`clock_timestamp()`,
         shiftId: shift.id,
         actorId: s.actorId,
         actorKind: s.kind,
@@ -358,8 +375,6 @@ export class SalesService {
         costTotal: 0,
         overrideBy,
         note: input.note || null,
-        // UMK-1991: with payment-api on, a sale that takes a payment waits for it (step 2 completes it).
-        // A kasbon sale takes none (its down payment is recorded apart) and completes here.
         status: charged ? 'awaiting_payment' : 'completed',
         // Fixed now: a later edit of the method's kind does not change what this sale is charged as.
         paymentMethodCode: charged ? paymentMethodCode(method) : null,
@@ -611,6 +626,7 @@ export class SalesService {
         .select({
           id: sales.id,
           number: sales.number,
+          holdNumber: sales.holdNumber,
           shiftId: sales.shiftId,
           actorKind: sales.actorKind,
           // Owner sales have no staff row (Lakasir's "user.name" column).
@@ -636,7 +652,12 @@ export class SalesService {
           and(eq(staff.tenantId, sales.tenantId), eq(staff.id, sales.actorId)),
         )
         .where(where)
-        .orderBy(desc(sales.paidAt), desc(sales.number))
+        .orderBy(
+          desc(sales.paidAt),
+          // Receipts by their number; waiting sales have none yet and follow their hold number.
+          sql`${sales.number} desc nulls last`,
+          desc(sales.holdNumber),
+        )
         .limit(q.perPage)
         .offset((q.page - 1) * q.perPage),
       this.db
@@ -691,6 +712,7 @@ export class SalesService {
     return {
       data: rows.map(({ paymentMethodCode: code, ...r }) => ({
         ...r,
+        ...saleNumbers(r),
         // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
         onlinePayment: isOnlineMethod(code),
         amountDue: r.total + r.rounding,
@@ -701,12 +723,87 @@ export class SalesService {
     };
   }
 
+  /**
+   * `GET /sales/paid-since` (UMK-2046): PG sales completed after `since`, OLDEST first, so a till that was
+   * away for long reads all of them, a page at a time. A till asks with the `asOf` of its last answer and
+   * learns which of its waiting sales were paid meanwhile.
+   *
+   * By `completed_at` (when pos-api wrote the completion), never `paid_at`: a payment learned late is dated
+   * at the customer's paid time, which can be before the till last looked. Whose: the actor's own sales, or
+   * the store's with `reports.view`, exactly as `GET /sales` (`scope`): the answer carries totals. A sale
+   * switched to cash is not listed (its method is cash: the cashier did that at the till); one refunded
+   * since is, as `void`.
+   *
+   * More than PAID_SINCE_LIMIT: `hasMore` is true, `asOf` is the last listed sale's completion time (to the
+   * microsecond) and `afterId` its id; the next request sends both and continues right after that sale.
+   * Else `hasMore` is false, `afterId` null and `asOf` the database's time less
+   * PAID_SINCE_OVERLAP_SECONDS: a completion is stamped when it is written and seen when its transaction
+   * ends, so the next request overlaps this one and the till drops the ids it already has.
+   */
+  async paidSince(s: PosSession, q: PaidSinceQuery) {
+    const since = sql`${q.since}::timestamptz`;
+    const [found, [{ asOf }]] = await Promise.all([
+      this.db
+        .select({
+          id: sales.id,
+          number: sales.number,
+          holdNumber: sales.holdNumber,
+          status: sales.status,
+          total: sales.total,
+          rounding: sales.rounding,
+          paymentMethod: paymentMethods.name,
+          paidAt: sales.paidAt,
+          completedAt: sales.completedAt,
+          // The cursor: `completedAt` above is cut to milliseconds on its way out.
+          at: sql<string>`to_char(${sales.completedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+          createdAt: sales.createdAt,
+        })
+        .from(sales)
+        .innerJoin(
+          paymentMethods,
+          and(
+            eq(paymentMethods.tenantId, sales.tenantId),
+            eq(paymentMethods.id, sales.paymentMethodId),
+          ),
+        )
+        .where(
+          and(
+            this.scope(s),
+            inArray(sales.status, [...FINAL_SALE_STATUSES]),
+            inArray(sales.paymentMethodCode, [...ONLINE_METHODS]),
+            q.afterId
+              ? sql`(${sales.completedAt}, ${sales.id}) > (${since}, ${q.afterId}::uuid)`
+              : sql`${sales.completedAt} > ${since}`,
+          ),
+        )
+        .orderBy(asc(sales.completedAt), asc(sales.id))
+        .limit(PAID_SINCE_LIMIT + 1),
+      this.db.execute<{ asOf: string }>(
+        sql`select to_char((now() - make_interval(secs => ${PAID_SINCE_OVERLAP_SECONDS})) at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "asOf"`,
+      ),
+    ]);
+    const hasMore = found.length > PAID_SINCE_LIMIT;
+    const rows = found.slice(0, PAID_SINCE_LIMIT);
+    const last = rows[rows.length - 1];
+    return {
+      data: rows.map(({ rounding, at, ...r }) => {
+        void at; // the cursor only
+        return { ...r, ...saleNumbers(r), amountDue: r.total + rounding };
+      }),
+      hasMore,
+      asOf: hasMore ? last.at : asOf,
+      afterId: hasMore ? last.id : null,
+    };
+  }
+
   /** One sale with lines. Cost is shown only to `reports.view`. `own` skips the scope (just created). */
   async get(s: PosSession, id: string, own = false) {
     const [sale] = await this.db
       .select({
         id: sales.id,
         number: sales.number,
+        holdNumber: sales.holdNumber,
         shiftId: sales.shiftId,
         actorId: sales.actorId,
         actorKind: sales.actorKind,
@@ -774,6 +871,7 @@ export class SalesService {
     const { paymentMethodCode: code, ...rest } = sale;
     return {
       ...rest,
+      ...saleNumbers(sale),
       // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
       onlinePayment: isOnlineMethod(code),
       // UMK-1993: what the customer owes; `rounding` is its own line ("Pembulatan"), 0 unless cash.
@@ -798,9 +896,23 @@ export class SalesService {
     };
   }
 
-  /** What the printed receipt shows. */
+  /**
+   * What the printed receipt shows. Only a receipt has one: a sale that awaits its payment or was cancelled
+   * answers 409 `not_a_receipt` (UMK-2038: its `number` is a hold number, which must never be printed as
+   * "No." next to real receipt numbers). So `number` here is always the receipt number.
+   */
   async receipt(s: PosSession, id: string) {
     const sale = await this.get(s, id);
+    if (sale.receiptNumber === null || !isFinalSale(sale.status))
+      throw new ConflictException({
+        message:
+          sale.status === 'awaiting_payment'
+            ? 'Penjualan ini masih menunggu pembayaran, belum ada struknya.'
+            : 'Penjualan ini dibatalkan dan tidak punya struk.',
+        code: 'not_a_receipt',
+        saleId: id,
+        status: sale.status,
+      });
     let cashier = 'Pemilik';
     if (sale.actorKind === 'cashier') {
       const [row] = await this.db
@@ -810,7 +922,9 @@ export class SalesService {
       cashier = row?.name ?? 'Kasir';
     }
     return {
-      number: sale.number,
+      number: sale.receiptNumber,
+      receiptNumber: sale.receiptNumber,
+      holdNumber: sale.holdNumber,
       createdAt: sale.createdAt,
       cashier,
       paymentMethod: sale.paymentMethod,

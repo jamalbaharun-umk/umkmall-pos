@@ -253,6 +253,13 @@
       "when": 1795633177941,
       "tag": "0035_sale_paid_at",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795659603337,
+      "tag": "0036_sale_hold_number",
+      "breakpoints": true
     }
   ]
 }

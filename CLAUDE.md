@@ -249,6 +249,23 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **`awaiting_payment` and `cancelled` sales are not receipts:** every list, report and shift total filters
   `FINAL_SALE_STATUSES` (`db/schema/sales.ts`). A new query on `pos.sales` must too. A shift does not close while one
   of its sales awaits payment.
+- **A receipt number is given when a sale is completed, never when it is rung up** (UMK-2038, plan
+  [2026-11-26-002](docs/plans/2026-11-26-002-feat-umk-1991-hold-number-close-refusal-paid-while-away-plan.md)):
+  `takeNumber(tx, tenantId, 'receipt')` (`src/sales/numbers.ts`) is called only in the transaction that writes a
+  sale `completed` (the insert of a sale that completes at once; `applyToSale` under the sale's row lock), so a
+  store's receipts are numbered 1..n with no gap. A sale written `awaiting_payment` takes a hold number
+  (`sales.hold_number`, "Menunggu #n") and has `number` null until it is completed; a cancelled sale never gets
+  one. Answers carry `receiptNumber`, `holdNumber` and `number`/`saleNumber` (the one to show now). A new way to
+  complete a sale must take the number in that same write.
+- **`sales.completed_at` is when pos-api wrote the completion** (its clock; never a reporting date, that is
+  `paid_at`). `GET /sales/paid-since?since=` (UMK-2046: PG sales completed while a till was away; scoped as
+  `GET /sales`: own sales, or the store's with `reports.view`) compares it, because a payment learned late is
+  dated in the past by `paid_at`. Oldest first, 50 a page: with `hasMore` the till sends `asOf` and `afterId`
+  back until it is false. A shift that cannot close for waiting sales answers 409 `sales_awaiting_payment` with
+  those sales (UMK-2044). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
+  cancelled sale, so a hold number is never printed as a receipt number.
+- **Migration `sale_hold_number` is not for a rolling deploy:** the version before it violates `sales_number_ck`
+  on every sale. Stop the old instances, migrate, start the new (the plan's "Deploy order").
 - **A sale is dated by `sales.paid_at`, not `created_at`,** in every day-based figure and in the sales list (owner
   ruling 2026-11-25): the time it was rung up when paid at once; for a sale that waited for a PG, payment-api's paid
   time (validated by `isoTime`, kept between creation and now, else the time it is applied); the switch to cash;

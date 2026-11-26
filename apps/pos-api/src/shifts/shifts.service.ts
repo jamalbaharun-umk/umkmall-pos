@@ -20,6 +20,7 @@ import { InjectDb } from '../db/db.module';
 import {
   expenses,
   FINAL_SALE_STATUSES,
+  GATEWAY_METHODS,
   MANUAL_CASH_REASON_LABELS,
   manualCashEntries,
   paymentMethods,
@@ -43,6 +44,9 @@ import {
   NO_CASH,
 } from './cash-ledger';
 import { shiftActorName, shiftNumbers } from './shift-read';
+
+/** The `code` of the 409 that refuses to close a shift while sales of it await payment (UMK-2044). */
+export const SALES_AWAITING_PAYMENT = 'sales_awaiting_payment';
 
 const shiftColumns = {
   id: shifts.id,
@@ -209,9 +213,25 @@ export class ShiftsService {
       if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
       // Owner decision (UMK-1991): a shift does not close while a sale of it awaits payment. Under the
       // shift's row lock, which a new sale also takes, so none appears after this check.
+      // UMK-2038: a waiting sale has no receipt number yet; it is named by its hold number.
       const waiting = await tx
-        .select({ number: sales.number })
+        .select({
+          id: sales.id,
+          holdNumber: sales.holdNumber,
+          total: sales.total,
+          rounding: sales.rounding,
+          paymentMethod: paymentMethods.name,
+          code: sales.paymentMethodCode,
+          createdAt: sales.createdAt,
+        })
         .from(sales)
+        .innerJoin(
+          paymentMethods,
+          and(
+            eq(paymentMethods.tenantId, sales.tenantId),
+            eq(paymentMethods.id, sales.paymentMethodId),
+          ),
+        )
         .where(
           and(
             eq(sales.tenantId, s.tenantId),
@@ -219,13 +239,26 @@ export class ShiftsService {
             eq(sales.status, 'awaiting_payment'),
           ),
         )
-        .orderBy(asc(sales.number));
+        .orderBy(asc(sales.holdNumber));
       if (waiting.length)
+        // UMK-2044: a stable code and the sales themselves (this shift's, so the actor's own, in the
+        // session's store), for the screen to name and open. The message keeps its first words.
         throw new ConflictException({
           message: `Masih ada penjualan yang menunggu pembayaran: ${waiting
-            .map((w) => `#${w.number}`)
+            .map((w) => `#${w.holdNumber}`)
             .join(', ')}`,
-          saleNumbers: waiting.map((w) => w.number),
+          code: SALES_AWAITING_PAYMENT,
+          sales: waiting.map(({ code, total, rounding, ...w }) => ({
+            ...w,
+            // What the customer owes: the total, plus the cash rounding of a cash sale.
+            amountDue: total + rounding,
+            // Waits for a payment gateway (the waiting screen opens it); else a cash or EDC sale between
+            // its two steps, which a repeat of the sale or the job finishes.
+            onlinePayment: (GATEWAY_METHODS as readonly string[]).includes(
+              code ?? '',
+            ),
+          })),
+          saleNumbers: waiting.map((w) => w.holdNumber),
         });
       const t = await this.totals(tx, shift.id);
       const cash = await this.cashOf(tx, s.tenantId, shift.id);
