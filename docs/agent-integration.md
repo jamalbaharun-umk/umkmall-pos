@@ -39,7 +39,7 @@ owner's browser with its own answer; dropping them signs the owner out of UMKMal
 
 **Only UMKMall's agent backend may hold the token.** It is the owner's full UMKMall credential: whoever holds it can
 also open an owner session (`POST /auth/umkmall/session`). Never send it to a model, a log, a browser script or a
-third party. Follow-up (proposed, not filed): an owner opt-in in UMKMall before any agent session is issued.
+third party. Follow-up: UMK-2059, an owner opt-in before any agent session is issued.
 
 **The owner can cut the agent off from the POS at once:** `POST /agent/access/revoke` (owner session only) refuses
 every agent session issued before that moment (401). UMKMall must get a new consent and a new session to come back.
