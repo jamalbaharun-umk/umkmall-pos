@@ -70,6 +70,10 @@ export type ReceiptLine = {
   savings: number
   /** The price was typed with `sales.price_override`: no tier, no savings. */
   manualPrice?: boolean
+  /** UMK-1990: the line discount (off `lineTotal`), its percent when given as one, and what the line was charged. */
+  discount?: number
+  discountPercent?: number | null
+  netTotal?: number
 }
 export type Receipt = {
   number: number
@@ -78,7 +82,9 @@ export type Receipt = {
   paymentMethod: string
   lines: ReceiptLine[]
   subtotal: number
+  /** Every manual discount; `lineDiscount` (UMK-1990) is the lines' part, the rest an order discount. */
   discount: number
+  lineDiscount?: number
   taxBps: number
   tax: number
   total: number
@@ -220,12 +226,12 @@ export const closeShift = createServerFn({ method: 'POST' })
   .validator((countedCash: number) => countedCash)
   .handler(({ data }) => send<Shift>('/shifts/current/close', { countedCash: data }))
 
+/** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
+type LineDiscountFields = { discountPercent?: number; discountAmount?: number }
 type SaleInput = {
   key: string
-  lines: { productId: string; qty: number; unit?: string }[]
+  lines: ({ productId: string; qty: number; unit?: string; discountApprovalId?: string } & LineDiscountFields)[]
   paid: number
-  // Order discount in rupiah; pos-api honours it only with sales.price_override.
-  discount?: number
   note?: string
   // U7: member (required for a kasbon method), voucher code, payment method (default Tunai).
   memberId?: string
@@ -250,7 +256,7 @@ export const createSale = createServerFn({ method: 'POST' })
 
 /** The server's price of the cart (unit and wholesale tier), nothing written. Only pos-api prices a sale. */
 export const quoteCart = createServerFn({ method: 'POST' })
-  .validator((lines: { productId: string; qty: number; unit?: string }[]) => lines)
+  .validator((lines: ({ productId: string; qty: number; unit?: string } & LineDiscountFields)[]) => lines)
   .handler(({ data }) => send<Quote>('/sales/quote', { lines: data }))
 
 /** The receipt, dated by when the sale was paid (`paidAt`, UMK-1991) when `GET /sales/:id` says so; else by creation. */

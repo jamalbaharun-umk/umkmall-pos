@@ -1,8 +1,23 @@
 // The open bill survives leaving /kasir (Lakasir keeps cart_items; Moka and Pawoon keep the open bill). v1 keeps it
 // per browser tab in sessionStorage: only product ids, units, quantities and the note, re-read against today's products.
 import { entryKey, findUnit, type SavedLine, type UnitProduct } from './-helpers'
+import type { LineDiscount } from './-discount'
 
-export type SavedCart = { lines: SavedLine[]; note: string }
+// UMK-1990: a line's discount is kept with its line (kind and value only). A PIN approval is never kept: a discount
+// above 30% comes back without it and asks for the PIN again before the sale.
+export type SavedDiscount = Pick<LineDiscount, 'kind' | 'value'>
+export type SavedCart = { lines: SavedLine[]; note: string; discounts?: Record<string, SavedDiscount> }
+
+const isSavedDiscount = (d: unknown): d is SavedDiscount => {
+  const x = d as Partial<SavedDiscount> | null
+  return (
+    !!x &&
+    (x.kind === 'percent' || x.kind === 'amount') &&
+    Number.isInteger(x.value) &&
+    (x.value as number) >= 1 &&
+    (x.kind === 'amount' || (x.value as number) <= 99)
+  )
+}
 
 const KEY = 'pos.kasir.cart'
 
@@ -10,7 +25,11 @@ const KEY = 'pos.kasir.cart'
 export function restoreCart<P extends UnitProduct>(
   saved: unknown,
   products: P[],
-): { lines: { product: P; unit: string | null; qty: number }[]; note: string } {
+): {
+  lines: { product: P; unit: string | null; qty: number }[]
+  note: string
+  discounts: Record<string, SavedDiscount>
+} {
   const s = saved as Partial<SavedCart> | null
   const byId = new Map(products.map((p) => [p.id, p]))
   const seen = new Set<string>()
@@ -25,7 +44,13 @@ export function restoreCart<P extends UnitProduct>(
     seen.add(entryKey(line))
     return [line]
   })
-  return { lines, note: typeof s?.note === 'string' ? s.note.slice(0, 200) : '' }
+  const keptDiscounts = s?.discounts && typeof s.discounts === 'object' ? s.discounts : {}
+  const discounts: Record<string, SavedDiscount> = {}
+  for (const k of seen) {
+    const d = (keptDiscounts as Record<string, unknown>)[k]
+    if (isSavedDiscount(d)) discounts[k] = { kind: d.kind, value: d.value }
+  }
+  return { lines, note: typeof s?.note === 'string' ? s.note.slice(0, 200) : '', discounts }
 }
 
 export function readCart(): unknown {
