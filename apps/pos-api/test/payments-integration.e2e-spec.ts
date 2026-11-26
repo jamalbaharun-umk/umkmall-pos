@@ -211,8 +211,13 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
   const saleRow = async (id: string) =>
     (
       await admin<
-        { status: string; payment_id: string | null; number: number }[]
-      >`select status, payment_id, number from pos.sales where id = ${id}`
+        {
+          status: string;
+          payment_id: string | null;
+          number: number | null;
+          hold_number: number | null;
+        }[]
+      >`select status, payment_id, number, hold_number from pos.sales where id = ${id}`
     )[0];
   const paymentsOf = (tenantId: string) =>
     pay.sql<PaymentRow[]>`
@@ -434,7 +439,9 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       const close = await post(s.auth, '/shifts/current/close', {
         countedCash: 100_000,
       }).expect(409);
-      expect(close.body.message).toContain(`#${row.number}`);
+      // UMK-2038: a waiting sale has no receipt number; it is named by its hold number.
+      expect(row.number).toBeNull();
+      expect(close.body.message).toContain(`#${row.hold_number}`);
       // Not voidable: it was never a receipt.
       await voidSale(s, saleId).expect(409);
 

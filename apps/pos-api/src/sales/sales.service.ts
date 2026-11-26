@@ -49,6 +49,7 @@ import {
 } from '../payments-client/payments.client';
 import { SalePayments } from '../payments-client/sale-payment.service';
 import { cashMethodId, cashRounding } from './cash';
+import { saleNumbers, takeNumber } from './numbers';
 import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
@@ -280,15 +281,17 @@ export class SalesService {
       : null;
     const method = await this.methodOf(tx, s.tenantId, input.paymentMethodId);
 
-    // One row per store: the next receipt number and the tax rate, in one statement.
-    const [settings] = await tx
-      .insert(salesSettings)
-      .values({ tenantId: s.tenantId, lastSaleNumber: 1 })
-      .onConflictDoUpdate({
-        target: salesSettings.tenantId,
-        set: { lastSaleNumber: sql`${salesSettings.lastSaleNumber} + 1` },
-      })
-      .returning();
+    // UMK-1991: with payment-api on, a sale that takes a payment waits for it (step 2 completes it).
+    // A kasbon sale takes none (its down payment is recorded apart) and completes here.
+    const charged = this.payments.enabled && !method.isCredit;
+    // One row per store: the sale's number and the tax rate, in one statement. A sale that completes in
+    // this transaction takes its receipt number now; one that waits for its payment takes a hold number,
+    // and its receipt number when it is completed (UMK-2038: a cancelled sale leaves no gap).
+    const settings = await takeNumber(
+      tx,
+      s.tenantId,
+      charged ? 'hold' : 'receipt',
+    );
     // Tax on the amount after the manual discount AND the voucher (Lakasir flaw 2).
     const tax = taxOf(subtotal - discount - voucherDiscount, settings.taxBps);
     const total = subtotal - discount - voucherDiscount + tax;
@@ -329,7 +332,6 @@ export class SalesService {
     }
     if (voucher) await consumeVoucher(tx, s.tenantId, voucher.id);
 
-    const charged = this.payments.enabled && !method.isCredit;
     const overrideBy =
       discount > 0 || lines.some((l) => l.priceOverriddenBy) ? s.actorId : null;
     // Inserting the sale claims the idempotency key: a concurrent duplicate fails here and rolls back.
@@ -337,7 +339,9 @@ export class SalesService {
       .insert(sales)
       .values({
         tenantId: s.tenantId,
-        number: settings.lastSaleNumber,
+        number: charged ? null : settings.number,
+        holdNumber: charged ? settings.number : null,
+        completedAt: charged ? null : sql`now()`,
         shiftId: shift.id,
         actorId: s.actorId,
         actorKind: s.kind,
@@ -358,8 +362,6 @@ export class SalesService {
         costTotal: 0,
         overrideBy,
         note: input.note || null,
-        // UMK-1991: with payment-api on, a sale that takes a payment waits for it (step 2 completes it).
-        // A kasbon sale takes none (its down payment is recorded apart) and completes here.
         status: charged ? 'awaiting_payment' : 'completed',
         // Fixed now: a later edit of the method's kind does not change what this sale is charged as.
         paymentMethodCode: charged ? paymentMethodCode(method) : null,
@@ -611,6 +613,7 @@ export class SalesService {
         .select({
           id: sales.id,
           number: sales.number,
+          holdNumber: sales.holdNumber,
           shiftId: sales.shiftId,
           actorKind: sales.actorKind,
           // Owner sales have no staff row (Lakasir's "user.name" column).
@@ -636,7 +639,12 @@ export class SalesService {
           and(eq(staff.tenantId, sales.tenantId), eq(staff.id, sales.actorId)),
         )
         .where(where)
-        .orderBy(desc(sales.paidAt), desc(sales.number))
+        .orderBy(
+          desc(sales.paidAt),
+          // Receipts by their number; waiting sales have none yet and follow their hold number.
+          sql`${sales.number} desc nulls last`,
+          desc(sales.holdNumber),
+        )
         .limit(q.perPage)
         .offset((q.page - 1) * q.perPage),
       this.db
@@ -691,6 +699,7 @@ export class SalesService {
     return {
       data: rows.map(({ paymentMethodCode: code, ...r }) => ({
         ...r,
+        ...saleNumbers(r),
         // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
         onlinePayment: isOnlineMethod(code),
         amountDue: r.total + r.rounding,
@@ -707,6 +716,7 @@ export class SalesService {
       .select({
         id: sales.id,
         number: sales.number,
+        holdNumber: sales.holdNumber,
         shiftId: sales.shiftId,
         actorId: sales.actorId,
         actorKind: sales.actorKind,
@@ -774,6 +784,7 @@ export class SalesService {
     const { paymentMethodCode: code, ...rest } = sale;
     return {
       ...rest,
+      ...saleNumbers(sale),
       // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
       onlinePayment: isOnlineMethod(code),
       // UMK-1993: what the customer owes; `rounding` is its own line ("Pembulatan"), 0 unless cash.
@@ -810,7 +821,10 @@ export class SalesService {
       cashier = row?.name ?? 'Kasir';
     }
     return {
+      // UMK-2038: `receiptNumber` is null while the sale awaits its payment: what is printed then is not a receipt.
       number: sale.number,
+      receiptNumber: sale.receiptNumber,
+      holdNumber: sale.holdNumber,
       createdAt: sale.createdAt,
       cashier,
       paymentMethod: sale.paymentMethod,

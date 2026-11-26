@@ -209,8 +209,9 @@ export class ShiftsService {
       if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
       // Owner decision (UMK-1991): a shift does not close while a sale of it awaits payment. Under the
       // shift's row lock, which a new sale also takes, so none appears after this check.
+      // UMK-2038: a waiting sale has no receipt number yet; it is named by its hold number.
       const waiting = await tx
-        .select({ number: sales.number })
+        .select({ number: sales.holdNumber })
         .from(sales)
         .where(
           and(
@@ -219,7 +220,7 @@ export class ShiftsService {
             eq(sales.status, 'awaiting_payment'),
           ),
         )
-        .orderBy(asc(sales.number));
+        .orderBy(asc(sales.holdNumber));
       if (waiting.length)
         throw new ConflictException({
           message: `Masih ada penjualan yang menunggu pembayaran: ${waiting

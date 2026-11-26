@@ -9,6 +9,7 @@ import { fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { paymentMethods, sales, saleVoids } from '../db/schema';
+import { saleNumbers } from '../sales/numbers';
 import { hasPermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
@@ -120,6 +121,7 @@ export class SalePayments {
       .select({
         id: sales.id,
         number: sales.number,
+        holdNumber: sales.holdNumber,
         status: sales.status,
         actorId: sales.actorId,
         total: sales.total,
@@ -322,9 +324,14 @@ export class SalePayments {
               .map((k) => [k, payment.checkout![k]]),
           )
         : null;
+    const numbers = saleNumbers(sale);
     return {
       saleId: sale.id,
-      saleNumber: sale.number,
+      // UMK-2038: `saleNumber` is the number to show now (the receipt number once the sale is completed,
+      // else the hold number); the two below say which is which.
+      saleNumber: numbers.number,
+      receiptNumber: numbers.receiptNumber,
+      holdNumber: numbers.holdNumber,
       saleStatus: sale.status,
       status,
       online,

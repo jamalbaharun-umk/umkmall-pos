@@ -30,6 +30,7 @@ import {
   saleVoids,
 } from '../db/schema';
 import { cashMethodId, cashRounding } from '../sales/cash';
+import { takeNumber } from '../sales/numbers';
 import { StockService } from '../stock/stock.service';
 import { restoreVoucher } from '../vouchers/vouchers.controller';
 import {
@@ -516,7 +517,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * a sale that moved on to another attempt (it was switched to cash) is not touched by the old attempt's
    * answer, and a sale is never cancelled while a switch to cash is asked. Both answer `stale`.
    *
-   * A sale that is completed here is reported from the moment it was paid (`paid_at`): `paidAt`, a PG
+   * A sale that is completed here gets its receipt number here (`takeNumber`), and is reported from the moment it was paid (`paid_at`): `paidAt`, a PG
    * payment's own paid time, kept between the sale's creation and now (payment-api's clock is not ours);
    * without one (a payment taken at the cashier, or a PG payment that came with no usable time) it is now.
    */
@@ -532,6 +533,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       const [sale] = await tx
         .select({
           status: sales.status,
+          number: sales.number,
           actorId: sales.actorId,
           voucherId: sales.voucherId,
           attempt: sales.paymentAttempt,
@@ -546,10 +548,17 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
       if (sale.attempt !== attempt) return 'stale';
       if (to === 'cancelled' && sale.switchCashPaid !== null) return 'stale';
       if (to === 'completed') {
+        // UMK-2038: the receipt number is taken here, in the write that completes the sale and under its
+        // row lock, so receipts are numbered in the order they are completed and a sale that is cancelled
+        // never took one. (A sale that was waiting when UMK-2038 shipped keeps the number it has.)
+        const number =
+          sale.number ?? (await takeNumber(tx, tenantId, 'receipt')).number;
         await tx
           .update(sales)
           .set({
             status: 'completed',
+            number,
+            completedAt: sql`now()`,
             paymentId,
             switchCashPaid: null,
             paidAt: paidAt
