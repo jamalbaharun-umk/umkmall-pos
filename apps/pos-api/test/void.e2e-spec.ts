@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { INestApplication } from '@nestjs/common';
+import { HttpException, INestApplication } from '@nestjs/common';
 import postgres from 'postgres';
 import request from 'supertest';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { signSession } from '../src/tenancy/session';
+import { VoidPins } from '../src/void/void-pin';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
 
@@ -1305,6 +1306,97 @@ describe('void a full sale (UMK-1962)', () => {
       // And B's own fresh session changes B's PIN only.
       await reset(b.freshAuth, b.userId).expect(200);
       expect((await pinRow(a.userId)).pin_hash).toBe(hash);
+    });
+  });
+
+  describe('the owner-only approval of a refund retry (UMK-2055)', () => {
+    const pins = () => app.get(VoidPins);
+    const httpOf = (e: unknown) => {
+      expect(e).toBeInstanceOf(HttpException);
+      const h = e as HttpException;
+      return {
+        status: h.getStatus(),
+        body: h.getResponse() as Record<string, unknown>,
+      };
+    };
+    const refusal = (p: Promise<unknown>) => p.then(() => null, httpOf);
+
+    it('an owner without a PIN is told to make their own, never "Admin ini", and nothing is counted', async () => {
+      const s = await shop();
+      await admin`delete from pos.void_pins where actor_id = ${s.userId}`;
+      const r = await refusal(
+        pins().verifyOwner(s.tenantId, s.userId, OWNER_PIN),
+      );
+      expect(r).toMatchObject({
+        status: 422,
+        body: {
+          code: 'owner_pin_missing',
+          errors: { pin: expect.stringMatching(/^Anda belum membuat PIN/) },
+        },
+      });
+      expect(JSON.stringify(r)).not.toMatch(/Admin ini/);
+      expect(await pinRow(s.userId)).toBeUndefined();
+    });
+
+    it("a locked owner is pointed to Keamanan, never to another admin; the lock is the void's own", async () => {
+      const s = await shop();
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '4 minutes' where actor_id = ${s.userId}`;
+      const r = await refusal(
+        pins().verifyOwner(s.tenantId, s.userId, OWNER_PIN),
+      );
+      expect(r).toMatchObject({
+        status: 429,
+        body: {
+          code: 'owner_pin_locked',
+          retryAfter: expect.any(Number),
+          errors: { pin: expect.stringMatching(/Pengaturan, Keamanan/) },
+        },
+      });
+      expect(JSON.stringify(r)).not.toMatch(/admin lain/);
+      expect((r!.body.retryAfter as number) <= 240).toBe(true);
+      // A wrong PIN is still the plain answer, and the 5th locks with the owner's words.
+      await admin`update pos.void_pins set failures = 3, locked_until = null where actor_id = ${s.userId}`;
+      expect(
+        await refusal(pins().verifyOwner(s.tenantId, s.userId, '000000')),
+      ).toEqual({
+        status: 422,
+        body: { message: 'PIN salah', errors: { pin: 'PIN salah' } },
+      });
+      const fifth = await refusal(
+        pins().verifyOwner(s.tenantId, s.userId, '000000'),
+      );
+      expect(fifth).toMatchObject({
+        status: 429,
+        body: { code: 'owner_pin_locked', retryAfter: 300 },
+      });
+      // The right PIN after the lock ran out approves, as the owner.
+      await admin`update pos.void_pins set locked_until = now() - interval '1 second' where actor_id = ${s.userId}`;
+      await expect(
+        pins().verifyOwner(s.tenantId, s.userId, OWNER_PIN),
+      ).resolves.toEqual({ id: s.userId, kind: 'owner', name: 'Pemilik' });
+      // A plain void keeps its shared words (another admin may approve a void).
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '4 minutes' where actor_id = ${s.userId}`;
+      const v = await refusal(pins().verify(s.tenantId, s.userId, OWNER_PIN));
+      expect(JSON.stringify(v)).toMatch(/admin lain/);
+    });
+
+    it("another store's owner id, with that owner's right PIN, is the plain wrong PIN and counts nowhere", async () => {
+      const a = await shop();
+      const b = await shop();
+      const r = await refusal(
+        pins().verifyOwner(a.tenantId, b.userId, OWNER_PIN),
+      );
+      expect(r).toEqual({
+        status: 422,
+        body: { message: 'PIN salah', errors: { pin: 'PIN salah' } },
+      });
+      expect((await pinRow(a.userId)).failures).toBe(0);
+      expect((await pinRow(b.userId)).failures).toBe(0);
+      // Also when this store's owner has no PIN: never "owner_pin_missing" for an id that is not the owner.
+      await admin`delete from pos.void_pins where actor_id = ${a.userId}`;
+      expect(
+        await refusal(pins().verifyOwner(a.tenantId, b.userId, OWNER_PIN)),
+      ).toMatchObject({ status: 422, body: { errors: { pin: 'PIN salah' } } });
     });
   });
 

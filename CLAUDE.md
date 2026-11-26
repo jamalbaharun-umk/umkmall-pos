@@ -318,7 +318,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   "dikembalikan manual" are the owner's alone (403 for anyone else); a retry is approved again by the OWNER's
   own PIN (owner decision 2026-11-26; `{ approverId, pin }`, `VoidPins.verifyOwner`): any other approver id, also an
   admin's with `sales.void`, answers the generic "PIN salah" and counts nowhere; the owner's count and lock are the
-  void's (wrong PIN 422, locked 429). Checked before payment-api is asked; `sale_voids.approved_by` stays the
+  void's (wrong PIN 422, locked 429 `owner_pin_locked`, no PIN yet 422 `owner_pin_missing`: the owner's words, never
+  "ask another admin"). Checked before payment-api is asked; `sale_voids.approved_by` stays the
   refund's approver (UMK-2040).
 - **The owner's own PIN is never changed by the session alone** (UMK-2054, `src/void/void-pin.ts`): changing it needs
   the old PIN; making the first one, removing it and clearing its lock need a fresh sign-in (`freshSignIn` in
