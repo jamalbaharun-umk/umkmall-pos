@@ -2,6 +2,7 @@ import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import type { FailureLike } from '@/lib/describe-error'
+import { parsePaidSince, type PaidSincePage } from './-since'
 import { paidFigures, paymentFailure, parseAwaiting, parsePayment, type AwaitingSale, type SalePayment } from './-online'
 import type { SaleVoid } from './-void-api'
 import { retryFailure, voidFailure, type VoidFailure } from './-void-helpers'
@@ -164,3 +165,14 @@ export const loadAwaitingSales = createServerFn().handler(async (): Promise<Answ
   if (!r.ok) return r
   return { ok: true, data: parseAwaiting((r.json as { data?: unknown } | null)?.data) }
 })
+
+/** What became of the actor's waiting sales after `since` (`GET /sales/paid-since`, one page; the screen pages while `hasMore`). */
+export const loadPaidSince = createServerFn()
+  .validator((d: { since: string; afterId: string | null }) => d)
+  .handler(async ({ data }): Promise<Answer<PaidSincePage>> => {
+    const q = `since=${enc(data.since)}${data.afterId ? `&afterId=${enc(data.afterId)}` : ''}`
+    const r = await call('poll', `/sales/paid-since?${q}`, { method: 'GET' })
+    if (!r.ok) return r
+    const page = parsePaidSince(r.json)
+    return page ? { ok: true, data: page } : { ok: false, failure: { status: 502 }, error: 'Kabar penjualan tidak bisa dibaca.' }
+  })

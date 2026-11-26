@@ -68,6 +68,7 @@ import {
   type Bank,
 } from './-pay-step'
 import { getSalePayment } from './-online-api'
+import { SinceNotices } from './-since-notices'
 import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
 import { holdLabel, keepPolling, parsePayment, receiptLabel, saleFailure, type ResumeDecision, type SalePayment } from './-online'
 import {
@@ -518,6 +519,7 @@ function Register({
               <Link to="/kasir/tutup">Tutup shift</Link>
             </Button>
           </div>
+          <SinceNotices ownIds={pend.state.sales.map((t) => t.id)} />
         </div>
         {!pend.durable && (
           <Alert variant="warning" size="small" role="alert">

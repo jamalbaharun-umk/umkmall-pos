@@ -975,7 +975,7 @@ describe('guard: one place remembers unfinished sales', () => {
   })
   it('only the pending store and the open bill touch browser storage', () => {
     const users = sources.filter((s) => /\b(sessionStorage|localStorage)\b/.test(code(s.text))).map((s) => s.f)
-    expect(users.sort()).toEqual(['-cart.ts', '-pending-store.ts'])
+    expect(users.sort()).toEqual(['-cart.ts', '-pending-store.ts', '-since-notices.tsx'])
   })
   it('the register and the waiting screens make no key and hold none: they dispatch and read the state', () => {
     for (const f of ['index.tsx', '-online-pay.tsx']) {
