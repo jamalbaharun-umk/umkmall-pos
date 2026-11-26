@@ -255,12 +255,18 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   sale `completed` (the insert of a sale that completes at once; `applyToSale` under the sale's row lock), so a
   store's receipts are numbered 1..n with no gap. A sale written `awaiting_payment` takes a hold number
   (`sales.hold_number`, "Menunggu #n") and has `number` null until it is completed; a cancelled sale never gets
-  one. Answers carry `receiptNumber`, `holdNumber` and `number`/`saleNumber` (the one to show now). A new way to
+  one. **The hold number starts at 1 every store day** (Asia/Jakarta; `sales_settings.hold_number_day`, compared
+  and written in `takeNumber`'s one upsert): it is unique per `(tenant, hold_day, hold_number)`, so name a
+  waiting sale by its id, never by its hold number alone. Answers carry `receiptNumber`, `holdNumber` and `number`/`saleNumber` (the one to show now). A new way to
   complete a sale must take the number in that same write.
 - **`sales.completed_at` is when pos-api wrote the completion** (its clock; never a reporting date, that is
-  `paid_at`). `GET /sales/paid-since?since=` (UMK-2046: PG sales completed while a till was away; scoped as
-  `GET /sales`: own sales, or the store's with `reports.view`) compares it, because a payment learned late is
-  dated in the past by `paid_at`. Oldest first, 50 a page: with `hasMore` the till sends `asOf` and `afterId`
+  `paid_at`). `GET /sales/paid-since?since=` (UMK-2046, plan
+  [2026-11-26-003](docs/plans/2026-11-26-003-feat-umk-1991-daily-hold-number-paid-since-ended-plan.md): what
+  became of waiting sales while a till was away; scoped as `GET /sales`: own sales, or the store's with
+  `reports.view`) compares it and `cancelled_at`, because a payment learned late is dated in the past by
+  `paid_at`. It lists PG sales that were paid, cash/EDC sales the JOB completed (`sales.settled_by_job`) and
+  cancelled sales with `reason` (`sales.cancel_reason`, written by `applyToSale`; its `status` says `expired` for
+  a QR or VA that ran out, the sale's own status stays `cancelled`). A new way to cancel a sale gives its reason. Oldest first, 50 a page: with `hasMore` the till sends `asOf` and `afterId`
   back until it is false. A shift that cannot close for waiting sales answers 409 `sales_awaiting_payment` with
   those sales (UMK-2044). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
   cancelled sale, so a hold number is never printed as a receipt number.

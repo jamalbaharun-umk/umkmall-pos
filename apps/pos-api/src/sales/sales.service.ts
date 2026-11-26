@@ -16,6 +16,7 @@ import {
   inArray,
   lt,
   isNull,
+  or,
   sql,
   type SQL,
 } from 'drizzle-orm';
@@ -354,6 +355,7 @@ export class SalesService {
         tenantId: s.tenantId,
         number: charged ? null : settings.number,
         holdNumber: charged ? settings.number : null,
+        holdDay: charged ? settings.day : null,
         completedAt: charged ? null : sql`clock_timestamp()`,
         shiftId: shift.id,
         actorId: s.actorId,
@@ -724,38 +726,52 @@ export class SalesService {
   }
 
   /**
-   * `GET /sales/paid-since` (UMK-2046): PG sales completed after `since`, OLDEST first, so a till that was
-   * away for long reads all of them, a page at a time. A till asks with the `asOf` of its last answer and
-   * learns which of its waiting sales were paid meanwhile.
+   * `GET /sales/paid-since` (UMK-2046): what became of the actor's waiting sales after `since`, OLDEST
+   * first, so a till that was away for long reads all of it, a page at a time. A till asks with the `asOf`
+   * of its last answer. Listed:
+   * - a sale paid through a payment gateway that was completed (`completed`; `void` when refunded since);
+   * - a cash or EDC sale that the JOB completed (`completedByJob`): its payment could not be confirmed when
+   *   it was rung up. One completed by a request of the till is not listed: the cashier saw it. Nor is a
+   *   sale the cashier switched to cash;
+   * - a sale that was cancelled: `expired` when its QR or VA ran out, else `cancelled`, with `reason`
+   *   (CANCEL_REASONS; null when unknown). Its stock and voucher are back and it has no receipt number.
    *
-   * By `completed_at` (when pos-api wrote the completion), never `paid_at`: a payment learned late is dated
-   * at the customer's paid time, which can be before the till last looked. Whose: the actor's own sales, or
-   * the store's with `reports.view`, exactly as `GET /sales` (`scope`): the answer carries totals. A sale
-   * switched to cash is not listed (its method is cash: the cashier did that at the till); one refunded
-   * since is, as `void`.
+   * By `endedAt`: `completed_at` or `cancelled_at`, when pos-api wrote the end, never `paid_at`: a payment
+   * learned late is dated at the customer's paid time, which can be before the till last looked. Whose: the
+   * actor's own sales, or the store's with `reports.view`, exactly as `GET /sales` (`scope`): the answer
+   * carries totals.
    *
-   * More than PAID_SINCE_LIMIT: `hasMore` is true, `asOf` is the last listed sale's completion time (to the
-   * microsecond) and `afterId` its id; the next request sends both and continues right after that sale.
+   * More than PAID_SINCE_LIMIT: `hasMore` is true, `asOf` is the last listed sale's end (to the
+   * microsecond) and `afterId` its id; the next request sends both and continues right after that sale. Such
+   * a cursor is kept out of the last PAID_SINCE_OVERLAP_SECONDS (see below).
    * Else `hasMore` is false, `afterId` null and `asOf` the database's time less
-   * PAID_SINCE_OVERLAP_SECONDS: a completion is stamped when it is written and seen when its transaction
-   * ends, so the next request overlaps this one and the till drops the ids it already has.
+   * PAID_SINCE_OVERLAP_SECONDS: an end is stamped when it is written and seen when its transaction ends, so
+   * the next request overlaps this one and the till drops the ids it already has.
    */
   async paidSince(s: PosSession, q: PaidSinceQuery) {
     const since = sql`${q.since}::timestamptz`;
+    // A cancelled sale has no `completed_at`, and a completed one no `cancelled_at`.
+    const endedAt = sql`coalesce(${sales.cancelledAt}, ${sales.completedAt})`;
     const [found, [{ asOf }]] = await Promise.all([
       this.db
         .select({
           id: sales.id,
           number: sales.number,
           holdNumber: sales.holdNumber,
-          status: sales.status,
+          saleStatus: sales.status,
+          cancelReason: sales.cancelReason,
+          completedByJob: sales.settledByJob,
+          code: sales.paymentMethodCode,
           total: sales.total,
           rounding: sales.rounding,
           paymentMethod: paymentMethods.name,
           paidAt: sales.paidAt,
           completedAt: sales.completedAt,
-          // The cursor: `completedAt` above is cut to milliseconds on its way out.
-          at: sql<string>`to_char(${sales.completedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+          cancelledAt: sales.cancelledAt,
+          // The cursor: the times above are cut to milliseconds on their way out.
+          at: sql<string>`to_char(${endedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+          // Ended long enough ago that no transaction still running can commit an earlier end.
+          settled: sql<boolean>`${endedAt} <= now() - make_interval(secs => ${PAID_SINCE_OVERLAP_SECONDS})`,
           createdAt: sales.createdAt,
         })
         .from(sales)
@@ -769,14 +785,22 @@ export class SalesService {
         .where(
           and(
             this.scope(s),
-            inArray(sales.status, [...FINAL_SALE_STATUSES]),
-            inArray(sales.paymentMethodCode, [...ONLINE_METHODS]),
+            or(
+              and(
+                inArray(sales.status, [...FINAL_SALE_STATUSES]),
+                or(
+                  inArray(sales.paymentMethodCode, [...ONLINE_METHODS]),
+                  eq(sales.settledByJob, true),
+                ),
+              ),
+              eq(sales.status, 'cancelled'),
+            ),
             q.afterId
-              ? sql`(${sales.completedAt}, ${sales.id}) > (${since}, ${q.afterId}::uuid)`
-              : sql`${sales.completedAt} > ${since}`,
+              ? sql`(${endedAt}, ${sales.id}) > (${since}, ${q.afterId}::uuid)`
+              : sql`${endedAt} > ${since}`,
           ),
         )
-        .orderBy(asc(sales.completedAt), asc(sales.id))
+        .orderBy(asc(endedAt), asc(sales.id))
         .limit(PAID_SINCE_LIMIT + 1),
       this.db.execute<{ asOf: string }>(
         sql`select to_char((now() - make_interval(secs => ${PAID_SINCE_OVERLAP_SECONDS})) at time zone 'UTC',
@@ -784,13 +808,35 @@ export class SalesService {
       ),
     ]);
     const hasMore = found.length > PAID_SINCE_LIMIT;
-    const rows = found.slice(0, PAID_SINCE_LIMIT);
+    let rows = found.slice(0, PAID_SINCE_LIMIT);
+    // A cursor is never put inside the last PAID_SINCE_OVERLAP_SECONDS: a completion still being written
+    // there may commit with an earlier time than the cursor and would be passed by. A page that would end
+    // there stops at the last settled sale instead, and the sales after it come with the page that ends the
+    // paging, whose `asOf` overlaps. (A page with no settled sale at all cannot be cut: more than a page
+    // of sales ended within those seconds. It is paged as it is.)
+    if (hasMore && !rows[rows.length - 1].settled && rows[0].settled)
+      rows = rows.filter((r) => r.settled);
     const last = rows[rows.length - 1];
     return {
-      data: rows.map(({ rounding, at, ...r }) => {
-        void at; // the cursor only
-        return { ...r, ...saleNumbers(r), amountDue: r.total + rounding };
-      }),
+      data: rows.map(
+        ({ rounding, at, settled, code, saleStatus, cancelReason, ...r }) => {
+          void [at, settled]; // the cursor only
+          return {
+            ...r,
+            ...saleNumbers(r),
+            // `expired`: cancelled because the QR or VA ran out. The sale's own status is `cancelled` then.
+            status:
+              saleStatus === 'cancelled' && cancelReason === 'expired'
+                ? ('expired' as const)
+                : saleStatus,
+            reason: cancelReason,
+            onlinePayment: isOnlineMethod(code),
+            amountDue: r.total + rounding,
+            // When pos-api wrote the end the till is told of.
+            endedAt: r.cancelledAt ?? r.completedAt,
+          };
+        },
+      ),
       hasMore,
       asOf: hasMore ? last.at : asOf,
       afterId: hasMore ? last.id : null,

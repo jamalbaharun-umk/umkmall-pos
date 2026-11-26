@@ -6,9 +6,11 @@ import path from 'node:path';
 import postgres from 'postgres';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { DB, type Db } from '../src/db/db.module';
 import { PaymentSync } from '../src/payments-client/payment-sync.service';
 import { PAYMENT_FETCH } from '../src/payments-client/payments.client';
 import { PAID_SINCE_LIMIT } from '../src/sales/sales.service';
+import { takeNumber } from '../src/sales/numbers';
 import { seedMerchant } from '../../payment-api/test/support/merchants';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
@@ -132,7 +134,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
   const onBill = async (
     s: Store,
     saleId: string,
-    action: 'pay' | 'fail',
+    action: 'pay' | 'fail' | 'expire',
     body: object = {},
   ) => {
     const { items } = await gateway<{ items: Bill[] }>(
@@ -645,24 +647,33 @@ describe('hold number and receipt number (UMK-2038)', () => {
         admin`update pos.sales set completed_at = null where id = ${done}`,
       );
       await refused(
-        admin`update pos.sales set hold_number = null where id = ${waiting}`,
+        admin`update pos.sales set hold_number = null, hold_day = null where id = ${waiting}`,
       );
+      // A hold number has its day, and only a cancelled sale has a reason.
+      for (const q of [
+        admin`update pos.sales set hold_day = null where id = ${waiting}`,
+        admin`update pos.sales set hold_number = null where id = ${done}`,
+        admin`update pos.sales set cancel_reason = 'expired' where id = ${waiting}`,
+      ])
+        await expect(q).rejects.toMatchObject({
+          constraint_name: 'sales_hold_day_ck',
+        });
       await refused(
         admin`update pos.sales set status = 'completed' where id = ${waiting}`,
       );
-      // Two sales of one store never share a hold number or a receipt number.
+      // Two sales of one store never share a hold number on one day, or a receipt number.
       const other = (await sell(s).expect(201)).body.id as string;
       await expect(
         admin`update pos.sales set hold_number = 2 where id = ${other}`,
       ).rejects.toMatchObject({
-        constraint_name: 'sales_tenant_hold_number_uq',
+        constraint_name: 'sales_tenant_hold_day_number_uq',
       });
       for (const id of [waiting, other])
         await post(s.auth, `/sales/${id}/payment/cancel`).expect(200);
       await gapFree(s.tenantId);
     });
 
-    it('the migration gives earlier receipts their completion time and waiting sales a hold number in the order they were rung up, and a waiting sale that had a number keeps it when it is completed', async () => {
+    it('the migration gives earlier receipts their completion time and waiting sales a hold number in the order they were rung up, then dates the hold numbers by store day and takes the receipt number off a waiting sale', async () => {
       const s = await shop();
       const other = await shop();
       const receipt = (await sellCash(s).expect(201)).body.id as string;
@@ -671,27 +682,35 @@ describe('hold number and receipt number (UMK-2038)', () => {
       const theirs = (await sell(other).expect(201)).body.id as string;
       // Found by its name, not its number: migrations of parallel work are renumbered.
       const dir = path.join(__dirname, '..', 'drizzle');
-      const file = readdirSync(dir).find((f) =>
-        f.endsWith('_sale_hold_number.sql'),
-      )!;
-      const statements = readFileSync(path.join(dir, file), 'utf8')
-        .split('--> statement-breakpoint')
-        .map((x) => x.replace(/^\s*--.*$/gm, '').trim())
-        .filter((x) => x.startsWith('UPDATE'));
+      const updatesOf = (suffix: string) =>
+        readFileSync(
+          path.join(
+            dir,
+            readdirSync(dir).find((f) => f.endsWith(suffix))!,
+          ),
+          'utf8',
+        )
+          .split('--> statement-breakpoint')
+          .map((x) => x.replace(/^\s*--.*$/gm, '').trim())
+          .filter((x) => x.startsWith('UPDATE'));
+      const statements = updatesOf('_sale_hold_number.sql');
       expect(statements).toHaveLength(3);
+      const daily = updatesOf('_hold_number_daily.sql');
+      expect(daily).toHaveLength(3);
       // As the migration finds the rows: numbered when rung up, no hold number, no completion time. Rolled
       // back after.
       const rollback = new Error('rollback');
       await admin
         .begin(async (tx) => {
           await tx`alter table pos.sales drop constraint sales_number_ck`;
-          await tx`update pos.sales set hold_number = null, completed_at = null,
+          await tx`alter table pos.sales drop constraint sales_hold_day_ck`;
+          await tx`update pos.sales set hold_number = null, hold_day = null, completed_at = null,
               paid_at = created_at - interval '1 hour'
             where tenant_id in ${tx([s.tenantId, other.tenantId])}`;
           // Rung up second, first: the order is by `created_at`, not by id.
           await tx`update pos.sales set number = 7, created_at = now() - interval '2 hours' where id = ${second}`;
           await tx`update pos.sales set number = 8, created_at = now() - interval '1 hour' where id = ${first}`;
-          await tx`update pos.sales_settings set last_hold_number = 0
+          await tx`update pos.sales_settings set last_hold_number = 0, hold_number_day = null
             where tenant_id in ${tx([s.tenantId, other.tenantId])}`;
           for (const statement of statements) await tx.unsafe(statement);
           const after = await tx<
@@ -717,15 +736,40 @@ describe('hold number and receipt number (UMK-2038)', () => {
           expect(
             Object.fromEntries(counters.map((c) => [c.tenant_id, c.n])),
           ).toEqual({ [s.tenantId]: 2, [other.tenantId]: 1 });
+
+          // The next migration (daily hold numbers): each hold number is dated at the store day its sale
+          // was rung up, and a counter in use goes on counting today.
+          await tx`update pos.sales set created_at = (current_date - 3 + time '23:30') at time zone 'UTC'
+            where id = ${second}`;
+          for (const statement of daily) await tx.unsafe(statement);
+          const dated = await tx<{ id: string; ok: boolean }[]>`
+            select id, hold_day = (created_at at time zone 'Asia/Jakarta')::date as ok
+            from pos.sales where id in ${tx([first, second, theirs])}`;
+          expect(dated.map((x) => x.ok)).toEqual([true, true, true]);
+          // 23:30 UTC is 06:30 the next day in Jakarta.
+          const [late] = await tx<{ day: string }[]>`
+            select (hold_day - current_date)::text as day from pos.sales where id = ${second}`;
+          expect(late.day).toBe('-2');
+          // And a waiting sale no longer holds the receipt number it was created with.
+          const kept = await tx<{ number: number | null }[]>`
+            select number from pos.sales where id in ${tx([first, second])}`;
+          expect(kept.map((x) => x.number)).toEqual([null, null]);
+          const [receiptKept] = await tx<{ number: number | null }[]>`
+            select number from pos.sales where id = ${receipt}`;
+          expect(receiptKept.number).toBe(1);
+          const [undated] = await tx<{ n: number }[]>`
+            select count(*)::int as n from pos.sales where id = ${receipt} and hold_day is null`;
+          expect(undated.n).toBe(1);
+          const days = await tx<{ today: boolean }[]>`
+            select hold_number_day = (now() at time zone 'Asia/Jakarta')::date as today
+            from pos.sales_settings where tenant_id in ${tx([s.tenantId, other.tenantId])}`;
+          expect(days.map((d) => d.today)).toEqual([true, true]);
           throw rollback;
         })
         .catch((e: unknown) => {
           if (e !== rollback) throw e;
         });
 
-      // A sale that was waiting with a number when the migration ran (here: given one by hand) keeps it.
-      await admin`update pos.sales set number = 2 where id = ${first}`;
-      await admin`update pos.sales_settings set last_sale_number = 2 where tenant_id = ${s.tenantId}`;
       await onBill(s, first, 'pay');
       expect((await poll(s, first).expect(200)).body).toMatchObject({
         saleStatus: 'completed',
@@ -736,6 +780,168 @@ describe('hold number and receipt number (UMK-2038)', () => {
       await post(other.auth, `/sales/${theirs}/payment/cancel`).expect(200);
       expect(await gapFree(s.tenantId)).toBe(3);
     }, 30_000);
+  });
+
+  describe('the hold number starts at 1 every store day (Asia/Jakarta)', () => {
+    const take = (tenantId: string, at?: Date) =>
+      app.get<Db>(DB).transaction((tx) => takeNumber(tx, tenantId, 'hold', at));
+    const counter = async (tenantId: string) =>
+      (
+        await admin<{ n: number; day: string }[]>`
+          select last_hold_number as n, hold_number_day::text as day
+          from pos.sales_settings where tenant_id = ${tenantId}`
+      )[0];
+
+    it('the clock passes midnight in Jakarta: the next number is 1 on the new day; before it, the count goes on', async () => {
+      // Not in `tenants`: numbers are taken here without a sale, which the 1..n check would not accept.
+      const s = await createStore();
+      // 23:59:58 and 23:59:59 on 30 November in Jakarta (UTC+7), then midnight.
+      expect(await take(s.tenantId, new Date('2026-11-30T16:59:58Z'))).toEqual({
+        number: 1,
+        day: '2026-11-30',
+        taxBps: 0,
+      });
+      expect(
+        await take(s.tenantId, new Date('2026-11-30T16:59:59.999Z')),
+      ).toMatchObject({ number: 2, day: '2026-11-30' });
+      expect(
+        await take(s.tenantId, new Date('2026-11-30T17:00:00Z')),
+      ).toMatchObject({ number: 1, day: '2026-12-01' });
+      expect(
+        await take(s.tenantId, new Date('2026-12-01T16:59:59Z')),
+      ).toMatchObject({ number: 2, day: '2026-12-01' });
+      // Days later, and a new year.
+      expect(
+        await take(s.tenantId, new Date('2027-01-01T03:00:00Z')),
+      ).toMatchObject({ number: 1, day: '2027-01-01' });
+      // A clock that went back gives no number twice: it stays in the day the counter is in.
+      expect(
+        await take(s.tenantId, new Date('2026-12-31T10:00:00Z')),
+      ).toMatchObject({ number: 2, day: '2027-01-01' });
+      expect(await counter(s.tenantId)).toEqual({ n: 2, day: '2027-01-01' });
+      // A transaction that rolls back gives its number back.
+      await app
+        .get<Db>(DB)
+        .transaction(async (tx) => {
+          await takeNumber(
+            tx,
+            s.tenantId,
+            'hold',
+            new Date('2027-01-01T04:00:00Z'),
+          );
+          throw new Error('rollback');
+        })
+        .catch(() => undefined);
+      expect(
+        await take(s.tenantId, new Date('2027-01-01T04:00:00Z')),
+      ).toMatchObject({ number: 3 });
+      // The receipt counter knows no day.
+      const receipt = (at?: Date) =>
+        app
+          .get<Db>(DB)
+          .transaction((tx) => takeNumber(tx, s.tenantId, 'receipt', at));
+      expect(await receipt()).toMatchObject({ number: 1, day: null });
+      expect(await receipt(new Date('2030-01-01T00:00:00Z'))).toMatchObject({
+        number: 2,
+      });
+    });
+
+    it('many takes at once, on one day and across midnight: no number twice on a day, each day counted from 1', async () => {
+      const s = await createStore();
+      const other = await createStore();
+      tenants.push(s.tenantId, other.tenantId);
+      // No row yet: the first takes race to create it.
+      const first = await Promise.all(
+        Array.from({ length: 12 }, () =>
+          take(s.tenantId, new Date('2026-11-30T10:00:00Z')),
+        ),
+      );
+      expect(first.map((x) => x.number).sort((a, b) => a - b)).toEqual(
+        Array.from({ length: 12 }, (_, i) => i + 1),
+      );
+      // Half a second around midnight, all at once, and another store at the same time.
+      const around = await Promise.all([
+        ...Array.from({ length: 16 }, (_, i) =>
+          take(
+            s.tenantId,
+            new Date(Date.parse('2026-11-30T16:59:59.750Z') + (i % 2) * 500),
+          ),
+        ),
+        ...Array.from({ length: 4 }, () =>
+          take(other.tenantId, new Date('2026-11-30T17:00:00Z')),
+        ),
+      ]);
+      const mine = around.slice(0, 16);
+      const pairs = [...first, ...mine].map((x) => `${x.day}#${x.number}`);
+      expect(new Set(pairs).size).toBe(pairs.length);
+      // Once a take of the new day got in, every later one is in the new day, counted from 1.
+      const newDay = mine
+        .filter((x) => x.day === '2026-12-01')
+        .map((x) => x.number)
+        .sort((a, b) => a - b);
+      expect(newDay.length).toBeGreaterThanOrEqual(8);
+      expect(newDay).toEqual(newDay.map((_, i) => i + 1));
+      const oldDay = mine.filter((x) => x.day === '2026-11-30');
+      expect(oldDay.map((x) => x.number).sort((a, b) => a - b)).toEqual(
+        oldDay.map((_, i) => 13 + i),
+      );
+      expect(await counter(s.tenantId)).toEqual({
+        n: newDay.length,
+        day: '2026-12-01',
+      });
+      expect(
+        around
+          .slice(16)
+          .map((x) => x.number)
+          .sort(),
+      ).toEqual([1, 2, 3, 4]);
+    });
+
+    it('a sale that still waits from yesterday keeps its number while today’s first waiting sale is #1 again; receipt numbers go on', async () => {
+      const s = await shop();
+      expect((await sellCash(s).expect(201)).body.holdNumber).toBe(1);
+      const old = (await sell(s).expect(201)).body;
+      expect(old.holdNumber).toBe(2);
+      // A day passes: what was taken today was taken yesterday.
+      await admin`update pos.sales set hold_day = hold_day - 1 where tenant_id = ${s.tenantId}`;
+      await admin`update pos.sales_settings set hold_number_day = hold_number_day - 1
+        where tenant_id = ${s.tenantId}`;
+
+      const fresh = await sellCash(s).expect(201);
+      expect(fresh.body).toMatchObject({ holdNumber: 1, receiptNumber: 2 });
+      const today = (await sell(s).expect(201)).body;
+      expect(today.holdNumber).toBe(2);
+      // Two waiting sales called #2, of two days: both are found, each by its id.
+      const days = await admin<{ id: string; day: number }[]>`
+        select id, (hold_day - (now() at time zone 'Asia/Jakarta')::date)::int as day
+        from pos.sales where id in ${admin([old.id as string, today.id as string])}`;
+      expect(Object.fromEntries(days.map((d) => [d.id, d.day]))).toEqual({
+        [old.id as string]: -1,
+        [today.id as string]: 0,
+      });
+      const close = await post(s.auth, '/shifts/current/close', {
+        countedCash: 0,
+      }).expect(409);
+      expect(
+        (close.body.sales as { id: string; holdNumber: number }[]).map((x) => [
+          x.id,
+          x.holdNumber,
+        ]),
+      ).toEqual(
+        expect.arrayContaining([
+          [old.id, 2],
+          [today.id, 2],
+        ]),
+      );
+      // Yesterday's sale is paid today: the next receipt number, its own hold number.
+      await onBill(s, old.id as string, 'pay');
+      expect((await poll(s, old.id as string).expect(200)).body).toMatchObject({
+        receiptNumber: 3,
+        holdNumber: 2,
+      });
+      await post(s.auth, `/sales/${today.id}/payment/cancel`).expect(200);
+      expect(await gapFree(s.tenantId)).toBe(3);
+    });
   });
 
   describe('closing a shift while sales await payment (UMK-2044)', () => {
@@ -817,6 +1023,68 @@ describe('hold number and receipt number (UMK-2038)', () => {
         expect(stuck.n).toBe(0);
       }
     });
+
+    it('a sale that is being rung up holds the close back: the close waits for it and is then refused with that sale', async () => {
+      const s = await shop();
+      await sellCash(s).expect(201);
+      // The sale is stopped where it takes its hold number (the store's counters row is locked here), after
+      // it took the shift's row lock.
+      const locker = postgres(ADMIN_DATABASE_URL, { max: 1 });
+      const waitingForLocks = async (n: number) => {
+        for (let i = 0; i < 200; i += 1) {
+          const [r] = await admin<{ n: number }[]>`
+            select count(*)::int as n from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock'`;
+          if (r.n === n) return;
+          await new Promise((r2) => setTimeout(r2, 25));
+        }
+        throw new Error(`never saw ${n} waiting`);
+      };
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const isLocked = new Promise<void>((r) => (locked = r));
+      const holding = locker.begin(async (tx) => {
+        await tx`select 1 from pos.sales_settings where tenant_id = ${s.tenantId} for update`;
+        locked();
+        await gate;
+      });
+      try {
+        await isLocked;
+        let saleDone = false;
+        let closeDone = false;
+        const sale = sell(s).then((r) => {
+          saleDone = true;
+          return r;
+        });
+        await waitingForLocks(1);
+        const close = post(s.auth, '/shifts/current/close', {
+          countedCash: 100_000,
+        }).then((r) => {
+          closeDone = true;
+          return r;
+        });
+        // The close waits for the shift's row, which the sale holds.
+        await waitingForLocks(2);
+        expect([saleDone, closeDone]).toEqual([false, false]);
+        release();
+        await holding;
+        const [sold, closed] = await Promise.all([sale, close]);
+        expect(sold.status).toBe(201);
+        expect(closed.status).toBe(409);
+        expect(closed.body).toMatchObject({
+          code: 'sales_awaiting_payment',
+          sales: [{ id: sold.body.id, holdNumber: 2 }],
+        });
+        await post(s.auth, `/sales/${sold.body.id}/payment/cancel`).expect(200);
+        await post(s.auth, '/shifts/current/close', {
+          countedCash: 100_000,
+        }).expect(200);
+      } finally {
+        release();
+        await locker.end();
+      }
+    }, 30_000);
 
     it('only the closing actor’s own shift in their own store: another cashier’s and another store’s waiting sales neither block nor show', async () => {
       const a = await shop();
@@ -908,14 +1176,21 @@ describe('hold number and receipt number (UMK-2038)', () => {
           receiptNumber: 3,
           holdNumber: 3,
           status: 'completed',
+          reason: null,
+          // The job learned of the payment, not the till.
+          completedByJob: true,
+          onlinePayment: true,
           total: PRICE,
           amountDue: PRICE,
           paymentMethod: 'QRIS Dinamis',
           paidAt: expect.any(String),
           completedAt: expect.any(String),
+          cancelledAt: null,
+          endedAt: expect.any(String),
           createdAt: expect.any(String),
         },
       ]);
+      expect(res.body.data[0].endedAt).toBe(res.body.data[0].completedAt);
       // `asOf` is behind the clock, so the next request overlaps this one: the till drops what it has shown.
       const asOf = new Date(res.body.asOf as string).getTime();
       expect(Date.now() - asOf).toBeGreaterThanOrEqual(9_000);
@@ -933,6 +1208,114 @@ describe('hold number and receipt number (UMK-2038)', () => {
 
       await post(s.auth, `/sales/${open}/payment/cancel`).expect(200);
       await gapFree(s.tenantId);
+    });
+
+    it('lists a cash sale the job completed (not one the till completed itself), and every cancelled sale with why: cashier, failed, expired, unpaid, gateway_refused', async () => {
+      const s = await shop();
+      const since = new Date(Date.now() - 1000).toISOString();
+      const row2 = async (id: string) =>
+        (
+          (await paidSince(s.auth, since).expect(200)).body.data as {
+            id: string;
+            status: string;
+            reason: string | null;
+            completedByJob: boolean;
+            onlinePayment: boolean;
+            receiptNumber: number | null;
+            holdNumber: number;
+            cancelledAt: string | null;
+            endedAt: string;
+          }[]
+        ).find((x) => x.id === id);
+
+      // Cash rung up and recorded at once, and cash completed by a repeat of the request: the till saw both.
+      const atOnce = (await sellCash(s).expect(201)).body.id as string;
+      link = 'down';
+      const key = randomUUID();
+      const repeated = (await sellCash(s, key).expect(503)).body
+        .saleId as string;
+      // Never recorded at all: the job gives it up.
+      const givenUp = (await sellCash(s).expect(503)).body.saleId as string;
+      link = 'ok';
+      await sellCash(s, key).expect(201);
+      // Recorded by payment-api, the answer lost: the job completes it.
+      loseCharge = true;
+      const byJob = (await sellCash(s).expect(503)).body.saleId as string;
+
+      const byCashier = (await sell(s).expect(201)).body.id as string;
+      await post(s.auth, `/sales/${byCashier}/payment/cancel`).expect(200);
+      const failed = (await sell(s).expect(201)).body.id as string;
+      await onBill(s, failed, 'fail');
+      await poll(s, failed).expect(200);
+      const expired = (await sell(s).expect(201)).body.id as string;
+      await pay.sql`update payment.payments set expires_at = now() - interval '1 minute' where order_ref = ${expired}`;
+      await onBill(s, expired, 'expire');
+
+      expect(await sync.tick(later())).toMatchObject({
+        completed: 1,
+        cancelled: 1,
+        failed: 0,
+      });
+      // The grace period for money on its way is over: payment-api closes the expired bill.
+      pay.clock.advance(11 * MINUTES);
+      try {
+        await post(s.auth, `/sales/${expired}/payment/check`).expect(200);
+      } finally {
+        pay.clock.advance(-11 * MINUTES);
+      }
+
+      expect(await row2(atOnce)).toBeUndefined();
+      expect(await row2(repeated)).toBeUndefined();
+      expect(await row2(byJob)).toMatchObject({
+        status: 'completed',
+        reason: null,
+        completedByJob: true,
+        onlinePayment: false,
+        receiptNumber: 3,
+        cancelledAt: null,
+      });
+      expect(await row2(givenUp)).toMatchObject({
+        status: 'cancelled',
+        reason: 'unpaid',
+        onlinePayment: false,
+        receiptNumber: null,
+      });
+      expect(await row2(byCashier)).toMatchObject({
+        status: 'cancelled',
+        reason: 'cashier',
+        onlinePayment: true,
+        receiptNumber: null,
+      });
+      expect(await row2(failed)).toMatchObject({
+        status: 'cancelled',
+        reason: 'failed',
+      });
+      const gone = await row2(expired);
+      expect(gone).toMatchObject({
+        status: 'expired',
+        reason: 'expired',
+        completedByJob: false,
+        receiptNumber: null,
+      });
+      expect(gone!.endedAt).toBe(gone!.cancelledAt);
+      // Still `cancelled` as a sale: `expired` is this answer's word for why.
+      expect((await row(expired)).status).toBe('cancelled');
+
+      // Nothing of it after it has all ended.
+      await pause();
+      expect(
+        idsOf(await paidSince(s.auth, new Date().toISOString()).expect(200)),
+      ).toEqual([]);
+      await gapFree(s.tenantId);
+
+      // A store that may not charge at the gateway: cancelled in the request that rang the sale up.
+      const closed = await shop(false);
+      const refused = (await sell(closed).expect(409)).body.saleId as string;
+      expect(
+        (await paidSince(closed.auth, since).expect(200)).body.data,
+      ).toMatchObject([
+        { id: refused, status: 'cancelled', reason: 'gateway_refused' },
+      ]);
     });
 
     it('a payment learned late is listed although the customer paid before `since`', async () => {
@@ -975,6 +1358,9 @@ describe('hold number and receipt number (UMK-2038)', () => {
       const owners = (await sell(a).expect(201)).body.id as string;
       const cashiers = (await sellAs(a, mine.auth).expect(201)).body
         .id as string;
+      // A cancelled sale is the same people's as a paid one.
+      const dropped = (await sell(a).expect(201)).body.id as string;
+      await post(a.auth, `/sales/${dropped}/payment/cancel`).expect(200);
       const supervisors = (await sellAs(a, supervisor.auth).expect(201)).body
         .id as string;
       for (const id of [owners, cashiers, supervisors]) {
@@ -989,7 +1375,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
       expect(
         idsOf(await paidSince(supervisor.auth, since).expect(200)),
       ).toEqual([supervisors]);
-      const all = [owners, cashiers, supervisors];
+      const all = [dropped, owners, cashiers, supervisors];
       expect(idsOf(await paidSince(reader.auth, since).expect(200))).toEqual(
         all,
       );
@@ -997,8 +1383,11 @@ describe('hold number and receipt number (UMK-2038)', () => {
       // The same sales as the list shows each of them.
       for (const who of [mine, other, supervisor, reader]) {
         const list = await get(who.auth, '/sales').expect(200);
+        // (The list shows receipts; this also tells of the cancelled sale.)
         expect(idsOf(list).sort()).toEqual(
-          idsOf(await paidSince(who.auth, since).expect(200)).sort(),
+          idsOf(await paidSince(who.auth, since).expect(200))
+            .filter((id) => id !== dropped)
+            .sort(),
         );
       }
       expect(idsOf(await paidSince(b.auth, since).expect(200))).toEqual([]);
@@ -1006,7 +1395,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
 
     it('more sales than one answer holds: oldest first, `hasMore` with a cursor, and paging sees every sale exactly once, also sales completed at the same instant', async () => {
       const s = await shop(true, 200);
-      const since = new Date(Date.now() - 1000).toISOString();
+      const since = new Date(Date.now() - 10 * MINUTES).toISOString();
       const ids: string[] = [];
       for (let i = 0; i < 2 * PAID_SINCE_LIMIT + 20; i += 1) {
         const id = (await sell(s).expect(201)).body.id as string;
@@ -1016,37 +1405,76 @@ describe('hold number and receipt number (UMK-2038)', () => {
       // The job completes them (100 a run).
       for (let i = 0; i < 2; i += 1) await sync.tick(later());
       expect(await gapFree(s.tenantId)).toBe(ids.length);
-      // Three instants only, so each page ends in the middle of sales completed at the same instant.
-      await admin`
-        update pos.sales set completed_at = date_trunc('second', now()) - make_interval(secs => number % 3)
-        where tenant_id = ${s.tenantId}`;
-
-      const seen: string[] = [];
-      const pages: number[] = [];
-      let query = `since=${encodeURIComponent(since)}`;
-      for (let page = 0; page < 10; page += 1) {
-        const res = await get(s.auth, `/sales/paid-since?${query}`).expect(200);
-        const body = res.body as {
-          data: { id: string; completedAt: string }[];
-          hasMore: boolean;
-          asOf: string;
-          afterId: string | null;
-        };
-        pages.push(body.data.length);
-        seen.push(...body.data.map((x) => x.id));
-        // Oldest first within the page.
-        const times = body.data.map((x) => x.completedAt);
-        expect(times).toEqual([...times].sort());
-        if (!body.hasMore) {
-          expect(body.afterId).toBeNull();
-          break;
-        }
-        expect(body.afterId).toBe(body.data[body.data.length - 1].id);
-        query = `since=${encodeURIComponent(body.asOf)}&afterId=${body.afterId}`;
+      // Cancelled sales are paged through with them.
+      for (let i = 0; i < 7; i += 1) {
+        const id = (await sell(s).expect(201)).body.id as string;
+        await post(s.auth, `/sales/${id}/payment/cancel`).expect(200);
+        ids.push(id);
       }
-      expect(pages).toEqual([PAID_SINCE_LIMIT, PAID_SINCE_LIMIT, 20]);
+      // A minute ago, at seven instants one MICROSECOND apart: every page ends in the middle of sales that
+      // ended at the same instant, and inside a millisecond that the next page continues in. A cursor cut
+      // to milliseconds would repeat or pass by sales.
+      const longAgo = admin`date_trunc('second', now()) - interval '1 minute'`;
+      await admin`
+        update pos.sales set completed_at = ${longAgo} + (number % 7) * interval '1 microsecond'
+        where tenant_id = ${s.tenantId} and status = 'completed'`;
+      await admin`
+        update pos.sales set cancelled_at = ${longAgo} + (hold_number % 7) * interval '1 microsecond'
+        where tenant_id = ${s.tenantId} and status = 'cancelled'`;
+
+      type Page = {
+        data: { id: string; endedAt: string }[];
+        hasMore: boolean;
+        asOf: string;
+        afterId: string | null;
+      };
+      /** Pages from `since` to the end: the size of each page, every id in order, and the last answer. */
+      async function pageThrough() {
+        const seen: string[] = [];
+        const pages: number[] = [];
+        let query = `since=${encodeURIComponent(since)}`;
+        for (;;) {
+          const res = await get(s.auth, `/sales/paid-since?${query}`).expect(
+            200,
+          );
+          const body = res.body as Page;
+          pages.push(body.data.length);
+          seen.push(...body.data.map((x) => x.id));
+          // Oldest first within the page.
+          const times = body.data.map((x) => x.endedAt);
+          expect(times).toEqual([...times].sort());
+          if (!body.hasMore || pages.length > 10) {
+            expect(body.afterId).toBeNull();
+            return { seen, pages, last: body, query };
+          }
+          expect(body.afterId).toBe(body.data[body.data.length - 1].id);
+          // The cursor carries the microseconds.
+          expect(body.asOf).toMatch(/\.\d{6}Z$/);
+          query = `since=${encodeURIComponent(body.asOf)}&afterId=${body.afterId}`;
+        }
+      }
+      const { seen, pages, query } = await pageThrough();
+      expect(pages).toEqual([PAID_SINCE_LIMIT, PAID_SINCE_LIMIT, 27]);
       expect(new Set(seen).size).toBe(seen.length);
       expect([...seen].sort()).toEqual([...ids].sort());
+
+      // The newest 30 ended just now, where a completion still being written could commit with an earlier
+      // time. No cursor is put there: the page that would end among them stops at the last settled sale,
+      // and they come with the last page, whose `asOf` is behind the clock, so the next request reads them
+      // again (and anything that committed meanwhile).
+      await admin`
+        update pos.sales set completed_at = clock_timestamp()
+        where tenant_id = ${s.tenantId} and status = 'completed' and number > ${ids.length - 7 - 30}`;
+      const fresh = await pageThrough();
+      expect(fresh.pages).toEqual([PAID_SINCE_LIMIT, 47, 30]);
+      expect(new Set(fresh.seen).size).toBe(fresh.seen.length);
+      expect([...fresh.seen].sort()).toEqual([...ids].sort());
+      const again = await get(
+        s.auth,
+        `/sales/paid-since?since=${encodeURIComponent(fresh.last.asOf)}`,
+      ).expect(200);
+      expect(idsOf(again).sort()).toEqual(fresh.seen.slice(-30).sort());
+
       // Store B pages through nothing of it, with store A's cursor.
       const b = await shop();
       expect(
