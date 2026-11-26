@@ -10,6 +10,20 @@ const flag = (fallback: boolean) =>
 const count = (fallback: number) =>
   z.coerce.number().int().nonnegative().default(fallback);
 
+/**
+ * How long a bill is payable, in seconds: 1 minute to 7 days. 0 (also an empty variable) would make every
+ * bill expired when it is made, and a huge value overflows the date it is added to.
+ */
+export const MIN_TTL_SECONDS = 60;
+export const MAX_TTL_SECONDS = 7 * 86_400;
+const ttl = (fallback: number) =>
+  z.coerce
+    .number()
+    .int()
+    .min(MIN_TTL_SECONDS)
+    .max(MAX_TTL_SECONDS)
+    .default(fallback);
+
 export const GATEWAY_MODES = ['fake', 'sandbox', 'live'] as const;
 export type GatewayMode = (typeof GATEWAY_MODES)[number];
 
@@ -50,10 +64,10 @@ const EnvSchema = z
     // The owner may mark a refund the PG refused as "returned by hand" (owner decision).
     PAYMENT_MANUAL_REFUND_MARK: flag(true),
     // How long a QR accepts payment (owner decision: 15 minutes). Also every method that declares no validity.
-    PAYMENT_QR_TTL_SECONDS: count(900),
+    PAYMENT_QR_TTL_SECONDS: ttl(900),
     // How long a virtual account accepts payment (UMK-2039). 60 minutes is the sample value of the approved
     // design, NOT an owner decision yet: set it per deploy once the owner has decided.
-    PAYMENT_VA_TTL_SECONDS: count(3600),
+    PAYMENT_VA_TTL_SECONDS: ttl(3600),
     // After the bill's expiry, how long a payment on its way is still waited for before the AUTOMATIC `expired`
     // (a proposal, not yet an owner decision). A cashier's own cancel never waits for it.
     PAYMENT_EXPIRY_GRACE_SECONDS: count(600),

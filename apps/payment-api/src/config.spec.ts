@@ -24,12 +24,18 @@ describe('environment', () => {
         PAYMENT_VA_TTL_SECONDS: 86400,
       },
     );
-    expect(() => loadEnv({ ...base, PAYMENT_VA_TTL_SECONDS: '-1' })).toThrow(
-      'Invalid environment: PAYMENT_VA_TTL_SECONDS',
-    );
-    expect(() => loadEnv({ ...base, PAYMENT_VA_TTL_SECONDS: '1.5' })).toThrow(
-      'Invalid environment: PAYMENT_VA_TTL_SECONDS',
-    );
+    for (const name of [
+      'PAYMENT_QR_TTL_SECONDS',
+      'PAYMENT_VA_TTL_SECONDS',
+    ] as const) {
+      // 0 and an empty variable would make a bill expired when it is made; a huge value is no date at all.
+      for (const bad of ['-1', '1.5', '0', '', '59', '604801', '1e300', 'abc'])
+        expect(() => loadEnv({ ...base, [name]: bad })).toThrow(
+          `Invalid environment: ${name}`,
+        );
+      for (const ok of ['60', '604800'])
+        expect(loadEnv({ ...base, [name]: ok })[name]).toBe(Number(ok));
+    }
   });
 
   it('refuses to boot when the late-money sweep ends before the expiry grace does, naming the variable and no value', () => {
