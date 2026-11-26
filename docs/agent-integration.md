@@ -158,6 +158,15 @@ ingredient costs for the next HPP run.
 In: `days?` (1 to 90, default 7), `limit?` (1 to 500, default 100). Out: the store's agent calls, newest first (see
 section 3).
 
+### `hpp_product_data`
+Everything UMKMall's HPP calculators need, pulled from the POS (owner direction 26 Nov 2026: UMKMall pulls the
+products and does the calculation; the POS provides the data). In: `from`, `to`, `q?`, `page?`, `perPage?` (1 to 100,
+default 50). Out: `products`, one row each with `sellingPrice`, `costPrice`, `units`, `priceTiers`, `stock`, `hppRef`,
+`sold` (qty, sales, cost, average price and unit cost in the period) and `purchases` (qty, total, average and last
+unit cost, last date: what buying it really cost); `operatingExpenses` (total and by category: fixed-cost
+candidates); `period` (revenue and gross profit); paging; `purchasesTruncated` when the period's purchase lines were
+more than the report shows.
+
 ### `create_category`
 In: `name` + write controls. Out: the created category and `provenance`.
 

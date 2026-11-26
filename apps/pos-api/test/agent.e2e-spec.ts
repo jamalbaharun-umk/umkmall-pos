@@ -843,6 +843,94 @@ describe('UMKMall agent: session and MCP tools', () => {
     });
   });
 
+  describe('HPP data for UMKMall (owner direction 2026-11-26)', () => {
+    it('hpp_product_data gives each product its prices, stock, sales and real purchase costs, plus expenses', async () => {
+      const store = await createStore();
+      const cat = await http()
+        .post('/catalog/categories')
+        .set('Authorization', store.auth)
+        .send({ name: 'Bahan' })
+        .expect(201);
+      const gula = await http()
+        .post('/catalog/products')
+        .set('Authorization', store.auth)
+        .send({
+          name: 'Gula',
+          categoryId: cat.body.id,
+          sellingPrice: 18000,
+          costPrice: 14000,
+          unit: 'kg',
+        })
+        .expect(201);
+      const sup = await http()
+        .post('/suppliers')
+        .set('Authorization', store.auth)
+        .send({
+          name: 'Toko Grosir',
+          phone: '081234567890',
+          address: 'Jl. Pasar 1',
+        })
+        .expect(201);
+      // Two deliveries at different prices.
+      for (const [qty, unitCost] of [
+        [10, 14000],
+        [5, 15500],
+      ]) {
+        const po = await http()
+          .post('/purchasing/orders')
+          .set('Authorization', store.auth)
+          .send({
+            supplierId: sup.body.id,
+            paymentMethod: 'Tunai',
+            lines: [{ productId: gula.body.id, qty, unitCost }],
+          })
+          .expect(201);
+        await http()
+          .post(`/purchasing/orders/${po.body.id}/approve`)
+          .set('Authorization', store.auth)
+          .expect(200);
+      }
+      const today = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Jakarta',
+      }).format(new Date());
+      const client = await mcp(await agentToken(store.userId, ['pos.read']));
+      const r = await call(client, 'hpp_product_data', {
+        from: today,
+        to: today,
+      });
+      expect(r.data).toMatchObject({
+        from: today,
+        to: today,
+        total: 1,
+        products: [
+          {
+            productId: gula.body.id,
+            name: 'Gula',
+            unit: 'kg',
+            category: 'Bahan',
+            sellingPrice: 18000,
+            costPrice: 14000,
+            stock: 15,
+            sold: { qty: 0, averagePrice: null },
+            purchases: {
+              qty: 15,
+              total: 217500,
+              averageUnitCost: 14500,
+              lastUnitCost: 15500,
+            },
+          },
+        ],
+        purchasesTruncated: false,
+        operatingExpenses: { total: 0, byCategory: [] },
+      });
+      const bad = await call(client, 'hpp_product_data', {
+        from: 'x',
+        to: today,
+      });
+      expect(bad.error).toMatch(/Tanggal/);
+    });
+  });
+
   describe('review follow-ups', () => {
     it('an off switch refuses a live session even without a revocation time', async () => {
       const store = await createStore();

@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { PosSession } from '../tenancy/session';
 import {
+  costDataRows,
   costFromCogs,
   HPP_CATEGORY,
   HPP_MAX_ROWS,
@@ -102,6 +103,7 @@ export const AGENT_TOOL_NAMES = [
   'profit_loss',
   'purchasing_report',
   'agent_activity',
+  'hpp_product_data',
   'create_category',
   'create_product',
   'import_hpp_products',
@@ -522,6 +524,84 @@ export function buildAgentServer(
       ),
     },
     async (a) => answer(await get('/agent/activity', a as Query)),
+  );
+
+  tool(
+    'hpp_product_data',
+    {
+      description:
+        "Everything UMKMall's HPP calculators need from the POS, one row per product: selling price, cost price, units and wholesale tiers, stock, what sold in the period (qty, sales, cost, average price and unit cost) and what buying it really cost (qty, total, average and last unit cost), plus the store's operating expenses by category for the period (fixed-cost candidates). The POS provides the data; UMKMall does the calculation. Paged by products.",
+      inputSchema: {
+        ...dateRange,
+        q: text(100)
+          .optional()
+          .describe('Only products matching a name, SKU or barcode'),
+        page: z.number().int().optional(),
+        perPage: z.number().int().optional().describe('1 to 100, default 50'),
+      },
+      registry: reads(
+        'Strategi Harga dan Profit and the HPP calculator: pull products with their real costs',
+        '/catalog/products',
+      ),
+    },
+    async (a) => {
+      const range = { from: a.from as string, to: a.to as string };
+      const [catalog, sold, bought, pl] = await Promise.all([
+        get('/catalog/products', {
+          q: a.q as string | undefined,
+          page: a.page as number | undefined,
+          perPage: (a.perPage as number | undefined) ?? 50,
+        }),
+        get('/reports/products', range),
+        get('/reports/purchasing', range),
+        get('/reports/profit-loss', range),
+      ]);
+      if (!catalog.ok) return refused(catalog.message);
+      if (!sold.ok) return refused(sold.message);
+      if (!bought.ok) return refused(bought.message);
+      if (!pl.ok) return refused(pl.message);
+      const page = catalog.data as {
+        data: Parameters<typeof costDataRows>[0];
+        page: number;
+        perPage: number;
+        total: number;
+      };
+      const purchases = bought.data as {
+        truncated: boolean;
+        rows: Parameters<typeof costDataRows>[2];
+      };
+      const profit = pl.data as {
+        timezone: string;
+        current: { revenue: number; grossProfit: number; expenses: number };
+        topExpenses: { category: string; label: string; total: number }[];
+      };
+      return ok({
+        ...range,
+        timezone: profit.timezone,
+        page: page.page,
+        perPage: page.perPage,
+        total: page.total,
+        products: costDataRows(
+          page.data,
+          (sold.data as { rows: Parameters<typeof costDataRows>[1] }).rows,
+          purchases.rows,
+        ),
+        // The purchase lines of a very busy period are capped by the report; averages then cover the first lines.
+        purchasesTruncated: purchases.truncated,
+        operatingExpenses: {
+          total: profit.current.expenses,
+          byCategory: profit.topExpenses.map(({ category, label, total }) => ({
+            category,
+            label,
+            total,
+          })),
+        },
+        period: {
+          revenue: profit.current.revenue,
+          grossProfit: profit.current.grossProfit,
+        },
+      });
+    },
   );
 
   tool(
