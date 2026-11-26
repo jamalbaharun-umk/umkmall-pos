@@ -811,8 +811,9 @@ export class SalesService {
    * of its last answer. Listed:
    * - a sale paid through a payment gateway that was completed (`completed`; `void` when refunded since);
    * - a cash or EDC sale that the JOB completed (`completedByJob`): its payment could not be confirmed when
-   *   it was rung up. One completed by a request of the till is not listed: the cashier saw it. Nor is a
-   *   sale the cashier switched to cash;
+   *   it was rung up, or it was switched to cash by a request that died and the job finished the switch.
+   *   One completed by a request of the till (the sale, its repeat, the switch to cash) is not listed: the
+   *   cashier saw it;
    * - a sale that was cancelled: `expired` when its QR or VA ran out, else `cancelled`, with `reason`
    *   (CANCEL_REASONS; null when unknown). Its stock and voucher are back and it has no receipt number.
    *

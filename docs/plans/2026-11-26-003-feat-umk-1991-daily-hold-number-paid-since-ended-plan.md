@@ -44,9 +44,15 @@ built on top of it (PR 29).
 | no payment was ever recorded and the job gave it up, or the bill was closed otherwise | `cancelled` | `unpaid` | |
 | cancelled before this change | `cancelled` | null | |
 
-- **Not listed:** a cash/EDC sale completed by a request of the till (the sale itself, or its repeat), and a sale
-  the cashier switched to cash: the person at the till saw it. `sales.settled_by_job` tells them apart; it is set
-  by `applyToSale` when the job (`reconcile`) completes a sale. A PG sale is listed whoever learned of the payment.
+- **Not listed:** a cash/EDC sale completed by a request of the till (the sale itself, its repeat, or the
+  cashier's switch to cash): the person at the till saw it. `sales.settled_by_job` tells them apart; it is set
+  by `applyToSale` when the job (`reconcile`) completes a sale. So a switch to cash whose request died and that
+  the JOB finished IS listed, with `completedByJob: true` (PR 31 review: the first text said no switched sale
+  is). A PG sale is listed whoever learned of the payment.
+- **`reason` is who or what made pos-api cancel, not the bill's last state.** A cancel by the cashier is
+  `cashier` also when the bill had already expired at the gateway a moment before (payment-api answers the
+  closed payment and the cancel route applies it). Harmless: the till that cancelled knows, and the sale is
+  cancelled either way; a screen that must tell an expired QR from a cancelled one reads the payment's status.
 - **`status` here is this answer's word,** not `sales.status`: `expired` is a sale whose status is `cancelled`
   and whose reason is `expired`. The sale's own status is unchanged everywhere else.
 - `sales.cancel_reason` (`CANCEL_REASONS`) is written by `applyToSale` with the cancellation: `gateway_refused`
@@ -66,7 +72,9 @@ built on top of it (PR 29).
 ### Migration `hold_number_daily` (a new file; `sale_hold_number` is not edited)
 
 - adds `sales.hold_day`, `sales.settled_by_job`, `sales.cancel_reason`, `sales_settings.hold_number_day`, the
-  check `sales_hold_day_ck`; replaces the unique index
+  check `sales_hold_day_ck`; replaces the unique index. **`sales_hold_day_ck` carries two rules** despite its
+  name: a hold number has its day, and only a cancelled sale has a `cancel_reason`. It is not renamed or split
+  (that would be one more migration for a name); a refusal by it can be either rule
 - existing hold numbers keep their number and are dated at the store day the sale was rung up (they were unique
   per store, so they are unique per store and day)
 - a counter in use goes on counting today (`hold_number_day` = today) and starts at 1 tomorrow: a 1 taken today
@@ -104,6 +112,12 @@ built on top of it (PR 29).
 
 pos-web: only the two alerts for a waiting and a cancelled sale are removed from `routes/kasir/riwayat.$id.tsx`.
 The screen loads the receipt, which pos-api now refuses for such a sale, so they could never show.
+
+### The close refusal names the day (PR 31 review)
+
+With daily numbers the refusal could read "#1, #1". The waiting sales are ordered by `(hold_day, hold_number)`,
+the message says the day of a sale that does not wait since today ("#1 (25/11), #1"), and each item of `sales`
+carries `holdDay`, `holdToday` and `holdDayLabel` (`DD/MM`, null for today).
 
 ## Not in this plan
 

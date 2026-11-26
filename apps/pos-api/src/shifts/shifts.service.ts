@@ -43,6 +43,7 @@ import {
   lockOpenShift,
   NO_CASH,
 } from './cash-ledger';
+import { HOLD_NUMBER_TIMEZONE } from '../sales/numbers';
 import { shiftActorName, shiftNumbers } from './shift-read';
 
 /** The `code` of the 409 that refuses to close a shift while sales of it await payment (UMK-2044). */
@@ -218,6 +219,10 @@ export class ShiftsService {
         .select({
           id: sales.id,
           holdNumber: sales.holdNumber,
+          // Hold numbers start at 1 every store day: a sale that waits since another day says which day.
+          holdDay: sales.holdDay,
+          today: sql<boolean>`${sales.holdDay} = (now() at time zone ${HOLD_NUMBER_TIMEZONE})::date`,
+          dayLabel: sql<string>`to_char(${sales.holdDay}, 'DD/MM')`,
           total: sales.total,
           rounding: sales.rounding,
           paymentMethod: paymentMethods.name,
@@ -239,25 +244,30 @@ export class ShiftsService {
             eq(sales.status, 'awaiting_payment'),
           ),
         )
-        .orderBy(asc(sales.holdNumber));
+        .orderBy(asc(sales.holdDay), asc(sales.holdNumber));
       if (waiting.length)
         // UMK-2044: a stable code and the sales themselves (this shift's, so the actor's own, in the
         // session's store), for the screen to name and open. The message keeps its first words.
         throw new ConflictException({
           message: `Masih ada penjualan yang menunggu pembayaran: ${waiting
-            .map((w) => `#${w.holdNumber}`)
+            // "#1 (25/11), #1": yesterday's #1 and today's are two sales.
+            .map((w) => `#${w.holdNumber}${w.today ? '' : ` (${w.dayLabel})`}`)
             .join(', ')}`,
           code: SALES_AWAITING_PAYMENT,
-          sales: waiting.map(({ code, total, rounding, ...w }) => ({
-            ...w,
-            // What the customer owes: the total, plus the cash rounding of a cash sale.
-            amountDue: total + rounding,
-            // Waits for a payment gateway (the waiting screen opens it); else a cash or EDC sale between
-            // its two steps, which a repeat of the sale or the job finishes.
-            onlinePayment: (GATEWAY_METHODS as readonly string[]).includes(
-              code ?? '',
-            ),
-          })),
+          sales: waiting.map(
+            ({ code, total, rounding, today, dayLabel, ...w }) => ({
+              ...w,
+              holdToday: today,
+              holdDayLabel: today ? null : dayLabel,
+              // What the customer owes: the total, plus the cash rounding of a cash sale.
+              amountDue: total + rounding,
+              // Waits for a payment gateway (the waiting screen opens it); else a cash or EDC sale between
+              // its two steps, which a repeat of the sale or the job finishes.
+              onlinePayment: (GATEWAY_METHODS as readonly string[]).includes(
+                code ?? '',
+              ),
+            }),
+          ),
           saleNumbers: waiting.map((w) => w.holdNumber),
         });
       const t = await this.totals(tx, shift.id);

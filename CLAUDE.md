@@ -295,8 +295,10 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   back until it is false. A shift that cannot close for waiting sales answers 409 `sales_awaiting_payment` with
   those sales (UMK-2044). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
   cancelled sale, so a hold number is never printed as a receipt number.
-- **Migration `sale_hold_number` is not for a rolling deploy:** the version before it violates `sales_number_ck`
-  on every sale. Stop the old instances, migrate, start the new (the plan's "Deploy order").
+- **Migrations `sale_hold_number` (0036) and `hold_number_daily` (0037) are not for a rolling deploy:** the
+  version before 0036 violates `sales_number_ck` on every sale, and the one before 0037 writes a hold number
+  without its day (`sales_hold_day_ck`, which also holds the rule that only a cancelled sale has a
+  `cancel_reason`). Stop the old instances, migrate, start the new (plan 2026-11-26-002's "Deploy order").
 - **A sale is dated by `sales.paid_at`, not `created_at`,** in every day-based figure and in the sales list (owner
   ruling 2026-11-25): the time it was rung up when paid at once; for a sale that waited for a PG, payment-api's paid
   time (validated by `isoTime`, kept between creation and now, else the time it is applied); the switch to cash;
