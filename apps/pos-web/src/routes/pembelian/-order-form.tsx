@@ -32,6 +32,7 @@ import { useCan } from '@/components/shell'
 import { createOrder, type Order, type StockProduct, type Supplier, updateOrder } from './-api'
 import { type OrderLine as Line, toInt, validateOrder } from './-validate'
 import { ActionRow } from '@/components/action-row'
+import { ProductPicker } from '@/components/product-picker'
 
 /**
  * The purchase form: create (no `order`) or edit a draft (`order`). Header grid plus a line table, like Lakasir's
@@ -40,10 +41,12 @@ import { ActionRow } from '@/components/action-row'
 export function OrderForm({
   suppliers,
   products,
+  productTotal,
   order,
 }: {
   suppliers: Supplier[]
   products: StockProduct[]
+  productTotal: number
   order?: Order
 }) {
   const navigate = useNavigate()
@@ -85,7 +88,7 @@ export function OrderForm({
       </Page>
     )
 
-  if (suppliers.length === 0 || products.length === 0)
+  if (suppliers.length === 0 || productTotal === 0)
     return (
       <Page crumbs={crumbs} title={title}>
         <Card variant="outlined">
@@ -113,11 +116,9 @@ export function OrderForm({
   }
   // Preview only: pos-api computes the stored total.
   const total = lines.reduce((sum, l) => sum + (toInt(l.qty) * toInt(l.unitCost) || 0), 0)
-  const productOptions = products.map((p) => ({
-    value: p.id,
-    label: p.name,
-    description: p.sku,
-  }))
+  // A saved line's product shows by name before any search (it may not be on the first page).
+  const savedProducts: StockProduct[] =
+    order?.lines.map((l) => ({ id: l.productId, name: l.productName, sku: l.sku, costPrice: l.unitCost ?? 0 })) ?? []
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -218,20 +219,13 @@ export function OrderForm({
                 <TableRow key={i} className="max-sm:grid max-sm:grid-cols-[1fr_1fr_auto] max-sm:items-end max-sm:gap-x-3">
                   <TableCell className="sm:min-w-56 max-sm:col-span-full max-sm:block">
                     <span className="mb-1 block text-xs text-default-secondary sm:hidden">Produk</span>
-                    <Select
-                      aria-label={`Produk baris ${i + 1}`}
-                      size="small"
-                      showSearch
-                      placeholder="Pilih produk"
+                    <ProductPicker
+                      label={`Produk baris ${i + 1}`}
                       error={errors[`lines.${i}.productId`]}
-                      options={productOptions}
-                      value={l.productId || undefined}
-                      onValueChange={(v) =>
-                        set(i, {
-                          productId: v,
-                          unitCost: l.unitCost || String(products.find((x) => x.id === v)?.costPrice ?? ''),
-                        })
-                      }
+                      initial={products}
+                      known={savedProducts}
+                      value={l.productId}
+                      onPick={(p) => set(i, { productId: p.id, unitCost: l.unitCost || String(p.costPrice || '') })}
                     />
                   </TableCell>
                   <TableCell className="max-sm:block">
