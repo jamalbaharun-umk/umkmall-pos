@@ -22,6 +22,8 @@ export interface PaymentRef {
   method: string;
   amount: number;
   providerRef: string | null;
+  /** The bank the payer chose: one of the adapter's `banks` codes, null for a method that declares none. */
+  bank: string | null;
   /** When the bill should stop accepting payment (the configured validity of the method). */
   expiresAt: Date | null;
 }
@@ -35,6 +37,15 @@ export interface PaymentRef {
  * A charge answers at least one of `qrString`, `paymentUrl` or `vaNumber`; a caller shows what it finds.
  */
 export type Checkout = Record<string, string>;
+
+/**
+ * A bank a method can make a bill at (UMK-2037). `code` is what a charge carries and what `checkout.bank`
+ * answers; `name` is what the payer is shown. The gateway's list, never a bank account.
+ */
+export interface Bank {
+  code: string;
+  name: string;
+}
 
 export interface ChargeResult {
   /** `pending`: the bill exists and the payer has not paid yet. `failed`: the PG refused it. */
@@ -129,6 +140,11 @@ export interface PaymentAdapter {
    * bill's own expiry.
    */
   readonly validity?: BillValidity;
+  /**
+   * The banks the payer chooses from BEFORE the bill is made (a virtual account). A method that declares
+   * banks is charged with one of their codes (`PaymentRef.bank`); a method that declares none takes none.
+   */
+  readonly banks?: readonly Bank[];
 
   /**
    * Throws GatewayUnreachableError when the request certainly never reached the PG; any other error means

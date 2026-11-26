@@ -62,7 +62,11 @@ describe('local fake gateway', () => {
   });
 
   const bill = async (s: Store, over: Record<string, unknown> = {}) => {
-    const res = await s.chargeRaw({ method: 'fake_qris', ...over }).expect(201);
+    // A virtual account is made at a bank the payer chose (UMK-2037): `FAKE` unless the test says otherwise.
+    const bank = over.method === 'fake_va' ? { bank: 'FAKE' } : {};
+    const res = await s
+      .chargeRaw({ method: 'fake_qris', ...bank, ...over })
+      .expect(201);
     expect(res.body.status).toBe('pending');
     return res.body as Payment;
   };
@@ -134,6 +138,136 @@ describe('local fake gateway', () => {
           vaNumber: expect.stringMatching(/^8808\d{12}$/),
         },
         capabilities: { singleUseQr: false },
+      });
+    });
+
+    describe('UMK-2037 the bank of a virtual account', () => {
+      const va = (s: Store, over: Record<string, unknown> = {}) =>
+        s.chargeRaw({ method: 'fake_va', ...over });
+
+      it('the account’s methods answer the banks a VA can be made at, and none for a QR', async () => {
+        const s = createStore(app);
+        const res = await s.get('/merchant-accounts').expect(200);
+        const [account] = res.body.items as {
+          methods: { method: string; banks: unknown }[];
+        }[];
+        const banks = Object.fromEntries(
+          account.methods.map((m) => [m.method, m.banks]),
+        );
+        expect(banks).toEqual({
+          fake_qris: [],
+          fake_va: [
+            { code: 'FAKE', name: 'Bank Fake' },
+            { code: 'FAKE2', name: 'Bank Fake Dua' },
+          ],
+          fake_checkout: [],
+        });
+      });
+
+      it('the VA is made at the chosen bank, which the payment and the gateway’s bill both carry', async () => {
+        const s = createStore(app);
+        const first = (await va(s, { bank: 'FAKE' }).expect(201)).body;
+        const second = (await va(s, { bank: 'FAKE2' }).expect(201)).body;
+        expect(first).toMatchObject({
+          bank: 'FAKE',
+          checkout: {
+            bank: 'FAKE',
+            vaNumber: expect.stringMatching(/^8808\d{12}$/),
+          },
+        });
+        expect(second).toMatchObject({
+          bank: 'FAKE2',
+          checkout: {
+            bank: 'FAKE2',
+            vaNumber: expect.stringMatching(/^8809\d{12}$/),
+          },
+        });
+        expect((await billOf(s, second)).checkout.bank).toBe('FAKE2');
+        const [row] = await sql<{ bank: string | null }[]>`
+          select bank from payment.payments where id = ${second.id}`;
+        expect(row.bank).toBe('FAKE2');
+        // Another store reads neither.
+        await createStore(app).get(`/payments/${second.id}`).expect(404);
+      });
+
+      it('no bank, an unknown bank or a value that is no code: 422 on `bank`, nothing written and no bill made', async () => {
+        const s = createStore(app);
+        const none = await va(s).expect(422);
+        expect(none.body).toMatchObject({
+          code: 'bank_required',
+          errors: { bank: expect.any(String) },
+        });
+        const unknown = await va(s, { bank: 'BCA' }).expect(422);
+        expect(unknown.body).toMatchObject({
+          code: 'bank_unknown',
+          errors: { bank: expect.any(String) },
+        });
+        for (const bank of ['', 'a b', 7, null, 'x'.repeat(31)]) {
+          const bad = await va(s, { bank }).expect(422);
+          expect(Object.keys(bad.body.errors)).toEqual(['bank']);
+        }
+        // A method that declares no banks takes none: a bank on a QR is a mistake of the caller.
+        const qr = await s
+          .chargeRaw({ method: 'fake_qris', bank: 'FAKE' })
+          .expect(422);
+        expect(qr.body.code).toBe('bank_not_supported');
+        const cash = await s.chargeRaw({ bank: 'FAKE' }).expect(422);
+        expect(cash.body.code).toBe('bank_not_supported');
+        expect(await bills(s)).toEqual([]);
+        const [{ n }] = await sql<{ n: number }[]>`
+          select count(*)::int as n from payment.payments where tenant_id = ${s.tenantId}`;
+        expect(n).toBe(0);
+      });
+
+      it('the key answers its VA again with the same bank, and refuses another bank under it', async () => {
+        const s = createStore(app);
+        const orderRef = `order-${randomUUID()}`;
+        const first = (await va(s, { orderRef, bank: 'FAKE' }).expect(201))
+          .body;
+        const again = await va(s, { orderRef, bank: 'FAKE' }).expect(200);
+        expect(again.body).toMatchObject({
+          id: first.id,
+          checkout: first.checkout,
+        });
+        for (const bank of ['FAKE2', 'BCA', undefined]) {
+          const other = await va(s, { orderRef, bank }).expect(409);
+          expect(other.body.code).toBe('idempotency_key_reused');
+        }
+        expect(await bills(s)).toHaveLength(1);
+        expect((await s.read(first.id)).checkout).toEqual(first.checkout);
+      });
+
+      it('a charge whose answer was lost is found again at the bank it was asked for (…903)', async () => {
+        const s = createStore(app);
+        const res = await va(s, { bank: 'FAKE2', amount: 25_903 }).expect(201);
+        expect(res.body).toMatchObject({
+          status: 'pending',
+          checkout: { bank: 'FAKE2' },
+        });
+      });
+
+      it('closing a key takes the charge’s own body, bank included, and a charge that arrives later answers the closed payment', async () => {
+        const s = createStore(app);
+        const body = {
+          orderRef: `order-${randomUUID()}`,
+          attempt: 1,
+          method: 'fake_va',
+          amount: 25_000,
+          actorRef: 'cashier-1',
+          bank: 'FAKE2',
+        };
+        const key = `${body.orderRef}:1`;
+        const closed = await s.post('/payments/close', body, key).expect(201);
+        expect(closed.body).toMatchObject({
+          status: 'cancelled',
+          bank: 'FAKE2',
+        });
+        const late = await s.post('/payments', body, key).expect(200);
+        expect(late.body).toMatchObject({
+          id: closed.body.id,
+          status: 'cancelled',
+        });
+        expect(await bills(s)).toEqual([]);
       });
     });
 
@@ -632,7 +766,7 @@ describe('local fake gateway', () => {
     it('…902: the gateway is unreachable, the payment fails at once', async () => {
       const s = createStore(app);
       const res = await s
-        .chargeRaw({ method: 'fake_va', amount: 25_902 })
+        .chargeRaw({ method: 'fake_va', bank: 'FAKE', amount: 25_902 })
         .expect(201);
       expect(res.body.status).toBe('failed');
       expect(await bills(s)).toEqual([]);

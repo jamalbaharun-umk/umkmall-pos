@@ -1,6 +1,7 @@
 import {
   ConflictException,
   HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -52,6 +53,7 @@ function view(p: PaymentRow, adapter: PaymentAdapter | undefined) {
     method: p.method,
     kind: adapter?.kind ?? null,
     amount: p.amount,
+    bank: p.bank,
     feeAmount: p.feeAmount,
     status: p.status,
     needsReview: p.needsReview,
@@ -68,6 +70,31 @@ function view(p: PaymentRow, adapter: PaymentAdapter | undefined) {
   };
 }
 
+/**
+ * UMK-2037: a method whose adapter declares banks is charged with one of them; any other method with none.
+ * 422 on `bank`, with a stable code the caller can act on. Null: the bank fits the method.
+ */
+function bankRefusal(
+  adapter: PaymentAdapter,
+  bank: string | undefined,
+): HttpException | null {
+  const refuse = (code: string, message: string) =>
+    new HttpException(
+      { message, code, errors: { bank: message } },
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
+  const banks = adapter.banks ?? [];
+  if (banks.length === 0)
+    return bank === undefined
+      ? null
+      : refuse('bank_not_supported', 'This payment method takes no bank');
+  if (bank === undefined)
+    return refuse('bank_required', 'Choose a bank for this payment method');
+  return banks.some((b) => b.code === bank)
+    ? null
+    : refuse('bank_unknown', 'Unknown bank for this payment method');
+}
+
 /** The fingerprint of a charge request: the same key with another request is refused, not replayed. */
 const hashOf = (input: ChargeInput) =>
   createHash('sha256')
@@ -78,6 +105,8 @@ const hashOf = (input: ChargeInput) =>
         input.method,
         input.amount,
         input.actorRef,
+        // Only when a bank was sent, so a key made before UMK-2037 still replays.
+        ...(input.bank === undefined ? [] : [input.bank]),
       ]),
     )
     .digest('hex');
@@ -114,6 +143,8 @@ export class PaymentsService {
           : 'Unknown payment method',
       );
     const requestHash = hashOf(input);
+    // Before anything is written or asked: a bill is never made at the wrong bank, or at none.
+    const wrongBank = bankRefusal(adapter, input.bank);
 
     // A PG charge needs the store's gateway account to be active with this method on (UMK-2019). Only a NEW
     // charge is refused: a key that already has a payment still answers it, whatever the account is now.
@@ -131,6 +162,21 @@ export class PaymentsService {
       if (!known) throw gate;
       return this.replay(tenantId, key, requestHash, input);
     }
+    // Like the gate, only a NEW charge is refused: a key that has a payment answers it (or 409 for another
+    // request under it), so a repeat never fails on a list of banks that changed since.
+    if (wrongBank) {
+      const [known] = await this.db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.tenantId, tenantId),
+            eq(payments.idempotencyKey, key),
+          ),
+        );
+      if (!known) throw wrongBank;
+      return this.replay(tenantId, key, requestHash, input);
+    }
 
     const now = this.clock.now();
     const claimed = await this.db.transaction(async (tx) => {
@@ -144,6 +190,7 @@ export class PaymentsService {
           attempt: input.attempt,
           method: input.method,
           amount: input.amount,
+          bank: input.bank ?? null,
           status: 'created',
           idempotencyKey: key,
           requestHash,
@@ -211,6 +258,7 @@ export class PaymentsService {
           attempt: input.attempt,
           method: input.method,
           amount: input.amount,
+          bank: input.bank ?? null,
           status: 'created',
           idempotencyKey: key,
           requestHash,

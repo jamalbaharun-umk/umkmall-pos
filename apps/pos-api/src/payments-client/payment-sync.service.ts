@@ -35,6 +35,7 @@ import { takeNumber } from '../sales/numbers';
 import { StockService } from '../stock/stock.service';
 import { restoreVoucher } from '../vouchers/vouchers.controller';
 import {
+  type Bank,
   isInFlight,
   isOnlineMethod,
   type Payment,
@@ -97,6 +98,17 @@ const GATE_REFUSALS = new Set([
   'method_disabled',
   'live_disabled',
   'merchant_mode_mismatch',
+]);
+
+/**
+ * payment-api's refusals of a charge whose bank does not fit the method (UMK-2037). pos-api checks the bank
+ * before the sale is written; these are payment-api's own answer when that check could not be made or its
+ * list has changed since. No bill exists after one of these either.
+ */
+export const BANK_REFUSALS = new Set([
+  'bank_required',
+  'bank_unknown',
+  'bank_not_supported',
 ]);
 
 /** A refund's state at payment-api as pos-api keeps it on the void record. */
@@ -168,6 +180,24 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    */
   get onlineEnabled(): boolean {
     return this.enabled && this.onlineAllowed;
+  }
+
+  /**
+   * The banks a sale with this gateway method chooses from (UMK-2037): empty when the method needs none.
+   * Null when payment-api gives no answer: the caller goes on without the check, and payment-api's own
+   * check of the charge decides (`BANK_REFUSALS`). Called before the sale's transaction, never inside one.
+   */
+  async banksOf(tenantId: string, method: string): Promise<Bank[] | null> {
+    try {
+      const { accounts } = await this.client.merchantAccounts(tenantId);
+      return (
+        accounts.flatMap((a) => a.methods).find((m) => m.method === method)
+          ?.banks ?? []
+      );
+    } catch (error) {
+      if (!(error instanceof PaymentApiError)) throw error;
+      return null;
+    }
   }
 
   async onModuleInit() {
@@ -262,6 +292,11 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         // What the customer owes: a cash total is rounded up to Rp100 (UMK-1993), `rounding` is 0 otherwise.
         amount: sale.total + sale.rounding,
         actorRef: actor,
+        // UMK-2037: the bank is part of the PG attempt's charge (and of its key's fingerprint), so every
+        // charge and close of that attempt carries it. The cash attempt of a switched sale has none.
+        ...(sale.bank && isOnlineMethod(sale.method)
+          ? { bank: sale.bank }
+          : {}),
       };
       let payment: Payment | null;
       let refusedCode: string | undefined;
@@ -276,7 +311,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
             if (
               !(error instanceof PaymentApiError) ||
               error.kind !== 'rejected' ||
-              !GATE_REFUSALS.has(error.code ?? '') ||
+              !(
+                GATE_REFUSALS.has(error.code ?? '') ||
+                BANK_REFUSALS.has(error.code ?? '')
+              ) ||
               !isOnlineMethod(charge.method)
             )
               throw error;
@@ -380,6 +418,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         actorId: sales.actorId,
         actorKind: sales.actorKind,
         method: sales.paymentMethodCode,
+        bank: sales.paymentBank,
         attempt: sales.paymentAttempt,
         attemptAt: sales.paymentAttemptAt,
         switchCashPaid: sales.switchCashPaid,

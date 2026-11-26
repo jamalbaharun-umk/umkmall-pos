@@ -58,6 +58,12 @@ export const SaleInput = z
     memberId: Uuid.optional(),
     voucherCode: z.string().trim().min(1).max(40).optional(),
     paymentMethodId: Uuid.optional(),
+    // UMK-2037: the bank the customer chose, for an online method that needs one (a virtual account): one of
+    // the codes of `GET /online-payments/methods`. Required for such a method, refused for any other.
+    bank: z
+      .string({ invalid_type_error: 'Bank tidak valid' })
+      .regex(/^[A-Za-z0-9_-]{1,30}$/, 'Bank tidak valid')
+      .optional(),
     paid: rupiah,
     note: z.string().trim().max(200).optional(),
   })

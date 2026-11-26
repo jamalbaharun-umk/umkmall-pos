@@ -644,18 +644,162 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       }).expect(200);
     });
 
-    it('a VA sale answers the bank and the VA number', async () => {
+    it('UMK-2037 a VA sale is made at the bank the customer chose, and answers that bank and its VA number', async () => {
       const s = await shop();
       const va = await method(s, 'VA', 'fake_va');
-      const res = await sell(s, { paymentMethodId: va }).expect(201);
-      expect(res.body.payment).toMatchObject({ method: 'fake_va' });
+      const res = await sell(s, { paymentMethodId: va, bank: 'FAKE2' }).expect(
+        201,
+      );
+      expect(res.body.payment).toMatchObject({
+        method: 'fake_va',
+        checkout: {
+          bank: 'FAKE2',
+          vaNumber: expect.stringMatching(/^8809\d{12}$/),
+        },
+      });
       expect(Object.keys(res.body.payment.checkout).sort()).toEqual([
         'bank',
         'vaNumber',
       ]);
+      const [row] = await admin<{ payment_bank: string | null }[]>`
+        select payment_bank from pos.sales where id = ${res.body.id}`;
+      expect(row.payment_bank).toBe('FAKE2');
+      const [payment] = await pay.sql<{ bank: string | null }[]>`
+        select bank from payment.payments where order_ref = ${res.body.id}`;
+      expect(payment.bank).toBe('FAKE2');
       await onBill(s, res.body.id, 'pay');
       await get(s.auth, `/sales/${res.body.id}/payment`).expect(200);
       expect((await saleRow(res.body.id)).status).toBe('completed');
+    });
+
+    it('UMK-2037 a VA sale without a bank, with an unknown one, or a QR or cash sale with one: 422 on `bank`, and nothing is written or taken', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      const sales = async () =>
+        (
+          await admin<{ n: number }[]>`
+            select count(*)::int as n from pos.sales where tenant_id = ${s.tenantId}`
+        )[0].n;
+      const banks = [
+        { code: 'FAKE', name: 'Bank Fake' },
+        { code: 'FAKE2', name: 'Bank Fake Dua' },
+      ];
+      const none = await sell(s, { paymentMethodId: va }).expect(422);
+      expect(none.body).toMatchObject({
+        errors: { bank: 'Pilih bank untuk virtual account' },
+        banks,
+      });
+      const unknown = await sell(s, {
+        paymentMethodId: va,
+        bank: 'BCA',
+      }).expect(422);
+      expect(unknown.body).toMatchObject({
+        errors: { bank: 'Bank tidak tersedia untuk metode ini' },
+        banks,
+      });
+      for (const bank of ['', 'a b', 7, null]) {
+        const bad = await sell(s, { paymentMethodId: va, bank }).expect(422);
+        expect(Object.keys(bad.body.errors)).toEqual(['bank']);
+      }
+      // A QR and a cash sale choose no bank.
+      const qr = await sell(s, { bank: 'FAKE' }).expect(422);
+      expect(qr.body.errors).toEqual({
+        bank: 'Metode pembayaran ini tidak memakai bank',
+      });
+      const cash = await sell(s, {
+        paymentMethodId: undefined,
+        paid: 10_000,
+        bank: 'FAKE',
+      }).expect(422);
+      expect(cash.body.errors).toEqual({
+        bank: 'Metode pembayaran ini tidak memakai bank',
+      });
+      expect(await sales()).toBe(0);
+      expect(await onHand(s)).toBe(20);
+      expect(await bills(s.tenantId)).toEqual([]);
+      expect(
+        await pay.sql`select 1 from payment.payments where tenant_id = ${s.tenantId}`,
+      ).toHaveLength(0);
+    });
+
+    it('UMK-2037 the same key answers the same VA; the same key with another bank is another request (422)', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      const key = randomUUID();
+      const body = { paymentMethodId: va, bank: 'FAKE' };
+      const first = await sell(s, body, key).expect(201);
+      const again = await sell(s, body, key).expect(201);
+      expect(again.body.id).toBe(first.body.id);
+      expect(again.body.payment.checkout).toEqual(first.body.payment.checkout);
+      await sell(s, { ...body, bank: 'FAKE2' }, key).expect(422);
+      expect(await bills(s.tenantId)).toHaveLength(1);
+      await post(s.auth, `/sales/${first.body.id}/payment/cancel`).expect(200);
+    });
+
+    it('UMK-2037 a VA sale whose charge got no answer is given up by the job with the bank it was asked for; switched to cash it is charged without one', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      // The charge never reaches payment-api; the bank check before the sale did.
+      link = 'no_charge';
+      const lost = await sell(s, { paymentMethodId: va, bank: 'FAKE2' }).expect(
+        503,
+      );
+      link = 'ok';
+      const lostId = lost.body.saleId as string;
+      expect(await sync.tick(later())).toMatchObject({ cancelled: 1 });
+      expect((await saleRow(lostId)).status).toBe('cancelled');
+      // The key was closed with the charge's own body: the charge that arrives late answers that payment.
+      const [closed] = await pay.sql<{ status: string; bank: string | null }[]>`
+        select status, bank from payment.payments where order_ref = ${lostId}`;
+      expect(closed).toEqual({ status: 'cancelled', bank: 'FAKE2' });
+
+      const res = await sell(s, { paymentMethodId: va, bank: 'FAKE' }).expect(
+        201,
+      );
+      const cash = await post(s.auth, `/sales/${res.body.id}/payment/cash`, {
+        paid: 5200,
+      }).expect(200);
+      expect(cash.body).toMatchObject({
+        saleStatus: 'completed',
+        method: 'cash',
+      });
+      const rows = await pay.sql<
+        { method: string; bank: string | null; status: string }[]
+      >`select method, bank, status from payment.payments
+        where order_ref = ${res.body.id} order by attempt`;
+      expect(rows).toEqual([
+        { method: 'fake_va', bank: 'FAKE', status: 'cancelled' },
+        { method: 'cash', bank: null, status: 'paid' },
+      ]);
+    });
+
+    it('UMK-2037 payment-api is the authority on the bank: when the check before the sale cannot be made and it refuses the charge, the sale is cancelled at once (422) with its stock back', async () => {
+      const s = await shop();
+      const va = await method(s, 'VA', 'fake_va');
+      // The list of banks cannot be read, so the sale goes on; the charge itself is answered.
+      answerInstead = (c) =>
+        c.init.method === 'GET' && c.url.endsWith('/merchant-accounts')
+          ? new Response('{}', { status: 500 })
+          : null;
+      const res = await sell(s, { paymentMethodId: va, bank: 'BCA' }).expect(
+        422,
+      );
+      expect(res.body).toMatchObject({
+        code: 'bank_unknown',
+        status: 'cancelled',
+        errors: { bank: expect.any(String) },
+      });
+      const missing = await sell(s, { paymentMethodId: va }).expect(422);
+      expect(missing.body.code).toBe('bank_required');
+      answerInstead = null;
+      for (const id of [res.body.saleId, missing.body.saleId] as string[]) {
+        expect((await saleRow(id)).status).toBe('cancelled');
+        expect((await paymentsOf(id)).map((p) => p.status)).toEqual([
+          'cancelled',
+        ]);
+      }
+      expect(await onHand(s)).toBe(20);
+      expect(await bills(s.tenantId)).toEqual([]);
     });
 
     it('M11 the gateway refuses the bill: 409, the sale is cancelled and stock is back at once', async () => {

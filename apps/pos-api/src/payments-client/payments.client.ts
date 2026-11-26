@@ -68,6 +68,9 @@ export type Payment = {
   unmatchedReceipts: UnmatchedReceipt[];
 };
 
+/** A bank a PG method can make a bill at (a virtual account): payment-api's code and the name to show. */
+export type Bank = { code: string; name: string };
+
 /** A store's account at a payment gateway, as payment-api answers it (UMK-2019). No secret is in it. */
 export type MerchantAccount = {
   provider: string;
@@ -83,7 +86,13 @@ export type MerchantAccount = {
   };
   termsAcceptedAt: string | null;
   submittedAt: string | null;
-  methods: { method: string; enabled: boolean; chargeable: boolean }[];
+  methods: {
+    method: string;
+    enabled: boolean;
+    chargeable: boolean;
+    /** UMK-2037: what the customer chooses from before a bill of this method is made; empty when none. */
+    banks: Bank[];
+  }[];
   lastSyncedAt: string | null;
   updatedAt: string | null;
 };
@@ -131,6 +140,13 @@ const toMerchantAccount = (v: unknown): MerchantAccount | null => {
         method: m.method as string,
         enabled: m.enabled === true,
         chargeable: m.chargeable === true,
+        banks: (Array.isArray(m.banks) ? (m.banks as unknown[]) : [])
+          .map((b) => b as Record<string, unknown> | null)
+          .filter(
+            (b): b is { code: string; name: string } =>
+              !!b && typeof b.code === 'string' && typeof b.name === 'string',
+          )
+          .map((b) => ({ code: b.code, name: b.name })),
       })),
     lastSyncedAt: text(a.lastSyncedAt),
     updatedAt: text(a.updatedAt),
@@ -218,6 +234,8 @@ export class PaymentsClient {
       /** Integer rupiah. */
       amount: number;
       actorRef: string;
+      /** UMK-2037: the bank of a PG method that needs one; left out for every other charge. */
+      bank?: string;
     },
   ): Promise<Payment> {
     return this.payment(
@@ -242,6 +260,7 @@ export class PaymentsClient {
       method: PaymentMethodCode;
       amount: number;
       actorRef: string;
+      bank?: string;
     },
   ): Promise<Payment> {
     return this.payment(

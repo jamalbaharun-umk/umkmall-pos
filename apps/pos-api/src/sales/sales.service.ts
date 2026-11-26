@@ -39,6 +39,7 @@ import {
 import { priceLines, type ProductPricing } from '../catalog/pricing';
 import { loadPricing } from '../catalog/pricing-store';
 import {
+  BANK_REFUSALS,
   PaymentSync,
   type SaleSettlement,
 } from '../payments-client/payment-sync.service';
@@ -188,6 +189,19 @@ export class SalesService {
         saleId: id,
         status,
       });
+    // UMK-2037: payment-api refused the bank (the check before the sale could not be made, or its banks have
+    // changed since). No bill was made; the sale is cancelled with its stock and voucher back.
+    if (status === 'cancelled' && refusedCode && BANK_REFUSALS.has(refusedCode))
+      throw new UnprocessableEntityException({
+        message:
+          'Bank tidak bisa dipakai untuk metode ini. Penjualan dibatalkan, pilih bank lalu buat transaksi baru.',
+        errors: {
+          bank: 'Bank tidak bisa dipakai untuk metode ini',
+        },
+        saleId: id,
+        status,
+        code: refusedCode,
+      });
     if (status === 'cancelled')
       throw new ConflictException({
         message: refusedCode
@@ -204,6 +218,7 @@ export class SalesService {
     const hash = requestHash(input);
     const prior = await this.replay(s, key, hash);
     if (prior) return prior;
+    await this.checkBank(s, input);
     let created: { id: string; downPaymentId: string | null };
     try {
       created = await this.db.transaction((tx) =>
@@ -224,6 +239,55 @@ export class SalesService {
         this.payments.recordReceivablePayment(s.tenantId, downPaymentId),
       );
     return this.finish(s, created.id);
+  }
+
+  /**
+   * UMK-2037: a sale with an online method that needs a bank (a virtual account) names one of the method's
+   * banks, and any other sale names none: 422 on `bank`, before anything is written or taken. The banks are
+   * payment-api's (the adapter declares them), asked here, outside the sale's transaction. When payment-api
+   * gives no answer the sale goes on as it would without this check, and payment-api's own check of the
+   * charge decides (`BANK_REFUSALS`: the sale is cancelled at once, 422).
+   */
+  private async checkBank(s: PosSession, input: SaleInput) {
+    const noBank = () =>
+      fail('Metode pembayaran ini tidak memakai bank', {}, 'bank');
+    // No method chosen is Tunai. A method that does not exist is reported by the sale's transaction.
+    const [method] = input.paymentMethodId
+      ? await this.db
+          .select({
+            isCash: paymentMethods.isCash,
+            isDebit: paymentMethods.isDebit,
+            isWallet: paymentMethods.isWallet,
+            isOnline: paymentMethods.isOnline,
+            gatewayMethod: paymentMethods.gatewayMethod,
+          })
+          .from(paymentMethods)
+          .where(
+            and(
+              eq(paymentMethods.tenantId, s.tenantId),
+              eq(paymentMethods.id, input.paymentMethodId),
+              isNull(paymentMethods.deletedAt),
+            ),
+          )
+      : [];
+    if (!method?.isOnline) {
+      if (input.bank !== undefined) throw noBank();
+      return;
+    }
+    const code = paymentMethodCode(method);
+    // Online where it must not be sold, or a gateway method this version does not know: the transaction
+    // refuses the sale itself.
+    if (!isOnlineMethod(code) || !this.payments.onlineEnabled) return;
+    const banks = await this.payments.banksOf(s.tenantId, code);
+    if (banks === null) return;
+    if (banks.length === 0) {
+      if (input.bank !== undefined) throw noBank();
+      return;
+    }
+    if (input.bank === undefined)
+      throw fail('Pilih bank untuk virtual account', { banks }, 'bank');
+    if (!banks.some((b) => b.code === input.bank))
+      throw fail('Bank tidak tersedia untuk metode ini', { banks }, 'bank');
   }
 
   private async insert(
@@ -380,6 +444,8 @@ export class SalesService {
         status: charged ? 'awaiting_payment' : 'completed',
         // Fixed now: a later edit of the method's kind does not change what this sale is charged as.
         paymentMethodCode: charged ? paymentMethodCode(method) : null,
+        // UMK-2037: checked before this transaction (`checkBank`); only a PG sale keeps one.
+        paymentBank: charged && method.isOnline ? (input.bank ?? null) : null,
       })
       .returning({ id: sales.id });
 

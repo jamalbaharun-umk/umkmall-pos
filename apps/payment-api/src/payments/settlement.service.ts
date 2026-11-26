@@ -78,6 +78,7 @@ export const toRef = (p: PaymentRow): PaymentRef => ({
   method: p.method,
   amount: p.amount,
   providerRef: p.providerRef,
+  bank: p.bank,
   expiresAt: p.expiresAt,
 });
 

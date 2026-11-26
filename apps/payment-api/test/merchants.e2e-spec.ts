@@ -165,7 +165,19 @@ describe('merchant onboarding', () => {
             termsAcceptedAt: null,
             submittedAt: null,
             methods: ['fake_qris', 'fake_va', 'fake_checkout'].map(
-              (method) => ({ method, enabled: false, chargeable: false }),
+              (method) => ({
+                method,
+                enabled: false,
+                chargeable: false,
+                // UMK-2037: what the payer chooses from before a VA is made; a QR needs no bank.
+                banks:
+                  method === 'fake_va'
+                    ? [
+                        { code: 'FAKE', name: 'Bank Fake' },
+                        { code: 'FAKE2', name: 'Bank Fake Dua' },
+                      ]
+                    : [],
+              }),
             ),
             lastSyncedAt: null,
             updatedAt: null,
@@ -225,9 +237,19 @@ describe('merchant onboarding', () => {
       const on = await s.put(`${FAKE}/methods/fake_qris`, ON).expect(200);
       expect(on.body.status).toBe('active');
       expect(on.body.methods).toEqual([
-        { method: 'fake_qris', enabled: true, chargeable: true },
-        { method: 'fake_va', enabled: false, chargeable: false },
-        { method: 'fake_checkout', enabled: false, chargeable: false },
+        { method: 'fake_qris', enabled: true, chargeable: true, banks: [] },
+        {
+          method: 'fake_va',
+          enabled: false,
+          chargeable: false,
+          banks: [expect.any(Object), expect.any(Object)],
+        },
+        {
+          method: 'fake_checkout',
+          enabled: false,
+          chargeable: false,
+          banks: [],
+        },
       ]);
       // The same toggle again changes nothing.
       await s.put(`${FAKE}/methods/fake_qris`, ON).expect(200);
@@ -410,6 +432,7 @@ describe('merchant onboarding', () => {
         method: 'fake_qris',
         enabled: true,
         chargeable: false,
+        banks: [],
       });
       await s.put(`${FAKE}/methods/fake_va`, ON).expect(409);
       await review(s, 'approve').expect(200);
@@ -1061,7 +1084,7 @@ describe('merchant onboarding', () => {
         (await s.chargeRaw({ method: 'fake_va' }).expect(409)).body.code,
       ).toBe('method_disabled');
       await s.put(`${FAKE}/methods/fake_va`, ON).expect(200);
-      await s.chargeRaw({ method: 'fake_va' }).expect(201);
+      await s.chargeRaw({ method: 'fake_va', bank: 'FAKE' }).expect(201);
       await s.put(`${FAKE}/methods/fake_qris`, OFF).expect(200);
       expect((await qris(s).expect(409)).body.code).toBe('method_disabled');
     });

@@ -95,13 +95,21 @@ export class OnlinePaymentsController {
   @Get('methods')
   @RequirePermission('sales.create')
   async methods(@CurrentSession() s: PosSession) {
-    if (!this.client.enabled) return { methods: [] };
+    if (!this.client.enabled) return { methods: [], banks: {} };
     const { accounts } = await this.ask(() =>
       this.client.merchantAccounts(s.tenantId),
     );
+    const chargeable = accounts.flatMap((a) =>
+      a.methods.filter((m) => m.chargeable),
+    );
     return {
-      methods: accounts.flatMap((a) =>
-        a.methods.filter((m) => m.chargeable).map((m) => m.method),
+      methods: chargeable.map((m) => m.method),
+      // UMK-2037: by method, the banks the customer chooses from before the bill is made. A method that is
+      // not listed here needs no bank; one that is must be sold with one of these codes (`bank`).
+      banks: Object.fromEntries(
+        chargeable
+          .filter((m) => m.banks.length > 0)
+          .map((m) => [m.method, m.banks]),
       ),
     };
   }
