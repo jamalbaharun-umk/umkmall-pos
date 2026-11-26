@@ -274,6 +274,10 @@ export function paidLater(createdAt: string, paidAt: string | null | undefined):
   return Number.isFinite(d) && Math.abs(d) > 60_000
 }
 
+/** The badge by the dialog title: a receipt exists only for a paid sale; a waiting or closed one has just its queue number. */
+export const numberBadge = (kind: 'waiting' | 'paid' | 'closed', n: number) =>
+  kind === 'paid' ? `Struk #${n}` : kind === 'waiting' ? `Menunggu #${n}` : `Nomor tunggu #${n}`
+
 export const gatewayLabel = (m: string | null | undefined) =>
   m === 'fake_qris' ? 'QRIS online' : m === 'fake_va' ? 'Virtual Account' : 'Pembayaran online'
 
