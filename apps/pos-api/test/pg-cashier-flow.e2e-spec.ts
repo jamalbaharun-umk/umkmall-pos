@@ -3083,25 +3083,43 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const after = await renew(s.auth, saleId, { attempt: 2 }).expect(409);
       expect(after.body.code).toBe('already_paid');
 
-      // A cancel while a renewal is held: one outcome, cancelled, no live bill.
+      // A cancel during a renewal wins, in this exact order (PR 51 review): the renewal R wrote its intent and
+      // closed bill 1 (its answer held); the cancel C took the intent back and is held before it looks the bill
+      // up. R then finds its intent gone: it stops, claims no new one and makes no second bill. C cancels.
       const other = (await sell(s).expect(201)).body.id as string;
-      const h = hold(isCancel, 'before');
+      const rClosed = hold(isCancel, 'after');
       const renewing = renew(s.auth, other, { attempt: 1 }).then((x) => x);
-      await h.held;
+      await rClosed.held;
+      expect(await renewAt(other)).not.toBeNull();
+      const cLooks = hold(isFindByKey, 'before');
       const cancel = post(s.auth, `/sales/${other}/payment/cancel`).then(
         (x) => x,
       );
-      h.release();
-      const [rn, cn] = await Promise.all([renewing, cancel]);
-      expect(cn.status).toBe(200);
-      expect([200, 409, 503]).toContain(rn.status);
-      // Whatever the renewal answered, the sale ends cancelled or waiting on exactly one bill.
-      const row = await saleRow(other);
-      if (row.status === 'awaiting_payment') {
-        expect((await live(other))[0].n).toBe(1);
-        await post(s.auth, `/sales/${other}/payment/cancel`).expect(200);
+      await cLooks.held;
+      expect(await renewAt(other)).toBeNull();
+      let rn: request.Response;
+      try {
+        rClosed.release();
+        rn = await renewing;
+      } finally {
+        rClosed.release();
+        cLooks.release();
       }
-      expect((await saleRow(other)).status).toBe('cancelled');
+      expect(rn.status).toBe(409);
+      expect(rn.body.code).toBe('cancel_refused');
+      // No intent claimed again, the sale still at attempt 1, never a bill for attempt 2.
+      expect(await renewAt(other)).toBeNull();
+      expect(await saleRow(other)).toMatchObject({ payment_attempt: 1 });
+      const cn = await cancel;
+      expect(cn.status).toBe(200);
+      expect(await saleRow(other)).toMatchObject({
+        status: 'cancelled',
+        payment_attempt: 1,
+        cancel_reason: 'cashier',
+      });
+      expect(
+        (await paymentsOf(other)).map((p) => [p.idempotency_key, p.status]),
+      ).toEqual([[`${other}:1`, 'cancelled']]);
       expect((await live(other))[0].n).toBe(0);
     });
 
