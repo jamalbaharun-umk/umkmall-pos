@@ -40,3 +40,72 @@ export function withMargins(
       r.sales > 0 ? Math.round((r.grossProfit / r.sales) * 1000) / 10 : null,
   }));
 }
+
+type CatalogRow = {
+  id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  type: string;
+  category?: { name: string };
+  sellingPrice: number;
+  costPrice?: number;
+  stock: number | null;
+  units?: unknown;
+  priceTiers?: unknown;
+};
+type SoldRow = { sku: string; qty: number; sales: number; cost: number };
+type BoughtRow = { sku: string; date: string; qty: number; unitCost: number };
+
+/**
+ * One row per product of everything UMKMall's HPP calculators need from the POS (owner direction 2026-11-26: UMKMall
+ * pulls the products and does the calculation; the POS provides the data): prices, cost, stock, what sold and what
+ * buying it really cost in the period. Integer rupiah, rounded; null where there is nothing to average.
+ */
+export function costDataRows(
+  catalog: CatalogRow[],
+  sold: SoldRow[],
+  bought: BoughtRow[],
+) {
+  const soldBy = new Map(sold.map((s) => [s.sku, s]));
+  const boughtBy = new Map<string, BoughtRow[]>();
+  for (const b of bought)
+    boughtBy.set(b.sku, [...(boughtBy.get(b.sku) ?? []), b]);
+  return catalog.map((p) => {
+    const s = soldBy.get(p.sku);
+    const buys = boughtBy.get(p.sku) ?? [];
+    const qty = buys.reduce((a, b) => a + b.qty, 0);
+    const total = buys.reduce((a, b) => a + b.qty * b.unitCost, 0);
+    const last = buys.at(-1);
+    return {
+      productId: p.id,
+      sku: p.sku,
+      name: p.name,
+      unit: p.unit,
+      type: p.type,
+      category: p.category?.name ?? null,
+      sellingPrice: p.sellingPrice,
+      costPrice: p.costPrice ?? null,
+      units: p.units ?? [],
+      priceTiers: p.priceTiers ?? [],
+      stock: p.stock,
+      hppRef: p.sku.startsWith(HPP_SKU_PREFIX)
+        ? p.sku.slice(HPP_SKU_PREFIX.length)
+        : null,
+      sold: {
+        qty: s?.qty ?? 0,
+        sales: s?.sales ?? 0,
+        cost: s?.cost ?? 0,
+        averagePrice: s && s.qty > 0 ? Math.round(s.sales / s.qty) : null,
+        averageUnitCost: s && s.qty > 0 ? Math.round(s.cost / s.qty) : null,
+      },
+      purchases: {
+        qty,
+        total,
+        averageUnitCost: qty > 0 ? Math.round(total / qty) : null,
+        lastUnitCost: last?.unitCost ?? null,
+        lastDate: last?.date ?? null,
+      },
+    };
+  });
+}
