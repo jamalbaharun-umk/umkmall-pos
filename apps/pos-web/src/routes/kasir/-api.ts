@@ -96,6 +96,8 @@ export type Receipt = {
   // U7
   voucherDiscount: number
   memberName: string | null
+  /** UMK-1987: the member record's number, for the WhatsApp receipt; null without a member or a number. Never logged. */
+  memberPhone?: string | null
   receivableRest: number | null
   // UMK-1962: a voided receipt says so
   status: 'completed' | 'void' | 'awaiting_payment' | 'cancelled'

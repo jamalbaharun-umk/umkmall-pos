@@ -111,7 +111,10 @@ describe('receiptMessage', () => {
     const m = receiptMessage(
       {
         ...sale,
-        lines: [{ name: 'Gula', qty: 2, unit: 'kg', unitPrice: 14000, discount: 1000 }],
+        lines: [
+          { name: 'Gula', qty: 2, unit: 'kg', unitQty: 10, unitPrice: 14000, discount: 1000 },
+          { name: 'Kopi', qty: 1, unit: 'pcs', unitQty: 1, unitPrice: 2000 },
+        ],
         discount: 3000, // 1.000 on the line, 2.000 on the order
         lineDiscount: 1000,
         voucherDiscount: 500,
@@ -126,6 +129,7 @@ describe('receiptMessage', () => {
       '2026-11-26T03:00:00Z',
     )
     expect(m).toContain('Gula 2 kg × Rp14.000\n  Diskon Rp1.000')
+    expect(m).toContain('Kopi 1 × Rp2.000')
     expect(m).toContain('\nDiskon Rp2.000\n')
     expect(m).toContain('\nVoucher Rp500\n')
     expect(m).toContain('\nPajak 11% Rp2.300\n')

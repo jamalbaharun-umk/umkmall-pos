@@ -31,7 +31,11 @@ export type ReceivableSummary = {
   id: string
   saleId: string
   saleNumber: number
+  memberId: string
   memberName: string
+  /** UMK-1973: when the customer was last reminded (a date, never the message), and how late an open balance is. */
+  memberLastRemindedAt: string | null
+  overdueDays: number
   total: number
   rest: number
   dueDate: string
@@ -133,7 +137,7 @@ async function openShiftOf(): Promise<OpenShift> {
 }
 
 export type Paged<T> = { data: T[]; total: number; page: number; perPage: number }
-export type ReceivablePage = Paged<ReceivableSummary> & { summary: { openRest: number; openCount: number; outsideShiftCollected: number } }
+export type ReceivablePage = Paged<ReceivableSummary> & { summary: { openRest: number; openCount: number; outsideShiftCollected: number; overdueMemberIds: string[] } }
 
 const query = (params: Record<string, string | number | undefined>) => {
   const qs = new URLSearchParams()

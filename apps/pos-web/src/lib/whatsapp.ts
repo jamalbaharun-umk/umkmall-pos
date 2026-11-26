@@ -66,7 +66,7 @@ export function dayMonth(date: string, year: number): string {
 export type ReceiptSource = {
   number: number
   paymentMethod: string
-  lines: { name: string; qty: number; unit?: string; unitPrice: number; discount?: number }[]
+  lines: { name: string; qty: number; unit?: string; unitQty?: number; unitPrice: number; discount?: number }[]
   subtotal: number
   /** Every manual discount (lines and order) and the voucher's, as the receipt carries them. */
   discount: number
@@ -87,7 +87,8 @@ export type ReceiptSource = {
 export function receiptMessage(r: ReceiptSource, storeName: string, at: string, timeZone?: string): string {
   const out = [`Terima kasih sudah belanja di ${storeName}.`, `Struk #${r.number} · ${shortDate(at, timeZone)}`]
   for (const l of r.lines) {
-    out.push(`${l.name} ${l.qty}${l.unit ? ` ${l.unit}` : ''} × ${idr(l.unitPrice)}`)
+    // The unit is named only for a larger pack (a dus, not the base "pcs"), like the design's plain lines.
+    out.push(`${l.name} ${l.qty}${l.unit && (l.unitQty ?? 1) > 1 ? ` ${l.unit}` : ''} × ${idr(l.unitPrice)}`)
     if (l.discount) out.push(`  Diskon ${idr(l.discount)}`)
   }
   const orderDiscount = r.discount - (r.lineDiscount ?? 0)
