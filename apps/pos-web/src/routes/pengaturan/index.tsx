@@ -2,6 +2,7 @@ import { Alert, Button, Select, TextField, Upload } from '@umkmall/ui/primitives
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { SCROLL_TABS } from '@/lib/scroll-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
@@ -43,7 +44,7 @@ function SettingsPage() {
         <NoAccess permission="Mengelola katalog" />
       ) : (
         <Tabs defaultValue="profil">
-          <TabsList label="Pengaturan">
+          <TabsList label="Pengaturan" className={SCROLL_TABS}>
             <TabsTrigger value="profil">Profil toko</TabsTrigger>
             <TabsTrigger value="pembayaran">Pembayaran</TabsTrigger>
             <TabsTrigger value="aplikasi">Aplikasi</TabsTrigger>
