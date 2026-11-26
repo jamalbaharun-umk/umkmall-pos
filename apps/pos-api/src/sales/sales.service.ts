@@ -85,6 +85,24 @@ export const taxOf = (taxable: number, bps: number) =>
 
 export { cashRounding };
 
+/**
+ * The one arithmetic of a sale after its lines: tax on the amount after the manual discount AND the voucher (Lakasir
+ * flaw 2); only a cash sale is rounded (UMK-1993), after tax, outside `total`. Used by the sale and by its quote.
+ */
+export function saleAmounts(a: {
+  subtotal: number;
+  discount: number;
+  voucherDiscount: number;
+  taxBps: number;
+  isCash: boolean;
+}) {
+  const taxable = a.subtotal - a.discount - a.voucherDiscount;
+  const tax = taxOf(taxable, a.taxBps);
+  const total = taxable + tax;
+  const rounding = a.isCash ? cashRounding(total) : 0;
+  return { tax, total, rounding, amountDue: total + rounding };
+}
+
 /** Order-independent fingerprint of a sale request (lines sorted by product, then unit; keys sorted). */
 export const requestHash = (input: SaleInput) => {
   const order = (l: { productId: string; unit?: string }) =>
@@ -404,13 +422,14 @@ export class SalesService {
       s.tenantId,
       charged ? 'hold' : 'receipt',
     );
-    // Tax on the amount after the manual discount AND the voucher (Lakasir flaw 2).
-    const tax = taxOf(subtotal - discount - voucherDiscount, settings.taxBps);
-    const total = subtotal - discount - voucherDiscount + tax;
-    // UMK-1993: only a cash sale is rounded, after tax, outside `total` (the tax base and the revenue do
-    // not change). A kasbon and every non-cash method owe the exact total.
-    const rounding = method.isCash ? cashRounding(total) : 0;
-    const amountDue = total + rounding;
+    // A kasbon and every non-cash method owe the exact total; cash owes the rounded amount due.
+    const { tax, total, rounding, amountDue } = saleAmounts({
+      subtotal,
+      discount,
+      voucherDiscount,
+      taxBps: settings.taxBps,
+      isCash: method.isCash,
+    });
     if (method.isCredit) {
       // Kasbon: the rest becomes the member's receivable; paid may be 0.
       if (!memberId) throw fail('Pilih member untuk kasbon', {}, 'memberId');
@@ -673,24 +692,23 @@ export class SalesService {
       ? await evaluateVoucher(this.db, s.tenantId, input.voucherCode, subtotal)
       : null;
     const voucherDiscount = voucher?.discount ?? 0;
-    const method = await this.methodOf(
-      this.db,
-      s.tenantId,
-      input.paymentMethodId,
-    );
+    // Only a method that was named is read: the default cash method is not seeded by a quote (it writes nothing).
+    const method = input.paymentMethodId
+      ? await this.methodOf(this.db, s.tenantId, input.paymentMethodId)
+      : null;
     const { taxBps } = await this.settings(s.tenantId);
-    const tax = taxOf(subtotal - voucherDiscount, taxBps);
-    const total = subtotal - voucherDiscount + tax;
-    const rounding = method.isCash ? cashRounding(total) : 0;
     return {
       lines,
       subtotal,
       voucherDiscount,
-      tax,
-      total,
-      rounding,
-      amountDue: total + rounding,
-      paymentMethod: {
+      ...saleAmounts({
+        subtotal,
+        discount: 0,
+        voucherDiscount,
+        taxBps,
+        isCash: method?.isCash ?? false,
+      }),
+      paymentMethod: method && {
         id: method.id,
         name: method.name,
         isCash: method.isCash,
@@ -784,7 +802,8 @@ export class SalesService {
           actorId: sales.actorId,
           actorKind: sales.actorKind,
           // Owner sales have no staff row (Lakasir's "user.name" column).
-          cashier: sql<string>`coalesce(${staff.name}, 'Pemilik')`,
+          cashier: sql<string>`case when ${sales.actorKind} = 'agent' then ${AGENT_LABEL}
+            else coalesce(${staff.name}, 'Pemilik') end`,
           subtotal: sales.subtotal,
           discount: sales.discount,
           voucherDiscount: sales.voucherDiscount,

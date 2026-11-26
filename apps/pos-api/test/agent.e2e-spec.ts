@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import request from 'supertest';
 import { withMargins } from '../src/agent/hpp';
-import { AGENT_TOOL_NAMES } from '../src/agent/tools';
+import { AGENT_TOOL_NAMES, redact } from '../src/agent/tools';
 import { ADMIN_DATABASE_URL, APP_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 
@@ -988,7 +988,8 @@ describe('UMKMall agent: session and MCP tools', () => {
         idempotencyKey: 'sale-agent-1',
         confirm: true,
       });
-      expect(again.data).toEqual(made.data);
+      // A replay answers the stored result, kept without customer data.
+      expect(again.data).toEqual(redact('record_sale', made.data));
 
       // the same cart at the till
       const till = await http()
@@ -1114,7 +1115,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       const replayed = await call(client, 'record_sale', args);
       expect(replayed.data).toMatchObject({ total: 10000 });
       const again = await call(client, 'record_sale', args);
-      expect(again.data).toEqual(replayed.data);
+      expect(again.data).toEqual(redact('record_sale', replayed.data));
       const [n] = await appDb<{ n: number }[]>`
         select count(*)::int as n from pos.sales where tenant_id = ${store.tenantId}`;
       expect(n.n).toBe(1);
@@ -1241,17 +1242,51 @@ describe('UMKMall agent: session and MCP tools', () => {
         confirm: true,
       });
       expect(sale.error).toMatch(/izin pos\.write/);
-      for (const path of ['/members/picker', '/receivables', '/shifts/current'])
+      for (const path of [
+        '/members/picker',
+        '/receivables',
+        '/shifts/current',
+        '/suppliers',
+      ])
         await http()
           .get(path)
           .set('Authorization', `Bearer ${token}`)
           .expect(403);
     });
 
-    it("cross-tenant: store B's agent cannot sell A's product or pay A's kasbon", async () => {
+    it("cross-tenant: store B's agent cannot sell A's product or pay A's real kasbon", async () => {
       const a = await createStore();
       const b = await createStore();
       const kopi = await seedProduct(a.auth, 'Kopi A', 10000);
+      // A real receivable of store A: a kasbon sale at A's till.
+      const kasbon = await http()
+        .post('/payment-methods')
+        .set('Authorization', a.auth)
+        .send({ name: 'Kasbon', kind: 'credit' })
+        .expect(201);
+      const member = await http()
+        .post('/members')
+        .set('Authorization', a.auth)
+        .send({ name: 'Pelanggan A', code: 'PLGA01' })
+        .expect(201);
+      await openShift(a.auth);
+      await http()
+        .post('/sales')
+        .set('Authorization', a.auth)
+        .set('Idempotency-Key', `till-${randomUUID()}`)
+        .send({
+          lines: [{ productId: kopi.id, qty: 1 }],
+          memberId: member.body.id,
+          paymentMethodId: kasbon.body.id,
+          paid: 0,
+        })
+        .expect(201);
+      const recA = await http()
+        .get('/receivables')
+        .set('Authorization', a.auth)
+        .expect(200);
+      const receivableId = recA.body.data[0].id as string;
+
       await openShift(b.auth);
       const client = await mcp(await agentToken(b.userId));
       const sale = await call(client, 'record_sale', {
@@ -1259,13 +1294,128 @@ describe('UMKMall agent: session and MCP tools', () => {
         idempotencyKey: 'x-sale-0001',
         confirm: true,
       });
-      expect(sale.error).toBeDefined();
-      const pay = await call(client, 'record_receivable_payment', {
-        receivableId: randomUUID(),
-        amount: 1000,
-        idempotencyKey: 'x-pay-0001',
+      expect(sale.error).toMatch(/tidak ditemukan/i);
+      for (const confirm of [false, true]) {
+        const pay = await call(client, 'record_receivable_payment', {
+          receivableId,
+          amount: 1000,
+          idempotencyKey: 'x-pay-0001',
+          confirm,
+        });
+        expect(pay.error).toMatch(/tidak ditemukan/i);
+      }
+      const still = await http()
+        .get(`/receivables/${receivableId}`)
+        .set('Authorization', a.auth)
+        .expect(200);
+      expect(still.body.rest).toBe(10000);
+    });
+  });
+
+  describe('UMK-1981 review follow-ups', () => {
+    it('keeps no customer name or phone in the stored answer; a replay answers without them', async () => {
+      const store = await createStore();
+      const client = await mcp(await agentToken(store.userId));
+      const args = {
+        name: 'Bu Ratna',
+        phone: '081298765432',
+        idempotencyKey: 'member-pii-0001',
+        confirm: true,
+      };
+      const first = await call(client, 'create_member', args);
+      expect(first.data).toMatchObject({
+        name: 'Bu Ratna',
+        phone: '081298765432',
       });
-      expect(pay.error).toMatch(/tidak ditemukan/);
+      expect((first.data as { code: string }).code).toMatch(/^AG[0-9A-F]{10}$/);
+      const [row] = await appDb<{ answer: string }[]>`
+        select answer::text as answer from pos.agent_requests where tenant_id = ${store.tenantId}`;
+      expect(row.answer).not.toMatch(/Ratna|081298765432/);
+      const replay = await call(client, 'create_member', args);
+      expect(replay.data).toMatchObject({
+        id: (first.data as { id: string }).id,
+      });
+      expect(replay.data).not.toHaveProperty('name');
+      expect(replay.data).not.toHaveProperty('phone');
+    });
+
+    it('labels agent sales "Agent UMKMall" in the sales list', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', store.auth)
+        .send({ openingCash: 0 })
+        .expect(201);
+      const client = await mcp(await agentToken(store.userId));
+      await call(client, 'record_sale', {
+        lines: [{ productId: kopi.id, qty: 1 }],
+        idempotencyKey: 'label-sale-0001',
+        confirm: true,
+      });
+      const list = await http()
+        .get('/sales')
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(list.body.data[0].cashier).toBe('Agent UMKMall');
+    });
+
+    it('previews refuse what the confirm would refuse: kasbon without a member, an instalment over the balance', async () => {
+      const store = await createStore();
+      const roti = await seedProduct(store.auth, 'Roti', 20000);
+      const kasbon = await http()
+        .post('/payment-methods')
+        .set('Authorization', store.auth)
+        .send({ name: 'Kasbon', kind: 'credit' })
+        .expect(201);
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', store.auth)
+        .send({ openingCash: 0 })
+        .expect(201);
+      const client = await mcp(await agentToken(store.userId));
+      const noMember = await call(client, 'record_sale', {
+        lines: [{ productId: roti.id, qty: 1 }],
+        paymentMethodId: kasbon.body.id,
+        idempotencyKey: 'prev-kasbon-0001',
+      });
+      expect(noMember.error).toMatch(/Pilih member/);
+      const member = await call(client, 'create_member', {
+        name: 'Pak Budi',
+        code: 'PB01',
+        idempotencyKey: 'prev-member-0001',
+        confirm: true,
+      });
+      const memberId = (member.data as { id: string }).id;
+      const ok = await call(client, 'record_sale', {
+        lines: [{ productId: roti.id, qty: 1 }],
+        paymentMethodId: kasbon.body.id,
+        memberId,
+        downPayment: 5000,
+        idempotencyKey: 'prev-kasbon-0002',
+      });
+      expect(ok.data).toMatchObject({ wouldPay: 5000, kasbonRest: 15000 });
+      await call(client, 'record_sale', {
+        lines: [{ productId: roti.id, qty: 1 }],
+        paymentMethodId: kasbon.body.id,
+        memberId,
+        downPayment: 5000,
+        idempotencyKey: 'prev-kasbon-0002',
+        confirm: true,
+      });
+      const recs = await call(client, 'list_receivables', { memberId });
+      const rec = (recs.data as { data: { id: string }[] }).data[0];
+      const over = await call(client, 'record_receivable_payment', {
+        receivableId: rec.id,
+        amount: 20000,
+        idempotencyKey: 'prev-pay-0001',
+      });
+      expect(over.error).toMatch(/melebihi sisa piutang/);
+      const blank = await call(client, 'create_supplier', {
+        name: '  ',
+        idempotencyKey: 'prev-supp-0001',
+      });
+      expect(blank.error).toMatch(/Nama wajib diisi/);
     });
   });
 

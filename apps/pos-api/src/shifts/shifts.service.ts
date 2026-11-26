@@ -18,6 +18,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  AGENT_LABEL,
   expenses,
   FINAL_SALE_STATUSES,
   GATEWAY_METHODS,
@@ -352,6 +353,7 @@ export class ShiftsService {
           actorId: e.actorId,
           actorKind: e.actorKind,
           actorName: sql<string>`case when ${e.actorKind} = 'owner' then 'Pemilik'
+            when ${e.actorKind} = 'agent' then ${AGENT_LABEL}
             else coalesce(${recorder.name}, 'Staf') end`,
           collectorId: storeCashDeposits.collectorId,
           collectorName: collector.name,

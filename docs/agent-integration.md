@@ -108,7 +108,8 @@ Every write tool takes `idempotencyKey` (8 to 100 of `A-Z a-z 0-9 : . _ -`, requ
   `record_receivable_payment` send it again with the **same** key: the tool replays the lost call (the exact body it
   sent) under the route's own idempotency key, which answers the first result and never records twice; never use a
   new key there. For the other writes check the catalog first, and use a new key only if it is really not there.
-  Keys expire after 7 days.
+  Keys expire after 7 days. The stored answer keeps no phone, address or customer name (`memberName`, a member's
+  `name`): a replay answers without them; read them again with `search_members` if needed.
 - **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, no void, no drawer cash):
   it creates categories and products with one base price, and HPP imports create new SKUs only. Price changes are the
   owner's, in the POS.
@@ -197,13 +198,13 @@ UMKMall HPP (Strategi Harga dan Profit, Kalkulator HPP) → new POS products: th
 Out: `GET /payment-methods` (id, name, `kind`: cash, debit, credit = kasbon, wallet = QRIS toko, online).
 
 ### `list_suppliers`
-Out: `GET /suppliers`.
+Needs `pos.write` (phones and addresses). Out: `GET /suppliers`.
 
 ### `current_shift`
 Needs `pos.write`. Out: `GET /shifts/current`: the owner's open shift (sales, expected cash) or `shift: null`.
 
 ### `search_members`
-Needs `pos.write`. In: `q?`. Out: `GET /members/picker`.
+Needs `pos.write`. In: `q?` (name or code). Out: `GET /members/picker`.
 
 ### `list_receivables`
 Needs `pos.write`. In: `memberId?`, `status?` (`open` | `settled` | `cancelled`), `q?`, `page?`, `perPage?`. Out:
@@ -222,17 +223,21 @@ In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `payment
 - **The agent never sends a price or a discount** (an agent's `POST /sales` refuses `price` and `discount`, 422). The
   preview is the server's full quote (`POST /sales/quote` with the method: line prices with units and wholesale tiers,
   voucher discount, tax after discounts, total, cash rounding, amount due).
+- The preview also says `wouldPay` (and `kasbonRest` for kasbon) and refuses a kasbon without a member or with a down
+  payment that leaves nothing owed. Stock is checked at confirm only (the sale's own lock).
 - On confirm the tool pays the exact amount: cash pays the amount due (rounded up to Rp100), debit and QRIS the total,
   kasbon `downPayment` (the rest becomes the member's receivable).
 - Online methods are refused for an agent session by the sale itself (422 on `paymentMethodId`), not only by the tool. One payment method per sale. The route's own `Idempotency-Key` is derived from
-  the agent key, so a retry is one sale twice over. The receipt names the seller "Agent UMKMall".
+  the agent key, so a retry with the same key is deduplicated by the tool and again by the route. The receipt names the seller "Agent UMKMall".
 
 ### `create_member`
-In: `name`, `code?` (made up from the key when left out), `phone?`, `address?` + write controls.
+In: `name`, `code?`, `phone?`, `address?` + write controls. Send the store's own code when known; otherwise one is
+made up from the key (`AG` + 10 hex), and a collision answers 409: send a `code` then.
 
 ### `record_receivable_payment`
 In: `receivableId`, `amount`, `paymentMethodId?` (default Tunai: cash goes into the owner's open shift) + write
-controls. The preview shows `balanceBefore` and `balanceAfter`; an amount above the balance is refused.
+controls. The preview shows `balanceBefore` and `balanceAfter` and refuses an amount above the balance, as the
+confirm does.
 
 ### `create_supplier`
 In: `name`, `phone?`, `address?` + write controls.

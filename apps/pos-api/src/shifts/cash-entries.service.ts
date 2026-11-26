@@ -10,6 +10,7 @@ import {
 } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import {
+  AGENT_LABEL,
   CASH_DIRECTIONS,
   MANUAL_CASH_REASON_CODES,
   MANUAL_CASH_REASON_LABELS,
@@ -91,6 +92,7 @@ const columns = {
   actorId: m.actorId,
   actorKind: m.actorKind,
   actorName: sql<string>`case when ${m.actorKind} = 'owner' then 'Pemilik'
+    when ${m.actorKind} = 'agent' then ${AGENT_LABEL}
     else coalesce(${staff.name}, 'Staf') end`,
   createdAt: m.createdAt,
 };
