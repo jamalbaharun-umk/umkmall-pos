@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   cashRoute,
   parseWaitingSales,
+  sentence,
   waitingSearch,
   cashRouteNotice,
   CLOSE_BLOCKED_HINT,
@@ -169,5 +170,13 @@ describe('the refusal of a close with waiting sales (UMK-2044)', () => {
   it('links to one sale, or to the list when none is named', () => {
     expect(waitingSearch('abc')).toEqual({ menunggu: 'abc' })
     expect(waitingSearch()).toEqual({ menunggu: 'daftar' })
+  })
+})
+
+describe('sentence (PR 40 review)', () => {
+  it('ends a text with exactly one full stop', () => {
+    expect(sentence('Masih ada penjualan menunggu #3')).toBe('Masih ada penjualan menunggu #3.')
+    expect(sentence('Masih ada penjualan menunggu #3.')).toBe('Masih ada penjualan menunggu #3.')
+    expect(sentence('Masih ada penjualan menunggu.. ')).toBe('Masih ada penjualan menunggu.')
   })
 })

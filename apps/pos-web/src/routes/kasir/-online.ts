@@ -51,6 +51,8 @@ export type SalePayment = {
   lastCheckedAt: string | null
   canCloseAtGateway: boolean
   switchingToCash: boolean
+  /** UMK-2042: pos-api allows a new bill (QR, VA, link) for this sale (`POST …/payment/renew`). */
+  canRenew: boolean
   refund: { status: RefundStatus; sent: boolean; reasonCode: string; note: string | null; requestedAt: string } | null
   lateReceipts: LateReceipt[]
 }
@@ -145,6 +147,7 @@ export function parsePayment(raw: unknown): SalePayment | null {
     lastCheckedAt: str(raw.lastCheckedAt) ?? null,
     canCloseAtGateway: raw.canCloseAtGateway !== false,
     switchingToCash: raw.switchingToCash === true,
+    canRenew: raw.canRenew === true,
     refund,
     lateReceipts: late,
   }
@@ -333,7 +336,32 @@ export function holdDisambiguation(rows: { id: string; holdNumber: number | null
 }
 
 export const gatewayLabel = (m: string | null | undefined) =>
-  m === 'fake_qris' ? 'QRIS online' : m === 'fake_va' ? 'Virtual Account' : 'Pembayaran online'
+  m === 'fake_qris'
+    ? 'QRIS online'
+    : m === 'fake_va'
+      ? 'Virtual Account'
+      : m === 'fake_checkout'
+        ? 'Link pembayaran'
+        : 'Pembayaran online'
+
+// ---- A new bill for the same sale (UMK-2042) ----
+
+/** "Buat QR baru" is offered once the code's own time is over, or in its last minute. */
+export const RENEW_WINDOW_MS = 60_000
+
+/** Whether the waiting screen offers a new code now. pos-api decides whether it may (`canRenew`) and checks again. */
+export function showRenew(p: SalePayment, left: Countdown): boolean {
+  if (!p.canRenew || !isWaiting(p) || p.switchingToCash || p.method === 'cash') return false
+  return p.checkoutExpired || (left !== null && left.remainingMs <= RENEW_WINDOW_MS)
+}
+
+/** The button's words follow what the customer has: a QR, a VA number or a link. */
+export function renewLabel(p: Pick<SalePayment, 'checkout' | 'method'>): string {
+  const c = p.checkout
+  if ((c && 'vaNumber' in c) || (!c && p.method === 'fake_va')) return 'Buat nomor VA baru'
+  if ((c && 'paymentUrl' in c) || (!c && p.method === 'fake_checkout')) return 'Buat link baru'
+  return 'Buat QR baru'
+}
 
 export const isQris = (c: Checkout | null): c is { qrString: string } => !!c && 'qrString' in c
 /** "4 menit" since a sale was rung up, for the list of waiting sales. */
@@ -479,7 +507,7 @@ const CODE = /^[a-z][a-z_]{1,39}$/
  * is already a cash sale needs repeating. Never echoes the server's own text unless pos-api marked it safe (409/422).
  */
 export function paymentFailure(
-  route: 'poll' | 'check' | 'cash' | 'cancel' | 'refund' | 'retry' | 'manual' | 'sale',
+  route: 'poll' | 'check' | 'cash' | 'cancel' | 'refund' | 'retry' | 'manual' | 'sale' | 'renew',
   status: number,
   body: unknown,
 ): FailureLike {
@@ -490,6 +518,8 @@ export function paymentFailure(
   if (status === 0) return { status: 0 }
   if (status === 503) {
     if (route === 'cash' && (code === 'payment_unavailable' || !code)) code = 'cash_switch_unanswered'
+    // a new code that got no answer may have closed the old bill (check first), unless the sale already moved
+    else if (route === 'renew') code = code === 'renew_pending' ? 'renew_pending' : 'renew_unanswered'
     else if (route === 'sale' && (b.saleId || b.status === 'awaiting_payment')) code = 'sale_waiting'
     // a cancel, a refund retry or a manual mark may have reached payment-api before the answer was lost: never "nothing changed"
     else if (route === 'cancel' || route === 'retry' || route === 'manual' || route === 'refund') code = 'payment_unclear'

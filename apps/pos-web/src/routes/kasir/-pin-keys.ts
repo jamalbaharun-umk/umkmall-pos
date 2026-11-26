@@ -7,8 +7,9 @@ type KeyInfo = { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boo
 
 /**
  * Which keypad key a keyboard event stands for, or null when the keypad must ignore it: a shortcut (Ctrl/Cmd/Alt),
- * a held key (Backspace may repeat to clear, a digit or Enter may not), and Enter or Space on a focused button or
- * link, where the browser clicks it already (taking Enter as well would press the key twice, or sign in twice).
+ * a held key (Backspace may repeat to clear, a digit or Enter may not), and Enter on a focused button or link, where
+ * the browser clicks it already (taking Enter as well would press the key twice, or sign in twice). Space is no
+ * keypad key: the browser's own click of a focused button is all it does.
  */
 export function pinKeyOf(e: KeyInfo): PinKey | null {
   if (e.ctrlKey || e.metaKey || e.altKey) return null

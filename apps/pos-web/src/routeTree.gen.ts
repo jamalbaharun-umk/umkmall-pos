@@ -39,6 +39,7 @@ import { Route as PengaturanQrisRouteImport } from './routes/pengaturan/qris'
 import { Route as PengeluaranIndexRouteImport } from './routes/pengeluaran/index'
 import { Route as PengeluaranIdRouteImport } from './routes/pengeluaran/$id'
 import { Route as PengeluaranBaruRouteImport } from './routes/pengeluaran/baru'
+import { Route as PerluDitinjauIndexRouteImport } from './routes/perlu-ditinjau/index'
 import { Route as PiutangIndexRouteImport } from './routes/piutang/index'
 import { Route as PiutangIdRouteImport } from './routes/piutang/$id'
 import { Route as StafIndexRouteImport } from './routes/staf/index'
@@ -216,6 +217,11 @@ const PengeluaranBaruRoute = PengeluaranBaruRouteImport.update({
   path: '/pengeluaran/baru',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PerluDitinjauIndexRoute = PerluDitinjauIndexRouteImport.update({
+  id: '/perlu-ditinjau/',
+  path: '/perlu-ditinjau/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PiutangIndexRoute = PiutangIndexRouteImport.update({
   id: '/piutang/',
   path: '/piutang/',
@@ -380,6 +386,7 @@ export interface FileRoutesByFullPath {
   '/pembelian/': typeof PembelianIndexRoute
   '/pengaturan/': typeof PengaturanIndexRoute
   '/pengeluaran/': typeof PengeluaranIndexRoute
+  '/perlu-ditinjau/': typeof PerluDitinjauIndexRoute
   '/piutang/': typeof PiutangIndexRoute
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
@@ -437,6 +444,7 @@ export interface FileRoutesByTo {
   '/pembelian': typeof PembelianIndexRoute
   '/pengaturan': typeof PengaturanIndexRoute
   '/pengeluaran': typeof PengeluaranIndexRoute
+  '/perlu-ditinjau': typeof PerluDitinjauIndexRoute
   '/piutang': typeof PiutangIndexRoute
   '/staf': typeof StafIndexRoute
   '/stok-opname': typeof StokOpnameIndexRoute
@@ -495,6 +503,7 @@ export interface FileRoutesById {
   '/pembelian/': typeof PembelianIndexRoute
   '/pengaturan/': typeof PengaturanIndexRoute
   '/pengeluaran/': typeof PengeluaranIndexRoute
+  '/perlu-ditinjau/': typeof PerluDitinjauIndexRoute
   '/piutang/': typeof PiutangIndexRoute
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
@@ -554,6 +563,7 @@ export interface FileRouteTypes {
     | '/pembelian/'
     | '/pengaturan/'
     | '/pengeluaran/'
+    | '/perlu-ditinjau/'
     | '/piutang/'
     | '/staf/'
     | '/stok-opname/'
@@ -611,6 +621,7 @@ export interface FileRouteTypes {
     | '/pembelian'
     | '/pengaturan'
     | '/pengeluaran'
+    | '/perlu-ditinjau'
     | '/piutang'
     | '/staf'
     | '/stok-opname'
@@ -668,6 +679,7 @@ export interface FileRouteTypes {
     | '/pembelian/'
     | '/pengaturan/'
     | '/pengeluaran/'
+    | '/perlu-ditinjau/'
     | '/piutang/'
     | '/staf/'
     | '/stok-opname/'
@@ -726,6 +738,7 @@ export interface RootRouteChildren {
   PembelianIndexRoute: typeof PembelianIndexRoute
   PengaturanIndexRoute: typeof PengaturanIndexRoute
   PengeluaranIndexRoute: typeof PengeluaranIndexRoute
+  PerluDitinjauIndexRoute: typeof PerluDitinjauIndexRoute
   PiutangIndexRoute: typeof PiutangIndexRoute
   StafIndexRoute: typeof StafIndexRoute
   StokOpnameIndexRoute: typeof StokOpnameIndexRoute
@@ -959,6 +972,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PengeluaranBaruRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/perlu-ditinjau/': {
+      id: '/perlu-ditinjau/'
+      path: '/perlu-ditinjau'
+      fullPath: '/perlu-ditinjau/'
+      preLoaderRoute: typeof PerluDitinjauIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/piutang/': {
       id: '/piutang/'
       path: '/piutang'
@@ -1174,6 +1194,7 @@ const rootRouteChildren: RootRouteChildren = {
   PembelianIndexRoute: PembelianIndexRoute,
   PengaturanIndexRoute: PengaturanIndexRoute,
   PengeluaranIndexRoute: PengeluaranIndexRoute,
+  PerluDitinjauIndexRoute: PerluDitinjauIndexRoute,
   PiutangIndexRoute: PiutangIndexRoute,
   StafIndexRoute: StafIndexRoute,
   StokOpnameIndexRoute: StokOpnameIndexRoute,

@@ -214,3 +214,6 @@ const STORE_KIND_LABELS: Record<string, string> = {
   collector_deposit: 'Setoran penagih masuk ke laci shift',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'
+
+/** A text as one sentence: a single full stop at its end, whether or not the server's own text ended with one. */
+export const sentence = (text: string) => text.trim().replace(/[.!?]+$/, '') + '.'

@@ -6,7 +6,7 @@ import { closeShift, loadCurrentShift, type Shift } from './-api'
 import { cashDifference, parseRupiah } from './-money'
 import { clockText, dayText, holdLabel } from './-online'
 import { awaitingCloseText } from '@/lib/describe-error'
-import { CLOSE_BLOCKED_HINT, drawerRows, isPendingPaymentRefusal, waitingSearch, type WaitingSale } from './-shift-helpers'
+import { CLOSE_BLOCKED_HINT, drawerRows, isPendingPaymentRefusal, sentence, waitingSearch, type WaitingSale } from './-shift-helpers'
 
 // Closing the cash drawer (Lakasir: cashier header action): expected cash, counted cash, the difference.
 export const Route = createFileRoute('/kasir/tutup')({
@@ -101,7 +101,7 @@ function CloseShiftPage() {
             </p>
             {blocked && (
               <Alert variant="danger" size="small" role="alert" className="mt-4">
-                {awaitingCloseText(blocked).what}. {CLOSE_BLOCKED_HINT}
+                {sentence(awaitingCloseText(blocked).what)} {CLOSE_BLOCKED_HINT}
               </Alert>
             )}
             {waiting.length > 0 && <WaitingList sales={waiting} />}
