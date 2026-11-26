@@ -104,6 +104,15 @@ silent, follow the monorepo's principles.
   admin dashboard css). The package is a vendored copy in `packages/ui` (see its `POS-COPY.md`): never edit it here.
   Layout and flows follow Lakasir screen by screen (`~/Documents/lakasir-test`, running at http://localhost:8090).
   The GPL-3 implication of bundling it is noted on UMK-1924 for legal.
+- **Tombol** (UI base guideline section 6, UMK-2018): a label is one line and never wraps; height is fixed 44 px, radius
+  12 px, never a full pill (`@umkmall/ui` Button has no such step and `packages/ui` is not edited, so the shared
+  `ActionRow` (`components/action-row.tsx`, rule in `lib/action-row.ts`) forces `h-11`, `rounded-[12px]`, nowrap on its
+  children, and `styles/app.css` sets radius and nowrap on every Button). Two or more actions are ALWAYS an `ActionRow`
+  (guard `src/action-row.guard.test.ts` fails an ad-hoc flex/grid row of action buttons): children are written
+  secondary first, primary last; on a phone it is a column, full width, primary on top; from `sm` it is one right-aligned
+  row of natural-width buttons. `stacked` keeps the column at every width (narrow cards such as the receipt). A destructive
+  confirm uses the red (`color="danger"`) button as the primary. Cancel is "Batal" (stop) or "Kembali" (leave), a message
+  closes with "Tutup". Toolbar, table-row and keypad buttons (`type="text"`, `iconOnly`, `compact`) are not action pairs.
 - **Copy is Indonesian,** every screen has loading, empty and error states.
 - **Navigation is one file:** `apps/pos-web/src/nav.ts` (Lakasir's groups and order). A new screen adds or fixes
   its one line there (`{ to, label, icon, permission? }`); an entry shows only when its route exists and the actor

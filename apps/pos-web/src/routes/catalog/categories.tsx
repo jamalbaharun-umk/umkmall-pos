@@ -20,6 +20,7 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { required } from '@/lib/validate'
 import { deleteCategory, listCategories, saveCategory, type Category } from './-api'
+import { ActionRow } from '@/components/action-row'
 
 export const Route = createFileRoute('/catalog/categories')({
   loader: () => listCategories(),
@@ -189,7 +190,7 @@ function CategoryDialog({ editing, onClose }: { editing: Category | 'new' | null
           error={nameError}
         />
         {error && <Alert variant="danger">{error}</Alert>}
-        <div className="flex flex-wrap justify-end gap-2">
+        <ActionRow>
           <Button type="outline" color="light" size="small" width="auto" disabled={busy} onClick={onClose}>
             Batal
           </Button>
@@ -208,7 +209,7 @@ function CategoryDialog({ editing, onClose }: { editing: Category | 'new' | null
           <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
             Simpan
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )

@@ -104,6 +104,7 @@ import {
 import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
 import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAmounts, taxOf } from './-money'
+import { ActionRow } from '@/components/action-row'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
 // the left, "Orders details" on the right, then the payment modal (method, quick amounts, numpad, "Pay it") and the
@@ -877,14 +878,14 @@ function UnitPicker({
             onChange={(e) => setQtyText(e.target.value)}
             error={qtyBad}
           />
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button width="auto" type="outline" color="light" onClick={onClose}>
               Batal
             </Button>
             <Button width="auto" htmlType="submit">
               Tambah ke pesanan
             </Button>
-          </div>
+          </ActionRow>
         </form>
       )}
     </Dialog>
@@ -938,14 +939,14 @@ function NoteDialog({
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
-        <div className="flex justify-end gap-2">
+        <ActionRow>
           <Button width="auto" type="outline" color="light" onClick={onClose}>
             Batal
           </Button>
           <Button width="auto" htmlType="submit">
             Simpan
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )
@@ -1368,7 +1369,7 @@ function PayDialog({
             <Alert variant="warning" size="small" role="alert">
               {notice === 'own_sale_open' ? OWN_SALE_OPEN_TEXT : notice === 'held_same' ? HELD_SAME_TEXT : RECORDED_TEXT}
               {notice === 'recorded' && (
-                <span className="mt-2 flex flex-wrap gap-2">
+                <ActionRow align="start" className="mt-2">
                   <Button asChild type="outline" color="light" size="small" width="auto">
                     <Link to="/kasir/riwayat">Buka Riwayat</Link>
                   </Button>
@@ -1407,7 +1408,7 @@ function PayDialog({
                       {WAITING_ANSWER_HINT}
                     </span>
                   )}
-                </span>
+                </ActionRow>
               )}
             </Alert>
           )}
@@ -1418,14 +1419,14 @@ function PayDialog({
               dua kali.
             </p>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <Button width="auto" htmlType="submit" size="large" isLoading={busy} disabled={requestOut(pend.state)}>
-              {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind, method?.gatewayMethod)}
-            </Button>
+          <ActionRow>
             <Button width="auto" size="large" type="outline" color="light" disabled={busy} onClick={onClose}>
               Tutup
             </Button>
-          </div>
+            <Button width="auto" htmlType="submit" size="large" isLoading={busy} disabled={requestOut(pend.state)}>
+              {isCredit ? 'Simpan kasbon' : confirmButtonLabel(method?.kind, method?.gatewayMethod)}
+            </Button>
+          </ActionRow>
         </div>
         <ul className="hidden space-y-3 md:block" aria-label="Item pesanan">
           {cart.map((l) => (
@@ -1474,17 +1475,17 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
             {sale.method && <Row label="Cara bayar" value={sale.method} />}
           </dl>
         )}
-        <div className="mt-4 grid w-full grid-cols-2 gap-2">
+        <ActionRow className="mt-4">
+          <Button width="auto" type="outline" color="light" onClick={onClose}>
+            Tutup
+          </Button>
           <Button
             width="auto"
             onClick={() => sale && void navigate({ to: '/kasir/struk/$id', params: { id: sale.id } })}
           >
             Cetak struk
           </Button>
-          <Button width="auto" type="outline" color="light" onClick={onClose}>
-            Tutup
-          </Button>
-        </div>
+        </ActionRow>
       </div>
     </Dialog>
   )

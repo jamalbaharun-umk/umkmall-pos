@@ -22,6 +22,7 @@ import { formatDay, formatMomentDay, LoadError, Page, Pending, rupiah } from '..
 import { notifySuccess, showError } from '@/lib/feedback'
 import { useCan } from '@/components/shell'
 import { cashRoute, cashRouteNotice, paymentPlace, restAfter } from '../kasir/-shift-helpers'
+import { ActionRow } from '@/components/action-row'
 
 // Lakasir ViewReceivable: details, the sale's items, the payment history and the "add payment" action.
 export const Route = createFileRoute('/piutang/$id')({
@@ -263,7 +264,7 @@ function ReceivablePage() {
               {error}
             </Alert>
           )}
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button type="outline" color="light" width="auto" onClick={() => {
                 setAmount(String(r.rest))
                 setAmountError(undefined)
@@ -273,7 +274,7 @@ function ReceivablePage() {
             <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy || route.kind === 'needs-shift'}>
               Simpan
             </Button>
-          </div>
+          </ActionRow>
         </form>
       </Dialog>
     </Page>

@@ -1,6 +1,7 @@
 import { Button, Dialog, Icon } from '@umkmall/ui/primitives'
 import { useSyncExternalStore } from 'react'
 import { dismissError, errorDialogState, subscribeErrorDialog } from '@/lib/feedback'
+import { ActionRow } from '@/components/action-row'
 
 /**
  * The error notification dialog (guideline section 2), mounted once in the root. Title names the failed action,
@@ -39,22 +40,22 @@ export function FeedbackHost() {
             <p className="text-xs text-default-secondary">Kode: {state.code}</p>
           </div>
         </div>
-        <div className="flex flex-col gap-2 md:flex-row-reverse md:justify-start">
+        <ActionRow>
           {main ? (
             <>
-              <Button type="primary" size="medium" width="auto" className="w-full md:w-auto" onClick={main.run}>
-                {main.label}
-              </Button>
-              <Button type="outline" color="light" size="medium" width="auto" className="w-full md:w-auto" onClick={dismissError}>
+              <Button type="outline" color="light" size="medium" width="auto" onClick={dismissError}>
                 Tutup
+              </Button>
+              <Button type="primary" size="medium" width="auto" onClick={main.run}>
+                {main.label}
               </Button>
             </>
           ) : (
-            <Button type="primary" size="medium" width="auto" className="w-full md:w-auto" onClick={dismissError}>
+            <Button type="primary" size="medium" width="auto" onClick={dismissError}>
               Mengerti
             </Button>
           )}
-        </div>
+        </ActionRow>
       </div>
     </Dialog>
   )

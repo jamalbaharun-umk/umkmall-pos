@@ -7,6 +7,7 @@ import { Panel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { required } from '@/lib/validate'
 import { PERMISSION_LABELS, saveRole, type Role } from '../-api'
+import { ActionRow } from '@/components/action-row'
 
 /** Lakasir's role form: a name, then the permissions as a searchable checkbox grid with select/deselect all. */
 export function RoleForm({ role, permissions }: { role?: Role; permissions: string[] }) {
@@ -96,14 +97,14 @@ export function RoleForm({ role, permissions }: { role?: Role; permissions: stri
         </fieldset>
       </Panel>
       {error && <Alert variant="danger">{error}</Alert>}
-      <div className="flex flex-wrap gap-2">
-        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
-          {role ? 'Simpan perubahan' : 'Simpan'}
-        </Button>
+      <ActionRow>
         <Button asChild type="outline" color="light" size="small" width="auto">
           <Link to="/staf/peran">Batal</Link>
         </Button>
-      </div>
+        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
+          {role ? 'Simpan perubahan' : 'Simpan'}
+        </Button>
+      </ActionRow>
     </form>
   )
 }

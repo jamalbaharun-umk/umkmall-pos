@@ -1,7 +1,7 @@
 import { Badge, Button, Menu, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@umkmall/ui/primitives'
 import { Card, Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { EllipsisVertical, Pencil, Trash2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
@@ -43,33 +43,35 @@ function ViewProduct() {
 
   return (
     <Page
-      title={product.name}
-      crumbs={[{ label: 'Produk', to: '/catalog/products' }, { label: product.name }, { label: 'Lihat' }]}
-      actions={
-        <>
+      title={
+        <span className="flex flex-wrap items-center gap-3">
+          {product.name}
           <Badge color={product.isActive ? 'success' : 'light'} size="small">
             {product.isActive ? 'Aktif' : 'Nonaktif'}
           </Badge>
-          {canEdit && (
-            <>
-              <Button asChild type="primary" color="primary" size="small" width="auto">
-                <Link to="/catalog/products/$id/ubah" params={{ id: product.id }}>
-                  <Pencil className="size-4" aria-hidden /> Ubah
-                </Link>
-              </Button>
-              <Menu
-                label="Aksi lain"
-                align="end"
-                trigger={
-                  <Button type="outline" color="light" size="small" iconOnly aria-label="Aksi lain">
-                    <EllipsisVertical className="size-4" aria-hidden />
-                  </Button>
-                }
-                items={[{ id: 'hapus', label: 'Hapus', danger: true, icon: <Trash2 className="size-4" />, onSelect: remove }]}
-              />
-            </>
-          )}
-        </>
+        </span>
+      }
+      crumbs={[{ label: 'Produk', to: '/catalog/products' }, { label: product.name }, { label: 'Lihat' }]}
+      actions={
+        canEdit && (
+          <>
+            <Menu
+              label="Aksi lain"
+              align="end"
+              trigger={
+                <Button type="outline" color="light" width="auto">
+                  Aksi lain
+                </Button>
+              }
+              items={[{ id: 'hapus', label: 'Hapus', danger: true, icon: <Trash2 className="size-4" />, onSelect: remove }]}
+            />
+            <Button asChild type="primary" color="primary" width="auto">
+              <Link to="/catalog/products/$id/ubah" params={{ id: product.id }}>
+                Ubah
+              </Link>
+            </Button>
+          </>
+        )
       }
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

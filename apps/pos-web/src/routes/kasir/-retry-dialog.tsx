@@ -9,6 +9,7 @@ import { loadOwnPin, retryRefund, type OwnPin } from './-online-api'
 import { useLost } from './-use-lost'
 import type { SaleVoid } from './-void-api'
 import { lockText, isWrongPin, keepsPin, retryBody, retryErrorOf, retryFormErrors, type VoidFormErrors } from './-void-helpers'
+import { ActionRow } from '@/components/action-row'
 
 type Props = {
   open: boolean
@@ -153,7 +154,7 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
         <p className="-mt-2 text-xs text-default-secondary">
           PIN tidak ditampilkan dan tidak disimpan. Salah 5 kali mengunci PIN pemilik 5 menit.
         </p>
-        <div className="flex justify-end gap-2">
+        <ActionRow>
           <Button
             type="outline"
             color="light"
@@ -176,7 +177,7 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
           >
             Coba lagi refund
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )

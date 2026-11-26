@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { showError } from '@/lib/feedback'
 import { WHATSAPP_NOT_SET_UP, WHATSAPP_NOT_SET_UP_TEXT, failureText } from '@/lib/sign-in'
 import { requestOtp, verifyOtp, type Consent, type ConsentAsk, type OtpFailure } from './-otp-api'
+import { ActionRow } from '@/components/action-row'
 
 /** Seconds before "Kirim ulang kode" opens again, as on UMKMall's own login. */
 const RESEND_SECONDS = 60
@@ -253,12 +254,15 @@ function ConsentDialog({
             onChange={(e) => setAge(e.target.checked)}
           />
         )}
-        <div className="flex flex-col gap-2 md:flex-row-reverse md:justify-start">
+        <ActionRow>
+          <Button type="outline" color="light" size="medium" width="auto" onClick={onClose}>
+            Batal
+          </Button>
           <Button
             type="primary"
             size="medium"
             width="auto"
-            className="w-full md:w-auto"
+           
             disabled={!ready || busy}
             onClick={() =>
               onAgree({
@@ -270,10 +274,7 @@ function ConsentDialog({
           >
             Setuju dan lanjutkan
           </Button>
-          <Button type="outline" color="light" size="medium" width="auto" className="w-full md:w-auto" onClick={onClose}>
-            Batal
-          </Button>
-        </div>
+        </ActionRow>
       </div>
     </Dialog>
   )

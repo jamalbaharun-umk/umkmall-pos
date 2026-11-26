@@ -8,6 +8,7 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { failureOf, pinDigits, pinSetErrors, lockText, type VoidFailure } from '../kasir/-void-helpers'
 import { loadSecurity, replaceForgottenPin, resetPin, setPin, unlockPin } from './-keamanan-api'
 import { freshSignInText, wrongOldPin, type FreshReason } from './-keamanan-helpers'
+import { ActionRow } from '@/components/action-row'
 
 export const Route = createFileRoute('/pengaturan/keamanan')({
   // `lupa`: the owner pressed "Lupa PIN", signed in again and landed here to make a new PIN (UMK-2054).
@@ -70,14 +71,14 @@ function SignInAgainDialog({ reason, onClose }: { reason: FreshReason | null; on
     <Dialog open={reason !== null} onOpenChange={(open) => !open && !busy && onClose()} title={text.title} size="small" centered>
       <form method="post" action="/masuk/ulang" onSubmit={() => setBusy(true)} className="flex flex-col gap-4 px-6 pt-2 pb-6">
         <p className="text-sm text-default-secondary">{text.body}</p>
-        <div className="flex flex-wrap justify-end gap-2">
+        <ActionRow>
           <Button type="outline" color="light" size="small" width="auto" disabled={busy} onClick={onClose}>
             Batal
           </Button>
           <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
             Masuk lagi
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )
@@ -161,14 +162,14 @@ function ForgotPinForm({ askSignIn }: { askSignIn: (reason: FreshReason) => void
           }}
           error={errors.confirm}
         />
-        <div className="flex flex-wrap justify-end gap-2">
+        <ActionRow>
           <Button type="outline" color="light" width="auto" disabled={busy} onClick={() => void leave()}>
             Batal
           </Button>
           <Button htmlType="submit" width="auto" isLoading={busy}>
             Simpan PIN baru
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Panel>
   )
@@ -298,7 +299,7 @@ function PinForm({
         <Alert variant="info" size="small">
           Jangan pakai tanggal lahir atau angka berurutan. Jangan beritahu kasir. Salah 5 kali mengunci PIN 5 menit.
         </Alert>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <ActionRow>
           {isOwner && (status.hasPin || locked) && (
             <Button type="text" color="primary" width="auto" disabled={busy} onClick={() => askSignIn('forgot')}>
               Lupa PIN?
@@ -307,7 +308,7 @@ function PinForm({
           <Button htmlType="submit" width="auto" isLoading={busy}>
             {status.hasPin ? 'Ganti PIN' : 'Simpan PIN'}
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Panel>
   )

@@ -7,6 +7,7 @@ import { dateTime, Page, PageError, PageLoading } from '@/components/page'
 import { placeErrors } from '@/lib/refusal'
 import { loadExpense, updateExpense, voidExpense, type Category, type ExpenseDetail } from './-api'
 import { amountError, dayLabel, describeChanges, formatAmountInput, parseAmount, rupiah, sourceLabel } from './-helpers'
+import { ActionRow } from '@/components/action-row'
 
 export const Route = createFileRoute('/pengeluaran/$id')({
   loader: ({ params }) => loadExpense({ data: params.id }),
@@ -213,14 +214,14 @@ function VoidAction({ expense: e }: { expense: ExpenseDetail }) {
           </p>
           <TextField label="Alasan (boleh kosong)" value={reason} maxLength={200} onChange={(ev) => setReason(ev.target.value)} />
           {error && <p role="alert" className="text-sm text-default-error">{error}</p>}
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button type="outline" color="light" size="small" width="auto" disabled={busy} onClick={() => setOpen(false)}>
               Kembali
             </Button>
             <Button type="primary" color="danger" size="small" width="auto" isLoading={busy} onClick={() => void confirm()}>
               Ya, batalkan
             </Button>
-          </div>
+          </ActionRow>
         </div>
       </Dialog>
     </>

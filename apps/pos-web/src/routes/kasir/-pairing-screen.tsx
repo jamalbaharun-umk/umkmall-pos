@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { WARN_SECONDS, formatCountdown, groupCode, secondsLeft } from '@/lib/pairing'
 import { currentPairing, pairingStatus, startPairing, type PairingResult, type PairingStatus } from '../staf/-pairing-api'
+import { ActionRow } from '@/components/action-row'
 
 const POLL_MS = 3000
 const POLL_SLOW_MS = 8000
@@ -166,14 +167,14 @@ export function PairingScreen() {
         </span>
       </Alert>
       <p className="text-xs text-default-secondary">Menunggu pemilik… layar ini berpindah sendiri saat terhubung.</p>
-      <div className="grid w-full grid-cols-2 gap-2">
+      <ActionRow stacked>
         <Button type="outline" color="primary" size="medium" isLoading={asking} disabled={checking} onClick={() => void ask(true)}>
           Kode baru
         </Button>
         <Button type="primary" color="primary" size="medium" isLoading={checking} disabled={asking} onClick={() => void checkNow()}>
           Cek sekarang
         </Button>
-      </div>
+      </ActionRow>
     </Frame>
   )
 }

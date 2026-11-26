@@ -26,6 +26,7 @@ import {
 } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
 import { deleteSupplier, loadSuppliers, saveSupplier, type Supplier } from '../pembelian/-api'
+import { ActionRow } from '@/components/action-row'
 
 // Lakasir's Suppliers resource: a table (name, phone, address) with edit/delete row actions and a modal form.
 export const Route = createFileRoute('/pemasok/')({
@@ -233,14 +234,14 @@ function SupplierForm({
         maxLength={500}
       />
       <ErrorText>{error}</ErrorText>
-      <div className="flex gap-2">
-        <Button width="auto" htmlType="submit" isLoading={busy}>
-          Simpan
-        </Button>
+      <ActionRow>
         <Button width="auto" type="outline" color="light" disabled={busy} onClick={onCancel}>
           Batal
         </Button>
-      </div>
+        <Button width="auto" htmlType="submit" isLoading={busy}>
+          Simpan
+        </Button>
+      </ActionRow>
     </form>
   )
 }

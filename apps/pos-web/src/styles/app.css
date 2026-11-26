@@ -302,3 +302,19 @@ html, body {
     animation: gallery-shimmer 1.4s linear infinite;
   }
 }
+
+/*
+ * Buttons (guideline "Panduan Dasar UI POS" section 6, UMK-2018): a label never wraps and the shape is a 12 px
+ * rounded rectangle, never a full pill. @umkmall/ui's Button has no step for it and packages/ui is not edited here,
+ * so this matches the Button's own base classes (inline-flex + rounded-full + transition-colors + duration-150).
+ * Height and the stacking of a group are `ActionRow` (components/action-row.tsx).
+ */
+:is(button, a)[class*="inline-flex"][class*="rounded-full"][class*="transition-colors"][class*="duration-150"] {
+  border-radius: 12px;
+  white-space: nowrap;
+}
+/* The "medium" and "large" Button steps (px-8 / px-10, py-3 / py-4) are 52 to 60 px tall: one fixed 44 px for both. */
+:is(button, a)[class*="inline-flex"][class*="rounded-full"][class*="duration-150"]:is([class*="px-8"], [class*="px-10"]) {
+  height: 44px;
+  padding-block: 0;
+}

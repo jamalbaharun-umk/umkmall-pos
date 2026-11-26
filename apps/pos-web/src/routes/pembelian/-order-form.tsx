@@ -31,6 +31,7 @@ import { clearKeys } from '../../lib/form-checks'
 import { useCan } from '@/components/shell'
 import { createOrder, type Order, type StockProduct, type Supplier, updateOrder } from './-api'
 import { type OrderLine as Line, toInt, validateOrder } from './-validate'
+import { ActionRow } from '@/components/action-row'
 
 /**
  * The purchase form: create (no `order`) or edit a draft (`order`). Header grid plus a line table, like Lakasir's
@@ -288,10 +289,7 @@ export function OrderForm({
           </p>
         </Card>
         <ErrorText>{error}</ErrorText>
-        <div className="flex gap-2">
-          <Button width="auto" htmlType="submit" isLoading={busy}>
-            Simpan sebagai draf
-          </Button>
+        <ActionRow>
           <Button width="auto" asChild type="outline" color="light" disabled={busy}>
             {order ? (
               <Link to="/pembelian/$id" params={{ id: order.id }}>
@@ -301,7 +299,10 @@ export function OrderForm({
               <Link to="/pembelian">Batal</Link>
             )}
           </Button>
-        </div>
+          <Button width="auto" htmlType="submit" isLoading={busy}>
+            Simpan sebagai draf
+          </Button>
+        </ActionRow>
       </form>
     </Page>
   )
