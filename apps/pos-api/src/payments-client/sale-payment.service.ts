@@ -106,13 +106,15 @@ const REFUSED_STATUSES = new Set([400, 401, 403, 429]);
 
 /**
  * The holder name of a VA as the screen may show it (UMK-2045): the gateway's text, so control characters
- * (and the invisible direction marks) are dropped and it is cut to 100 characters. Null when nothing is left.
+ * and the invisible marks (direction marks and isolates, the Arabic letter mark U+061C, zero-width and joiner
+ * characters U+200B-200F and U+2060-2064, the BOM) are dropped and it is cut to 100 characters, counted by code
+ * point so a character outside the BMP is never split in half. Null when nothing is left.
  */
 const UNPRINTABLE =
   // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 export const accountNameOf = (v: string): string | null =>
-  v.replace(UNPRINTABLE, '').trim().slice(0, 100).trim() || null;
+  [...v.replace(UNPRINTABLE, '').trim()].slice(0, 100).join('').trim() || null;
 
 /**
  * The gateway's payment page as the screen may show and open it (UMK-2043): an `https:` URL without
