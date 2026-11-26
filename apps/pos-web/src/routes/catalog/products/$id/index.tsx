@@ -57,6 +57,7 @@ function ViewProduct() {
           <>
             <Menu
               label="Aksi lain"
+              side="bottom"
               align="end"
               trigger={
                 <Button type="outline" color="light" width="auto">
