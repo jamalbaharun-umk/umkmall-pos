@@ -503,6 +503,7 @@ describe('"Buat QR baru" (UMK-2042)', () => {
     expect(describeError(paymentFailure('renew', 503, null), 'x').primary).toBe('none')
     expect(describeError(paymentFailure('renew', 503, { code: 'renew_pending' }), 'x').primary).toBe('retry')
     expect(describeError(paymentFailure('renew', 409, { code: 'attempt_limit', message: 'm' }), 'x').what).toMatch(/terlalu sering/)
+    expect(describeError(paymentFailure('renew', 409, { code: 'renew_in_progress', message: 'm' }), 'x').what).toMatch(/sedang dibuat/)
   })
 
   it('a payment-page link is read only as https', () => {

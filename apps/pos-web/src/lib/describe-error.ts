@@ -140,6 +140,12 @@ export const PAYMENT_CODES: Record<string, { what: string; todo: string; primary
     todo: 'Tekan lagi tombol buat kode baru sampai berhasil. Jangan membuat penjualan baru.',
     primary: 'retry',
   },
+  // another tap or tab is making the new code right now
+  renew_in_progress: {
+    what: 'Kode baru untuk penjualan ini sedang dibuat dari layar lain atau tekanan sebelumnya.',
+    todo: 'Tunggu sebentar, lalu tekan Cek status pembayaran.',
+    primary: 'none',
+  },
   switching_to_cash: {
     what: 'Penjualan ini sedang dialihkan ke tunai, jadi kode baru tidak dibuat.',
     todo: 'Selesaikan pembayaran tunainya, atau batalkan penjualan ini.',

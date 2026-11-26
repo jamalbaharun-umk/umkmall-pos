@@ -230,7 +230,7 @@ export function OnlineWait({
     if (!r || !r.ok) {
       const failure = r?.failure ?? { status: 0 }
       // The customer paid the old code first, or the sale ended: show the true state next to the explanation.
-      if (failure.code === 'already_paid' || failure.code === 'not_awaiting' || failure.code === 'renew_unanswered') await refetch()
+      if (['already_paid', 'not_awaiting', 'renew_unanswered', 'renew_in_progress'].includes(failure.code ?? '')) await refetch()
       return showError(failure, {
         action: 'membuat kode bayar baru',
         retry: failure.status === 0 || failure.code === 'renew_pending' ? () => void renew() : undefined,
