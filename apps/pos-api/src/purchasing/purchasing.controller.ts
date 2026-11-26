@@ -63,13 +63,32 @@ export class PurchasingController {
     return { data: rows, summary: await this.orders.summary(s.tenantId) };
   }
 
-  @AgentRoute()
   @Post()
   @RequirePermission('purchasing.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
     return this.orders.create(
       s.tenantId,
       s.actorId,
+      validate(OrderCreate, body),
+    );
+  }
+
+  /**
+   * UMK-2070: goods received in one step (written and approved in one transaction), once per Idempotency-Key. The
+   * one purchase route UMKMall's agent reaches: it can neither approve nor edit any other purchase.
+   */
+  @AgentRoute()
+  @Post('stock-in')
+  @RequirePermission('purchasing.manage')
+  stockIn(
+    @CurrentSession() s: PosSession,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    return this.orders.stockIn(
+      s.tenantId,
+      s.actorId,
+      keyOf(key),
       validate(OrderCreate, body),
     );
   }
@@ -163,7 +182,6 @@ export class PurchasingController {
     await this.orders.remove(s.tenantId, parseId(id));
   }
 
-  @AgentRoute()
   @Post(':id/approve')
   @RequirePermission('purchasing.manage')
   @HttpCode(200)

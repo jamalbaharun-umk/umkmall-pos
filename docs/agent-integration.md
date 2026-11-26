@@ -220,9 +220,10 @@ In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `payment
 
 - The sale goes into the owner's open shift; with none open the tool answers "Belum ada shift yang dibuka" and records
   nothing.
-- A `price` on a line or a `discount` the agent sends anyway is **ignored and said so** (UMK-2069): the preview and
-  the answer carry `ignored` (`linePrices` with each `sentPrice`, `discount`, and a sentence); the sale uses the
-  catalog price.
+- A line `price`, `discountPercent` or `discountAmount`, or an order `discount`, that the agent sends anyway is
+  **ignored and said so** (UMK-2069): the preview and the answer carry `ignored` (`linePrices` with `sentPrice`,
+  `sentDiscountPercent`, `sentDiscountAmount`; `discount`; a sentence), whole numbers only; the sale uses the catalog
+  price and no discount.
 - **The agent never sends a price or a discount** (an agent's `POST /sales` refuses `price` and `discount`, 422). The
   preview is the server's full quote (`POST /sales/quote` with the method: line prices with units and wholesale tiers,
   voucher discount, tax after discounts, total, cash rounding, amount due).
@@ -274,12 +275,14 @@ the agent (the owner can add more in the POS); the 11th answers an error on `fil
 3 MB for this tool (every other route keeps 100 kB).
 
 ### `stock_in`
-Goods received from a supplier (UMK-2070). In: `supplierId`, `lines` (`productId`, `qty`, `unitCost`: what the store
-paid per unit, integer rupiah), `paymentMethod?`, `note?` + write controls. Written as a purchase order and approved
-at once (`POST /purchasing/orders`, then `/approve`), which receives the stock at that cost (FIFO). Only stock-tracked
-products (`type: product`); a cost never changes a selling price. The preview shows each product's `stockBefore` and
-`stockAfter`. After a lost answer send it again with the same key: the tool approves the order it already wrote
-(approving an approved order changes nothing), so stock is never received twice.
+Goods received from a supplier (UMK-2070). Needs `pos.write`. In: `supplierId`, `lines` (1 to 200, one per product:
+`productId`, `qty` 1 to 100,000, `unitCost` 0 to Rp1,000,000,000: what the store paid per unit, whole rupiah),
+`paymentMethod?`, `note?` + write controls. One route, `POST /purchasing/orders/stock-in` with an `Idempotency-Key`:
+the purchase is written and approved in one transaction (stock in at those costs, FIFO), once per key; a retry with
+the same key answers the first purchase, another body under the key is 422. The agent cannot create a draft purchase
+nor approve one (`POST /purchasing/orders` and `/approve` are not agent routes). Only stock-tracked products
+(`type: product`); a cost never changes a selling price. The preview checks the same bounds and shows each product's
+`stockBefore` and `stockAfter`. After a lost answer send it again with the same key.
 
 ## 6. Not yet
 

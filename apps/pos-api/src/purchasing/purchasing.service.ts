@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ConflictException,
   Injectable,
@@ -230,32 +231,95 @@ export class PurchasingService {
     actorId: string,
     input: z.infer<typeof OrderCreate>,
   ) {
+    const id = await this.db.transaction((tx) =>
+      this.insertOrder(tx, tenantId, actorId, input),
+    );
+    return this.get(tenantId, id);
+  }
+
+  /**
+   * UMK-2070: goods received in one step: the purchase is written and approved (stock in at its costs) in ONE
+   * transaction, once per Idempotency-Key: a retry with the same key and body answers the first purchase, another
+   * body under the key is 422. Used by UMKMall's agent (`stock_in`), so nothing is ever left half done.
+   */
+  async stockIn(
+    tenantId: string,
+    actorId: string,
+    key: string,
+    input: z.infer<typeof OrderCreate>,
+  ) {
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify(input))
+      .digest('hex');
     const id = await this.db.transaction(async (tx) => {
-      await this.assertSupplier(tx, tenantId, input.supplierId);
-      // The next number of this store, one creation at a time (released at commit).
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext('pos.purchase_number'), hashtext(${tenantId}))`,
-      );
-      const [last] = await tx
-        .select({ n: sql<number | null>`max(${purchaseOrders.number})` })
-        .from(purchaseOrders)
-        .where(eq(purchaseOrders.tenantId, tenantId));
-      const [order] = await tx
-        .insert(purchaseOrders)
-        .values({
-          tenantId,
-          number: Number(last?.n ?? 0) + 1,
-          supplierId: input.supplierId,
-          paymentMethod: input.paymentMethod,
-          note: input.note,
-          dueDate: input.dueDate ?? null,
-          createdBy: actorId,
-        })
-        .returning({ id: purchaseOrders.id });
-      await this.writeLines(tx, tenantId, order.id, input.lines);
-      return order.id;
+      const id = await this.insertOrder(tx, tenantId, actorId, input, {
+        key,
+        requestHash,
+      });
+      await this.receiveOrder(tx, tenantId, actorId, id);
+      return id;
     });
     return this.get(tenantId, id);
+  }
+
+  /** A new draft under the store's next number; with a key, the purchase already made under it instead. */
+  private async insertOrder(
+    tx: Tx,
+    tenantId: string,
+    actorId: string,
+    input: z.infer<typeof OrderCreate>,
+    idem?: { key: string; requestHash: string },
+  ): Promise<string> {
+    await this.assertSupplier(tx, tenantId, input.supplierId);
+    // The next number of this store, one creation at a time (released at commit). It also serializes two
+    // requests with one Idempotency-Key: the second finds the first's purchase below.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('pos.purchase_number'), hashtext(${tenantId}))`,
+    );
+    if (idem) {
+      const [prev] = await tx
+        .select({
+          id: purchaseOrders.id,
+          requestHash: purchaseOrders.requestHash,
+        })
+        .from(purchaseOrders)
+        .where(
+          and(
+            eq(purchaseOrders.tenantId, tenantId),
+            eq(purchaseOrders.idempotencyKey, idem.key),
+          ),
+        );
+      if (prev) {
+        if (prev.requestHash !== idem.requestHash)
+          throw fieldError(
+            'idempotencyKey',
+            'Idempotency-Key ini sudah dipakai untuk pembelian lain',
+          );
+        return prev.id;
+      }
+    }
+    const [last] = await tx
+      .select({ n: sql<number | null>`max(${purchaseOrders.number})` })
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.tenantId, tenantId));
+    const [order] = await tx
+      .insert(purchaseOrders)
+      .values({
+        tenantId,
+        number: Number(last?.n ?? 0) + 1,
+        supplierId: input.supplierId,
+        paymentMethod: input.paymentMethod,
+        note: input.note,
+        dueDate: input.dueDate ?? null,
+        createdBy: actorId,
+        ...(idem && {
+          idempotencyKey: idem.key,
+          requestHash: idem.requestHash,
+        }),
+      })
+      .returning({ id: purchaseOrders.id });
+    await this.writeLines(tx, tenantId, order.id, input.lines);
+    return order.id;
   }
 
   /**
@@ -307,37 +371,47 @@ export class PurchasingService {
    * check); a cancelled one is 409.
    */
   async approve(tenantId: string, actorId: string, id: string) {
-    await this.db.transaction(async (tx) => {
-      const status = await this.lock(tx, tenantId, id);
-      if (status === 'approved') return;
-      if (status === 'cancelled')
-        throw new ConflictException('Pembelian sudah dibatalkan');
-      const lines = await tx
-        .select()
-        .from(purchaseOrderLines)
-        .where(eq(purchaseOrderLines.orderId, id))
-        .orderBy(purchaseOrderLines.productId);
-      for (const l of lines)
-        await this.stock.receive(tx, {
-          tenantId,
-          productId: l.productId,
-          qty: l.qty,
-          unitCost: l.unitCost,
-          source: 'purchase',
-          sourceId: id,
-          actorId,
-        });
-      await tx
-        .update(purchaseOrders)
-        .set({
-          status: 'approved',
-          approvedBy: actorId,
-          approvedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(purchaseOrders.id, id));
-    });
+    await this.db.transaction((tx) =>
+      this.receiveOrder(tx, tenantId, actorId, id),
+    );
     return this.get(tenantId, id);
+  }
+
+  /** Draft → approved under the order's row lock; approved stays approved (no second receipt); cancelled → 409. */
+  private async receiveOrder(
+    tx: Tx,
+    tenantId: string,
+    actorId: string,
+    id: string,
+  ) {
+    const status = await this.lock(tx, tenantId, id);
+    if (status === 'approved') return;
+    if (status === 'cancelled')
+      throw new ConflictException('Pembelian sudah dibatalkan');
+    const lines = await tx
+      .select()
+      .from(purchaseOrderLines)
+      .where(eq(purchaseOrderLines.orderId, id))
+      .orderBy(purchaseOrderLines.productId);
+    for (const l of lines)
+      await this.stock.receive(tx, {
+        tenantId,
+        productId: l.productId,
+        qty: l.qty,
+        unitCost: l.unitCost,
+        source: 'purchase',
+        sourceId: id,
+        actorId,
+      });
+    await tx
+      .update(purchaseOrders)
+      .set({
+        status: 'approved',
+        approvedBy: actorId,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrders.id, id));
   }
 
   /** Draft → cancelled; cancelled stays cancelled; approved → 409 (its stock is already in). */

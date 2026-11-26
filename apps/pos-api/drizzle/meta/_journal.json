@@ -330,6 +330,13 @@
       "when": 1795704027670,
       "tag": "0046_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795708670923,
+      "tag": "0047_purchase_stock_in_key",
+      "breakpoints": true
     }
   ]
 }

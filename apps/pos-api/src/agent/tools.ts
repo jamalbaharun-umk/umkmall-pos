@@ -160,6 +160,30 @@ export const AGENT_TOOL_NAMES = [
   'stock_in',
 ] as const;
 
+/** The purchase route's line bounds (`purchasing.service.ts` Line, orderFields), for the stock_in preview. */
+const StockLines = z
+  .array(
+    z.object({
+      productId: z.string(),
+      qty: z
+        .number()
+        .int('Jumlah harus bilangan bulat')
+        .positive('Jumlah harus lebih dari 0')
+        .max(100_000, 'Jumlah maksimal 100.000'),
+      unitCost: z
+        .number()
+        .int('Harga beli harus bilangan bulat rupiah')
+        .nonnegative('Harga beli tidak boleh negatif')
+        .max(1_000_000_000, 'Harga beli maksimal Rp1.000.000.000'),
+    }),
+  )
+  .min(1)
+  .max(200, 'Maksimal 200 baris')
+  .refine(
+    (l) => new Set(l.map((x) => x.productId)).size === l.length,
+    'Satu produk cukup satu baris',
+  );
+
 const HppRow = z
   .object({
     ref: z
@@ -986,6 +1010,18 @@ export function buildAgentServer(
                 .describe(
                   'IGNORED: the server prices every line; a price sent here is echoed back in ignored, never used',
                 ),
+              discountPercent: z
+                .number()
+                .optional()
+                .describe(
+                  'IGNORED: no line discount from the agent; echoed back in ignored',
+                ),
+              discountAmount: z
+                .number()
+                .optional()
+                .describe(
+                  'IGNORED: no line discount from the agent; echoed back in ignored',
+                ),
             }),
           )
           .describe('1 or more cart lines'),
@@ -1019,21 +1055,42 @@ export function buildAgentServer(
         qty: number;
         unit?: string;
         price?: number;
+        discountPercent?: number;
+        discountAmount?: number;
       }[];
       const cart = sent.map(({ productId, qty, unit }) => ({
         productId,
         qty,
         ...(unit !== undefined && { unit }),
       }));
+      // Echoed only as whole numbers: anything else is not a price or discount at all, and is dropped as well.
+      const whole = (v: unknown) =>
+        typeof v === 'number' && Number.isSafeInteger(v) ? v : undefined;
       const ignoredPrices = sent
-        .filter((l) => l.price !== undefined)
-        .map((l) => ({ productId: l.productId, sentPrice: l.price }));
+        .map((l) => ({
+          productId: l.productId,
+          sentPrice: whole(l.price),
+          sentDiscountPercent: whole(l.discountPercent),
+          sentDiscountAmount: whole(l.discountAmount),
+        }))
+        .filter(
+          (l) =>
+            l.sentPrice !== undefined ||
+            l.sentDiscountPercent !== undefined ||
+            l.sentDiscountAmount !== undefined,
+        )
+        .map((l) =>
+          Object.fromEntries(
+            Object.entries(l).filter(([, v]) => v !== undefined),
+          ),
+        );
+      const discount = whole(a.discount);
       const ignored =
-        ignoredPrices.length > 0 || a.discount !== undefined
+        ignoredPrices.length > 0 || discount !== undefined
           ? {
               ignored: {
                 ...(ignoredPrices.length > 0 && { linePrices: ignoredPrices }),
-                ...(a.discount !== undefined && { discount: a.discount }),
+                ...(discount !== undefined && { discount }),
                 message:
                   'Harga atau diskon dari agent diabaikan: POS memakai harga di katalog (lihat quote).',
               },
@@ -1394,6 +1451,18 @@ export function buildAgentServer(
       }[];
       const ids = lines.map((l) => idParam(l.productId));
       if (lines.length === 0 || ids.some((id) => !id)) return refused(BAD_ID);
+      // The route's own bounds, checked before the preview too, so a preview never shows what a confirm refuses.
+      const bounds = StockLines.safeParse(lines);
+      if (!bounds.success)
+        return refused(
+          bounds.error.issues
+            .map((i) =>
+              i.path.length > 0
+                ? `baris ${i.path.join('.')}: ${i.message}`
+                : i.message,
+            )
+            .join('; '),
+        );
       const body = {
         supplierId: a.supplierId,
         lines,
@@ -1434,33 +1503,23 @@ export function buildAgentServer(
             total: lines.reduce((n, l) => n + l.qty * l.unitCost, 0),
           });
         },
-        async (replay) => {
-          // The order has no key of its own: a lost answer after the create keeps its id, and a replay only approves
-          // that order again (approving an approved order changes nothing), so stock is never received twice.
-          let orderId = (replay as { orderId?: string } | undefined)?.orderId;
-          if (!orderId) {
-            const made = await callRoute(ctx, 'POST', '/purchasing/orders', {
-              body,
-            });
-            if (!made.ok) return { error: made.message, status: made.status };
-            orderId = (made.data as { id: string }).id;
-          }
-          const approved = await callRoute(
+        async () => {
+          // One route, one transaction, the route's own Idempotency-Key (derived from the agent key): a retry with the
+          // same key answers the first purchase, so stock never comes in twice.
+          const r = await callRoute(
             ctx,
             'POST',
-            `/purchasing/orders/${orderId}/approve`,
+            '/purchasing/orders/stock-in',
+            {
+              headers: {
+                'idempotency-key': routeKey(a.idempotencyKey as string),
+              },
+              body,
+            },
           );
-          if (!approved.ok)
-            return {
-              error: approved.message,
-              // A refused approve after a written order: the order is a draft the owner can see; keep the key.
-              status:
-                approved.status < 500 && approved.status !== 0
-                  ? 500
-                  : approved.status,
-              replay: { orderId },
-            };
-          return { data: approved.data as object, resultRefs: [orderId] };
+          if (!r.ok) return { error: r.message, status: r.status };
+          const order = r.data as { id: string };
+          return { data: order, resultRefs: [order.id] };
         },
         true,
       );

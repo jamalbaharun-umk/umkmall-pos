@@ -1572,14 +1572,25 @@ describe('UMKMall agent: session and MCP tools', () => {
         .expect(201);
       const client = await mcp(await agentToken(store.userId));
       const args = {
-        lines: [{ productId: kopi.id, qty: 1, price: 1 }],
+        lines: [
+          {
+            productId: kopi.id,
+            qty: 1,
+            price: 1,
+            discountPercent: 50,
+            discountAmount: 1.5,
+          },
+        ],
         discount: 5000,
         idempotencyKey: 'sale-price-0001',
       };
       const preview = await call(client, 'record_sale', args);
       expect(preview.data).toMatchObject({
         ignored: {
-          linePrices: [{ productId: kopi.id, sentPrice: 1 }],
+          // A non-whole number is not echoed (nor used).
+          linePrices: [
+            { productId: kopi.id, sentPrice: 1, sentDiscountPercent: 50 },
+          ],
           discount: 5000,
         },
         quote: { total: 10000 },
@@ -1665,7 +1676,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       ).toMatch(/izin pos\.write/);
     });
 
-    it('stock_in after a lost approve answer replays the approve only: one order, stock once', async () => {
+    it('stock_in after a lost answer replays under the same key: one purchase, stock once', async () => {
       const { store, productId, supplierId, onHand } = await stockStore();
       const client = await mcp(await agentToken(store.userId));
       const realFetch = global.fetch;
@@ -1678,7 +1689,8 @@ describe('UMKMall agent: session and MCP tools', () => {
             : input instanceof URL
               ? input.href
               : input.url;
-        if (!failed && url.endsWith('/approve') && init?.method === 'POST') {
+        // The purchase is written and received, then its answer is lost.
+        if (!failed && url.endsWith('/stock-in') && init?.method === 'POST') {
           failed = true;
           return new Response('{}', { status: 502 });
         }
@@ -1701,6 +1713,70 @@ describe('UMKMall agent: session and MCP tools', () => {
       const [n] = await appDb<{ n: number }[]>`
         select count(*)::int as n from pos.purchase_orders where tenant_id = ${store.tenantId}`;
       expect(n.n).toBe(1);
+    });
+
+    it('two stock-in requests with one key at once make one purchase and receive the stock once', async () => {
+      const { store, productId, supplierId, onHand } = await stockStore();
+      const auth = `Bearer ${await agentToken(store.userId)}`;
+      const send = () =>
+        http()
+          .post('/purchasing/orders/stock-in')
+          .set('Authorization', auth)
+          .set('Idempotency-Key', 'same-key-00001')
+          .send({ supplierId, lines: [{ productId, qty: 3, unitCost: 1000 }] });
+      const [a, b] = await Promise.all([send(), send()]);
+      expect([a.status, b.status]).toEqual([201, 201]);
+      expect(a.body.id).toBe(b.body.id);
+      expect(await onHand()).toBe(3);
+      // the same key with another body is refused
+      const other = await http()
+        .post('/purchasing/orders/stock-in')
+        .set('Authorization', auth)
+        .set('Idempotency-Key', 'same-key-00001')
+        .send({ supplierId, lines: [{ productId, qty: 4, unitCost: 1000 }] })
+        .expect(422);
+      expect(other.body.errors.idempotencyKey).toMatch(/sudah dipakai/);
+      expect(await onHand()).toBe(3);
+    });
+
+    it('the agent can neither create a draft purchase nor approve one', async () => {
+      const { store, productId, supplierId, onHand } = await stockStore();
+      const draft = await http()
+        .post('/purchasing/orders')
+        .set('Authorization', store.auth)
+        .send({ supplierId, lines: [{ productId, qty: 7, unitCost: 1000 }] })
+        .expect(201);
+      const auth = `Bearer ${await agentToken(store.userId)}`;
+      await http()
+        .post(`/purchasing/orders/${draft.body.id}/approve`)
+        .set('Authorization', auth)
+        .expect(403);
+      await http()
+        .post('/purchasing/orders')
+        .set('Authorization', auth)
+        .send({ supplierId, lines: [{ productId, qty: 1, unitCost: 1 }] })
+        .expect(403);
+      expect(await onHand()).toBe(0);
+    });
+
+    it('stock_in previews only what the route would take', async () => {
+      const { store, productId, supplierId } = await stockStore();
+      const client = await mcp(await agentToken(store.userId));
+      for (const [line, msg] of [
+        [{ productId, qty: 1.5, unitCost: 1000 }, /bilangan bulat/],
+        [{ productId, qty: 100_001, unitCost: 1000 }, /maksimal 100.000/],
+        [
+          { productId, qty: 1, unitCost: 1_000_000_001 },
+          /maksimal Rp1.000.000.000/,
+        ],
+      ] as const) {
+        const r = await call(client, 'stock_in', {
+          supplierId,
+          lines: [line],
+          idempotencyKey: `bounds-${randomUUID()}`,
+        });
+        expect(r.error).toMatch(msg);
+      }
     });
 
     it("stock_in refuses a product without stock tracking and another store's supplier", async () => {
