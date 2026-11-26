@@ -258,12 +258,16 @@ can be deduplicated; `totals` (in, out, net); `truncated` past 2000 entries (ask
 
 A kasbon sale itself brings in no money (only its payments do). The POS categories are the POS's; UMKMall maps them
 to its own (for example `ambil_pemilik` → uang pribadi, `setor_bank` → a transfer). Data only: nothing is written.
+`note` is the free text the owner or a cashier typed on an expense or a drawer cash entry, passed through as it is: it
+can hold anything they wrote (a name, a phone number). Treat it as the owner's data and show it only to them.
+`totals` add up the entries in this answer (all of them unless `truncated`).
 
 ### `add_product_photo`
 In: `productId`, `imageBase64` (JPG, PNG or WebP, at most 2 MB, no `data:` prefix) + write controls. Adds a photo to
 the product (`POST /catalog/products/:id/images`), e.g. the result of Upgrade Foto Produk. **Append only**: the agent
 never deletes or replaces a photo and never edits the product; the owner manages photos in the POS. The preview checks
-the product and the size; the idempotency record keeps the photo's sha256, not the photo. `/mcp` accepts bodies up to
+the product and the size; the idempotency record keeps the photo's sha256, not the photo. At most 10 photos per product through
+the agent (the owner can add more in the POS); the 11th answers an error on `file`. `/mcp` accepts bodies up to
 3 MB for this tool (every other route keeps 100 kB).
 
 ## 6. Not yet
