@@ -503,6 +503,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
                 : payment.status === 'expired' || payment.status === 'failed'
                   ? payment.status
                   : 'unpaid',
+            refusedCode,
           },
         );
         if (outcome === 'stale') continue;
@@ -833,7 +834,11 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
     paymentId: string,
     attempt: number,
     paidAt: string | null = null,
-    how: { byJob?: boolean; cancelReason?: CancelReason } = {},
+    how: {
+      byJob?: boolean;
+      cancelReason?: CancelReason;
+      refusedCode?: string;
+    } = {},
   ): Promise<SaleOutcome | 'stale'> {
     return this.db.transaction(async (tx) => {
       const [sale] = await tx
@@ -891,6 +896,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           status: 'cancelled',
           cancelledAt: sql`clock_timestamp()`,
           cancelReason: how.cancelReason ?? null,
+          paymentRefusedCode: how.refusedCode ?? null,
           paymentId,
           switchCashPaid: null,
           paymentRenewAt: null,

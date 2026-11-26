@@ -353,9 +353,11 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
           paid: string;
           change: string;
           switch_cash_paid: string | null;
+          cancel_reason: string | null;
+          payment_refused_code: string | null;
         }[]
       >`select status, payment_id, payment_attempt, payment_method_code, rounding, paid, change,
-          switch_cash_paid from pos.sales where id = ${id}`
+          switch_cash_paid, cancel_reason, payment_refused_code from pos.sales where id = ${id}`
     )[0];
   const paymentsOf = (saleId: string) =>
     pay.sql<PaymentRow[]>`
@@ -841,6 +843,23 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const missing = await sell(s, { paymentMethodId: va }).expect(422);
       expect(missing.body.code).toBe('bank_required');
       answerInstead = null;
+      // UMK-2055: the store's banks known now say BCA would do (the list changed since): a repeat still
+      // answers what the first request got, never a guess from today's list.
+      (
+        sync as unknown as {
+          banksCache: Map<
+            string,
+            { at: number; byMethod: Map<string, unknown> }
+          >;
+        }
+      ).banksCache.set(s.tenantId, {
+        at: Date.now(),
+        byMethod: new Map([['fake_va', [{ code: 'BCA', name: 'BCA' }]]]),
+      });
+      expect(await saleRow(res.body.saleId)).toMatchObject({
+        cancel_reason: 'gateway_refused',
+        payment_refused_code: 'bank_unknown',
+      });
       // A repeat of the request answers the same 422 with the same code, not a 409.
       const again = await sell(
         s,
@@ -896,9 +915,25 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
       expect((await saleRow(res.body.saleId)).status).toBe('cancelled');
       expect(await onHand(s)).toBe(20);
-      // A retry of the same request answers the same cancelled sale.
+      // A retry of the same request answers the same cancelled sale, with the same code (UMK-2055), also when
+      // the banks known now would make a bank refusal of it (QRIS "needs" a bank in this made-up list).
+      (
+        sync as unknown as {
+          banksCache: Map<
+            string,
+            { at: number; byMethod: Map<string, unknown> }
+          >;
+        }
+      ).banksCache.set(s.tenantId, {
+        at: Date.now(),
+        byMethod: new Map([['fake_qris', [{ code: 'FAKE', name: 'Fake' }]]]),
+      });
       const again = await sell(s, {}, key).expect(409);
-      expect(again.body.saleId).toBe(res.body.saleId);
+      expect(again.body).toMatchObject({
+        saleId: res.body.saleId,
+        status: 'cancelled',
+        code: 'merchant_not_active',
+      });
       expect(await onHand(s)).toBe(20);
       expect(await bills(s.tenantId)).toEqual([]);
       // The charge key is closed: nothing can be paid under it later.

@@ -276,7 +276,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   gets one), checked against payment-api's list BEFORE the sale's transaction (`SalesService.checkBank`,
   `PaymentSync.banksOf`); the sale keeps it in `sales.payment_bank` and every charge and close of the PG attempt
   sends it. With no answer to that check the sale goes on and payment-api's own refusal (`BANK_REFUSALS`) cancels it
-  at once, like a gate refusal (422).
+  at once, like a gate refusal (422). The refusal's code is kept on the sale (`sales.payment_refused_code`), and a
+  repeat of the request answers it (UMK-2055), never a code worked out again from today's banks.
 - **Switch to cash is written before anything is closed, and only the cashier's request does it:**
   `sales.switch_cash_paid` first, then that request (`settle` mode `cash`) closes the PG bill, turns the sale into a
   cash sale with attempt + 1 and charges it; a bill the customer paid first completes the PG sale instead (409
