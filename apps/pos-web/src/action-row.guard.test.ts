@@ -71,4 +71,11 @@ describe('button groups', () => {
     }
     expect(offenders, 'wrap these button groups in <ActionRow> (components/action-row.tsx)').toEqual([])
   })
+
+  it('the page header `actions` slot is an action row (a prop, so the grouping scan above cannot see it)', () => {
+    const page = readFileSync(join(SRC, 'components/page.tsx'), 'utf8')
+    const slot = /\{actions && <div className=\{(.*?)\}>\{actions\}<\/div>\}/.exec(page)
+    expect(slot, 'Page must render `actions` in a wrapper').not.toBeNull()
+    expect(slot![1]).toContain('actionRowClass(')
+  })
 })
