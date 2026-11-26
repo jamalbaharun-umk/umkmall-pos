@@ -61,6 +61,11 @@ const ACTIONS: Record<string, string> = {
   void: 'Void struk',
   refund: 'Refund struk',
   refund_manual: 'Tandai refund manual',
+  refund_retry: 'Coba ulang refund',
+  discount_approval: 'Setujui diskon dengan PIN',
+  approval_pin_set: 'Atur PIN persetujuan',
+  approval_pin_unlock: 'Buka kunci PIN persetujuan',
+  approval_pin_reset: 'Hapus PIN persetujuan',
   price_override: 'Ubah harga',
   drawer_cash_in: 'Kas laci masuk',
   drawer_cash_out: 'Kas laci keluar',
@@ -123,6 +128,13 @@ export function detailText(row: Pick<LogRow, 'event' | 'details'>, permissionLab
     case 'void':
     case 'refund':
       parts.push(num(d.total) === null ? null : rupiah(num(d.total)!), REASONS[text(d.reasonCode) ?? ''] ?? null)
+      break
+    case 'discount_approval':
+      if (num(d.discount) !== null) parts.push(`Diskon ${rupiah(num(d.discount)!)}`)
+      if (num(d.discountPercent) !== null) parts.push(`${num(d.discountPercent)}%`)
+      break
+    case 'approval_pin_set':
+      parts.push(d.forgotten === true ? 'PIN diganti setelah lupa' : d.first === true ? 'PIN pertama' : 'PIN diganti')
       break
     case 'price_override':
       if (num(d.listPrice) !== null && num(d.unitPrice) !== null) parts.push(`${rupiah(num(d.listPrice)!)} jadi ${rupiah(num(d.unitPrice)!)}`)

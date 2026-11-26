@@ -17,7 +17,6 @@ import {
   GROUPS,
   isFiltered,
   parseSearch,
-  PER_PAGE,
   PERIODS,
   staffOptions,
   targetLabel,
@@ -80,7 +79,8 @@ function LogScreen() {
   // The load failed: the error dialog says what happened and offers "Muat ulang".
   const failed = first.ok ? undefined : first
   useEffect(() => {
-    if (failed) showFailure(failed, () => void router.invalidate())
+    // A 403 is said on the page (a dialog cannot fix it); any other failure gets the dialog, and the page only the way back.
+    if (failed && failed.status !== 403) showFailure(failed, () => void router.invalidate())
   }, [failed, router])
 
   function setFilter(next: Partial<LogSearch>) {
@@ -103,10 +103,10 @@ function LogScreen() {
         <Panel>
           <Empty
             title="Log aktivitas belum bisa dimuat"
-            hint={failed.status === 403 ? failed.error : 'Periksa sambungan, lalu muat ulang.'}
+            hint={failed.status === 403 ? failed.error : undefined}
             action={
               failed.status === 403 ? undefined : (
-                <Button width="auto" size="small" onClick={() => void router.invalidate()}>
+                <Button width="auto" onClick={() => void router.invalidate()}>
                   Muat ulang
                 </Button>
               )
@@ -130,7 +130,7 @@ function LogScreen() {
             <Button
               key={g.value}
               width="auto"
-              size="small"
+             
               type={on ? 'primary' : 'outline'}
               color={on ? 'primary' : 'light'}
               aria-pressed={on}
@@ -144,14 +144,14 @@ function LogScreen() {
       <div className="grid gap-3 sm:grid-cols-2 lg:max-w-xl">
         <Select
           label="Staf"
-          size="small"
+         
           options={staffOptions(staff)}
           value={search.staff ?? 'all'}
           onValueChange={(v) => setFilter({ staff: v === 'all' ? undefined : v })}
         />
         <Select
           label="Tanggal"
-          size="small"
+         
           options={PERIODS.map((p) => ({ value: p.value, label: p.value === 'all' || p.value === '1' ? p.label : `${p.label} terakhir` }))}
           value={search.period ?? DEFAULT_PERIOD}
           onValueChange={(v) => setFilter({ period: v as LogSearch['period'] })}
@@ -164,7 +164,7 @@ function LogScreen() {
             <Empty
               title="Tidak ada aktivitas untuk filter ini."
               action={
-                <Button width="auto" size="small" type="outline" color="light" onClick={() => void navigate({ search: {} })}>
+                <Button width="auto" type="outline" color="light" onClick={() => void navigate({ search: {} })}>
                   Hapus filter
                 </Button>
               }
@@ -252,8 +252,8 @@ function LogScreen() {
               </span>
               {hasMore && (
                 <ActionRow>
-                  <Button width="auto" size="small" type="outline" color="light" isLoading={loadingMore} onClick={() => void loadMore()}>
-                    Muat lebih banyak ({PER_PAGE} baris)
+                  <Button width="auto" type="outline" color="light" isLoading={loadingMore} onClick={() => void loadMore()}>
+                    Muat lagi
                   </Button>
                 </ActionRow>
               )}

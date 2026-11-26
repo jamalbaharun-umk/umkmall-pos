@@ -69,6 +69,11 @@ describe('Log aktivitas (UMK-1969)', () => {
     ).toBe('Tambah izin Void · Cabut izin Laporan')
     expect(detailText(row({ event: 'sign_in', details: { deviceId: ID } }))).toBe('')
     expect(signedRupiah(2000)).toBe('+Rp2.000')
+    expect(detailText(row({ event: 'discount_approval', details: { discount: 8000, discountPercent: 40 } }))).toBe('Diskon Rp8.000 · 40%')
+    expect(detailText(row({ event: 'approval_pin_set', details: { first: true } }))).toBe('PIN pertama')
+    expect(detailText(row({ event: 'approval_pin_set', details: { first: false } }))).toBe('PIN diganti')
+    expect(actionLabel('refund_retry')).toBe('Coba ulang refund')
+    expect(actionLabel('approval_pin_reset')).toBe('Hapus PIN persetujuan')
   })
 
   it('shows only the facts a row holds in its expanded view', () => {
