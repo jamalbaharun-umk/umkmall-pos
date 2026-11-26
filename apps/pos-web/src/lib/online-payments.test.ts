@@ -49,6 +49,7 @@ describe('labels', () => {
     expect(providerLabel('midtrans')).toBe('Midtrans')
     expect(methodLabel('fake_qris')).toBe('QRIS dinamis')
     expect(methodLabel('fake_va')).toBe('Virtual Account (VA)')
+    expect(methodLabel('fake_checkout')).toBe('Checkout tiruan')
     expect(methodLabel('some_new_one')).toBe('some new one')
   })
   it('method hints follow the lock', () => {
