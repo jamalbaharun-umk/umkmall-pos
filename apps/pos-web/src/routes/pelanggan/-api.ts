@@ -2,6 +2,9 @@ import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { api, trySetStatus } from '@/lib/api.server'
+import { refusalOf } from '@/lib/refusal'
+import type { ApproversAnswer } from '../kasir/-void-api'
+import type { Approver } from '../kasir/-void-helpers'
 import { CORRECTION_NOTE_MAX, CORRECTION_REASONS } from '../piutang/-correction'
 
 // Server functions for the U7 screens (pelanggan, voucher, metode pembayaran, piutang). pos-api validates and
@@ -59,6 +62,8 @@ export type Receivable = ReceivableSummary & {
     reversesId?: string | null
     replacesId?: string | null
     reversedById?: string | null
+    /** A closed shift's cash reversal, given back from the store cash. */
+    viaStoreCash?: boolean
     reasonCode?: string | null
     note?: string | null
   }[]
@@ -226,6 +231,20 @@ const CorrectionInput = z
   })
   .strict()
 type CorrectionInput = z.infer<typeof CorrectionInput>
+
+/**
+ * Who may approve a kasbon correction by PIN: never the asking staff member (a second person approves; the owner
+ * sees themself). Never a PIN or a hash.
+ */
+export const loadCorrectionApprovers = createServerFn().handler(async (): Promise<ApproversAnswer> => {
+  const res = await api('/receivables/correction-approvers').catch((e: unknown) => {
+    if (isRedirect(e)) throw e // session ended: go to sign-in
+    return null
+  })
+  if (!res) return { ok: false, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
+  if (!res.ok) return { ok: false, error: (await refusalOf(res)).error }
+  return { ok: true, approvers: (await res.json()) as Approver[] }
+})
 
 /**
  * "Koreksi pembayaran" (UMK-1971): pos-api writes a reversal line and, unless `replacement` is null, the new payment.

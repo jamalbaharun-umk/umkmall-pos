@@ -253,15 +253,18 @@ describe('repo guards', () => {
     expect(service).not.toMatch(/\.(update|delete)\(\s*storeCashDeposits\b/);
   });
 
-  it('writes the kind receivable_reversal only in receivables/receivable-corrections.service.ts, and the book stays append-only (UMK-1971)', () => {
+  it('writes the kinds receivable_reversal(_closed_shift) only in receivables/receivable-corrections.service.ts, and the book stays append-only (UMK-1971)', () => {
     const own = path.join('receivables', 'receivable-corrections.service.ts');
     const offenders = files
       .filter(({ f }) => f !== own)
-      .filter(({ text }) =>
-        /direction:\s*['"`](in|out)['"`],\s*kind:\s*['"`]receivable_reversal['"`]/.test(
-          text.replace(/^\s*\/\/.*$/gm, ''),
-        ),
-      )
+      .filter(({ text }) => {
+        const code = text.replace(/^\s*\/\/.*$/gm, '');
+        return (
+          /direction:\s*['"`](in|out)['"`],\s*kind:\s*['"`]receivable_reversal['"`]/.test(
+            code,
+          ) || /kind:\s*['"`]receivable_reversal_closed_shift['"`]/.test(code)
+        );
+      })
       .map(({ f }) => f);
     expect(offenders).toEqual([]);
     const service = files.find(({ f }) => f === own)!.text;

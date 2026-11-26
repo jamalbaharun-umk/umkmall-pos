@@ -18,6 +18,15 @@ export const DISCOUNT_APPROVAL_REQUIRED = 'DISCOUNT_APPROVAL_REQUIRED';
 /** A cashier named themself as the approver: the gate needs a second person (only the owner may confirm their own). */
 export const DISCOUNT_SELF_APPROVAL = 'DISCOUNT_SELF_APPROVAL';
 
+/**
+ * The approver named is the asking actor, unless that actor is the owner (who may confirm their own). A PIN gate
+ * (a line discount UMK-1990, a kasbon correction UMK-1971) needs a second person.
+ */
+export const isSelfApproval = (
+  s: { kind: string; actorId: string },
+  approverId: string,
+) => s.kind !== 'owner' && approverId.toLowerCase() === s.actorId.toLowerCase();
+
 export type LineDiscountInput = {
   discountPercent?: number;
   discountAmount?: number;

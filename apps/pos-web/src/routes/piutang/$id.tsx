@@ -243,7 +243,9 @@ function ReceivablePage() {
                             ? 'Keluar dari laci shift'
                             : p.collectedOutsideShift
                               ? 'Keluar dari kas penagih'
-                              : place.label
+                              : p.viaStoreCash
+                                ? 'Keluar dari kas toko'
+                                : place.label
                           : place.label
                       return (
                         <TableRow key={p.id}>

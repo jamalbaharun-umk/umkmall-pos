@@ -35,8 +35,9 @@ export const CASH_DIRECTIONS = ['in', 'out'] as const;
  *   (UMK-1970). purchase_payment_reversal (in): the same id, that payment voided while its shift was open.
  *   Written only by src/purchasing/purchase-payments.service.ts.
  * - receivable_reversal (out): ref_id = the reversal row in pos.receivable_payments (UMK-1971), the cash of a
- *   corrected kasbon instalment taken out of the drawer: the instalment's own shift while it is open, else the
- *   shift open at the correction. Written only by src/receivables/receivable-corrections.service.ts.
+ *   corrected kasbon instalment taken out of the drawer of the instalment's own shift, while it is open (a closed
+ *   shift's goes out of the store cash, receivable_reversal_closed_shift). Written only by
+ *   src/receivables/receivable-corrections.service.ts.
  */
 export const CASH_ENTRY_KINDS = [
   'receivable_payment',

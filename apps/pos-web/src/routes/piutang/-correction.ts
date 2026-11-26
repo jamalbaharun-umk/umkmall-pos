@@ -99,8 +99,8 @@ export type CashOld = {
 
 /**
  * What the correction does to cash, mirroring pos-api so the form can say it before the click (pos-api decides again):
- * - `closedShift`: the old cash came from a shift that is closed: it stays as it was, and the difference is booked in
- *   the actor's open shift (`delta` = new cash − old cash), or `needsShift` when none is open;
+ * - `closedShift`: the old cash came from a shift that is closed: that shift and today's drawer stay as they are and
+ *   the store's cash gives it back (owner ruling 2026-11-26); no shift is needed for it;
  * - `collector`: the old cash is with a collector outside a shift: what they hold drops by the old amount;
  * - `sameShift`: the old cash leaves its own shift, still open;
  * - `none`: no drawer is touched by the reversal.
@@ -108,10 +108,7 @@ export type CashOld = {
  */
 export type CashEffect = {
   reversal: 'none' | 'sameShift' | 'closedShift' | 'collector'
-  needsShift: boolean
   newNeedsShift: boolean
-  /** Net cash into the open drawer for a closed-shift correction (may be negative). */
-  delta: number
 }
 
 export function cashEffect(
@@ -119,26 +116,19 @@ export function cashEffect(
   next: { amount: number; isCash: boolean } | null,
   ctx: { hasOpenShift: boolean; canOpenShift: boolean },
 ): CashEffect {
-  const newCash = next?.isCash ? next.amount : 0
   const newNeedsShift = !!next?.isCash && !ctx.hasOpenShift && ctx.canOpenShift
-  if (!old.isCash) return { reversal: 'none', needsShift: false, newNeedsShift, delta: newCash }
-  if (old.collectedOutsideShift) return { reversal: 'collector', needsShift: false, newNeedsShift, delta: newCash }
-  if (!old.shiftId) return { reversal: 'none', needsShift: false, newNeedsShift, delta: newCash }
-  if (!old.shiftClosed) return { reversal: 'sameShift', needsShift: false, newNeedsShift, delta: newCash - old.amount }
-  return { reversal: 'closedShift', needsShift: !ctx.hasOpenShift, newNeedsShift, delta: newCash - old.amount }
+  if (!old.isCash) return { reversal: 'none', newNeedsShift }
+  if (old.collectedOutsideShift) return { reversal: 'collector', newNeedsShift }
+  if (!old.shiftId) return { reversal: 'none', newNeedsShift }
+  if (!old.shiftClosed) return { reversal: 'sameShift', newNeedsShift }
+  return { reversal: 'closedShift', newNeedsShift }
 }
 
-/** "+Rp500" / "−Rp1.000" / "Rp0". */
-export const signedDelta = (n: number, fmt: (n: number) => string) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : fmt(0))
-
 /** The line under the form that says where the cash goes, in the design's words; undefined when no drawer moves. */
-export function cashNotice(effect: CashEffect, fmt: (n: number) => string, shiftNumber?: number | null): string | undefined {
-  const shift = shiftNumber ? `Shift #${shiftNumber}` : 'shift Anda yang sedang buka'
+export function cashNotice(effect: CashEffect): string | undefined {
   switch (effect.reversal) {
     case 'closedShift':
-      return effect.needsShift
-        ? 'Belum ada shift buka. Koreksi tunai dari shift lama butuh shift buka.'
-        : `Pembayaran tunai ini dari shift yang sudah ditutup. Shift lama tidak berubah. Selisih tunai ${signedDelta(effect.delta, fmt)} ke laci, dicatat di ${shift}.`
+      return 'Shift tertutup: uang dikembalikan lewat kas toko'
     case 'sameShift':
       return 'Uang tunai pembayaran lama dikeluarkan dari laci shift tempat ia diterima (shift itu masih buka).'
     case 'collector':

@@ -232,6 +232,7 @@ const STORE_KIND_LABELS: Record<string, string> = {
   collector_deposit: 'Setoran penagih masuk ke laci shift',
   purchase_payment_void: 'Bayar pemasok dari laci dibatalkan setelah shift ditutup',
   receivable_reversal: 'Koreksi kasbon yang dikumpulkan di luar shift',
+  receivable_reversal_closed_shift: 'Koreksi kasbon dari shift yang sudah ditutup',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'
 

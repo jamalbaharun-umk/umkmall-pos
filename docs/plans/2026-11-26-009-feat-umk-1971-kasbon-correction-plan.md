@@ -18,15 +18,22 @@ on the day of the correction. Replaces feature 9 (edit/delete a receivable payme
   a reason (`wrong_amount`, `wrong_method`, `wrong_customer`, `duplicate`, `other` + note) and an approver's PIN,
   checked by `VoidPins.verify` as a void is (wrong PIN 422, lock 429). No default role gains a permission (Admin
   already holds `sales.void`), so no role migration. Never an agent route; a person at the till only.
+- A second person approves (owner ruling 2026-11-26, the line-discount rule of UMK-1990, `isSelfApproval`): staff
+  naming themself is refused 422 `CORRECTION_SELF_APPROVAL` before the PIN is checked (no attempt counted); the
+  owner may approve their own. `GET /receivables/correction-approvers` (sales.void) leaves the asking staff member
+  out of the picker; the owner sees themself.
 - Idempotency-Key on the request, stored on the reversal row with the request hash (PIN not hashed); the new
   payment row carries `<key>.n` (a `.` never appears in a client key). Replay answers the first result without a
   PIN attempt; another body under the key is 422 `IDEMPOTENCY_KEY_REUSED`.
-- Cash: a reversal of a cash instalment taken in a shift goes out of THAT shift when it is still open; when it is
-  closed the closed shift never changes and the reversal goes out of the actor's open shift (as a void does);
-  no open shift then → 422 `SHIFT_REQUIRED`. A new cash payment follows the instalment rule (actor's open shift, or
-  outside a shift for a collector who cannot open one). Ledger kind `receivable_reversal` (out) in both ledgers.
+- Cash: a reversal of a cash instalment taken in a shift goes out of THAT shift when it is still open (ledger kind
+  `receivable_reversal`, out). When that shift is closed, neither it nor today's drawer changes: the store cash gives
+  the money back, store ledger kind `receivable_reversal_closed_shift` (out), the expense_void /
+  purchase_payment_void pattern the other way (owner ruling 2026-11-26), and no open shift is needed for it. A new
+  cash payment follows the instalment rule (actor's open shift, or outside a shift for a collector who cannot open
+  one), so only a new CASH payment can still answer `SHIFT_REQUIRED`. The dialog says "Shift tertutup: uang
+  dikembalikan lewat kas toko".
 - Collector cash: a reversal of an instalment collected outside a shift is a store ledger `out`
-  (`receivable_reversal`) and lowers that collector's held cash ("Setoran penagih": collected − reversed −
+  (`receivable_reversal`; never the closed-shift kind, so no collector nets it) and lowers that collector's held cash ("Setoran penagih": collected − reversed −
   deposited). It may not take it below what deposits already covered: refused 422 `REVERSAL_EXCEEDS_HELD` with
   `outstanding`, under the collector's staff row lock (the lock a deposit takes).
 - payment-api (UMK-1991): after the commit the original payment is voided there (recorded first if it was not),
@@ -45,11 +52,13 @@ on the day of the correction. Replaces feature 9 (edit/delete a receivable payme
    → one correction, PIN not asked again; revert-red).
 3. [test] Second correction of the same payment 422 `ALREADY_REVERSED`; correcting a reversal row 422; down payment
    422; voided kasbon 422.
-4. [test] Shift still open: its expected cash drops; closed shift: unchanged, the reversal is in the actor's open
-   shift; no open shift → `SHIFT_REQUIRED`.
+4. [test] Shift still open: its expected cash drops; closed shift: unchanged, today's drawer unchanged, the reversal
+   is a store cash `out` (also with no shift open; a new cash payment without a shift → `SHIFT_REQUIRED`); no
+   collector's held cash changes (revert-red).
 5. [test] Collector cash: held cash drops by the reversal; above what is still held (after a deposit) → 
    `REVERSAL_EXCEEDS_HELD` (revert-red).
-6. [test] 403 without `sales.void`; wrong PIN 422; reason missing 422; store B gets 404 on store A's receivable and
+6. [test] Self-approval by staff 422 `CORRECTION_SELF_APPROVAL` before the PIN, absent from the picker, another
+   admin approves, the owner may approve their own (revert-red). 403 without `sales.void`; wrong PIN 422; reason missing 422; store B gets 404 on store A's receivable and
    payment for the correction and the read.
 7. [test] payment-api on: the original payment is voided there and the new one recorded.
 8. [test] pos-web vitest for the pure helpers (form checks, rest after, cash effect text, row status).

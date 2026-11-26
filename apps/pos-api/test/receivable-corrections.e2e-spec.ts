@@ -47,6 +47,7 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
     shiftClosed: boolean;
     collectedOutsideShift: boolean;
     downPayment: boolean;
+    viaStoreCash: boolean;
   };
 
   /**
@@ -492,7 +493,7 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
     });
   });
 
-  it('cash of a shift still open goes out of THAT shift (also another cashier’s); a closed shift never changes and the cash goes through the shift open now', async () => {
+  it('cash of a shift still open goes out of THAT shift (also another cashier’s); a closed shift and today’s drawer never change: the store cash gives it back, with or without an open shift', async () => {
     const k = await kasbonStore(3);
     const rina = await createCashier(app, k, [
       'sales.create',
@@ -527,33 +528,78 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
       expectedCash: 0,
     });
 
-    // A cash instalment in the owner's shift, which is then closed (counted Rp2.500).
+    // Two cash instalments in the owner's shift, which is then closed (counted Rp5.000).
     const p = await pay(k.auth, k, 2500);
-    await post(k.auth, '/shifts/current/close', { countedCash: 2500 }).expect(
+    const q = await pay(k.auth, k, 2500);
+    await post(k.auth, '/shifts/current/close', { countedCash: 5000 }).expect(
       200,
     );
     const closedBefore = await shiftOf(k.auth, k.ownerShiftId);
-    expect(closedBefore).toMatchObject({ expectedCash: 2500, cashOut: 0 });
+    expect(closedBefore).toMatchObject({ expectedCash: 5000, cashOut: 0 });
     expect(
       (await receivable(k.auth, k)).payments.find((x) => x.id === p.id),
     ).toMatchObject({ shiftId: k.ownerShiftId, shiftClosed: true });
+    const storeOut = () =>
+      admin<
+        { kind: string; direction: string; amount: number; ref_id: string }[]
+      >`
+        select kind, direction, amount::int as amount, ref_id from pos.store_cash_entries
+         where tenant_id = ${k.tenantId} order by created_at, amount`;
 
-    // No open shift: refused before the PIN (design: "Belum ada shift buka").
-    const none = await correct(
+    // No open shift: the reversal needs none (owner ruling 2026-11-26), only a new CASH payment does, and that
+    // refusal still comes before the PIN.
+    const cashNoShift = await correct(
+      k.auth,
+      k,
+      q.id,
+      body(k, { amount: 3000 }, { pin: '000000' }),
+    ).expect(422);
+    expect(cashNoShift.body).toMatchObject({ code: 'SHIFT_REQUIRED' });
+    expect(cashNoShift.body.message).toMatch(/Buka shift dulu/);
+    expect(await pinFailures(k)).toBe(0);
+    const toTransfer = await correct(
       k.auth,
       k,
       p.id,
-      body(k, { amount: 3000 }, { pin: '000000' }),
-    ).expect(422);
-    expect(none.body).toMatchObject({ code: 'SHIFT_REQUIRED' });
-    expect(none.body.message).toMatch(/Belum ada shift buka/);
-    expect(await pinFailures(k)).toBe(0);
+      body(
+        k,
+        { amount: 2500, paymentMethodId: k.transferId },
+        { reasonCode: 'wrong_method' },
+      ),
+    ).expect(201);
+    expect(await storeOut()).toEqual([
+      {
+        kind: 'receivable_reversal_closed_shift',
+        direction: 'out',
+        amount: 2500,
+        ref_id: toTransfer.body.correction.id,
+      },
+    ]);
 
+    // With a shift open now: the reversal still leaves the store cash; today's drawer takes only the new cash.
     const next = await post(k.auth, '/shifts/open', { openingCash: 0 }).expect(
       201,
     );
-    await correct(k.auth, k, p.id, body(k, { amount: 3000 })).expect(201);
-    // The closed shift's report is unchanged; the open one takes −2.500 and +3.000: "Selisih tunai +Rp500".
+    await correct(k.auth, k, q.id, body(k, { amount: 3000 })).expect(201);
+    expect(await currentShift(k.auth)).toMatchObject({
+      id: next.body.id,
+      cashIn: 3000,
+      cashOut: 0,
+      receivableReversals: 0,
+      expectedCash: 3000,
+    });
+    expect((await storeOut()).map((e) => [e.kind, e.amount])).toEqual([
+      ['receivable_reversal_closed_shift', 2500],
+      ['receivable_reversal_closed_shift', 2500],
+    ]);
+    // The store cash pays it out; no collector holds less (Setoran penagih and Laporan kasbon).
+    const store = (await get(k.auth, '/store-cash').expect(200)).body;
+    expect(store.summary).toMatchObject({ cashOut: 5000, outstanding: 0 });
+    expect(store.collectors).toEqual([]);
+    const report = await get(k.auth, '/reports/receivables').expect(200);
+    expect(report.body.summary.collectorHeld).toBe(0);
+
+    // The closed shift's report is unchanged.
     const closedAfter = await shiftOf(k.auth, k.ownerShiftId);
     for (const field of [
       'expectedCash',
@@ -570,14 +616,18 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
         reversed: true,
       })),
     );
-    expect(await currentShift(k.auth)).toMatchObject({
-      id: next.body.id,
-      cashIn: 3000,
-      cashOut: 2500,
-      receivableReversals: 2500,
-      expectedCash: 500,
-    });
-    expect((await receivable(k.auth, k)).rest).toBe(18000 - 2500 - 3000);
+    // The history says where the reversal's cash came from.
+    const r = await receivable(k.auth, k);
+    expect(
+      r.payments
+        .filter((x) => x.status === 'reversal')
+        .map((x) => [x.amount, x.viaStoreCash, x.shiftId]),
+    ).toEqual([
+      [-2500, false, rinaShift.body.id],
+      [-2500, true, null],
+      [-2500, true, null],
+    ]);
+    expect(r.rest).toBe(18000 - 2500 - 2500 - 3000);
   });
 
   it('collector cash: a reversal lowers what the collector holds, never below what they already deposited (REVERSAL_EXCEEDS_HELD)', async () => {
@@ -982,17 +1032,12 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
     await correct(collector.auth, k, p.id, body(k, null)).expect(403);
     await correct(voider.auth, k, p.id, body(k, null)).expect(403);
 
-    // An admin (both permissions) with an own PIN may correct, approved by that PIN.
+    // An admin (both permissions) may correct, approved by another person's PIN (here the owner's).
     const adm = await createCashier(app, k, [
       'sales.create',
       'receivables.manage',
       'sales.void',
     ]);
-    await http()
-      .put('/void-pin')
-      .set('Authorization', adm.auth)
-      .send({ pin: '715064' })
-      .expect(200);
 
     const bad = async (b: object, field: string) => {
       const res = await correct(k.auth, k, p.id, b).expect(422);
@@ -1028,13 +1073,85 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
       adm.auth,
       k,
       p.id,
-      body(
-        k,
-        { amount: 2000, paymentMethodId: k.transferId },
-        { approverId: adm.staffId, pin: '715064' },
-      ),
+      body(k, { amount: 2000, paymentMethodId: k.transferId }),
     ).expect(201);
     expect(ok.body.correction.restAfter).toBe(4000);
+  });
+
+  it('a second person approves: staff naming themself is refused before the PIN (CORRECTION_SELF_APPROVAL) and is not offered; the owner may approve their own', async () => {
+    const k = await kasbonStore();
+    const p = await pay(k.auth, k, 2500);
+    const perms = ['sales.create', 'receivables.manage', 'sales.void'] as const;
+    const adm = await createCashier(app, k, [...perms]);
+    const adm2 = await createCashier(app, k, [...perms]);
+    for (const a of [adm, adm2])
+      await http()
+        .put('/void-pin')
+        .set('Authorization', a.auth)
+        .send({ pin: a === adm ? '715064' : '135790' })
+        .expect(200);
+    const failures = async (actorId: string) =>
+      (
+        await admin<{ failures: number }[]>`
+          select failures from pos.void_pins
+          where tenant_id = ${k.tenantId} and actor_id = ${actorId}`
+      )[0]?.failures ?? 0;
+
+    // The picker leaves the asking staff member out; the owner sees themself.
+    const ids = async (auth: string) =>
+      (
+        (await get(auth, '/receivables/correction-approvers').expect(200))
+          .body as { id: string }[]
+      ).map((a) => a.id);
+    const forAdm = await ids(adm.auth);
+    expect(forAdm).toEqual(expect.arrayContaining([k.userId, adm2.staffId]));
+    expect(forAdm).not.toContain(adm.staffId);
+    expect(await ids(k.auth)).toEqual(
+      expect.arrayContaining([k.userId, adm.staffId, adm2.staffId]),
+    );
+    // Only for someone who may correct.
+    const collector = await createCashier(app, k, ['receivables.manage']);
+    await get(collector.auth, '/receivables/correction-approvers').expect(403);
+
+    // Naming themself: refused, with the right PIN too, also in other letter case; no attempt counted, nothing written.
+    for (const approverId of [adm.staffId, adm.staffId.toUpperCase()])
+      for (const pin of ['000000', '715064']) {
+        const self = await correct(
+          adm.auth,
+          k,
+          p.id,
+          body(k, null, { approverId, pin }),
+        ).expect(422);
+        expect(self.body).toMatchObject({ code: 'CORRECTION_SELF_APPROVAL' });
+        expect(self.body.errors.approverId).toMatch(/admin lain atau pemilik/);
+      }
+    expect(await failures(adm.staffId)).toBe(0);
+    expect(await bookRows(k.tenantId)).toHaveLength(1);
+    expect(await auditRows(k.tenantId)).toEqual([]);
+
+    // Another admin approves.
+    const ok = await correct(
+      adm.auth,
+      k,
+      p.id,
+      body(
+        k,
+        // A transfer: the admin has no shift open for cash.
+        { amount: 3000, paymentMethodId: k.transferId },
+        { approverId: adm2.staffId, pin: '135790' },
+      ),
+    ).expect(201);
+    expect((await auditRows(k.tenantId))[0]).toMatchObject({
+      actor_id: adm.staffId,
+      details: { approvedBy: adm2.staffId },
+    });
+    // The owner approves their own correction with their PIN.
+    await correct(
+      k.auth,
+      k,
+      ok.body.correction.newPaymentId,
+      body(k, null),
+    ).expect(201);
   });
 
   it('cross-tenant: store B gets 404 on store A’s receivable and payment, for the correction and the read; A is unchanged', async () => {

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { ApproverPinFields, ApproverStatus, useApprovers } from '../kasir/-approver-fields'
-import { correctPayment, type OpenShift, type PaymentMethod, type Receivable } from '../pelanggan/-api'
+import { correctPayment, loadCorrectionApprovers, type OpenShift, type PaymentMethod, type Receivable } from '../pelanggan/-api'
 import { parseRupiah } from '../pelanggan/-form'
 import { formatMomentDay, rupiah } from '../pelanggan/-ui'
 import {
@@ -40,7 +40,7 @@ type Props = {
  */
 export function CorrectionDialog({ receivable: r, payment, methods, shift, canOpenShift, onClose, onChanged }: Props) {
   const open = payment !== null
-  const { approvers, reload, list, anyApprover } = useApprovers(open)
+  const { approvers, reload, list, anyApprover } = useApprovers(open, loadCorrectionApprovers)
   const [mode, setMode] = useState<'replace' | 'cancel'>('replace')
   const [amount, setAmount] = useState('')
   const [methodId, setMethodId] = useState('')
@@ -88,8 +88,8 @@ export function CorrectionDialog({ receivable: r, payment, methods, shift, canOp
     next,
     { hasOpenShift: !!shift, canOpenShift },
   )
-  const notice = cashNotice(effect, rupiah, shift?.number)
-  const blocked = effect.needsShift || (mode === 'replace' && effect.newNeedsShift)
+  const notice = cashNotice(effect)
+  const blocked = mode === 'replace' && effect.newNeedsShift
   const restAfter = restAfterCorrection(r.rest, payment.amount, mode === 'replace' ? (value > 0 ? value : null) : null)
   const showSummary = mode === 'cancel' || (value > 0 && value <= r.rest + payment.amount)
 
@@ -257,17 +257,20 @@ export function CorrectionDialog({ receivable: r, payment, methods, shift, canOp
         )}
 
         {notice && (
-          <Alert variant={effect.needsShift ? 'warning' : 'info'} size="small">
+          <Alert variant="info" size="small">
             {notice}
           </Alert>
         )}
-        {mode === 'replace' && effect.newNeedsShift && !effect.needsShift && (
+        {mode === 'replace' && effect.newNeedsShift && (
           <Alert variant="warning" size="small">
             Buka shift dulu untuk menerima pembayaran tunai. Transfer dan QRIS tetap bisa dicatat.
           </Alert>
         )}
 
         <ApproverStatus approvers={approvers} anyApprover={anyApprover} reload={reload} />
+        <p className="text-sm text-default-secondary">
+          Admin lain atau pemilik yang memegang izin void menyetujui dengan PIN-nya sendiri.
+        </p>
         <ApproverPinFields
           approvers={approvers}
           list={list}

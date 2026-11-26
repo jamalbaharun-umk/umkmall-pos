@@ -61,6 +61,7 @@ describe('drawerRows', () => {
     expect(drawerAddsUp(rows)).toBe(true)
     expect(entryKindLabel('receivable_reversal')).toBe('Koreksi kasbon (uang dikeluarkan)')
     expect(storeKindLabel('receivable_reversal')).toBe('Koreksi kasbon yang dikumpulkan di luar shift')
+    expect(storeKindLabel('receivable_reversal_closed_shift')).toBe('Koreksi kasbon dari shift yang sudah ditutup')
   })
 
   it('drops zero ledger lines but keeps opening cash and sales', () => {

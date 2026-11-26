@@ -29,11 +29,11 @@ import { PaymentSync } from '../payments-client/payment-sync.service';
 import { paymentMethodCode } from '../payments-client/payments.client';
 import {
   assertPersonAtTill,
-  recordShiftCash,
   recordShiftCashIfOpen,
   recordShiftCashInShift,
 } from '../shifts/cash-ledger';
 import { isUniqueViolation } from '../staff/http';
+import { isSelfApproval } from '../sales/line-discount';
 import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
 import { StoreCashDepositsService } from '../store-cash/store-cash-deposits.service';
@@ -98,8 +98,7 @@ const requestHash = (
 const replacementKey = (key: string) => `${key}.n`;
 
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk transaksi lain';
-const NO_SHIFT_REVERSAL =
-  'Belum ada shift buka. Koreksi tunai dari shift lama butuh shift buka.';
+export const CORRECTION_SELF_APPROVAL = 'CORRECTION_SELF_APPROVAL';
 const NO_SHIFT_CASH = 'Buka shift dulu sebelum menerima pembayaran tunai';
 
 const rp = receivablePayments;
@@ -119,7 +118,8 @@ type Original = {
 
 /**
  * Where the cash of a corrected instalment goes back from (UMK-1971):
- * - `shift`: it was taken in shift `shiftId`; out of that drawer while it is open, else out of the actor's open one;
+ * - `shift`: it was taken in shift `shiftId`; out of that drawer while it is open, else out of the store's cash (owner
+ *   ruling 2026-11-26: a closed shift and today's drawer never change, as a voided drawer expense);
  * - `collector`: collected outside a shift by `collectorId`; out of the store's cash, lowering what they hold;
  * - `none`: not cash, or cash that never reached a drawer ledger.
  */
@@ -134,15 +134,16 @@ type CashBack =
  * row (`reverses_id`, minus the old amount) and, unless the payment is only cancelled, a NEW payment (`replaces_id`),
  * both dated now, and moves `receivables.rest` by `+old − new`. Closed shifts and closed days keep their figures.
  *
- * This file is the only writer of the ledger kind `receivable_reversal` (guard in src/guards.spec.ts); the ledger rows
- * themselves go through `recordShiftCashInShift` / `recordShiftCash` / `recordStoreCash`.
+ * This file is the only writer of the ledger kinds `receivable_reversal` and `receivable_reversal_closed_shift` (guard
+ * in src/guards.spec.ts); the ledger rows themselves go through `recordShiftCashInShift` / `recordStoreCash`.
+ * The approver is a second person (`CORRECTION_SELF_APPROVAL`); the owner may approve their own.
  *
  * Lock order (the one a payment and a deposit use): receivable row, the collector's staff row, then shifts; when two
  * shifts are touched (the instalment's and the actor's), both at once in id order.
  * Checks run cheapest and safest first: validation, replay, state (no lock), then the approver's PIN, then all again
  * under the locks. A request that cannot succeed never costs a PIN attempt.
  *
- * Refusals carry a `code`: `IDEMPOTENCY_KEY_REUSED`, `RECEIVABLE_CANCELLED`, `ALREADY_REVERSED`, `NOT_CORRECTABLE`,
+ * Refusals carry a `code`: `CORRECTION_SELF_APPROVAL`, `IDEMPOTENCY_KEY_REUSED`, `RECEIVABLE_CANCELLED`, `ALREADY_REVERSED`, `NOT_CORRECTABLE`,
  * `DOWN_PAYMENT`, `SAME_AS_ORIGINAL`, `AMOUNT_EXCEEDS_REST`, `SHIFT_REQUIRED`, `REVERSAL_EXCEEDS_HELD` (with
  * `outstanding`), `AGENT_FORBIDDEN`; a wrong PIN is VoidPins' own 422/429.
  */
@@ -167,6 +168,14 @@ export class ReceivableCorrectionsService {
   ) {
     // An agent never corrects money: refused before any lookup.
     assertPersonAtTill(s.kind);
+    // A second person approves (owner ruling 2026-11-26, the line-discount rule): only the owner may approve their
+    // own correction. Refused before anything else, so no PIN attempt counts.
+    if (isSelfApproval(s, input.approverId))
+      throw codedError(
+        CORRECTION_SELF_APPROVAL,
+        'approverId',
+        'Koreksi ini harus disetujui admin lain atau pemilik',
+      );
     const hash = requestHash(receivableId, paymentId, input);
     const prior = await this.byKey(this.db, s.tenantId, key);
     if (prior)
@@ -204,6 +213,12 @@ export class ReceivableCorrectionsService {
         this.payments.recordReceivablePayment(s.tenantId, recorded),
       );
     return this.answer(s, receivableId, done.reversalId);
+  }
+
+  /** The approver picker of the correction dialog: who holds sales.void with a PIN, never the asking staff member. */
+  async approvers(s: PosSession) {
+    const all = await this.pins.approvers(s.tenantId);
+    return all.filter((a) => !isSelfApproval(s, a.id));
   }
 
   private async byKey(db: Db | Tx, tenantId: string, key: string) {
@@ -325,8 +340,6 @@ export class ReceivableCorrectionsService {
     if (!locked) {
       // Without locks: refuse early what will certainly fail, so no PIN attempt is spent on it.
       const open = await this.hasOpenShift(s);
-      if (back.kind === 'shift' && !back.open && !open)
-        throw codedError('SHIFT_REQUIRED', '_', NO_SHIFT_REVERSAL);
       if (method?.isCash && !open && hasPermission(s, 'sales.create'))
         throw codedError('SHIFT_REQUIRED', '_', NO_SHIFT_CASH);
       if (back.kind === 'collector')
@@ -501,15 +514,19 @@ export class ReceivableCorrectionsService {
         )
         .orderBy(shifts.id)
         .for('update');
-      // Out of the instalment's own drawer while that shift is open; a closed shift never changes, so the cash
-      // goes out of the drawer open now (the actor's), as a void's does.
+      // Out of the instalment's own drawer while that shift is open. A closed shift never changes and today's
+      // drawer did not hold that cash: it goes out of the store's cash (owner ruling 2026-11-26), no shift needed.
       const inOwnShift = await recordShiftCashInShift(
         tx,
         s,
         back.shiftId,
         cashOut,
       );
-      if (!inOwnShift) await recordShiftCash(tx, s, cashOut, NO_SHIFT_REVERSAL);
+      if (!inOwnShift)
+        await recordStoreCash(tx, s, {
+          ...cashOut,
+          kind: 'receivable_reversal_closed_shift',
+        });
     }
 
     let recordedId: string | null = null;

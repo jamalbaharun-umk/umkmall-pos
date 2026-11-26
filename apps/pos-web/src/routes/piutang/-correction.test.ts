@@ -80,22 +80,20 @@ describe('koreksi kasbon helpers (UMK-1971)', () => {
     })
   })
 
-  it('says where the cash goes: a closed shift stays as it was and the difference goes to the open drawer', () => {
+  it('says where the cash goes: a closed shift and today’s drawer stay as they are, the store cash gives it back', () => {
     const cash = { amount: 2500, isCash: true, shiftId: 's1', shiftClosed: true, collectedOutsideShift: false }
     const open = { hasOpenShift: true, canOpenShift: true }
     const closed = cashEffect(cash, { amount: 3000, isCash: true }, open)
-    expect(closed).toEqual({ reversal: 'closedShift', needsShift: false, newNeedsShift: false, delta: 500 })
-    expect(cashNotice(closed, rp, 13)).toBe(
-      'Pembayaran tunai ini dari shift yang sudah ditutup. Shift lama tidak berubah. Selisih tunai +Rp500 ke laci, dicatat di Shift #13.',
-    )
-    // Corrected to a transfer: all of the old cash leaves the open drawer.
-    expect(cashEffect(cash, { amount: 2500, isCash: false }, open).delta).toBe(-2500)
+    expect(closed).toEqual({ reversal: 'closedShift', newNeedsShift: false })
+    expect(cashNotice(closed)).toBe('Shift tertutup: uang dikembalikan lewat kas toko')
+    // Without an open shift the reversal still goes (owner ruling 2026-11-26); only a new CASH payment needs one.
     const none = cashEffect(cash, null, { hasOpenShift: false, canOpenShift: true })
-    expect(none.needsShift).toBe(true)
-    expect(cashNotice(none, rp)).toMatch(/^Belum ada shift buka/)
+    expect(none).toEqual({ reversal: 'closedShift', newNeedsShift: false })
+    expect(cashEffect(cash, { amount: 2500, isCash: false }, { hasOpenShift: false, canOpenShift: true }).newNeedsShift).toBe(false)
+    expect(cashEffect(cash, { amount: 3000, isCash: true }, { hasOpenShift: false, canOpenShift: true }).newNeedsShift).toBe(true)
     expect(cashEffect({ ...cash, shiftClosed: false }, null, open).reversal).toBe('sameShift')
     expect(cashEffect({ ...cash, shiftId: null, collectedOutsideShift: true }, null, open).reversal).toBe('collector')
-    expect(cashNotice(cashEffect({ ...cash, isCash: false }, null, open), rp)).toBeUndefined()
+    expect(cashNotice(cashEffect({ ...cash, isCash: false }, null, open))).toBeUndefined()
     expect(cashEffect({ ...cash, isCash: false }, { amount: 1000, isCash: true }, { hasOpenShift: false, canOpenShift: true }).newNeedsShift).toBe(true)
     expect(cashEffect({ ...cash, isCash: false }, { amount: 1000, isCash: true }, { hasOpenShift: false, canOpenShift: false }).newNeedsShift).toBe(false)
   })

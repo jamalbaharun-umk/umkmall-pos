@@ -36,6 +36,9 @@ export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
  * - receivable_reversal (out): ref_id = the reversal row in pos.receivable_payments (UMK-1971), a corrected cash
  *   instalment that was collected outside a shift: it lowers what that collector holds (the original payment's
  *   actor, not this row's), never below what they deposited.
+ * - receivable_reversal_closed_shift (out): ref_id = the reversal row in pos.receivable_payments (UMK-1971), the cash
+ *   of a corrected instalment whose shift is already closed (owner ruling 2026-11-26): the closed shift and today's
+ *   drawer never change, the store's cash gives it back, as expense_void does the other way. Not a collector's.
  */
 export const STORE_CASH_KINDS = [
   'receivable_payment',
@@ -43,6 +46,7 @@ export const STORE_CASH_KINDS = [
   'expense_void',
   'purchase_payment_void',
   'receivable_reversal',
+  'receivable_reversal_closed_shift',
 ] as const;
 
 export const storeCashEntries = pos

@@ -363,6 +363,10 @@ export class ReceivablesService {
             string | null
           >`(select x.id from ${receivablePayments} x
             where x.tenant_id = ${receivablePayments.tenantId} and x.reverses_id = ${receivablePayments.id})`,
+          // A reversal of a closed shift's cash instalment: given back from the store's cash (owner ruling 2026-11-26).
+          viaStoreCash: sql<boolean>`exists (select 1 from pos.store_cash_entries x
+            where x.tenant_id = ${receivablePayments.tenantId} and x.kind = 'receivable_reversal_closed_shift'
+              and x.ref_id = ${receivablePayments.id})`,
           reasonCode: receivablePayments.reasonCode,
           note: receivablePayments.note,
           createdAt: receivablePayments.createdAt,
@@ -616,6 +620,16 @@ export class ReceivablesController {
   @RequirePermission('receivables.manage')
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
     return this.receivables.list(s.tenantId, validate(ReceivableQuery, query));
+  }
+
+  /**
+   * The approver picker of "Koreksi pembayaran" (UMK-1971): who may approve by void PIN, never the asking staff
+   * member themself (a second person approves; the owner sees themself). Before `:id`, which would take the path.
+   */
+  @Get('correction-approvers')
+  @RequirePermission('sales.void')
+  correctionApprovers(@CurrentSession() s: PosSession) {
+    return this.corrections.approvers(s);
   }
 
   @AgentRoute()
