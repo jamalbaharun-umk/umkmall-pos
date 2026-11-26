@@ -5,6 +5,7 @@ import { loadReceipt } from './-api'
 import { soldQtyText, soldPriceNote } from './-helpers'
 import { hasRounding } from './-money'
 import { ActionRow } from '@/components/action-row'
+import { ReceiptMark } from './-receipt-mark'
 
 // Printable receipt (Lakasir's browser printer): the browser's print dialog, sized for 58/80 mm paper.
 export const Route = createFileRoute('/kasir/struk/$id')({
@@ -20,6 +21,7 @@ function ReceiptPage() {
     <main className="min-h-svh bg-default-secondary px-4 py-6 print:bg-white print:p-0">
       <div className="flex flex-col items-center gap-4 print:block">
         <article className="w-full max-w-[320px] rounded-xl bg-white p-4 font-mono text-sm text-black shadow-sm print:max-w-none print:rounded-none print:p-0 print:shadow-none">
+          <ReceiptMark receipt={r} />
           <p className="text-center font-semibold">STRUK PENJUALAN</p>
           <p className="mt-2 flex justify-between">
             <span>No. {r.number}</span>

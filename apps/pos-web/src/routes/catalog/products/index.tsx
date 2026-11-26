@@ -18,6 +18,7 @@ import { EllipsisVertical, Eye, Pencil, Search, Trash2 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
+import { SCROLL_ROW } from '@/lib/scroll-row'
 import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components/page'
 import { deleteProduct, listCategories, listProducts, type ProductSearch } from '../-api'
@@ -86,7 +87,7 @@ function ProductsPage() {
         <div className="flex flex-col gap-3 border-b border-border-light p-4 md:flex-row md:items-center md:justify-end">
           <SegmentedControl
             aria-label="Filter stok"
-            className="md:mr-auto"
+            className={`${SCROLL_ROW} md:mr-auto`}
             options={[
               { value: 'all', label: 'Semua' },
               { value: 'low', label: filterLabel('Menipis', page.stockCounts.low) },

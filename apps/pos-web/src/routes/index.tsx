@@ -2,6 +2,7 @@ import { Button } from '@umkmall/ui/primitives'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useEffect, type ReactNode } from 'react'
+import { ActionRow } from '@/components/action-row'
 import { notifySuccess } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
@@ -75,11 +76,11 @@ function Dashboard({ products }: { products: number }) {
           </Empty>
         ) : (
           <QuickStart>
-            <Button asChild type="primary" color="primary" size="small" width="auto">
-              <a href="/kasir">Buka kasir</a>
-            </Button>
             <Button asChild type="outline" color="primary" size="small" width="auto">
               <Link to="/catalog/products">Produk ({products})</Link>
+            </Button>
+            <Button asChild type="primary" color="primary" size="small" width="auto">
+              <a href="/kasir">Buka kasir</a>
             </Button>
           </QuickStart>
         )}
@@ -95,7 +96,7 @@ function QuickStart({ children }: { children: ReactNode }) {
         <p className="font-semibold text-default-primary">Siap berjualan</p>
         <p className="text-sm text-default-secondary">Buka kasir untuk mencatat penjualan hari ini.</p>
       </div>
-      <div className="flex gap-2">{children}</div>
+      <ActionRow className="sm:w-auto">{children}</ActionRow>
     </div>
   )
 }

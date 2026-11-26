@@ -3,6 +3,7 @@ import { Card } from '@umkmall/ui/compositions'
 import { Alert, SegmentedControl, Skeleton } from '@umkmall/ui/primitives'
 import { loadDashboard, rupiah, type Dashboard, type Metrics, type Period } from './-api'
 import { hasRounding } from '../kasir/-money'
+import { SCROLL_ROW } from '@/lib/scroll-row'
 import { change } from './-reports'
 
 // U5 dashboard widgets, rendered by the dashboard page on `/` (owned by the UI parity slice) with one line.
@@ -45,7 +46,7 @@ export function MetricWidgets() {
   const prevLabel = PERIODS.find((p) => p.value === period)!.previous
   return (
     <section aria-label="Ringkasan penjualan" className="space-y-3">
-      <SegmentedControl aria-label="Periode" options={PERIODS} value={period} onChange={setPeriod} />
+      <SegmentedControl aria-label="Periode" className={SCROLL_ROW} options={PERIODS} value={period} onChange={setPeriod} />
       {state.status === 'error' && <Alert variant="danger">{state.error}</Alert>}
       <div className="grid gap-4 sm:grid-cols-3">
         {WIDGETS.map((w) => (
