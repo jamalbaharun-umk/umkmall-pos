@@ -19,6 +19,7 @@ import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/component
 import { notifySuccess, showError } from '@/lib/feedback'
 import { formatAmountInput, parseAmount } from '../pengeluaran/-helpers'
 import { createCashEntry, loadCashDrawer, type DrawerPage } from './-cash-api'
+import { entryKindLabel } from './-shift-helpers'
 import {
   cashFormErrors,
   cashToast,
@@ -83,7 +84,7 @@ function CashDrawerPage() {
             {rows.length === 0 ? (
               <Empty
                 title="Belum ada uang masuk atau keluar manual"
-                hint="Tambah modal laci atau setor ke bank akan muncul di sini."
+                hint="Tambah modal laci, setor ke bank, atau setoran penagih yang Anda terima akan muncul di sini."
               />
             ) : (
               <>
@@ -91,7 +92,7 @@ function CashDrawerPage() {
                   {rows.map((e) => (
                     <li key={e.id} className="flex items-start justify-between gap-3 px-4 py-3">
                       <div className="min-w-0">
-                        <p className="font-medium text-default-primary">{e.reasonLabel ?? 'Kas lain'}</p>
+                        <p className="font-medium text-default-primary">{e.reasonLabel ?? entryKindLabel(e.kind)}</p>
                         <p className="text-xs text-default-secondary">{formatDate(e.createdAt)}</p>
                         {e.note && <p className="text-sm text-default-secondary">{e.note}</p>}
                       </div>
@@ -118,7 +119,7 @@ function CashDrawerPage() {
                       {rows.map((e) => (
                         <TableRow key={e.id}>
                           <TableCell>{formatDate(e.createdAt)}</TableCell>
-                          <TableCell>{e.reasonLabel ?? 'Kas lain'}</TableCell>
+                          <TableCell>{e.reasonLabel ?? entryKindLabel(e.kind)}</TableCell>
                           <TableCell>
                             <Badge color={e.direction === 'in' ? 'success' : 'warning'}>
                               {e.direction === 'in' ? 'Uang masuk' : 'Uang keluar'}
@@ -219,9 +220,10 @@ function CashEntryDialog({
       closeDisabled={busy}
       keyboardAware
     >
-      <form noValidate onSubmit={submit} className="flex flex-col gap-4 px-6 pt-2 pb-6">
+      <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pt-2 pb-6">
         <TextField
           label={out ? 'Jumlah yang diambil' : 'Jumlah yang ditambahkan'}
+          aria-label={out ? 'Jumlah yang diambil dari laci, dalam rupiah' : 'Jumlah yang ditambahkan ke laci, dalam rupiah'}
           prefix="Rp"
           inputMode="numeric"
           size="large"

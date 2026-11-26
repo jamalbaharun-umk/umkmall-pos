@@ -3,7 +3,10 @@ import {
   VOID_REASONS,
   approverBlock,
   approverOptions,
+  failureOf,
   isWrongPin,
+  keepsPin,
+  needsRefundFollow,
   lockText,
   pinDigits,
   pinSetErrors,
@@ -178,5 +181,31 @@ describe('refund of an online sale, UMK-1991', () => {
     expect(manualNoteError('transfer ke rekening pelanggan')).toBeUndefined()
     expect(manualNoteError('x'.repeat(201))).toMatch(/200/)
     expect(manualNoteError('x'.repeat(200))).toBeUndefined()
+  })
+})
+
+describe('a refusal that is not about a field or the PIN', () => {
+  const noShift = voidFailure(422, { message: 'Buka shift dulu sebelum membatalkan struk tunai.' })
+  it('does not point at red fields and keeps the PIN', () => {
+    const f = failureOf(noShift)
+    expect(f.error).toMatch(/Buka shift/)
+    expect(f.todo).toBeTruthy()
+    expect(keepsPin(noShift)).toBe(true)
+  })
+  it('a marked field keeps the default advice; a wrong PIN, a lock or a conflict clear the PIN', () => {
+    expect(failureOf(voidFailure(422, { message: 'x', errors: { note: 'Wajib' } })).todo).toBeUndefined()
+    expect(keepsPin(voidFailure(422, { message: 'x', errors: { pin: 'PIN salah' } }))).toBe(false)
+    expect(keepsPin(voidFailure(429, { retryAfter: 5 }))).toBe(false)
+    expect(keepsPin(voidFailure(409, null))).toBe(false)
+  })
+})
+
+describe('needsRefundFollow', () => {
+  it('only a pending refund is followed', () => {
+    expect(needsRefundFollow({ refundStatus: 'pending' })).toBe(true)
+    expect(needsRefundFollow({ refundStatus: 'succeeded' })).toBe(false)
+    expect(needsRefundFollow({ refundStatus: 'failed' })).toBe(false)
+    expect(needsRefundFollow({ refundStatus: null })).toBe(false)
+    expect(needsRefundFollow(null)).toBe(false)
   })
 })

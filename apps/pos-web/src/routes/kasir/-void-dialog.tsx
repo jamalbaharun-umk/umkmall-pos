@@ -11,6 +11,7 @@ import {
   approverOptions,
   failureOf,
   isWrongPin,
+  keepsPin,
   pinDigits,
   refundGuidance,
   voidBody,
@@ -86,7 +87,8 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
     const input = { saleId: sale.id, key: key.current, ...voidBody(form) }
     // A paid QRIS or VA sale goes through the refund route; the answer has the void's own failure kinds either way.
     const answer = await (online ? refundSale({ data: input }) : voidSale({ data: input })).catch(lost)
-    setPin('') // cleared after every submit, whatever the answer
+    // Cleared after a submit, except for a refusal that is not about the PIN (the admin should not type it again).
+    if (!answer || answer.ok || !keepsPin(answer.failure)) setPin('')
     lock.current = false
     setBusy(false)
     if (!answer) {
@@ -137,7 +139,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
       size="small"
       centered
     >
-      <form noValidate onSubmit={submit} className="flex flex-col gap-4 px-6 pb-6">
+      <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
         <p className="text-sm text-default-secondary">
           {online
             ? 'Refund hanya penuh dan hanya sekali. Penjualan dibatalkan dan stok serta voucher kembali sekarang; struk tetap ada dengan tanda VOID. Dana kembali ke pelanggan saat gateway memastikan.'

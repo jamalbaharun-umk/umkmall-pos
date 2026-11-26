@@ -72,6 +72,8 @@ const METHODS: Record<string, string> = {
   qris: 'QRIS dinamis',
   fake_va: 'Virtual Account (VA)',
   va: 'Virtual Account (VA)',
+  fake_checkout: 'Checkout tiruan',
+  checkout: 'Checkout',
 }
 export const methodLabel = (method: string) => METHODS[method] ?? method.replace(/_/g, ' ')
 

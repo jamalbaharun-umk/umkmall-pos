@@ -15,6 +15,8 @@ export type FailureLike = {
   retryAfter?: number
   /** Set when the call never reached pos-api. */
   offline?: boolean
+  /** What to do next, for a 400/422 whose problem is not a marked field (replaces "Perbaiki isian yang ditandai merah"). */
+  todo?: string
 }
 
 export type PrimaryAction = 'retry' | 'reload' | 'signin' | 'none'
@@ -247,7 +249,7 @@ export function describeError(error: unknown, fallback: string): ErrorDescriptio
     case 422:
       return {
         what: text ?? 'Isian belum benar.',
-        todo: 'Perbaiki isian yang ditandai merah, lalu simpan lagi.',
+        todo: f.todo ?? 'Perbaiki isian yang ditandai merah, lalu simpan lagi.',
         code: codeOf(f, String(status)),
         primary: 'none',
       }

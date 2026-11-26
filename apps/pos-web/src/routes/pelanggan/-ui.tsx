@@ -23,12 +23,8 @@ import { removeResource, saveResource, type Resource, type Result } from './-api
 // Page pieces for the U7 screens (pelanggan, voucher, metode pembayaran, piutang): Filament's page header,
 // loading / empty / error states, and the list + modal form Lakasir's simple resources use.
 
-export const rupiah = (n: number) =>
-  new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    maximumFractionDigits: 0,
-  }).format(n)
+// One formatter for every screen ("Rp12.000"), not Intl's currency style ("Rp 12.000").
+export { rupiah } from '@/components/page'
 
 export { Empty, Page, PageError as LoadError, PageLoading as Pending }
 

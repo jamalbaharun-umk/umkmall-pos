@@ -44,7 +44,7 @@ export function MemberRow({ member, onChange }: { member: MemberOption | null; o
         )}
       </dd>
       <Dialog open={open} onOpenChange={setOpen} centered title="Pilih pelanggan">
-        <div className="space-y-3 px-6 pb-6">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 pb-6">
           <TextField
             aria-label="Cari pelanggan"
             placeholder="Cari nama atau kode"
@@ -176,7 +176,7 @@ export function VoucherRow({
         )}
       </dd>
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)} centered size="small" title="Pakai voucher">
-        <form onSubmit={apply} noValidate className="space-y-3 px-6 pb-6">
+        <form onSubmit={apply} noValidate className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 pb-6">
           <TextField
             label="Kode voucher"
             placeholder="Contoh: HEMAT10"

@@ -20,9 +20,12 @@ export type CashEntryRow = {
   createdAt: string
 }
 
-/** The shift's manual entries only (the sales, kasbon and expenses are in the closing screen), newest first. */
+/** The deposits a collector handed over: cash that entered this drawer without a sale, so the list shows it too. */
+const SHOWN_KINDS = [...MANUAL_KINDS, 'collector_deposit']
+
+/** The shift's manual entries and the collector deposits it received (sales, kasbon and expenses are in the closing screen), newest first. */
 export function manualEntries<T extends { kind: string; createdAt: string }>(rows: T[]): T[] {
-  return rows.filter((r) => MANUAL_KINDS.includes(r.kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return rows.filter((r) => SHOWN_KINDS.includes(r.kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 /** What a server function reports on a refusal; `status` 0 means pos-api could not be reached. */

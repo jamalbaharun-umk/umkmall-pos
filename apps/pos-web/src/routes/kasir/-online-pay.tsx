@@ -32,6 +32,7 @@ import {
   gatewayLabel,
   isQris,
   keepPolling,
+  numberBadge,
   lateReceiptText,
   outcomeOf,
   type SalePayment,
@@ -316,7 +317,7 @@ export function OnlineWait({
               {title}
             </Text>
             <Badge color={outcome.kind === 'paid' ? 'success' : outcome.kind === 'closed' ? 'danger' : 'warning'} size="small">
-              {outcome.kind === 'waiting' ? 'Menunggu' : 'Struk'} #{payment.saleNumber}
+              {numberBadge(outcome.kind, payment.saleNumber)}
             </Badge>
           </div>
 
@@ -545,6 +546,7 @@ export function OnlineWait({
               {!cashPending && (
               <TextField
                 label="Uang diterima"
+                aria-label="Uang diterima dari pelanggan, dalam rupiah"
                 prefix="Rp"
                 inputMode="numeric"
                 value={cashText}
@@ -596,16 +598,16 @@ export function OnlineWait({
             </Alert>
           )}
 
-          <div className="flex flex-col gap-2 sm:flex-row-reverse sm:justify-start">
+          <div className="flex flex-col gap-2">
             {waiting && mode === 'wait' && (
               <>
-                <Button width="auto" className="w-full sm:w-auto" isLoading={busy === 'check'} disabled={busy !== null} onClick={() => void check()}>
+                <Button width="auto" className="w-full" isLoading={busy === 'check'} disabled={busy !== null} onClick={() => void check()}>
                   Cek status pembayaran
                 </Button>
                 {!notMine && (
                   <Button
                     width="auto"
-                    className="w-full sm:w-auto"
+                    className="w-full"
                     type="outline"
                     color="light"
                     disabled={busy !== null}
@@ -616,7 +618,7 @@ export function OnlineWait({
                 )}
                 <Button
                   width="auto"
-                  className="w-full sm:w-auto"
+                  className="w-full"
                   type="text"
                   color="danger"
                   disabled={busy !== null}
@@ -628,13 +630,13 @@ export function OnlineWait({
             )}
             {waiting && mode === 'cash' && (
               <>
-                <Button width="auto" className="w-full sm:w-auto" isLoading={busy === 'cash'} disabled={busy !== null} onClick={() => void saveCash()}>
+                <Button width="auto" className="w-full" isLoading={busy === 'cash'} disabled={busy !== null} onClick={() => void saveCash()}>
                   {cashPending ? 'Simpan tunai lagi' : 'Simpan tunai'}
                 </Button>
                 {!cashPending ? (
                   <Button
                     width="auto"
-                    className="w-full sm:w-auto"
+                    className="w-full"
                     type="outline"
                     color="light"
                     disabled={busy !== null}
@@ -648,7 +650,7 @@ export function OnlineWait({
                 ) : (
                   <Button
                     width="auto"
-                    className="w-full sm:w-auto"
+                    className="w-full"
                     type="text"
                     color="danger"
                     disabled={busy !== null}
@@ -661,16 +663,16 @@ export function OnlineWait({
             )}
             {outcome.kind === 'paid' && outcome.completed && (
               <>
-                <Button width="auto" className="w-full sm:w-auto" onClick={() => finish('paid')}>
+                <Button width="auto" className="w-full" onClick={() => finish('paid')}>
                   Penjualan baru
                 </Button>
-                <Button width="auto" className="w-full sm:w-auto" type="outline" color="light" onClick={() => finish('paid', true)}>
+                <Button width="auto" className="w-full" type="outline" color="light" onClick={() => finish('paid', true)}>
                   Cetak struk
                 </Button>
               </>
             )}
             {outcome.kind === 'closed' && (
-              <Button width="auto" className="w-full sm:w-auto" onClick={() => finish('closed')}>
+              <Button width="auto" className="w-full" onClick={() => finish('closed')}>
                 {!own ? 'Tutup' : outcome.why === 'cancelled' ? 'Kembali ke keranjang' : 'Pilih cara bayar lain'}
               </Button>
             )}
@@ -758,10 +760,10 @@ export function ResumeGate({ gate, onRetry, onAside }: { gate: 'none' | 'checkin
           </Alert>
         )}
         <div className="flex flex-col gap-2 sm:flex-row-reverse">
-          <Button width="auto" className="w-full sm:w-auto" onClick={onRetry}>
+          <Button width="auto" className="w-full" onClick={onRetry}>
             Coba lagi sekarang
           </Button>
-          <Button width="auto" className="w-full sm:w-auto" type="outline" color="light" onClick={onAside}>
+          <Button width="auto" className="w-full" type="outline" color="light" onClick={onAside}>
             Lanjut tunai saja
           </Button>
         </div>

@@ -11,7 +11,7 @@ const KINDS: { value: PaymentKind; label: string }[] = [
   { value: 'credit', label: 'Kasbon (kredit)' },
   { value: 'wallet', label: 'Dompet digital' },
   // UMK-1991: paid through the payment gateway; the customer gets a QR or a VA number and the till waits for the payment.
-  { value: 'online', label: 'Pembayaran online (QRIS dinamis / VA)' },
+  { value: 'online', label: 'Online (QRIS / VA)' },
 ]
 const GATEWAY_METHODS = [
   { value: 'fake_qris', label: gatewayLabel('fake_qris') },

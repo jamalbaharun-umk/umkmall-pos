@@ -19,6 +19,13 @@ export function payStepOf(kind: PayMethodKind | undefined): PayStep {
 }
 
 /** Only the wallet kind is the store's static QRIS: it gets the scan instruction and the no-bank-check warning. */
+/** The success toast of a finished sale: a kasbon with nothing paid is not a payment, so it must not say "Pembayaran berhasil". */
+export function saleToast(paid: number, receivableRest: number | null | undefined, fmt: (n: number) => string): string {
+  const rest = receivableRest ?? 0
+  if (rest <= 0) return 'Pembayaran berhasil'
+  return paid > 0 ? `Pembayaran ${fmt(paid)} diterima. Sisa kasbon ${fmt(rest)}` : `Kasbon ${fmt(rest)} dicatat`
+}
+
 export const isStaticQris = (kind: PayMethodKind | undefined) => kind === 'wallet'
 
 export const qrisScanHint = (amountText: string) =>

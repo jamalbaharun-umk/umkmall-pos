@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { refusalOf } from '@/lib/refusal'
 import type { Receipt } from './-api'
-import { voidFailure, type Approver, type MethodKind, type VoidFailure } from './-void-helpers'
+import { needsRefundFollow, voidFailure, type Approver, type MethodKind, type VoidFailure } from './-void-helpers'
 
 // Server functions for the void of a sale (UMK-1962). pos-api decides everything; these only relay. The PIN passes
 // through `voidSale` and is never stored, logged or echoed.
@@ -51,11 +51,17 @@ export const loadSaleDetail = createServerFn()
     const res = await api(`/sales/${id}/receipt`)
     if (!res.ok) throw new Error((await refusalOf(res)).error)
     const receipt = (await res.json()) as Receipt
-    const [saleVoid, methods, meta] = await Promise.all([
+    let [saleVoid, methods, meta] = await Promise.all([
       receipt.status === 'void' ? read<SaleVoid>(`/sales/${id}/void`) : null,
       receipt.status === 'completed' ? read<{ data: { name: string; kind: MethodKind }[] }>('/payment-methods') : null,
       read<{ onlinePayment?: boolean; paidAt?: string | null }>(`/sales/${id}`),
     ])
+    // The stored refund status is old until pos-api asks the gateway; reading the sale's payment does that, so a
+    // pending refund is followed here (best effort, a failure leaves the stored status) and the void read again.
+    if (needsRefundFollow(saleVoid)) {
+      await api(`/sales/${id}/payment`).catch(() => null)
+      saleVoid = (await read<SaleVoid>(`/sales/${id}/void`)) ?? saleVoid
+    }
     const online = meta?.onlinePayment === true
     // A paid QRIS or VA sale is refunded by the gateway, so its kind is `online` whatever its method is called.
     const methodKind = online ? 'online' : (methods?.data.find((m) => m.name === receipt.paymentMethod)?.kind ?? null)

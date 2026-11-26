@@ -252,7 +252,7 @@ function DepositDialog({
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-default-secondary">Masuk ke</dt>
-                <dd>Kas toko</dd>
+                <dd>Laci shift Anda yang sedang buka</dd>
               </div>
             </dl>
             {after && (

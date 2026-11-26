@@ -57,6 +57,7 @@ import {
   payStepOf,
   qrisScanHint,
   qrisSrc,
+  saleToast,
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
@@ -364,7 +365,7 @@ function Register({
   const setQty = (key: string, qty: number) => setCart((c) => setEntryQty(c, key, qty))
 
   return (
-    <main className="grid min-h-svh bg-default-secondary md:grid-cols-[1fr_minmax(320px,380px)]">
+    <main className="grid min-h-svh bg-default-secondary md:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
       <section aria-label="Produk" className="min-w-0 space-y-4 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <Button width="auto" asChild type="text" size="small" className="mr-auto">
@@ -464,13 +465,13 @@ function Register({
 
       <aside
         aria-label="Rincian pesanan"
-        className="flex flex-col gap-3 border-default-primary bg-default-primary p-4 md:sticky md:top-0 md:h-svh md:border-l"
+        className="flex min-w-0 flex-col gap-3 border-default-primary bg-default-primary p-4 md:sticky md:top-0 md:h-svh md:border-l"
       >
-        <div className="flex items-center justify-between">
-          <Text as="h1" variant="h5" weight="bold" className="whitespace-nowrap">
+        <div className="flex min-w-0 flex-col gap-1">
+          <Text as="h1" variant="h5" weight="bold">
             Rincian pesanan
           </Text>
-          <div className="flex gap-1 whitespace-nowrap">
+          <div className="flex flex-wrap gap-1">
             <Button width="auto" type="text" size="compact" onClick={() => setListing(true)}>
               Menunggu
             </Button>
@@ -798,7 +799,7 @@ function UnitPicker({
       {product && picked && (
         <form
           noValidate
-          className="space-y-4 px-6 pb-6"
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6"
           onSubmit={(e) => {
             e.preventDefault()
             if (!qtyBad) onAdd(product, picked.unit, Number(qtyText.trim()))
@@ -867,7 +868,7 @@ function NoteDialog({
       title="Catatan pesanan"
     >
       <form
-        className="space-y-4 px-6 pb-6"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6"
         onSubmit={(e) => {
           e.preventDefault()
           onSave(text.trim())
@@ -1065,7 +1066,7 @@ function PayDialog({
       sale: { id: res.data.id, change: Math.max(res.data.change, 0), receivableRest: res.data.receivableRest ?? null },
     })
     if (pend.current().completed?.clearCart) writeCart({ lines: [], note: '' })
-    notifySuccess('Pembayaran berhasil')
+    notifySuccess(saleToast(amount, res.data.receivableRest, rupiah))
   }
   const notice = orderNotice(pend.state)
 

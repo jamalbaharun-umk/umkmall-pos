@@ -1,6 +1,6 @@
 import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { api } from '@/lib/api.server'
+import { api, trySetStatus } from '@/lib/api.server'
 
 // Server functions for the U7 screens (pelanggan, voucher, metode pembayaran, piutang). pos-api validates and
 // computes every amount; these only relay. Mutations return a Result instead of throwing, for forms.
@@ -158,6 +158,9 @@ export const loadReceivable = createServerFn()
       load<{ data: PaymentMethod[] }>('/payment-methods'),
       openShiftOf(),
     ])
+    // The receivable itself was readable. A part this role may not read (the open shift needs a sales permission)
+    // sets its 403 on the page response; the page renders without it, so it answers 200.
+    trySetStatus(200)
     // A kasbon is never paid with another kasbon, and an instalment is never charged at a payment gateway (UMK-1991).
     return { receivable, methods: methods.data.filter((m) => m.kind !== 'credit' && m.kind !== 'online'), shift }
   })

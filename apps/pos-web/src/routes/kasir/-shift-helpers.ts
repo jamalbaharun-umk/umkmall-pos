@@ -84,6 +84,7 @@ const KIND_LABELS: Record<string, string> = {
   void_refund: 'Uang dikembalikan (batalkan struk)',
   expense: 'Pengeluaran dari laci',
   expense_reversal: 'Pengeluaran dibatalkan',
+  collector_deposit: 'Setoran penagih diterima',
 }
 
 /** The reason of a cash in/out entry in words; an unknown kind (a newer server) is shown as what it is. */
@@ -163,5 +164,6 @@ export function paymentPlace(p: { collectedOutsideShift: boolean; shiftId: strin
 const STORE_KIND_LABELS: Record<string, string> = {
   receivable_payment: 'Kasbon dibayar tunai di luar shift',
   expense_void: 'Pengeluaran laci dibatalkan setelah shift ditutup',
+  collector_deposit: 'Setoran penagih masuk ke laci shift',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'

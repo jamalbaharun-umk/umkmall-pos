@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   OPEN_PAST_CODE_TIME,
   cancelBody,
+  numberBadge,
   paidFigures,
   resumeDecision,
   saleFailure,
@@ -396,5 +397,13 @@ describe('paidFigures', () => {
     expect(paidFigures({ paid: 1.5, change: 0 })).toBeNull()
     expect(paidFigures({ paid: -1, change: 0 })).toBeNull()
     expect(paidFigures(null)).toBeNull()
+  })
+})
+
+describe('numberBadge', () => {
+  it('calls it a receipt only when paid', () => {
+    expect(numberBadge('paid', 7)).toBe('Struk #7')
+    expect(numberBadge('waiting', 7)).toBe('Menunggu #7')
+    expect(numberBadge('closed', 7)).toBe('Nomor tunggu #7')
   })
 })

@@ -165,7 +165,10 @@ export function failureOf(f: VoidFailure): FailureLike {
     case 'done':
       return { status: 409, error: f.error }
     case 'invalid':
-      return { status: 422, error: f.error }
+      // With no field to mark, "perbaiki isian yang ditandai merah" would point at nothing: say what the text asks.
+      return Object.keys(f.errors).length > 0
+        ? { status: 422, error: f.error }
+        : { status: 422, error: f.error, todo: 'Selesaikan hal di atas, lalu coba lagi. Isian Anda masih ada.' }
     default:
       return { status: 500 }
   }
@@ -230,3 +233,10 @@ export function manualNoteError(note: string): string | undefined {
   if (t.length > MANUAL_NOTE_MAX) return `Catatan maksimal ${MANUAL_NOTE_MAX} karakter`
   return undefined
 }
+
+/** The PIN stays after a refusal that has nothing to do with it (e.g. no open shift); it is cleared when it is the problem. */
+export const keepsPin = (f: VoidFailure) => f.kind === 'invalid' && !f.errors.pin
+
+/** A refund the gateway has not settled yet: its stored status is old until pos-api asks, so the page asks. */
+export const needsRefundFollow = (v: { refundStatus?: 'pending' | 'succeeded' | 'failed' | null } | null | undefined) =>
+  v?.refundStatus === 'pending'

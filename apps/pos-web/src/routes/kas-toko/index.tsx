@@ -56,7 +56,7 @@ function StoreCashPage() {
       </Card>
       <Alert variant="info" size="small">
         Ini uang tunai yang dipegang di luar laci kasir, misalnya kasbon tunai dari staf tanpa shift. Uang itu dihitung
-        dipegang penagih sampai setorannya diterima; setoran memindahkan uang ke kas toko tanpa mengubah saldo.
+        dipegang penagih sampai setorannya diterima; saat setorannya diterima, uang itu keluar dari kas toko dan masuk ke laci shift penerima, jadi saldo kas toko berkurang sebesar setoran.
       </Alert>
       <CollectorsPanel collectors={list.collectors} />
       <Card variant="outlined" padding="none" className="overflow-hidden">
