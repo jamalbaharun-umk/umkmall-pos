@@ -113,6 +113,46 @@ export class ReceivablesReportService {
     };
   }
 
+  /**
+   * The dashboard card "Piutang menurut umur" (design feature 35): what is still owed, by how late it is on the store's
+   * calendar date. `Belum jatuh tempo` has a due date after today; a kasbon due today counts as late 0 days and is in
+   * `1 sampai 7 hari`, so the three late buckets add up to the summary's `dueRest` and every bucket to its `totalRest`.
+   */
+  async aging(tenantId: string) {
+    const tz = await this.reports.timezone(tenantId);
+    const [r] = await this.rows(sql`
+      select to_char((now() at time zone ${tz}), 'YYYY-MM-DD') as today,
+             count(distinct o.member_id) as customers,
+             coalesce(sum(o.rest), 0) as total,
+             coalesce(sum(o.rest) filter (where o.overdue_days is null), 0) as a_amount,
+             count(distinct o.member_id) filter (where o.overdue_days is null) as a_customers,
+             coalesce(sum(o.rest) filter (where o.overdue_days between 0 and 7), 0) as b_amount,
+             count(distinct o.member_id) filter (where o.overdue_days between 0 and 7) as b_customers,
+             coalesce(sum(o.rest) filter (where o.overdue_days between 8 and 30), 0) as c_amount,
+             count(distinct o.member_id) filter (where o.overdue_days between 8 and 30) as c_customers,
+             coalesce(sum(o.rest) filter (where o.overdue_days > 30), 0) as d_amount,
+             count(distinct o.member_id) filter (where o.overdue_days > 30) as d_customers
+        from ${this.open(tenantId, tz)} o`);
+    const bucket = (key: string, label: string, k: 'a' | 'b' | 'c' | 'd') => ({
+      key,
+      label,
+      amount: n(r[`${k}_amount`]),
+      customers: n(r[`${k}_customers`]),
+    });
+    return {
+      timezone: tz,
+      today: r.today as string,
+      total: n(r.total),
+      customers: n(r.customers),
+      buckets: [
+        bucket('not_due', 'Belum jatuh tempo', 'a'),
+        bucket('late_1_7', '1 sampai 7 hari', 'b'),
+        bucket('late_8_30', '8 sampai 30 hari', 'c'),
+        bucket('late_over_30', 'Lebih dari 30 hari', 'd'),
+      ],
+    };
+  }
+
   /** Summary plus the customers who still owe, the most overdue first. */
   async list(tenantId: string, filter: ReceivableFilter) {
     const tz = await this.reports.timezone(tenantId);

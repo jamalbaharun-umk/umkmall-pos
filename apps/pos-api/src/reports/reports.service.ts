@@ -100,7 +100,7 @@ export class ReportsService {
   }
 
   /** `[from 00:00, to+1 00:00)` in the store's timezone, as timestamptz expressions. */
-  private bounds(r: DateRange, tz: string) {
+  bounds(r: DateRange, tz: string) {
     return {
       start: sql`((${r.from}::date)::timestamp at time zone ${tz})`,
       end: sql`(((${r.to}::date) + 1)::timestamp at time zone ${tz})`,
@@ -230,7 +230,7 @@ export class ReportsService {
    * in the range, the voided sale's lines again with negative quantity, amount and cost, dated at the void
    * and attributed to whoever started it.
    */
-  private lineRows(tenantId: string, start: SQL, end: SQL) {
+  lineRows(tenantId: string, start: SQL, end: SQL) {
     return sql`(
       select 'sale' as kind, s.paid_at as at, s.number, s.actor_kind, s.actor_id,
              l.id as line_id, l.product_id, l.name, l.qty, l.unit, l.base_qty, l.unit_price, l.line_total, l.discount, l.cost_total
