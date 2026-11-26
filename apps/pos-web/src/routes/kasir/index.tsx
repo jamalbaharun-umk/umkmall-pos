@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  Chip,
   Dialog,
   Icon,
   SegmentedControl,
@@ -58,8 +59,13 @@ import {
   qrisScanHint,
   qrisSrc,
   saleToast,
+  bankError,
+  bankToSend,
+  banksFor,
+  bankRefusalText,
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
+  type Bank,
 } from './-pay-step'
 import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
 import { parsePayment, saleFailure, type ResumeDecision, type SalePayment } from './-online'
@@ -102,9 +108,9 @@ export const Route = createFileRoute('/kasir/')({
 })
 
 function CashierPage() {
-  const { shift, products, taxBps, methods, qris, chargeable } = Route.useLoaderData()
+  const { shift, products, taxBps, methods, qris, chargeable, banks } = Route.useLoaderData()
   return shift ? (
-    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} />
+    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} banks={banks} />
   ) : (
     <OpenShift />
   )
@@ -173,6 +179,7 @@ function Register({
   methods,
   qris,
   chargeable,
+  banks,
 }: {
   products: Product[]
   taxBps: number
@@ -180,6 +187,8 @@ function Register({
   qris: Qris
   /** UMK-1991: the gateway methods the store may charge now; an online method not in it is not offered. */
   chargeable: string[]
+  /** UMK-2037: by gateway method, the banks to choose from before a virtual account is made. */
+  banks: Record<string, Bank[]>
 }) {
   const router = useRouter()
   const [q, setQ] = useState('')
@@ -693,6 +702,7 @@ function Register({
           pend={pend}
           methods={methods}
           chargeable={onlineBlocked(pend.state) ? [] : chargeable}
+          banks={banks}
           onlineBlocked={onlineBlocked(pend.state)}
           qris={qris}
           member={member}
@@ -914,6 +924,7 @@ function PayDialog({
   pend,
   methods: allMethods,
   chargeable,
+  banks,
   qris,
   member,
   onMemberChange,
@@ -933,6 +944,7 @@ function PayDialog({
   pend: PendingHandle
   methods: PaymentMethod[]
   chargeable: string[]
+  banks: Record<string, Bank[]>
   qris: Qris
   member: MemberOption | null
   onMemberChange: (m: MemberOption | null) => void
@@ -952,6 +964,9 @@ function PayDialog({
   const [paidText, setPaidText] = useState('')
   const [methodId, setMethodId] = useState(() => methods.find((m) => m.kind === 'cash')?.id ?? methods[0]?.id ?? '')
   const method = methods.find((m) => m.id === methodId)
+  // UMK-2037: a virtual account is made for one bank, chosen before it is created; a method without banks needs none.
+  const [bankCode, setBankCode] = useState('')
+  const bankList = useMemo(() => (method?.kind === 'online' ? banksFor(banks, method.gatewayMethod) : []), [banks, method])
   // Kasbon: paid may be 0 and the rest becomes the member's receivable; debit/wallet: exactly the total.
   const isCredit = method?.kind === 'credit'
   const step = payStepOf(method?.kind)
@@ -985,7 +1000,10 @@ function PayDialog({
     // The key is read from the register's memory NOW, never from this render: the error dialog's "Coba lagi" runs an
     // older closure of this function, and must still send the key of the sale that was last written.
     const online = step === 'online'
-    const plan = pend.send(methodId)
+    const bank = online ? bankToSend(bankList, bankCode) : null
+    const missing = online ? bankError(bankList, bankCode) : undefined
+    if (missing) return setError(missing)
+    const plan = pend.send(methodId, bank)
     if ('blocked' in plan) return setError(BLOCKED_TEXT[plan.blocked])
     const sendKey = plan.key
     lock.current = true
@@ -1001,6 +1019,7 @@ function PayDialog({
         memberId: member?.id,
         voucherCode: voucher?.code,
         paymentMethodId: methodId || undefined,
+        bank: bank ?? undefined,
       },
     }).catch((e: unknown) => {
       lost(e) // a sign-in redirect is followed; any other failure is "no answer"
@@ -1024,13 +1043,21 @@ function PayDialog({
       : { ok: false, status: res.status ?? 0, saleId: res.saleId, error: res.error }
     // What the answer means for the key and the remembered sales is decided in `-pending.ts` (a cancelled sale's key
     // is spent, a sale written but not charged is kept, another body under a used key means a sale already exists).
-    const ev = saleAnswerEvent(pend.current(), { key: sendKey, methodId, online }, answer)
+    const ev = saleAnswerEvent(pend.current(), { key: sendKey, methodId, online, bank }, answer)
     if (!res.ok) {
       pend.dispatch(ev)
       if (ev.type === 'sale_mismatch') {
         // The first sale exists (or may): never a silent dead end. The dialog and the notice above the button say so.
         showError(res, { action: 'menyimpan penjualan' }, () => recordedDescription(res.error))
         return setError(RECORDED_TEXT)
+      }
+      // pos-api's 422 on `bank` (UMK-2037): the bank list moved on, the sale (if one was written) is cancelled.
+      if (res.status === 422 && res.errors?.bank) {
+        setBankCode('')
+        const text = bankRefusalText(res.code)
+        showError({ status: 422, error: text, todo: 'Pilih bank atau metodenya lagi, lalu coba lagi.' }, { action: 'membuat nomor VA' })
+        void router.invalidate() // the banks are read again
+        return setError(text)
       }
       showError(
         res.status === 503 || (res.status === 409 && res.code)
@@ -1093,6 +1120,7 @@ function PayDialog({
             value={methodId}
             onChange={(v) => {
               setMethodId(v)
+              setBankCode('')
               setError(undefined)
             }}
           />
@@ -1164,6 +1192,29 @@ function PayDialog({
                 {QRIS_NO_BANK_CHECK}
               </Alert>
             </div>
+          )}
+          {step === 'online' && bankList.length > 0 && (
+            <fieldset className="space-y-2" aria-label="Bank Virtual Account">
+              <legend className="text-sm font-semibold">Pilih bank pelanggan</legend>
+              <div className="flex flex-wrap gap-2">
+                {bankList.map((b) => (
+                  <Chip
+                    key={b.code}
+                    state={bankCode === b.code ? 'active' : 'default'}
+                    disabled={busy}
+                    onClick={() => {
+                      setBankCode(b.code)
+                      setError(undefined)
+                    }}
+                  >
+                    {b.name}
+                  </Chip>
+                ))}
+              </div>
+              <p className="text-xs text-default-secondary">
+                Nomor VA dibuat khusus untuk bank yang dipilih, jadi tanyakan dulu bank pelanggan.
+              </p>
+            </fieldset>
           )}
           {step === 'online' && (
             <Alert variant="info" size="small">

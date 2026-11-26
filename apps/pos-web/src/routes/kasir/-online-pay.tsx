@@ -443,6 +443,12 @@ export function OnlineWait({
                     <span>Bank</span>
                     <span className="font-semibold">{payment.checkout.bank || '-'}</span>
                   </div>
+                  {payment.checkout.accountName && (
+                    <div className="mt-1 flex justify-between gap-3 text-sm">
+                      <span>a.n.</span>
+                      <span className="text-right font-semibold">{payment.checkout.accountName}</span>
+                    </div>
+                  )}
                   <p className="mt-2 text-sm text-default-secondary">Nomor Virtual Account</p>
                   <p className="my-1 break-all font-mono text-2xl font-bold tracking-wider">{vaGroups(payment.checkout.vaNumber)}</p>
                   <Button

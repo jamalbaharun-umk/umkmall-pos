@@ -59,6 +59,9 @@ function till(start: PendingState = initialState(K1)) {
       return state
     },
     /** What `pay()` does first: the key that is sent, or `blocked`. */
+    set state(v: PendingState) {
+      state = v
+    },
     send(methodId: string) {
       const r = planSend(state, methodId, next())
       state = r.state
@@ -131,7 +134,7 @@ describe('online 503 with a sale id (written, not charged)', () => {
   }
   it('remembers the sale as the cart\'s own and repeats the same method with the same key: never a second sale', () => {
     const t = held()
-    expect(t.state.held).toEqual({ saleId: A, methodId: QRIS, online: true })
+    expect(t.state.held).toEqual({ saleId: A, methodId: QRIS, online: true, bank: null })
     expect(t.state.sales).toEqual([{ id: A, key: K1, shown: false, phase: 'held' }])
     expect(isOwn(t.state, A)).toBe(true)
     expect(holdsStock(t.state)).toBe(true)
@@ -297,7 +300,7 @@ describe('an answer that arrives after the order was cleared, edited or reopened
   it('a late 503 with a sale id (held) does not reopen sending under the key', () => {
     const t = cleared()
     t.do({ type: 'sale_held', key: K1, saleId: A, methodId: CASH, online: false })
-    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false })
+    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false, bank: null })
     stillChecked(t)
   })
   it('a late online 503 with a sale id keeps the sale tracked and still sends nothing', () => {
@@ -398,14 +401,14 @@ describe('cash 503 with a sale id (the job completes it)', () => {
     expect(t.peek(CASH)).toBe(K1)
     expect(t.peek(DEBIT)).toBe(K1)
     expect(t.peek(QRIS)).toBe(K1)
-    expect(t.reload().held).toEqual({ saleId: A, methodId: CASH, online: false })
+    expect(t.reload().held).toEqual({ saleId: A, methodId: CASH, online: false, bank: null })
     // UMK-2049: after a reload the job may have completed it: Bayar never replays it, the cashier checks first
     expect(t.peek(CASH)).toBe('recorded')
   })
   it('a held cash sale with an untouched cart is not replayed after the register is reopened either (UMK-2049)', () => {
     const t = held()
     t.reopen()
-    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false })
+    expect(t.state.held).toEqual({ saleId: A, methodId: CASH, online: false, bank: null })
     expect(t.state.recorded).toBe(true)
     expect(orderNotice(t.state)).toBe('recorded')
     expect(t.send(CASH)).toBe('blocked')
@@ -452,7 +455,7 @@ describe('saleAnswerEvent: the answer of POST /sales as an event', () => {
   it('reads each answer', () => {
     expect(saleAnswerEvent(s, sent, { ok: true, awaiting: false })).toEqual({ type: 'sale_paid', key: K1 })
     expect(saleAnswerEvent(s, sent, { ok: true, awaiting: true, saleId: A, readable: true })).toEqual({ type: 'sale_awaiting', key: K1, saleId: A, readable: true })
-    expect(saleAnswerEvent(s, sent, { ok: false, status: 503, saleId: A })).toEqual({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true })
+    expect(saleAnswerEvent(s, sent, { ok: false, status: 503, saleId: A })).toEqual({ type: 'sale_held', key: K1, saleId: A, methodId: QRIS, online: true, bank: null })
     expect(saleAnswerEvent(s, sent, { ok: false, status: 503 })).toEqual({ type: 'sale_unanswered', key: K1 })
     expect(saleAnswerEvent(s, sent, { ok: false, status: 0 })).toEqual({ type: 'sale_unanswered', key: K1 })
     expect(saleAnswerEvent(s, sent, { ok: false, status: 500 })).toEqual({ type: 'sale_unanswered', key: K1 })
@@ -464,10 +467,43 @@ describe('saleAnswerEvent: the answer of POST /sales as an event', () => {
     expect(saleAnswerEvent(s, sent, { ok: false, status: 422, error: 'Uang dibayar kurang' }).type).toBe('sale_refused')
     expect(saleAnswerEvent(s, sent, { ok: false, status: 422, error: KEY_REUSED_TEXT }).type).toBe('sale_mismatch')
     expect(saleAnswerEvent({ ...s, unanswered: true }, sent, { ok: false, status: 422, error: 'teks lain' }).type).toBe('sale_mismatch')
-    const held = { ...s, held: { saleId: A, methodId: CASH, online: false } }
+    const held = { ...s, held: { saleId: A, methodId: CASH, online: false, bank: null } }
     expect(saleAnswerEvent(held, sent, { ok: false, status: 422, error: 'teks lain' }).type).toBe('sale_mismatch')
     // an answer for another key says nothing about this one
     expect(saleAnswerEvent({ ...s, unanswered: true }, { ...sent, key: id(7) }, { ok: false, status: 422, error: 'teks lain' }).type).toBe('sale_refused')
+  })
+})
+
+describe('the bank of a virtual account sale (UMK-2037)', () => {
+  it('the bank is remembered with the held sale', () => {
+    const t = till()
+    const k = t.send(VA)
+    const ev = saleAnswerEvent(t.state, { key: k, methodId: VA, online: true, bank: 'FAKE' }, { ok: false, status: 503, saleId: A })
+    expect(ev).toEqual({ type: 'sale_held', key: K1, saleId: A, methodId: VA, online: true, bank: 'FAKE' })
+    t.do(ev)
+    expect(t.state.held).toEqual({ saleId: A, methodId: VA, online: true, bank: 'FAKE' })
+    expect(rehydrate(serialize(t.state), null, id(77)).held).toEqual({ saleId: A, methodId: VA, online: true, bank: 'FAKE' })
+  })
+  it('another bank under a held VA sale is another sale (the old key is not reused with another body)', () => {
+    const t = till()
+    t.do({ type: 'sale_sending', methodId: VA, bank: 'FAKE' })
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: VA, online: true, bank: 'FAKE' })
+    t.do({ type: 'sale_sending', methodId: VA, bank: 'FAKE' })
+    expect(t.state.key).toBe(K1)
+    t.do({ type: 'sale_sending', methodId: VA, bank: 'FAKE2' })
+    expect(t.state.key).not.toBe(K1)
+    expect(t.state.sales.map((x) => x.id)).toContain(A)
+  })
+  it('a 422 that carries a sale id is the bank refusal of a cancelled sale: key spent, not "a sale may exist"', () => {
+    const t = till()
+    const k = t.send(VA)
+    t.do({ type: 'sale_held', key: k, saleId: A, methodId: VA, online: true, bank: 'FAKE' })
+    const ev = saleAnswerEvent(t.state, { key: k, methodId: VA, online: true, bank: 'FAKE' }, { ok: false, status: 422, saleId: A, error: 'Bank tidak bisa dipakai' })
+    expect(ev).toEqual({ type: 'sale_cancelled', key: K1, saleId: A })
+    t.do(ev)
+    expect(t.state.key).not.toBe(K1)
+    expect(t.state.held).toBeNull()
+    expect(t.state.recorded).toBe(false)
   })
 })
 
@@ -946,14 +982,14 @@ describe('guard: one place remembers unfinished sales', () => {
       const text = code(sources.find((s) => s.f === f)!.text)
       expect(text, f).not.toMatch(/randomUUID|idempotencyKey|pos\.online-sale|pos\.kasir\.pending/)
     }
-    expect(code(sources.find((s) => s.f === 'index.tsx')!.text)).toMatch(/pend\.send\(methodId\)/)
+    expect(code(sources.find((s) => s.f === 'index.tsx')!.text)).toMatch(/pend\.send\(methodId, bank\)/)
   })
   it('pay() asks the store for the key (which stores "a request is out") BEFORE the one createSale call, and sends that key', () => {
     const text = code(sources.find((s) => s.f === 'index.tsx')!.text)
     const start = text.indexOf('async function pay(')
     const body = text.slice(start, text.indexOf('const notice = orderNotice', start))
     expect(start).toBeGreaterThan(-1)
-    const send = body.indexOf('pend.send(methodId)')
+    const send = body.indexOf('pend.send(methodId, bank)')
     const create = body.indexOf('createSale(')
     expect(send).toBeGreaterThan(-1)
     expect(create).toBeGreaterThan(send)
@@ -1055,5 +1091,13 @@ describe('a paid answer after the register was left and opened again (UMK-2048)'
     t.send(CASH)
     t.do({ type: 'sale_paid', key: K1, sale: SALE })
     expect(serialize(t.state)).not.toMatch(/completed|change/)
+  })
+})
+
+describe('guard: a PIN kept after a refusal does not outlive its dialog (UMK-2053)', () => {
+  const dir = join(__dirname)
+  it.each(['-void-dialog.tsx', '-retry-dialog.tsx'])('%s clears the PIN when it closes or unmounts', (f) => {
+    const text = readFileSync(join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+    expect(text).toMatch(/useEffect\(\(\) => \{\s*if \(!open\) setPin\(''\)\s*return \(\) => setPin\(''\)\s*\}, \[open\]\)/)
   })
 })

@@ -61,6 +61,10 @@ describe('parsePayment', () => {
     expect(q.amount).toBe(5123)
     const v = pay({ method: 'fake_va', checkout: { bank: 'BCA', vaNumber: '8800123' } })
     expect(v.checkout).toEqual({ bank: 'BCA', vaNumber: '8800123' })
+    // UMK-2045: the account holder name ("a.n.") rides along only when there is one
+    const named = pay({ method: 'fake_va', checkout: { bank: 'FAKE', vaNumber: '8800123', accountName: '  Toko Contoh  ' } })
+    expect(named.checkout).toEqual({ bank: 'FAKE', vaNumber: '8800123', accountName: 'Toko Contoh' })
+    expect(pay({ method: 'fake_va', checkout: { bank: 'FAKE', vaNumber: '1', accountName: '  ' } }).checkout).toEqual({ bank: 'FAKE', vaNumber: '1' })
     expect(isQris(v.checkout)).toBe(false)
   })
 

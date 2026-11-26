@@ -18,7 +18,7 @@ export type PaymentStatus =
   | 'voided'
 export type SaleStatus = 'awaiting_payment' | 'completed' | 'void' | 'cancelled'
 /** A QR, a virtual account, or (a PG with its own payment page) a link. The server decides which; the screen follows. */
-export type Checkout = { qrString: string } | { bank: string; vaNumber: string } | { paymentUrl: string }
+export type Checkout = { qrString: string } | { bank: string; vaNumber: string; /** UMK-2045: the name the customer's bank shows for the account ("a.n."). */ accountName?: string } | { paymentUrl: string }
 export type RefundStatus = 'pending' | 'succeeded' | 'failed'
 export type LateReceipt = {
   id: string
@@ -72,7 +72,10 @@ const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) ? v : 
 function parseCheckout(v: unknown): Checkout | null {
   if (!isObject(v)) return null
   if (typeof v.qrString === 'string' && v.qrString) return { qrString: v.qrString }
-  if (typeof v.vaNumber === 'string' && v.vaNumber) return { bank: str(v.bank) ?? '', vaNumber: v.vaNumber }
+  if (typeof v.vaNumber === 'string' && v.vaNumber) {
+    const accountName = str(v.accountName)?.trim()
+    return { bank: str(v.bank) ?? '', vaNumber: v.vaNumber, ...(accountName ? { accountName: accountName.slice(0, 80) } : {}) }
+  }
   // only an https link is ever offered to open or share
   if (typeof v.paymentUrl === 'string' && /^https:\/\/\S+$/.test(v.paymentUrl)) return { paymentUrl: v.paymentUrl }
   return null
