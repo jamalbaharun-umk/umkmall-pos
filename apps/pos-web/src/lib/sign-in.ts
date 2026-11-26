@@ -20,21 +20,25 @@ export function devSignInUser(env: Record<string, string | undefined> = process.
 
 /** Why the last sign-in failed, from the status `/masuk*` put in `?gagal=`. */
 export function failureText(status: number): string {
-  if (status === 0 || status >= 500) return 'UMKMall sedang tidak bisa dihubungi. Coba lagi sebentar lagi.'
-  if (status === 401) return 'Sesi UMKMall Anda sudah berakhir atau akun belum terdaftar. Masuk lagi ke UMKMall.'
+  if (status === 0 || status >= 500) return 'Server kasir sedang tidak bisa dihubungi. Coba lagi sebentar lagi.'
+  if (status === 401) return 'Sesi Anda sudah berakhir. Masuk lagi dengan nomor WhatsApp.'
   if (status === 422) return 'Data masuk tidak lengkap. Coba lagi.'
   return 'Gagal masuk. Coba lagi sebentar lagi.'
 }
 
-/**
- * UMKMall's login page with `next` = the POS home. `next` is built from POS_WEB_URL's origin only, never from the
- * request, so it cannot point anywhere but the POS host. `/` (the POS sign-in page) when either URL is missing.
- */
-export function loginUrl(umkmallWebUrl: string | undefined, posWebUrl: string | undefined): string {
-  if (!umkmallWebUrl || !posWebUrl) return '/'
-  const url = new URL('/login', umkmallWebUrl)
-  url.searchParams.set('next', `${new URL(posWebUrl).origin}/`)
-  return url.toString()
+/** UMKMall's native session behind an owner's WhatsApp sign-in, as the `pos_umkmall` cookie holds it (UMK-2065). */
+export type NativeSession = { sid: string; refreshToken: string }
+
+/** The cookie's value, or undefined for anything else (absent, cut, edited): pos-api validates it again. */
+export function parseNativeSession(raw: string | undefined): NativeSession | undefined {
+  try {
+    const v = JSON.parse(raw ?? '') as Partial<NativeSession>
+    return typeof v.sid === 'string' && typeof v.refreshToken === 'string' && v.sid && v.refreshToken
+      ? { sid: v.sid, refreshToken: v.refreshToken }
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

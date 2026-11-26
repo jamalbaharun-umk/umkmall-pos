@@ -21,7 +21,7 @@ silent, follow the monorepo's principles.
   `Refs: UMK-1924 U<n>`. Small commits on logical boundaries.
 - **Evidence over assertion.** Report only checks you ran. Every new behaviour gets a test; a guard test is
   proven once by breaking what it guards (revert-red) and restoring it.
-- **UMKMall monorepo changes** (shared login cookie UMK-1947, U8 erasure hook) go through the monorepo's own
+- **UMKMall monorepo changes** (attested POS client IP UMK-2066, U8 erasure hook) go through the monorepo's own
   process: `/team-plan` → `/team-work` → `/team-ship`, a PR, its review gate. Never push to its `main`.
 - When a unit is done: tick it in the epic plan's Rulings, comment on UMK-1924 (what shipped, tests, what was
   not exercised).
@@ -78,17 +78,14 @@ silent, follow the monorepo's principles.
   `hasPermission(session, key)` (U3: a client price counts only with `sales.price_override`).
 - **Validate at the boundary with zod;** a bad input answers 422 (never 500). Errors never echo internals.
 - **POS tokens are signed and verified only in `src/tenancy/session.ts`** (guard test). The POS never holds
-  UMKMall's `auth_token` HS256 key. Owner sign-in (UMK-1945): pos-web forwards only UMKMall's `auth_token` and
-  `auth_refresh` cookies (shared on `.umkmall.id`, UMK-1947) to `POST /auth/umkmall/session`, which asks
-  `${UMKMALL_WEB_URL}/api/auth/me` (5 s; 401 → 401, 5xx/timeout → 503) and opens a 15-minute owner session; the owner
-  refresh repeats that call. **Every `Set-Cookie` from `/auth/me` goes back to the browser unchanged** (pos-api and
-  pos-web both relay it): it can mint UMKMall's refresh cookie once, and dropping it signs the owner out of UMKMall.
-  Never forward any other cookie to UMKMall.
+  UMKMall's `auth_token` HS256 key, and reads no UMKMall cookie (the shared-cookie sign-in of UMK-1945 is gone).
 - **Owner sign-in by WhatsApp OTP** (UMK-2065, plan 2026-11-26-005): pos-api calls UMKMall apps/api's native auth
   (`${UMKMALL_API_URL}/mobile/v1/auth/**`, `src/auth/umkmall-native.ts`, bodies only, never cookies) at
   `POST /auth/otp/request`, `/auth/otp/verify`, `/auth/umkmall/refresh`, `/auth/umkmall/sign-out`. The user id comes
   only from UMKMall's answer. Verify is a sign-in (fresh); the refresh never is. pos-api stores no UMKMall token: the
-  native `{ sid, refreshToken }` goes back to pos-web. Consent UMKMall asks for (409 `consent_required`) is recorded
+  native `{ sid, refreshToken }` goes back to pos-web, which keeps it in the httpOnly `pos_umkmall` cookie
+  (`storeSession`, `refreshOwner`, `endOwnerSession` in `lib/session.server.ts`; screen `routes/-owner-sign-in.tsx`).
+  Sign-out and "Masuk lagi" end that native session; the owner's web and app sessions stay. Consent UMKMall asks for (409 `consent_required`) is recorded
   before a session is handed out. Never log a phone number, an OTP or a token. Until UMK-2066, UMKMall's per-IP OTP caps
   see only pos-api, so pos-api limits per address first. `UMKMALL_API_URL` unset → those routes answer 404.
 - **No `console`** in `src/` (lint + guard). Never log tokens, PINs, phone numbers or customer names.
@@ -126,8 +123,8 @@ usage record and provenance on every tool.
 - **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, void or drawer cash-out):
   `PATCH /catalog/products/:id` is not an agent route, an agent creates with `AgentProductCreate` only, and the HPP
   import creates new `UMK-<ref>` SKUs and leaves existing ones untouched.
-- **The agent session is server to server** (`X-Pos-Agent-Key` = `POS_AGENT_SERVICE_KEY`, its own key, never the purge key; then the owner's token checked at `/auth/me`) and
-  relays `/auth/me`'s Set-Cookie like owner sign-in; UMKMall's agent backend passes it to the browser. The owner's
+- **The agent session is server to server** (`X-Pos-Agent-Key` = `POS_AGENT_SERVICE_KEY`, its own key, never the purge key; then the owner's token checked at `${UMKMALL_WEB_URL}/api/auth/me`) and
+  relays `/auth/me`'s Set-Cookie unchanged; UMKMall's agent backend passes it to the browser. The owner's
   switch is persistent (`pos.agent_access.enabled`): revoke refuses old sessions and every new one until enable.
 - **Tools call the REST routes over loopback** with the caller's token (`src/agent/loopback.ts`): never a service
   method, never a tenant id of their own. A new tool is one entry in `AGENT_TOOL_NAMES`, its registry entry and its
@@ -326,8 +323,8 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
 - **The owner's own PIN is never changed by the session alone** (UMK-2054, `src/void/void-pin.ts`): changing it needs
   the old PIN; making the first one, removing it and clearing its lock need a fresh sign-in (`freshSignIn` in
   `src/tenancy/session.ts`: the token's `auth_time` is at most `FRESH_SIGN_IN_SECONDS` old), else 403
-  `fresh_sign_in_required`. Only a sign-in stamps `auth_time` (`POST /auth/umkmall/session` with `{ signIn: true }`,
-  the dev sign-in); **a refresh never does**, and pos-web's `api()` refresh must never pass `signIn`. A new route
+  `fresh_sign_in_required`. Only a sign-in stamps `auth_time` (`POST /auth/otp/verify`, the dev sign-in);
+  **a refresh never does** (`POST /auth/umkmall/refresh`, pos-web's `api()` after a 401). A new route
   that touches the owner's `void_pins` row keeps both rules. Admin PINs are not gated. In tests `createStore`'s
   `auth` is a refreshed session and `freshAuth` a just-signed-in one.
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
@@ -400,15 +397,14 @@ npm run db:generate -w pos-api  # new migration from schema changes
 npm run dev -w pos-web          # http://localhost:3101
 ```
 
-`pos-api` needs `DATABASE_URL` (the `pos_app` role), `POS_SESSION_SECRET` (≥ 32 chars), `UMKMALL_WEB_URL` (UMKMall's
-web origin, for `/api/auth/me`) and `POS_SERVICE_KEY` (same value as UMKMall's, for the purge) in its environment.
-`pos-web` needs `POS_API_URL`, plus `UMKMALL_WEB_URL` and `POS_WEB_URL` (its own public origin) to send signed-out owners
-to UMKMall's login. Names in `.env.example`. The POS must sit under UMKMall's cookie domain: `pos.umkmall.id`, and
-`pos.preview.umkmall.id` on preview.
+`pos-api` needs `DATABASE_URL` (the `pos_app` role), `POS_SESSION_SECRET` (≥ 32 chars), `UMKMALL_API_URL` (apps/api's
+origin, owner WhatsApp sign-in), `UMKMALL_WEB_URL` (UMKMall's web origin, the agent session's `/api/auth/me`) and `POS_SERVICE_KEY` (same value as UMKMall's, for the purge) in its environment.
+`pos-web` needs `POS_API_URL`, and `UMKMALL_WEB_URL` for the policy links of the consent dialog (default
+`https://umkmall.id`). Names in `.env.example`.
 
-**Signing in locally without UMKMall** (localhost gets no UMKMall cookie; only with `NODE_ENV` set to `development` or `test`, on pos-api and pos-web alike; unset refuses): create a stub UMKMall user in your
+**Signing in locally without UMKMall** (only with `NODE_ENV` set to `development` or `test`, on pos-api and pos-web alike; unset refuses): create a stub UMKMall user in your
 database, then start `pos-web` with `POS_DEV_USER_ID` set to it and press "Masuk (pengembangan)" on `/`
-(`POST /masuk/dev` → pos-api `POST /auth/dev/sign-in`). The dev session has no UMKMall `sid`, so it cannot refresh:
+(`POST /masuk/dev` → pos-api `POST /auth/dev/sign-in`). The dev session has no UMKMall native session, so it cannot refresh:
 sign in again after 15 minutes. Screens call pos-api through `api()` in `apps/pos-web/src/lib/api.server.ts`.
 
 ```bash

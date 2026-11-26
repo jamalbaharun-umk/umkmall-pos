@@ -22,7 +22,6 @@ import { Route as KasirTutupRouteImport } from './routes/kasir/tutup'
 import { Route as LaporanIndexRouteImport } from './routes/laporan/index'
 import { Route as LaporanJenisRouteImport } from './routes/laporan/$jenis'
 import { Route as LaporanUntungRugiRouteImport } from './routes/laporan/untung-rugi'
-import { Route as MasukIndexRouteImport } from './routes/masuk/index'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
 import { Route as MasukUlangRouteImport } from './routes/masuk/ulang'
 import { Route as MetodePembayaranIndexRouteImport } from './routes/metode-pembayaran/index'
@@ -129,11 +128,6 @@ const LaporanJenisRoute = LaporanJenisRouteImport.update({
 const LaporanUntungRugiRoute = LaporanUntungRugiRouteImport.update({
   id: '/laporan/untung-rugi',
   path: '/laporan/untung-rugi',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MasukIndexRoute = MasukIndexRouteImport.update({
-  id: '/masuk/',
-  path: '/masuk/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MasukDevRoute = MasukDevRouteImport.update({
@@ -379,7 +373,6 @@ export interface FileRoutesByFullPath {
   '/kas-toko/': typeof KasTokoIndexRoute
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
-  '/masuk/': typeof MasukIndexRoute
   '/metode-pembayaran/': typeof MetodePembayaranIndexRoute
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
@@ -437,7 +430,6 @@ export interface FileRoutesByTo {
   '/kas-toko': typeof KasTokoIndexRoute
   '/kasir': typeof KasirIndexRoute
   '/laporan': typeof LaporanIndexRoute
-  '/masuk': typeof MasukIndexRoute
   '/metode-pembayaran': typeof MetodePembayaranIndexRoute
   '/pelanggan': typeof PelangganIndexRoute
   '/pemasok': typeof PemasokIndexRoute
@@ -496,7 +488,6 @@ export interface FileRoutesById {
   '/kas-toko/': typeof KasTokoIndexRoute
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
-  '/masuk/': typeof MasukIndexRoute
   '/metode-pembayaran/': typeof MetodePembayaranIndexRoute
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
@@ -556,7 +547,6 @@ export interface FileRouteTypes {
     | '/kas-toko/'
     | '/kasir/'
     | '/laporan/'
-    | '/masuk/'
     | '/metode-pembayaran/'
     | '/pelanggan/'
     | '/pemasok/'
@@ -614,7 +604,6 @@ export interface FileRouteTypes {
     | '/kas-toko'
     | '/kasir'
     | '/laporan'
-    | '/masuk'
     | '/metode-pembayaran'
     | '/pelanggan'
     | '/pemasok'
@@ -672,7 +661,6 @@ export interface FileRouteTypes {
     | '/kas-toko/'
     | '/kasir/'
     | '/laporan/'
-    | '/masuk/'
     | '/metode-pembayaran/'
     | '/pelanggan/'
     | '/pemasok/'
@@ -731,7 +719,6 @@ export interface RootRouteChildren {
   KasTokoIndexRoute: typeof KasTokoIndexRoute
   KasirIndexRoute: typeof KasirIndexRoute
   LaporanIndexRoute: typeof LaporanIndexRoute
-  MasukIndexRoute: typeof MasukIndexRoute
   MetodePembayaranIndexRoute: typeof MetodePembayaranIndexRoute
   PelangganIndexRoute: typeof PelangganIndexRoute
   PemasokIndexRoute: typeof PemasokIndexRoute
@@ -851,13 +838,6 @@ declare module '@tanstack/react-router' {
       path: '/laporan/untung-rugi'
       fullPath: '/laporan/untung-rugi'
       preLoaderRoute: typeof LaporanUntungRugiRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/masuk/': {
-      id: '/masuk/'
-      path: '/masuk'
-      fullPath: '/masuk/'
-      preLoaderRoute: typeof MasukIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/masuk/dev': {
@@ -1187,7 +1167,6 @@ const rootRouteChildren: RootRouteChildren = {
   KasTokoIndexRoute: KasTokoIndexRoute,
   KasirIndexRoute: KasirIndexRoute,
   LaporanIndexRoute: LaporanIndexRoute,
-  MasukIndexRoute: MasukIndexRoute,
   MetodePembayaranIndexRoute: MetodePembayaranIndexRoute,
   PelangganIndexRoute: PelangganIndexRoute,
   PemasokIndexRoute: PemasokIndexRoute,

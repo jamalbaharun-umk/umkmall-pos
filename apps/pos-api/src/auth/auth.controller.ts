@@ -34,21 +34,12 @@ const SESSION_TTL = 15 * 60;
 /** Failed agent-key checks allowed per network address per minute (UMK-1978 review). */
 export const AGENT_SESSIONS_PER_MINUTE = 30;
 const UMKMALL_TIMEOUT_MS = 5_000;
-/** UMKMall's login cookies (`@umkmall/auth` AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME); no other cookie leaves the POS. */
-const UMKMALL_COOKIES = new Set(['auth_token', 'auth_refresh']);
 
 const MeAnswer = z.object({
   success: z.literal(true),
   user: z.object({ id: z.string().uuid() }),
 });
 const DevBody = z.object({ userId: z.string().uuid() });
-/**
- * `signIn: true` is sent by the relay (pos-web) only when a person is signing in, never by the refresh of a
- * session (UMK-2054). pos-api cannot tell the two apart by itself: both are the same UMKMall cookie.
- */
-const UmkmallSessionBody = z
-  .object({ signIn: z.literal(true).optional() })
-  .strict();
 // A JWT or any opaque token: no character that could end the cookie or add another one.
 // New Teman AI consent: the scopes the owner granted and UMKMall's consent record. Read is always included.
 const agentGrant = {
@@ -134,7 +125,13 @@ const NativeSignedIn = z.object({
   data: z.object({
     accessToken: z.string().min(1),
     refreshToken: z.string().min(16).optional(), // absent on a refresh that lost the rotation race (UMKMall's grace)
-    user: z.object({ id: z.string().uuid() }),
+    // lower case: the same user must map to the same store and the same actor id however UMKMall spells it
+    user: z.object({
+      id: z
+        .string()
+        .uuid()
+        .transform((id) => id.toLowerCase()),
+    }),
     session: z.object({ id: z.string().min(1) }),
     isNewUser: z.boolean().optional(),
   }),
@@ -150,15 +147,6 @@ const TOO_MANY = 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.';
 const parse = validate;
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const digest = (s: string) => createHash('sha256').update(s).digest();
-/** The `Cookie` header cut down to UMKMall's two auth cookies, or undefined when neither is there. */
-export function authCookies(header: string | undefined): string | undefined {
-  const kept = (header ?? '')
-    .split(';')
-    .map((c) => c.trim())
-    .filter((c) => UMKMALL_COOKIES.has(c.slice(0, c.indexOf('='))));
-  return kept.length > 0 ? kept.join('; ') : undefined;
-}
-
 const isMissingUser = (e: unknown) =>
   (e as { cause?: { code?: string } }).cause?.code === '23503';
 
@@ -238,8 +226,17 @@ export class AuthController {
     });
     if (verified.status !== 200) throw this.refusal(verified, 'otp', res);
     const answer = NativeSignedIn.safeParse(verified.body);
-    if (!answer.success || !answer.data.data.refreshToken)
+    if (!answer.success) throw this.unavailable();
+    if (!answer.data.data.refreshToken) {
+      // A session the POS could never refresh or end: end it now rather than leave it open at UMKMall.
+      await umkmall.call(
+        'DELETE',
+        '/mobile/v1/auth/session',
+        undefined,
+        answer.data.data.accessToken,
+      );
       throw this.unavailable();
+    }
     const { accessToken, refreshToken, user, session, isNewUser } =
       answer.data.data;
     if (needed && consent) {
@@ -418,40 +415,6 @@ export class AuthController {
     return new ServiceUnavailableException({
       message: UNAVAILABLE,
       code: 'umkmall_unavailable',
-    });
-  }
-
-  /**
-   * The shared UMKMall login cookie (UMK-1945) → 15-minute owner session; also the owner refresh. Asks UMKMall's
-   * `/api/auth/me` with only the two auth cookies. Every Set-Cookie it answers goes back unchanged: it can renew the
-   * access cookie and mint the refresh cookie once, and dropping that signs the owner out of UMKMall later.
-   *
-   * A sign-in (`{ signIn: true }`) stamps the session with its sign-in time, which makes it fresh for
-   * `FRESH_SIGN_IN_SECONDS` (UMK-2054: resetting or unlocking the owner's PIN). A refresh sends no `signIn` and
-   * its session carries no sign-in time: a refresh is never fresh, whatever the session before it was.
-   */
-  @Public()
-  @Post('umkmall/session')
-  @HttpCode(200)
-  async umkmallSession(
-    @Headers('cookie') cookie: string | undefined,
-    @Body() body: unknown,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const { signIn } = parse(UmkmallSessionBody, body ?? {});
-    const forwarded = authCookies(cookie);
-    if (!forwarded) throw new UnauthorizedException();
-    const { userId, setCookies, unavailable } =
-      await this.askUmkmall(forwarded);
-    if (setCookies.length > 0) res.setHeader('set-cookie', setCookies);
-    if (unavailable) throw new ServiceUnavailableException();
-    if (!userId) throw new UnauthorizedException();
-    const tenantId = await this.tenantOfUmkmallUser(userId);
-    return this.issue({
-      tenantId,
-      actorId: userId,
-      kind: 'owner',
-      ...(signIn && { signedInAt: nowSeconds() }),
     });
   }
 

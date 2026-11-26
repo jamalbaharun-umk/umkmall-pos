@@ -19,8 +19,7 @@ Open http://localhost:3101. Full steps: [installation](../../README.md#-installa
 | Variable | Meaning |
 |---|---|
 | `POS_API_URL` | Where pos-api is |
-| `UMKMALL_WEB_URL` | UMKMall login page for signed-out owners (unset locally) |
-| `POS_WEB_URL` | This app's public origin, used as the login return address |
+| `UMKMALL_WEB_URL` | UMKMall policy pages linked from the consent dialog (default https://umkmall.id) |
 | `POS_DEV_USER_ID` | Local only: enables **Masuk (pengembangan)** |
 
 ```bash

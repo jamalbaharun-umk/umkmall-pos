@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// umkmallSession(): only UMKMall's two auth cookies go to pos-api, and every Set-Cookie it answers reaches the browser.
+// The owner's WhatsApp sign-in (UMK-2065): pos-api's answer stores the POS token and UMKMall's native session; the
+// refresh sends that session back; signing out ends it.
 const cookies = new Map<string, string>()
-const appended: [string, string][] = []
 const set: string[] = []
 vi.mock('@tanstack/react-start/server', () => ({
   getCookie: (name: string) => cookies.get(name),
@@ -13,79 +13,74 @@ vi.mock('@tanstack/react-start/server', () => ({
   deleteCookie: (name: string) => {
     cookies.delete(name)
   },
-  appendResponseHeader: (name: string, value: string) => appended.push([name, value]),
 }))
 process.env.POS_API_URL = 'http://pos-api.test'
 
-const { setReturnTo, takeLandingPath, umkmallSession } = await import('./session.server')
+const { endOwnerSession, refreshOwner, setReturnTo, startSession, takeLandingPath } = await import('./session.server')
 
 const ownerToken = `h.${Buffer.from(JSON.stringify({ kind: 'owner' })).toString('base64url')}.s`
-const minted = [
-  'auth_token=new; Path=/; Domain=.umkmall.id; HttpOnly; Secure; SameSite=Lax',
-  'auth_refresh=sid.minted; Path=/; Domain=.umkmall.id; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000',
-]
+const NATIVE = JSON.stringify({ sid: 'sid-1', refreshToken: 'r1' })
 
 function posApi(status: number, body: unknown) {
   const calls: { url: string; init: RequestInit }[] = []
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     calls.push({ url, init })
-    const headers = new Headers({ 'content-type': 'application/json' })
-    for (const c of minted) headers.append('set-cookie', c)
-    return new Response(JSON.stringify(body), { status, headers })
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   })
   return calls
 }
 
-describe('umkmallSession()', () => {
+describe('owner session from a WhatsApp sign-in', () => {
   beforeEach(() => {
     cookies.clear()
-    appended.length = 0
     set.length = 0
   })
 
-  it('forwards only auth_token and auth_refresh, relays every Set-Cookie and stores the session', async () => {
-    for (const [k, v] of [['auth_token', 'at'], ['auth_refresh', 'sid.secret'], ['pos_session', 'old'], ['_ga', 'x']])
-      cookies.set(k, v)
-    const calls = posApi(200, { sessionToken: ownerToken, expiresIn: 900 })
-    expect(await umkmallSession()).toBe(ownerToken)
-    expect(calls).toHaveLength(1)
-    expect(calls[0].url).toBe('http://pos-api.test/auth/umkmall/session')
-    expect(new Headers(calls[0].init.headers).get('cookie')).toBe('auth_token=at; auth_refresh=sid.secret')
-    expect(new Headers(calls[0].init.headers).has('authorization')).toBe(false)
-    expect(appended).toEqual(minted.map((c) => ['set-cookie', c]))
-    expect(set).toEqual(['pos_session'])
+  it('stores the POS token and the native session pos-api answers', async () => {
+    posApi(200, { sessionToken: ownerToken, expiresIn: 900, umkmall: { sid: 'sid-1', refreshToken: 'r1' } })
+    expect(await startSession('/auth/otp/verify', {})).toBe(ownerToken)
+    expect(cookies.get('pos_session')).toBe(ownerToken)
+    expect(JSON.parse(cookies.get('pos_umkmall')!)).toEqual({ sid: 'sid-1', refreshToken: 'r1' })
   })
 
-  it('relays Set-Cookie on a refusal too, and answers its status', async () => {
-    cookies.set('auth_refresh', 'sid.secret')
-    posApi(401, { message: 'x' })
-    expect(await umkmallSession()).toBe(401)
-    expect(appended).toHaveLength(2)
-    expect(set).toEqual([])
+  it('refreshes with the stored native session, keeping it when UMKMall did not rotate it', async () => {
+    cookies.set('pos_umkmall', NATIVE)
+    const calls = posApi(200, { sessionToken: ownerToken, expiresIn: 900, umkmall: { sid: 'sid-1' } })
+    expect(await refreshOwner()).toBe(ownerToken)
+    expect(calls[0].url).toBe('http://pos-api.test/auth/umkmall/refresh')
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ sid: 'sid-1', refreshToken: 'r1' })
+    expect(cookies.get('pos_umkmall')).toBe(NATIVE)
+    // a rotated token replaces it
+    posApi(200, { sessionToken: ownerToken, expiresIn: 900, umkmall: { sid: 'sid-1', refreshToken: 'r2' } })
+    await refreshOwner()
+    expect(JSON.parse(cookies.get('pos_umkmall')!).refreshToken).toBe('r2')
   })
 
-  it('answers 401 without calling pos-api when neither UMKMall cookie is there', async () => {
-    cookies.set('pos_session', 'old')
+  it('answers 401 without a call when there is no native session, and the refusal status otherwise', async () => {
     const calls = posApi(200, {})
-    expect(await umkmallSession()).toBe(401)
+    expect(await refreshOwner()).toBe(401)
     expect(calls).toHaveLength(0)
-  })
-
-  it('answers 0 when pos-api cannot be reached', async () => {
-    cookies.set('auth_token', 'at')
+    cookies.set('pos_umkmall', NATIVE)
+    posApi(401, { message: 'x' })
+    expect(await refreshOwner()).toBe(401)
     vi.stubGlobal('fetch', async () => {
       throw new TypeError('fetch failed')
     })
-    expect(await umkmallSession()).toBe(0)
+    expect(await refreshOwner()).toBe(0)
   })
 
-  it('UMK-2054 tells pos-api about a sign-in only when asked: a refresh sends an empty body', async () => {
-    cookies.set('auth_token', 'at')
-    const calls = posApi(200, { sessionToken: ownerToken, expiresIn: 900 })
-    await umkmallSession()
-    await umkmallSession(false)
-    await umkmallSession(true)
-    expect(calls.map((c) => c.init.body)).toEqual(['{}', '{}', '{"signIn":true}'])
+  it('signing out ends the native session at pos-api and drops every session cookie, even when pos-api is down', async () => {
+    for (const [k, v] of [['pos_session', ownerToken], ['pos_umkmall', NATIVE], ['pos_me', '{}']]) cookies.set(k, v)
+    const calls = posApi(204, {})
+    await endOwnerSession()
+    expect(calls.map((c) => c.url)).toEqual(['http://pos-api.test/auth/umkmall/sign-out'])
+    expect([...cookies.keys()]).toEqual([])
+    cookies.set('pos_umkmall', NATIVE)
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('fetch failed')
+    })
+    await endOwnerSession()
+    expect(cookies.has('pos_umkmall')).toBe(false)
   })
 })
 
