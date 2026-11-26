@@ -1144,6 +1144,8 @@ function PayDialog({
         <div className="space-y-3">
           <SegmentedControl
             aria-label="Metode pembayaran"
+            // Six methods are wider than a phone: wrap them instead of pushing the sheet sideways (UMK-2056).
+            className="flex max-w-full flex-wrap rounded-ds-xl"
             options={methods.map((m) => ({ value: m.id, label: m.name }))}
             value={methodId}
             onChange={(v) => {
