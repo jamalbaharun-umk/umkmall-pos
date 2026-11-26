@@ -1131,6 +1131,22 @@ export class SalesService {
         .where(and(eq(staff.tenantId, s.tenantId), eq(staff.id, sale.actorId)));
       cashier = row?.name ?? 'Kasir';
     }
+    // The void record of a voided or refunded sale: its reason and whether the money went back by a gateway refund.
+    let voidReasonCode: string | null = null;
+    let refunded = false;
+    if (sale.status === 'void') {
+      const [v] = await this.db
+        .select({
+          reasonCode: saleVoids.reasonCode,
+          refundStatus: saleVoids.refundStatus,
+        })
+        .from(saleVoids)
+        .where(
+          and(eq(saleVoids.tenantId, s.tenantId), eq(saleVoids.saleId, id)),
+        );
+      voidReasonCode = v?.reasonCode ?? null;
+      refunded = v?.refundStatus != null;
+    }
     return {
       number: sale.receiptNumber,
       receiptNumber: sale.receiptNumber,
@@ -1167,6 +1183,8 @@ export class SalesService {
       // A reprint of a voided receipt must say so.
       status: sale.status,
       voidedAt: sale.voidedAt,
+      voidReasonCode,
+      refunded,
     };
   }
 

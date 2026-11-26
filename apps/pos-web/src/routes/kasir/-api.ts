@@ -94,6 +94,10 @@ export type Receipt = {
   // UMK-1962: a voided receipt says so
   status: 'completed' | 'void' | 'awaiting_payment' | 'cancelled'
   voidedAt: string | null
+  /** Why it was voided (pos-api's reason code); null unless voided. */
+  voidReasonCode?: string | null
+  /** The money went back by a gateway refund, not a plain void. */
+  refunded?: boolean
 }
 export type Result<T = undefined> =
   | { ok: true; data: T }

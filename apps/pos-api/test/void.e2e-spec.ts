@@ -224,6 +224,8 @@ describe('void a full sale (UMK-1962)', () => {
       expect(read.body.voidedAt).toEqual(expect.any(String));
       const receipt = await get(s.auth, `/sales/${sale.body.id}/receipt`);
       expect(receipt.body.status).toBe('void');
+      expect(receipt.body.voidReasonCode).toBe(res.body.reasonCode);
+      expect(receipt.body.refunded).toBe(false);
       const audit = await get(s.auth, `/sales/${sale.body.id}/void`);
       expect(audit.body).toEqual(res.body);
 
@@ -1854,6 +1856,11 @@ describe('void a full sale (UMK-1962)', () => {
       });
 
       await voidSale(b.auth, sale.body.id, b.approval).expect(404);
+      await get(b.auth, `/sales/${sale.body.id}/receipt`).expect(404);
+      const own = await get(a.auth, `/sales/${sale.body.id}/receipt`).expect(
+        200,
+      );
+      expect(own.body).toMatchObject({ voidReasonCode: null, refunded: false });
       // Store A's approver and PIN in a store B session change nothing either.
       await voidSale(b.auth, sale.body.id, a.approval).expect(404);
       await voidSale(b.auth, 'not-a-uuid', b.approval).expect(404);
