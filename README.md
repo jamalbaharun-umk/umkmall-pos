@@ -4,14 +4,14 @@
 
 ### Your shop's cashier, stock book and cash notebook, in one place
 
-**A point of sale for Indonesian small businesses (UMKM), made to work alongside UMKMall.**
+**One of UMKMall's tools: the store's database, ledger and cashier inside the same ecosystem as the UMKMall app and web.**
 
 [![CI](https://github.com/jamalbaharun-umk/umkmall-pos/actions/workflows/ci.yml/badge.svg)](https://github.com/jamalbaharun-umk/umkmall-pos/actions/workflows/ci.yml)
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 ![Node.js 22+](https://img.shields.io/badge/node-22%2B-339933)
 ![Status: in development](https://img.shields.io/badge/status-in%20development-orange)
 
-[Why](#-why-umkmall-pos) · [Features](#-features) · [Install](#-installation) · [How to use](#-how-to-use-a-day-at-warung-berkah) · [Coming soon](#-coming-soon) · [Contributing](#-contributing)
+[Why](#-why-umkmall-pos) · [UMKMall ecosystem](#-a-tool-of-the-umkmall-ecosystem) · [Features](#-features) · [Install](#-installation) · [How to use](#-how-to-use-a-day-at-warung-berkah) · [Coming soon](#-coming-soon) · [Contributing](#-contributing)
 
 <img src="docs/screenshots/53-kasir-desktop.png" alt="Cashier screen on a desktop" width="68%" />
 <img src="docs/screenshots/21-hp-qris-menunggu.png" alt="Dynamic QRIS payment on a phone" width="21%" />
@@ -42,12 +42,31 @@ UMKMall POS answers each of these from a phone, tablet or computer:
 > **Project status:** in active development, not yet deployed to production. Online payments work only with a built-in
 > test gateway, so no real money moves through them.
 
-### How it complements UMKMall
+## 🧩 A tool of the UMKMall ecosystem
 
-- The owner signs in with their **UMKMall account** (shared login cookie on `.umkmall.id`). No second password.
-- One UMKMall account is one store. Cashiers are local POS users with a PIN on a paired device.
-- When a UMKMall account is erased, UMKMall calls the POS purge endpoint, which deletes that store's data.
-- Soon, UMKMall's assistant will be able to enter data for you. See [Coming soon](#-coming-soon).
+UMKMall POS is not a separate product. It is **one of UMKMall's tools**, like the HPP calculator or the finance
+notebook in the UMKMall app and web, and it holds what the rest of UMKMall needs from a shop:
+
+| UMKMall needs… | UMKMall POS is… |
+|---|---|
+| Real sales, stock and customers | **The store's database**: products, units and prices, stock batches at cost, customers, suppliers |
+| Money it can trust | **The store's ledger**: every sale, shift, drawer movement, kasbon, expense and refund, in integer rupiah, append-only where money moves |
+| A place to put its results | **The place results land**: an HPP calculated in UMKMall becomes POS products with cost and selling price |
+| Facts for its journeys and tools | **The source of figures**: actual margins per product, profit and loss, purchases, all readable by UMKMall's agent |
+
+How it fits:
+
+- **One account, one ecosystem.** The owner signs in with their **UMKMall account** (shared login cookie on
+  `.umkmall.id`); no second password. One UMKMall account is one store. Cashiers are local POS users with a PIN on a
+  paired device.
+- **UMKMall's agent works the POS for the owner** over MCP ([docs/agent-integration.md](docs/agent-integration.md)):
+  it reads the catalog, stock, sales, margins and profit and loss, and fills the catalog, including importing HPP
+  results. It cannot void, change prices at the till, take cash out of a drawer or touch store settings.
+- **UMKMall's features feed on POS data**: "Strategi Harga dan Profit" and the HPP calculator (cost, price, actual
+  margin), the finance notebook and cashflow templates (sales, purchases, profit), chat and label tools (products,
+  prices, stock). The full map is in the PRD's "Dukungan fitur UMKMall".
+- **Erasure follows UMKMall.** When a UMKMall account is erased, UMKMall calls the POS purge endpoint, which deletes
+  that store's data, payments included.
 
 The app speaks **Indonesian**. This documentation is in English and quotes the on-screen labels exactly, **in bold**.
 
@@ -62,6 +81,7 @@ The app speaks **Indonesian**. This documentation is in English and quotes the o
 | 👥 People | Staff with PINs, roles and permissions, paired cashier devices |
 | 📊 Money | Receivables, expenses, sales / product / cashier / purchase reports, profit and loss, CSV export |
 | 🔒 Safety | Void with an admin PIN, per-store data isolation, PIN lockout, no double sale on retry |
+| 🤝 UMKMall agent (MCP) | Agent session from the UMKMall login, catalog and report reads, HPP import with preview and once-only writes |
 | 🖥 Every screen size | Desktop and phone layouts, a success message or a clear error dialog after each action |
 
 ## 🚀 Installation
@@ -543,7 +563,8 @@ Ideas on the roadmap. **None of these is available yet**, there are no promised 
 
 | Soon you may be able to… | What it means for your shop |
 |---|---|
-| 🤖 **Ask UMKMall's assistant** (POS MCP server) | Say "add 20 new products" or "record this purchase" and let the assistant type |
+| 🤖 **Ask UMKMall's assistant to record sales, purchases and kasbon** (more MCP tools) | Say "record this order" or "record this purchase" and let the assistant type |
+| 📸 Product photos and finance notes from UMKMall land in the POS | Photos made in UMKMall go to the catalog; POS sales fill the UMKMall finance notebook |
 | 💳 **Take real QRIS payments** through a payment gateway | Self-confirming QR with real money, after legal approval |
 | 🔁 Renew a QR, send a payment link, choose the VA bank | Fewer stuck payments at the counter |
 | 🔎 A "needs review" list for odd payments | Late or unmatched money is easy to check |
