@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { ErrorText, rupiah } from '@/components/pos-page'
 import { checkVoucher, pickMembers, type MemberOption } from './-api'
+import { ActionRow } from '@/components/action-row'
 
 // U7 pieces of the cashier (member picker, voucher field), kept out of index.tsx so the cashier screen
 // (ui-parity-b) only gains a few lines. pos-api re-validates both inside the sale.
@@ -189,14 +190,14 @@ export function VoucherRow({
             required
             autoFocus
           />
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button type="outline" color="light" width="auto" disabled={busy} onClick={() => setOpen(false)}>
               Batal
             </Button>
             <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
               Pakai
             </Button>
-          </div>
+          </ActionRow>
         </form>
       </Dialog>
     </div>

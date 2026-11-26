@@ -30,6 +30,7 @@ import {
   outstandingAfterText,
   type CollectorCash,
 } from './-deposit-helpers'
+import { ActionRow } from '@/components/action-row'
 
 const root = getRouteApi('__root__')
 
@@ -262,7 +263,7 @@ function DepositDialog({
             )}
           </>
         )}
-        <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
+        <ActionRow>
           <Button htmlType="button" type="outline" color="light" width="auto" disabled={busy} onClick={onClose}>
             {options.length === 0 ? 'Tutup' : 'Batal'}
           </Button>
@@ -271,7 +272,7 @@ function DepositDialog({
               Terima setoran
             </Button>
           )}
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )

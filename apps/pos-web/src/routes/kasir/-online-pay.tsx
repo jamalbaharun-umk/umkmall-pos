@@ -49,6 +49,7 @@ import { parseRupiah, quickAmounts } from './-money'
 import { NOT_STORED_TEXT } from './-pending'
 import { QUIET_ZONE, qrMatrix, qrPath } from './-qr'
 import { useLost } from './-use-lost'
+import { ActionRow } from '@/components/action-row'
 
 export type OnlineFinish =
   | { kind: 'paid'; saleId: string }
@@ -442,7 +443,7 @@ export function OnlineWait({
                   <p className="text-sm text-default-secondary">Bayar lewat halaman gateway: pelanggan scan kode ini atau buka tautannya</p>
                   <QrCode value={payment.checkout.paymentUrl} label="Kode QR tautan halaman bayar" />
                   <p className="break-all text-sm font-semibold">{payment.checkout.paymentUrl}</p>
-                  <div className="flex flex-wrap gap-2">
+                  <ActionRow>
                     <Button asChild type="outline" color="light" size="small" width="auto">
                       <a href={payment.checkout.paymentUrl} target="_blank" rel="noopener noreferrer">
                         Buka halaman bayar
@@ -468,7 +469,7 @@ export function OnlineWait({
                     >
                       Bagikan tautan
                     </Button>
-                  </div>
+                  </ActionRow>
                 </div>
               ) : payment.checkout ? (
                 <div className="rounded-lg border border-default-primary p-4" aria-label="Nomor Virtual Account">
@@ -828,14 +829,14 @@ export function ResumeGate({ gate, onRetry, onAside }: { gate: 'none' | 'checkin
             jadi penjualan online baru belum dibuka. Layar mencoba lagi sendiri.
           </Alert>
         )}
-        <div className="flex flex-col gap-2 sm:flex-row-reverse">
-          <Button width="auto" className="w-full" onClick={onRetry}>
-            Coba lagi sekarang
-          </Button>
-          <Button width="auto" className="w-full" type="outline" color="light" onClick={onAside}>
+        <ActionRow>
+          <Button width="auto" type="outline" color="light" onClick={onAside}>
             Lanjut tunai saja
           </Button>
-        </div>
+          <Button width="auto" onClick={onRetry}>
+            Coba lagi sekarang
+          </Button>
+        </ActionRow>
         <p className="text-xs text-default-secondary">
           Lanjut tunai saja: penjualan online ditahan, penjualan sebelumnya tetap ada di Menunggu, dan layar ini terus
           memeriksanya.

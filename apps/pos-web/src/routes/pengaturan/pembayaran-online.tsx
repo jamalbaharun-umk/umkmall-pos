@@ -5,6 +5,7 @@ import { useConfirm } from '@/components/confirm'
 import { Empty, Page, PageError, PageLoading, Panel, RequiredLabel, dateTime } from '@/components/page'
 import { useCan } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
+import { ActionRow } from '@/components/action-row'
 import {
   BUSINESS_TYPES,
   PERMISSION,
@@ -241,9 +242,7 @@ function AccountView({ account }: { account: MerchantAccount }) {
   )
 }
 
-function Actions({ children }: { children: React.ReactNode }) {
-  return <div className="flex flex-col gap-2 md:flex-row md:justify-end">{children}</div>
-}
+const Actions = ActionRow
 
 function Methods({ account }: { account: MerchantAccount }) {
   const router = useRouter()

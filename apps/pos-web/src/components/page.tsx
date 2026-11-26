@@ -42,7 +42,7 @@ export function Page({
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-default-primary md:text-3xl">{title}</h1>
-          {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+          {actions && <div className="flex flex-wrap items-center gap-2 [&>*]:shrink-0 [&>*]:whitespace-nowrap">{actions}</div>}
         </div>
       </header>
       {children}

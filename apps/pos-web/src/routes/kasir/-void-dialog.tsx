@@ -18,6 +18,7 @@ import {
   type MethodKind,
   type VoidFormErrors,
 } from './-void-helpers'
+import { ActionRow } from '@/components/action-row'
 
 type Props = {
   open: boolean
@@ -178,7 +179,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
           }}
         />
 
-        <div className="flex justify-end gap-2">
+        <ActionRow>
           <Button
             type="outline"
             color="light"
@@ -201,7 +202,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
           >
             {online ? `Refund ${rupiah(sale.amountDue)}` : 'Batalkan transaksi'}
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )

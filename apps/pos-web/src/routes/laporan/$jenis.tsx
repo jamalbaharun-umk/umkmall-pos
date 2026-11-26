@@ -6,6 +6,7 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
 import { cashDiff, checkRange, REPORTS, type Column, type ReportDef } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
+import { ActionRow } from '@/components/action-row'
 
 type Search = { from?: string; to?: string }
 
@@ -107,9 +108,7 @@ function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: strin
           <TextField label="Sampai tanggal" type="date" value={to} required error={errors.to} onChange={(e) => setTo(e.target.value)} />
         </div>
         {errors._ && <Alert variant="danger" className="mt-3">{errors._}</Alert>}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button htmlType="submit" type="primary" color="primary" width="auto">Tampilkan</Button>
-          <Button htmlType="button" type="outline" color="primary" width="auto" disabled={!!serverErrors} onClick={() => window.print()}>Cetak</Button>
+        <ActionRow align="start" className="mt-4">
           <Button
             htmlType="button"
             type="outline"
@@ -128,7 +127,9 @@ function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: strin
           >
             Unduh CSV
           </Button>
-        </div>
+          <Button htmlType="button" type="outline" color="primary" width="auto" disabled={!!serverErrors} onClick={() => window.print()}>Cetak</Button>
+          <Button htmlType="submit" type="primary" color="primary" width="auto">Tampilkan</Button>
+        </ActionRow>
       </form>
     </Card>
   )

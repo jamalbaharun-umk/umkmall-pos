@@ -31,6 +31,7 @@ import { clearKeys } from '../../lib/form-checks'
 import { useCan } from '@/components/shell'
 import { createOpname, loadOpnameForm } from '../pembelian/-api'
 import { type OpnameLine as Line, validateOpname } from '../pembelian/-validate'
+import { ActionRow } from '@/components/action-row'
 
 // Lakasir's create stock opname plus its items (product, counted qty, reason) on one screen.
 export const Route = createFileRoute('/stok-opname/baru')({
@@ -226,14 +227,14 @@ function NewOpnamePage() {
           </Table>
         </Card>
         <ErrorText>{error}</ErrorText>
-        <div className="flex gap-2">
-          <Button width="auto" htmlType="submit" isLoading={busy}>
-            Simpan sebagai draf
-          </Button>
+        <ActionRow>
           <Button width="auto" asChild type="outline" color="light" disabled={busy}>
             <Link to="/stok-opname">Batal</Link>
           </Button>
-        </div>
+          <Button width="auto" htmlType="submit" isLoading={busy}>
+            Simpan sebagai draf
+          </Button>
+        </ActionRow>
       </form>
     </Page>
   )

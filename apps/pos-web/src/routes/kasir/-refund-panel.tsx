@@ -9,6 +9,7 @@ import { RetryRefundDialog } from './-retry-dialog'
 import type { SaleVoid } from './-void-api'
 import { useLost } from './-use-lost'
 import { MANUAL_NOTE_MAX, manualNoteError, refundStateText } from './-void-helpers'
+import { ActionRow } from '@/components/action-row'
 
 /**
  * Where the refund of a paid QRIS or VA sale stands (UMK-1991): pending, succeeded or refused, with the next step.
@@ -71,14 +72,14 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
       </Alert>
       {saleVoid.refundStatus === 'failed' &&
         (owner ? (
-          <div className="flex flex-wrap gap-2">
-            <Button width="auto" size="small" isLoading={busy} disabled={busy} onClick={() => setRetrying(true)}>
-              Coba lagi
-            </Button>
+          <ActionRow>
             <Button width="auto" size="small" type="outline" color="light" disabled={busy} onClick={() => setMarking(true)}>
               Dikembalikan manual
             </Button>
-          </div>
+            <Button width="auto" size="small" isLoading={busy} disabled={busy} onClick={() => setRetrying(true)}>
+              Coba lagi
+            </Button>
+          </ActionRow>
         ) : (
           <p className="text-sm text-default-secondary">Hanya pemilik yang bisa mencoba lagi atau menandai refund ini.</p>
         ))}
@@ -112,14 +113,14 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
             error={noteError}
             placeholder="mis. transfer BCA 25 Nov, bukti di WA"
           />
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button type="outline" color="light" width="auto" disabled={busy} onClick={() => setMarking(false)}>
               Batal
             </Button>
             <Button htmlType="submit" width="auto" isLoading={busy}>
               Tandai selesai
             </Button>
-          </div>
+          </ActionRow>
         </form>
       </Dialog>
     </div>

@@ -4,6 +4,7 @@ import { LoadError, Pending, rupiah } from '@/components/pos-page'
 import { loadReceipt } from './-api'
 import { soldQtyText, soldPriceNote } from './-helpers'
 import { hasRounding } from './-money'
+import { ActionRow } from '@/components/action-row'
 
 // Printable receipt (Lakasir's browser printer): the browser's print dialog, sized for 58/80 mm paper.
 export const Route = createFileRoute('/kasir/struk/$id')({
@@ -62,14 +63,14 @@ function ReceiptPage() {
           <hr className="my-2 border-dashed border-black/40" />
           <p className="text-center">Terima kasih</p>
         </article>
-        <div className="flex gap-2 print:hidden">
-          <Button width="auto" size="large" onClick={() => window.print()}>
-            Cetak struk
-          </Button>
+        <ActionRow stacked>
           <Button width="auto" asChild size="large" type="outline" color="light">
             <Link to="/kasir">Transaksi baru</Link>
           </Button>
-        </div>
+          <Button width="auto" size="large" onClick={() => window.print()}>
+            Cetak struk
+          </Button>
+        </ActionRow>
       </div>
     </main>
   )

@@ -5,6 +5,7 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { CODE_LENGTH, isPairingCode } from '@/lib/pairing'
 import { describePairError } from '@/lib/pair-errors'
 import { claimPairing } from './-pairing-api'
+import { ActionRow } from '@/components/action-row'
 
 /**
  * The owner's side of pairing (UMK-2022): type the 6-digit code a cashier device shows. This runs in the owner's own
@@ -91,14 +92,14 @@ export function PairDialog({ open, onClose }: { open: boolean; onClose: () => vo
           disabled={busy}
         />
         <Alert variant="info">Hubungkan hanya bila Anda sendiri yang memintanya di perangkat itu.</Alert>
-        <div className="flex flex-col gap-2 md:flex-row-reverse md:justify-start">
-          <Button htmlType="submit" type="primary" color="primary" size="medium" width="auto" className="w-full md:w-auto" isLoading={busy}>
-            Hubungkan perangkat
-          </Button>
-          <Button htmlType="button" type="outline" color="light" size="medium" width="auto" className="w-full md:w-auto" disabled={busy} onClick={close}>
+        <ActionRow>
+          <Button htmlType="button" type="outline" color="light" size="medium" width="auto" disabled={busy} onClick={close}>
             Batal
           </Button>
-        </div>
+          <Button htmlType="submit" type="primary" color="primary" size="medium" width="auto" isLoading={busy}>
+            Hubungkan perangkat
+          </Button>
+        </ActionRow>
       </form>
     </Dialog>
   )

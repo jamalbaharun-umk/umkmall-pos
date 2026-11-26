@@ -32,6 +32,7 @@ import {
   withCode,
   type CashDirection,
 } from './-cash-helpers'
+import { ActionRow } from '@/components/action-row'
 
 // Drawer cash in/out by hand (design feature 20): "Tambah uang" and "Ambil uang" for the open shift, and the shift's
 // manual entries. Entry point: the "Kas laci" button on the Kasir screen. pos-api refuses a cash-out above the drawer.
@@ -68,12 +69,12 @@ function CashDrawerPage() {
               <p className="text-3xl font-bold text-default-primary tabular-nums">{rupiah(shift.expectedCash)}</p>
               <p className="text-sm text-default-secondary">Shift dibuka {formatDate(shift.openedAt)}</p>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 md:max-w-md">
-              <Button onClick={() => setOpen('in')}>+ Tambah uang</Button>
+            <ActionRow align="start">
               <Button type="outline" onClick={() => setOpen('out')}>
                 − Ambil uang
               </Button>
-            </div>
+              <Button onClick={() => setOpen('in')}>+ Tambah uang</Button>
+            </ActionRow>
             <p className="text-xs text-default-secondary">
               Belanja untuk toko, misalnya beli galon? Catat di Pengeluaran dengan sumber Laci; laci otomatis berkurang di
               sana. Penjualan tunai, kasbon tunai, dan pengeluaran dari laci ada di rincian tutup shift.
@@ -270,14 +271,14 @@ function CashEntryDialog({
           error={errors.note}
           onChange={(e) => setNote(e.target.value)}
         />
-        <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
+        <ActionRow>
           <Button htmlType="button" type="outline" color="light" width="auto" disabled={busy} onClick={onClose}>
             Batal
           </Button>
           <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
             {out ? 'Catat uang keluar' : 'Catat uang masuk'}
           </Button>
-        </div>
+        </ActionRow>
       </form>
     </Dialog>
   )

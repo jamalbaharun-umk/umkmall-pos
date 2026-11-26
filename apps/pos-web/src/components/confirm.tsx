@@ -1,6 +1,7 @@
 import { Button, Dialog } from '@umkmall/ui/primitives'
 import { useRef, useState, type ReactNode } from 'react'
 import { showError, type FailureLike } from '@/lib/feedback'
+import { ActionRow } from '@/components/action-row'
 
 /**
  * Lakasir's confirmation modal (Filament "Are you sure?") for destructive actions. `run` returns the refusal (an
@@ -37,7 +38,7 @@ export function useConfirm() {
     >
       <div className="flex flex-col gap-4 px-6 pt-2 pb-6">
         {state?.body && <div className="text-sm text-default-secondary">{state.body}</div>}
-        <div className="flex justify-end gap-2">
+        <ActionRow>
           <Button type="outline" color="light" size="small" width="auto" disabled={busy} onClick={() => setState(null)}>
             Batal
           </Button>
@@ -61,7 +62,7 @@ export function useConfirm() {
           >
             {state?.label}
           </Button>
-        </div>
+        </ActionRow>
       </div>
     </Dialog>
   )

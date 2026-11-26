@@ -6,6 +6,7 @@ import { Panel } from '@/components/page'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { staffErrors, type Errors } from '@/lib/validate'
 import { saveStaff, type Role, type Staff } from './-api'
+import { ActionRow } from '@/components/action-row'
 
 /**
  * Lakasir's user form, for POS staff: a cashier signs in with a PIN on a bound device (U4), so name, PIN (+ confirm)
@@ -120,9 +121,9 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
         )}
       </Panel>
       {error && <Alert variant="danger">{error}</Alert>}
-      <div className="flex flex-wrap gap-2">
-        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
-          {member ? 'Simpan perubahan' : 'Simpan'}
+      <ActionRow>
+        <Button asChild type="outline" color="light" size="small" width="auto">
+          <Link to="/staf">Batal</Link>
         </Button>
         {!member && (
           <Button
@@ -136,10 +137,10 @@ export function StaffForm({ member, roles }: { member?: Staff; roles: Role[] }) 
             Simpan & buat lagi
           </Button>
         )}
-        <Button asChild type="outline" color="light" size="small" width="auto">
-          <Link to="/staf">Batal</Link>
+        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
+          {member ? 'Simpan perubahan' : 'Simpan'}
         </Button>
-      </div>
+      </ActionRow>
     </form>
   )
 }

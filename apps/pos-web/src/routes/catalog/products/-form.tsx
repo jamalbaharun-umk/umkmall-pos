@@ -33,6 +33,7 @@ import {
   type TierRow,
   type UnitRow,
 } from './-helpers'
+import { ActionRow } from '@/components/action-row'
 
 export const TYPE_LABEL: Record<ProductType, string> = { product: 'Barang', service: 'Jasa', non_stock: 'Tanpa stok' }
 const TYPES = (Object.keys(TYPE_LABEL) as ProductType[]).map((value) => ({ value, label: TYPE_LABEL[value] }))
@@ -381,9 +382,11 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
 
       {error && <Alert variant="danger">{error}</Alert>}
 
-      <div className="flex flex-wrap gap-2">
-        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
-          {product ? 'Simpan perubahan' : 'Simpan'}
+      <ActionRow>
+        <Button asChild type="outline" color="light" size="small" width="auto">
+          <Link to={product ? '/catalog/products/$id' : '/catalog/products'} params={{ id: product?.id ?? '' }}>
+            Batal
+          </Link>
         </Button>
         {!product && (
           <Button
@@ -397,12 +400,10 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             Simpan & buat lagi
           </Button>
         )}
-        <Button asChild type="outline" color="light" size="small" width="auto">
-          <Link to={product ? '/catalog/products/$id' : '/catalog/products'} params={{ id: product?.id ?? '' }}>
-            Batal
-          </Link>
+        <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
+          {product ? 'Simpan perubahan' : 'Simpan'}
         </Button>
-      </div>
+      </ActionRow>
       {confirm.dialog}
     </form>
   )

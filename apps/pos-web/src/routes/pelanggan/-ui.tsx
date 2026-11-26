@@ -19,6 +19,7 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, type Crumb } from '@/components/page'
 import { checkFields, toBody, visibleFields, type Errors, type Field, type Values } from './-form'
 import { removeResource, saveResource, type Resource, type Result } from './-api'
+import { ActionRow } from '@/components/action-row'
 
 // Page pieces for the U7 screens (pelanggan, voucher, metode pembayaran, piutang): Filament's page header,
 // loading / empty / error states, and the list + modal form Lakasir's simple resources use.
@@ -262,14 +263,14 @@ export function ResourcePage<T extends { id: string }>(props: {
               {error}
             </Alert>
           )}
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button type="outline" color="light" width="auto" onClick={() => setForm(undefined)}>
               Batal
             </Button>
             <Button htmlType="submit" width="auto" isLoading={busy} disabled={busy}>
               Simpan
             </Button>
-          </div>
+          </ActionRow>
         </form>
       </Dialog>
 
@@ -287,7 +288,7 @@ export function ResourcePage<T extends { id: string }>(props: {
               {error}
             </Alert>
           )}
-          <div className="flex justify-end gap-2">
+          <ActionRow>
             <Button type="outline" color="light" width="auto" onClick={() => setDeleting(undefined)}>
               Batal
             </Button>
@@ -310,7 +311,7 @@ export function ResourcePage<T extends { id: string }>(props: {
             >
               Hapus
             </Button>
-          </div>
+          </ActionRow>
         </div>
       </Dialog>
     </Page>

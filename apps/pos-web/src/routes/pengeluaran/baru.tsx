@@ -15,6 +15,7 @@ import {
   SOURCES,
   type ExpenseSource,
 } from './-helpers'
+import { ActionRow } from '@/components/action-row'
 
 export const Route = createFileRoute('/pengeluaran/baru')({
   loader: () => loadExpenseForm(),
@@ -152,14 +153,14 @@ function NewExpense() {
           </Alert>
         )}
         <Card variant="outlined" padding="small" className="sticky bottom-2 md:static md:border-0 md:p-0">
-          <div className="flex gap-2">
+          <ActionRow>
             <Button htmlType="button" type="outline" color="light" width="auto" disabled={busy} onClick={() => void navigate({ to: '/pengeluaran', search: { period: 'today' } })}>
               Batal
             </Button>
             <Button htmlType="submit" width="full" isLoading={busy} disabled={busy}>
               Simpan
             </Button>
-          </div>
+          </ActionRow>
         </Card>
       </form>
     </Page>
