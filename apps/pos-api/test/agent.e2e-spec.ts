@@ -260,7 +260,8 @@ describe('UMKMall agent: session and MCP tools', () => {
         ['get', '/members'],
         ['post', '/payment-methods'],
         ['get', '/expenses'],
-        ['post', '/sales'],
+        ['post', `/sales/${randomUUID()}/void`],
+        ['post', '/shifts/current/close'],
         ['post', '/agent/access/revoke'],
       ] as const)
         await http()
@@ -928,6 +929,267 @@ describe('UMKMall agent: session and MCP tools', () => {
         to: today,
       });
       expect(bad.error).toMatch(/Tanggal/);
+    });
+  });
+
+  describe('sales, members, kasbon and suppliers (UMK-1981)', () => {
+    async function openShift(auth: string, openingCash = 100000) {
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', auth)
+        .send({ openingCash })
+        .expect(201);
+    }
+
+    it("records a sale into the owner's open shift exactly as the till would, once per key", async () => {
+      const store = await createStore();
+      await http()
+        .put('/sales/settings')
+        .set('Authorization', store.auth)
+        .send({ taxBps: 1100 })
+        .expect(200);
+      const kopi = await seedProduct(store.auth, 'Kopi Susu', 15123);
+      const client = await mcp(await agentToken(store.userId));
+      const cart = { lines: [{ productId: kopi.id, qty: 2 }] };
+
+      // no open shift: the tool says so and records nothing
+      const closed = await call(client, 'record_sale', {
+        ...cart,
+        idempotencyKey: 'sale-noshift-1',
+        confirm: true,
+      });
+      expect(closed.error).toMatch(/Belum ada shift yang dibuka/);
+
+      await openShift(store.auth);
+      const preview = await call(client, 'record_sale', {
+        ...cart,
+        idempotencyKey: 'sale-agent-1',
+      });
+      expect(preview.error).toBeUndefined();
+      // 30246 + 11% tax (3327) = 33573, cash rounded up to 33600
+      expect(preview.data).toMatchObject({
+        preview: true,
+        quote: {
+          subtotal: 30246,
+          tax: 3327,
+          total: 33573,
+          rounding: 27,
+          amountDue: 33600,
+        },
+      });
+      const made = await call(client, 'record_sale', {
+        ...cart,
+        idempotencyKey: 'sale-agent-1',
+        confirm: true,
+      });
+      const saleId = (made.data as { id: string }).id;
+      const again = await call(client, 'record_sale', {
+        ...cart,
+        idempotencyKey: 'sale-agent-1',
+        confirm: true,
+      });
+      expect(again.data).toEqual(made.data);
+
+      // the same cart at the till
+      const till = await http()
+        .post('/sales')
+        .set('Authorization', store.auth)
+        .set('Idempotency-Key', `till-${randomUUID()}`)
+        .send({ ...cart, paid: 33600 })
+        .expect(201);
+      const viaAgent = await http()
+        .get(`/sales/${saleId}`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      const viaTill = await http()
+        .get(`/sales/${till.body.id}`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      for (const k of [
+        'subtotal',
+        'tax',
+        'total',
+        'rounding',
+        'paid',
+        'costTotal',
+        'shiftId',
+      ])
+        expect([k, viaAgent.body[k]]).toEqual([k, viaTill.body[k]]);
+      const receipt = await http()
+        .get(`/sales/${saleId}/receipt`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(receipt.body.cashier).toBe('Agent UMKMall');
+      const list = await http()
+        .get('/sales')
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(list.body.total).toBe(2);
+    });
+
+    it('never takes a price or a discount from the agent, over REST either', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await openShift(store.auth);
+      const auth = `Bearer ${await agentToken(store.userId)}`;
+      for (const body of [
+        { lines: [{ productId: kopi.id, qty: 1, price: 1 }], paid: 10000 },
+        { lines: [{ productId: kopi.id, qty: 1 }], discount: 5000, paid: 5000 },
+      ])
+        await http()
+          .post('/sales')
+          .set('Authorization', auth)
+          .set('Idempotency-Key', `agent-${randomUUID()}`)
+          .send(body)
+          .expect(422);
+    });
+
+    it('opens a shift only through its own tool, and not twice', async () => {
+      const store = await createStore();
+      const client = await mcp(await agentToken(store.userId));
+      const p = await call(client, 'open_shift', {
+        openingCash: 150000,
+        idempotencyKey: 'shift-open-1',
+      });
+      expect(p.data).toMatchObject({ preview: true });
+      await call(client, 'open_shift', {
+        openingCash: 150000,
+        idempotencyKey: 'shift-open-1',
+        confirm: true,
+      });
+      const cur = await http()
+        .get('/shifts/current')
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(cur.body.shift).toMatchObject({ openingCash: 150000 });
+      const twice = await call(client, 'open_shift', {
+        openingCash: 1,
+        idempotencyKey: 'shift-open-2',
+      });
+      expect(twice.error).toMatch(/sudah terbuka/);
+    });
+
+    it('a kasbon sale to a new member, then an instalment, each once', async () => {
+      const store = await createStore();
+      const roti = await seedProduct(store.auth, 'Roti', 20000);
+      const kasbon = await http()
+        .post('/payment-methods')
+        .set('Authorization', store.auth)
+        .send({ name: 'Kasbon', kind: 'credit' })
+        .expect(201);
+      await openShift(store.auth);
+      const client = await mcp(await agentToken(store.userId));
+      const member = await call(client, 'create_member', {
+        name: 'Bu Sari',
+        phone: '081234567890',
+        idempotencyKey: 'member-0001',
+        confirm: true,
+      });
+      expect(member.error).toBeUndefined();
+      const memberId = (member.data as { id: string }).id;
+      const found = await call(client, 'search_members', { q: 'Sari' });
+      expect(
+        (found.data as { data: { id: string }[] }).data.map((m) => m.id),
+      ).toContain(memberId);
+
+      await call(client, 'record_sale', {
+        lines: [{ productId: roti.id, qty: 1 }],
+        memberId,
+        paymentMethodId: kasbon.body.id,
+        downPayment: 5000,
+        idempotencyKey: 'sale-kasbon-1',
+        confirm: true,
+      });
+      const recs = await call(client, 'list_receivables', { memberId });
+      const rec = (recs.data as { data: { id: string; rest: number }[] })
+        .data[0];
+      expect(rec.rest).toBe(15000);
+
+      const preview = await call(client, 'record_receivable_payment', {
+        receivableId: rec.id,
+        amount: 6000,
+        idempotencyKey: 'kasbon-pay-1',
+      });
+      expect(preview.data).toMatchObject({
+        balanceBefore: 15000,
+        balanceAfter: 9000,
+      });
+      for (let i = 0; i < 2; i += 1)
+        await call(client, 'record_receivable_payment', {
+          receivableId: rec.id,
+          amount: 6000,
+          idempotencyKey: 'kasbon-pay-1',
+          confirm: true,
+        });
+      const after = await http()
+        .get(`/receivables/${rec.id}`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(after.body.rest).toBe(9000);
+      const over = await call(client, 'record_receivable_payment', {
+        receivableId: rec.id,
+        amount: 10000,
+        idempotencyKey: 'kasbon-pay-2',
+        confirm: true,
+      });
+      expect(over.error).toMatch(/melebihi sisa piutang/);
+    });
+
+    it('adds a supplier and lists suppliers and payment methods', async () => {
+      const store = await createStore();
+      const client = await mcp(await agentToken(store.userId));
+      await call(client, 'create_supplier', {
+        name: 'Toko Grosir Jaya',
+        idempotencyKey: 'supplier-0001',
+        confirm: true,
+      });
+      const list = await call(client, 'list_suppliers');
+      expect(
+        (list.data as { data: { name: string }[] }).data.map((x) => x.name),
+      ).toEqual(['Toko Grosir Jaya']);
+      const methods = await call(client, 'list_payment_methods');
+      expect(
+        (methods.data as { data: unknown[] }).data.length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+
+    it('a read-only consent can record nothing and read no member or kasbon data', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await openShift(store.auth);
+      const token = await agentToken(store.userId, ['pos.read']);
+      const client = await mcp(token);
+      const sale = await call(client, 'record_sale', {
+        lines: [{ productId: kopi.id, qty: 1 }],
+        idempotencyKey: 'ro-sale-1',
+        confirm: true,
+      });
+      expect(sale.error).toMatch(/izin pos\.write/);
+      for (const path of ['/members/picker', '/receivables', '/shifts/current'])
+        await http()
+          .get(path)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(403);
+    });
+
+    it("cross-tenant: store B's agent cannot sell A's product or pay A's kasbon", async () => {
+      const a = await createStore();
+      const b = await createStore();
+      const kopi = await seedProduct(a.auth, 'Kopi A', 10000);
+      await openShift(b.auth);
+      const client = await mcp(await agentToken(b.userId));
+      const sale = await call(client, 'record_sale', {
+        lines: [{ productId: kopi.id, qty: 1 }],
+        idempotencyKey: 'x-sale-0001',
+        confirm: true,
+      });
+      expect(sale.error).toBeDefined();
+      const pay = await call(client, 'record_receivable_payment', {
+        receivableId: randomUUID(),
+        amount: 1000,
+        idempotencyKey: 'x-pay-0001',
+      });
+      expect(pay.error).toMatch(/tidak ditemukan/);
     });
   });
 

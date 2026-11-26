@@ -29,6 +29,8 @@ const tenantId = () =>
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
 export const ACTOR_KINDS = ['owner', 'cashier', 'agent'] as const;
+/** How a row UMKMall's agent recorded names its actor on screens and receipts (UMK-1981). */
+export const AGENT_LABEL = 'Agent UMKMall';
 
 export const shifts = pos
   .table(

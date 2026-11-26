@@ -18,7 +18,7 @@ import { type Db, InjectDb } from '../db/db.module';
 import { suppliers } from '../db/schema';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
 const optionalText = (max: number) =>
@@ -109,11 +109,13 @@ export class SuppliersService {
 export class SuppliersController {
   constructor(private readonly suppliers: SuppliersService) {}
 
+  @AgentRoute()
   @Get()
   async list(@CurrentSession() s: PosSession) {
     return { data: await this.suppliers.list(s.tenantId) };
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('purchasing.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {

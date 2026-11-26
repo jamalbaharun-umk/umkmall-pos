@@ -35,6 +35,6 @@ export async function shiftNumbers(
  * query whose FROM or JOIN has `pos.shifts` unaliased; plain SQL, so it reads the same row whether or
  * not drizzle qualifies its own columns.
  */
-export const shiftActorName = sql<string>`case when shifts.actor_kind = 'owner' then 'Pemilik'
+export const shiftActorName = sql<string>`case when shifts.actor_kind in ('owner', 'agent') then 'Pemilik'
   else coalesce((select st.name from pos.staff st
                   where st.tenant_id = shifts.tenant_id and st.id = shifts.actor_id), 'Staf') end`;

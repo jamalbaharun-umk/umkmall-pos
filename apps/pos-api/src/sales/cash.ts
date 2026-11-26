@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { paymentMethods } from '../db/schema';
+import type { Db } from '../db/db.module';
 import type { Tx } from '../stock/stock.service';
 
 /**
@@ -9,7 +10,10 @@ import type { Tx } from '../stock/stock.service';
 export const cashRounding = (total: number) => (100 - (total % 100)) % 100;
 
 /** The store's cash method, "Tunai", created on first use. */
-export async function cashMethodId(tx: Tx, tenantId: string): Promise<string> {
+export async function cashMethodId(
+  tx: Db | Tx,
+  tenantId: string,
+): Promise<string> {
   await tx
     .insert(paymentMethods)
     .values({ tenantId, name: 'Tunai', isCash: true })

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { FINAL_SALE_STATUSES, reportSettings } from '../db/schema';
+import { AGENT_LABEL, FINAL_SALE_STATUSES, reportSettings } from '../db/schema';
 import { fieldError } from '../common/validation';
 import {
   TIMEZONE_UNKNOWN,
@@ -27,7 +27,9 @@ const n = (v: unknown) => Number(v ?? 0);
 const cashierName = (r: Row) =>
   r.actor_kind === 'owner'
     ? 'Pemilik'
-    : ((r.staff_name as string | null) ?? 'Staf');
+    : r.actor_kind === 'agent'
+      ? AGENT_LABEL
+      : ((r.staff_name as string | null) ?? 'Staf');
 
 /**
  * The one place a metric is defined (Lakasir swapped revenue and profit, flaw 5).

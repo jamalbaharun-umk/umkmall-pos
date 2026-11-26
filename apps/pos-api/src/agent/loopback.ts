@@ -31,6 +31,7 @@ export async function callRoute(
   options: {
     query?: Record<string, string | number | boolean | undefined>;
     body?: unknown;
+    headers?: Record<string, string>;
   } = {},
 ): Promise<RouteAnswer> {
   const qs = new URLSearchParams();
@@ -42,6 +43,7 @@ export async function callRoute(
     res = await fetch(url, {
       method,
       headers: {
+        ...options.headers,
         authorization: ctx.authorization,
         accept: 'application/json',
         ...(options.body !== undefined && {
