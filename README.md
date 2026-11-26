@@ -195,8 +195,6 @@ for the admin, `222222` for the cashier.
 | Thrown back to the sign-in page | The development sign-in lasts 15 minutes; press **Masuk (pengembangan)** again |
 | Cashier cannot use a PIN | [Pair the device](#3-pair-a-cashier-device) first |
 | Online methods missing at the cashier | [Turn on online payments](#23-turn-on-online-payments), then add the payment method |
-| Cashier screen scrolls sideways, or **Tutup shift** is hidden | Known layout bug at about 1280 px and below, including phones: scroll sideways |
-| **Batalkan transaksi** or **Refund** buttons are off screen | Known bug on short screens: use a taller window or zoom out |
 
 ---
 
