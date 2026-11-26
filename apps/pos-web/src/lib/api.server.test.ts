@@ -16,7 +16,7 @@ vi.mock('./session.server', () => ({
 let refresh: string | number = 503
 const refreshArgs: unknown[][] = []
 
-const { api, API_DOWN, UMKMALL_DOWN } = await import('./api.server')
+const { api, API_DOWN, API_TIMEOUT_MS, UMKMALL_DOWN, timeoutMs } = await import('./api.server')
 
 describe('api() page status', () => {
   beforeEach(() => {
@@ -102,5 +102,19 @@ describe('api() page status', () => {
     expect((await api('/void-pin')).status).toBe(200)
     expect(refreshArgs).toEqual([[]])
     refresh = 503
+  })
+})
+
+describe('timeoutMs (UMK-2053)', () => {
+  it('is 15 s by default and when pos-api\'s payment timeout is the default 5 s', () => {
+    expect(timeoutMs({})).toBe(API_TIMEOUT_MS)
+    expect(timeoutMs({ PAYMENT_API_TIMEOUT_MS: '5000' })).toBe(API_TIMEOUT_MS)
+  })
+  it('outlasts two payment-api calls when that timeout is raised', () => {
+    expect(timeoutMs({ PAYMENT_API_TIMEOUT_MS: '8000' })).toBe(19_000)
+  })
+  it('POS_API_TIMEOUT_MS wins; junk values are ignored', () => {
+    expect(timeoutMs({ POS_API_TIMEOUT_MS: '40', PAYMENT_API_TIMEOUT_MS: '8000' })).toBe(40)
+    expect(timeoutMs({ POS_API_TIMEOUT_MS: 'x', PAYMENT_API_TIMEOUT_MS: '-1' })).toBe(API_TIMEOUT_MS)
   })
 })

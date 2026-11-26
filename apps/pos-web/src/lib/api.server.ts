@@ -8,10 +8,20 @@ export const API_DOWN = 'Tidak bisa terhubung ke server kasir. Periksa koneksi l
 
 /** An answer that takes longer is "no answer" (UMK-2051), same as an unreachable server: the screen shows its retry. */
 export const API_TIMEOUT_MS = 15_000
-/** `POS_API_TIMEOUT_MS` (a positive number) overrides it, for tests and slow links. */
-function timeoutMs(): number {
-  const n = Number(process.env.POS_API_TIMEOUT_MS)
-  return Number.isFinite(n) && n > 0 ? n : API_TIMEOUT_MS
+/**
+ * pos-api's own call to payment-api has `PAYMENT_API_TIMEOUT_MS` (default 5 s) and one request can make two of
+ * them (switch to cash: close the bill, then charge), so the wait here must outlast them or
+ * a slow but healthy answer is read as "no answer" and the action is repeated (UMK-2053).
+ */
+export const PAYMENT_CALLS_PER_REQUEST = 2
+export const TIMEOUT_MARGIN_MS = 3_000
+/** `POS_API_TIMEOUT_MS` (a positive number) overrides it, for tests and slow links. Else 15 s, or more when this process knows a longer `PAYMENT_API_TIMEOUT_MS`. */
+export function timeoutMs(env: Record<string, string | undefined> = process.env): number {
+  const own = Number(env.POS_API_TIMEOUT_MS)
+  if (Number.isFinite(own) && own > 0) return own
+  const pay = Number(env.PAYMENT_API_TIMEOUT_MS)
+  const floor = Number.isFinite(pay) && pay > 0 ? pay * PAYMENT_CALLS_PER_REQUEST + TIMEOUT_MARGIN_MS : 0
+  return Math.max(API_TIMEOUT_MS, floor)
 }
 
 /**
