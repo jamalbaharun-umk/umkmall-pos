@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { rupiah } from '@/components/pos-page'
 import { useIsOwner } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
-import { markRefundManual, retryRefund } from './-online-api'
+import { markRefundManual } from './-online-api'
+import { RetryRefundDialog } from './-retry-dialog'
 import type { SaleVoid } from './-void-api'
 import { useLost } from './-use-lost'
 import { MANUAL_NOTE_MAX, manualNoteError, refundStateText } from './-void-helpers'
@@ -12,7 +13,7 @@ import { MANUAL_NOTE_MAX, manualNoteError, refundStateText } from './-void-helpe
 /**
  * Where the refund of a paid QRIS or VA sale stands (UMK-1991): pending, succeeded or refused, with the next step.
  * "Coba lagi" and "Dikembalikan manual" are the owner's alone (approved design 27), the second after the money went
- * back outside the system. The design also asks the admin PIN for "Coba lagi"; pos-api does not take one yet. Every action ends in a success toast or the error dialog.
+ * back outside the system. "Coba lagi" asks an admin's PIN (UMK-2040, `RetryRefundDialog`). Every action ends in a success toast or the error dialog.
  */
 export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onChanged: () => void }) {
   // Design 27: only the owner retries or marks a refund returned by hand; others see the status.
@@ -20,6 +21,7 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [marking, setMarking] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [note, setNote] = useState('')
   const [noteError, setNoteError] = useState<string>()
   const lock = useRef(false)
@@ -37,18 +39,6 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
     return () => clearInterval(t)
   }, [pending, router])
   if (!state) return null
-
-  async function retry() {
-    if (lock.current) return
-    lock.current = true
-    setBusy(true)
-    const r = await retryRefund({ data: saleVoid.saleId }).catch(lost)
-    lock.current = false
-    setBusy(false)
-    if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'mengajukan refund lagi', retry: () => void retry() })
-    notifySuccess('Refund diminta lagi ke gateway')
-    onChanged()
-  }
 
   async function mark(e: FormEvent) {
     e.preventDefault()
@@ -82,7 +72,7 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
       {saleVoid.refundStatus === 'failed' &&
         (owner ? (
           <div className="flex flex-wrap gap-2">
-            <Button width="auto" size="small" isLoading={busy} disabled={busy} onClick={() => void retry()}>
+            <Button width="auto" size="small" isLoading={busy} disabled={busy} onClick={() => setRetrying(true)}>
               Coba lagi
             </Button>
             <Button width="auto" size="small" type="outline" color="light" disabled={busy} onClick={() => setMarking(true)}>
@@ -92,6 +82,12 @@ export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onCha
         ) : (
           <p className="text-sm text-default-secondary">Hanya pemilik yang bisa mencoba lagi atau menandai refund ini.</p>
         ))}
+      <RetryRefundDialog
+        open={retrying}
+        onClose={() => setRetrying(false)}
+        onChanged={onChanged}
+        sale={{ id: saleVoid.saleId, number: saleVoid.saleNumber, amount }}
+      />
       <Dialog
         open={marking}
         onOpenChange={(o) => !o && !busy && setMarking(false)}

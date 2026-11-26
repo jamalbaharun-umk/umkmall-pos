@@ -4,7 +4,7 @@ import { api } from '@/lib/api.server'
 import type { FailureLike } from '@/lib/describe-error'
 import { paidFigures, paymentFailure, parsePayment, type SalePayment } from './-online'
 import type { SaleVoid } from './-void-api'
-import { voidFailure, type VoidFailure } from './-void-helpers'
+import { retryFailure, voidFailure, type VoidFailure } from './-void-helpers'
 
 // Server functions of the payment-gateway cashier flow (UMK-1991). pos-api decides everything (status, who may act,
 // stock, voucher); these only relay. The PIN of a refund passes through `refundSale` and is never stored or logged.
@@ -119,12 +119,32 @@ export const refundSale = createServerFn({ method: 'POST' })
     return { ok: false, failure: voidFailure(res.status, json), code }
   })
 
-/** Asks a refused refund again (`sales.void`, no new PIN). */
+export type RetryAnswer = { ok: true; saleVoid: SaleVoid } | { ok: false; failure: VoidFailure; code?: string }
+
+/**
+ * Asks a refused refund again (UMK-2040): the owner only, approved by `approverId`'s PIN (a `sales.void` holder), with
+ * the void's lockout. The PIN passes through and is never stored or logged. Answered with the void's failure kinds.
+ */
 export const retryRefund = createServerFn({ method: 'POST' })
-  .validator((saleId: string) => saleId)
-  .handler(async ({ data }): Promise<Answer<SaleVoid>> => {
-    const r = await call('retry', `/sales/${enc(data)}/refund/retry`, { method: 'POST' })
-    return r.ok ? { ok: true, data: r.json as SaleVoid } : r
+  .validator((d: { saleId: string; approverId: string; pin: string }) => d)
+  .handler(async ({ data: { saleId, ...body } }): Promise<RetryAnswer> => {
+    const res = await api(`/sales/${enc(saleId)}/refund/retry`, { method: 'POST', body: JSON.stringify(body) }).catch(
+      (e: unknown) => {
+        if (isRedirect(e)) throw e
+        return null
+      },
+    )
+    if (!res) return { ok: false, failure: retryFailure(0, null) }
+    if (res.ok) return { ok: true, saleVoid: (await res.json()) as SaleVoid }
+    const json = (await res.json().catch(() => null)) as { code?: unknown } | null
+    // no usable answer from payment-api: the request may have reached it, so "nothing changed" would be wrong
+    const code =
+      res.status === 503
+        ? 'payment_unclear'
+        : typeof json?.code === 'string' && /^[a-z][a-z_]{1,39}$/.test(json.code)
+          ? json.code
+          : undefined
+    return { ok: false, failure: retryFailure(res.status, json), code }
   })
 
 /** "Dikembalikan manual": the owner only; the note says how the money went back. */
