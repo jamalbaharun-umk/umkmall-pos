@@ -1,7 +1,9 @@
 import {
   Body,
+  ConflictException,
   Controller,
   Get,
+  HttpCode,
   Injectable,
   Module,
   NotFoundException,
@@ -35,7 +37,7 @@ import {
   UuidField,
   validate,
 } from '../common/validation';
-import { storeToday } from '../common/store-day';
+import { storeDayOf, storeToday } from '../common/store-day';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { type Db, InjectDb } from '../db/db.module';
 import {
@@ -113,12 +115,16 @@ export const standingPayment = sql`(${receivablePayments.reversesId} is null and
   select 1 from ${receivablePayments} x
   where x.tenant_id = ${receivablePayments.tenantId} and x.reverses_id = ${receivablePayments.id}))`;
 
-const columns = {
+const columns = (tenantId: string) => ({
   id: receivables.id,
   saleId: receivables.saleId,
   saleNumber: sales.number,
   memberId: receivables.memberId,
   memberName: members.name,
+  // UMK-1973: when the customer was last reminded (a date, never the message) and how late an open balance is, in
+  // whole days of the store's day; 0 when it is not yet due or nothing is owed.
+  memberLastRemindedAt: members.lastRemindedAt,
+  overdueDays: sql<number>`case when ${receivables.rest} > 0 then greatest(0, ${storeToday(tenantId)} - ${receivables.dueDate}) else 0 end`.mapWith(Number),
   total: receivables.total,
   rest: receivables.rest,
   dueDate: receivables.dueDate,
@@ -127,7 +133,7 @@ const columns = {
   cancelledAmount: receivables.cancelledAmount,
   outsideShiftCollected,
   createdAt: receivables.createdAt,
-};
+});
 
 /**
  * A credit sale's receivable, inside the sale's transaction. Totals come from the server-computed
@@ -235,9 +241,9 @@ export class ReceivablesService {
     private readonly payments: PaymentSync,
   ) {}
 
-  private base() {
+  private base(tenantId: string) {
     return this.db
-      .select(columns)
+      .select(columns(tenantId))
       .from(receivables)
       .innerJoin(sales, eq(sales.id, receivables.saleId))
       .innerJoin(members, eq(members.id, receivables.memberId));
@@ -271,8 +277,8 @@ export class ReceivablesService {
         : undefined,
       q.status === 'cancelled' ? isNotNull(receivables.cancelledAt) : undefined,
     );
-    const [data, [{ total }], [summary]] = await Promise.all([
-      this.base()
+    const [data, [{ total }], [summary], overdue] = await Promise.all([
+      this.base(tenantId)
         .where(where)
         .orderBy(desc(receivables.createdAt), desc(receivables.id))
         .limit(q.perPage)
@@ -293,6 +299,23 @@ export class ReceivablesService {
         .innerJoin(sales, eq(sales.id, receivables.saleId))
         .innerJoin(members, eq(members.id, receivables.memberId))
         .where(search),
+      // UMK-1973: customers with a phone number whose open balance is past due, oldest first ("Kirim pengingat ke
+      // yang terlambat"), over the whole store: a reminder queue does not follow the list's search.
+      this.db
+        .select({ memberId: receivables.memberId })
+        .from(receivables)
+        .innerJoin(members, eq(members.id, receivables.memberId))
+        .where(
+          and(
+            eq(receivables.tenantId, tenantId),
+            gt(receivables.rest, 0),
+            isNotNull(members.phone),
+            sql`${receivables.dueDate} < ${storeToday(tenantId)}`,
+          ),
+        )
+        .groupBy(receivables.memberId)
+        .orderBy(asc(sql`min(${receivables.dueDate})`), asc(receivables.memberId))
+        .limit(50),
     ]);
     return {
       data,
@@ -304,12 +327,82 @@ export class ReceivablesService {
         openCount: Number(summary.openCount),
         // Cash taken without an open shift, over the same search: in no shift's expected cash.
         outsideShiftCollected: Number(summary.outsideShiftCollected),
+        overdueMemberIds: overdue.map((o) => o.memberId),
       },
     };
   }
 
+  /** What a kasbon reminder for one customer says, over all the customer's open balances (UMK-1973). */
+  async reminder(tenantId: string, memberId: string) {
+    const [m] = await this.db
+      .select({
+        id: members.id,
+        name: members.name,
+        phone: members.phone,
+        lastRemindedAt: members.lastRemindedAt,
+        // Whole days since the last reminder in the store's day (null when never reminded).
+        remindedDaysAgo: sql<
+          number | null
+        >`(${storeToday(tenantId)} - ${storeDayOf(tenantId, members.lastRemindedAt)})::int`,
+      })
+      .from(members)
+      .where(and(eq(members.tenantId, tenantId), eq(members.id, memberId)));
+    if (!m) throw new NotFoundException();
+    const [owed] = await this.db
+      .select({
+        rest: sql<string>`coalesce(sum(${receivables.rest}), 0)`,
+        dueDate: sql<string | null>`to_char(min(${receivables.dueDate}), 'YYYY-MM-DD')`,
+        overdueDays: sql<
+          number | null
+        >`(${storeToday(tenantId)} - min(${receivables.dueDate}))::int`,
+      })
+      .from(receivables)
+      .where(
+        and(
+          eq(receivables.tenantId, tenantId),
+          eq(receivables.memberId, memberId),
+          gt(receivables.rest, 0),
+        ),
+      );
+    const rest = Number(owed.rest);
+    if (rest === 0 || !owed.dueDate)
+      throw new ConflictException({
+        message: 'Pelanggan ini tidak punya sisa kasbon.',
+        code: 'nothing_owed',
+      });
+    return {
+      memberId: m.id,
+      memberName: m.name,
+      phone: m.phone,
+      rest,
+      dueDate: owed.dueDate,
+      overdueDays: Math.max(0, owed.overdueDays ?? 0),
+      lastRemindedAt: m.lastRemindedAt,
+      remindedDaysAgo: m.lastRemindedAt ? m.remindedDaysAgo : null,
+    };
+  }
+
+  /**
+   * The owner opened a reminder in WhatsApp: remember the date on the customer (never the message). The POS cannot
+   * know the message was sent, only that it was offered.
+   */
+  async markReminded(tenantId: string, memberId: string) {
+    const r = await this.reminder(tenantId, memberId);
+    if (!r.phone)
+      throw new ConflictException({
+        message: 'Pelanggan ini belum punya nomor WhatsApp.',
+        code: 'phone_missing',
+      });
+    const [row] = await this.db
+      .update(members)
+      .set({ lastRemindedAt: sql`now()` })
+      .where(and(eq(members.tenantId, tenantId), eq(members.id, memberId)))
+      .returning({ lastRemindedAt: members.lastRemindedAt });
+    return { memberId, lastRemindedAt: row.lastRemindedAt };
+  }
+
   async get(tenantId: string, id: string) {
-    const [row] = await this.base().where(
+    const [row] = await this.base(tenantId).where(
       and(eq(receivables.tenantId, tenantId), eq(receivables.id, id)),
     );
     if (!row) throw new NotFoundException();
@@ -630,6 +723,23 @@ export class ReceivablesController {
   @RequirePermission('sales.void')
   correctionApprovers(@CurrentSession() s: PosSession) {
     return this.corrections.approvers(s);
+  }
+
+  // UMK-1973: not an agent route; the reminder carries a customer's phone number.
+  @Get('reminders/:memberId')
+  @RequirePermission('receivables.manage')
+  reminder(@CurrentSession() s: PosSession, @Param('memberId') id: string) {
+    return this.receivables.reminder(s.tenantId, parseId(id));
+  }
+
+  @Post('reminders/:memberId')
+  @HttpCode(200)
+  @RequirePermission('receivables.manage')
+  markReminded(
+    @CurrentSession() s: PosSession,
+    @Param('memberId') id: string,
+  ) {
+    return this.receivables.markReminded(s.tenantId, parseId(id));
   }
 
   @AgentRoute()

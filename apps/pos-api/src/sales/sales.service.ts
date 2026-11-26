@@ -1422,6 +1422,18 @@ export class SalesService {
       voidReasonCode = v?.reasonCode ?? null;
       refundStatus = v?.refundStatus ?? null;
     }
+    // UMK-1987: the customer's number from the member record, for the WhatsApp receipt. Read here, not in `get`,
+    // so no other sale answer carries it. Never logged.
+    let memberPhone: string | null = null;
+    if (sale.memberId) {
+      const [m] = await this.db
+        .select({ phone: members.phone })
+        .from(members)
+        .where(
+          and(eq(members.tenantId, s.tenantId), eq(members.id, sale.memberId)),
+        );
+      memberPhone = m?.phone ?? null;
+    }
     return {
       number: sale.receiptNumber,
       receiptNumber: sale.receiptNumber,
@@ -1451,6 +1463,7 @@ export class SalesService {
       lineDiscount: sale.lineDiscount,
       voucherDiscount: sale.voucherDiscount,
       memberName: sale.memberName,
+      memberPhone,
       receivableRest: sale.receivableRest,
       taxBps: sale.taxBps,
       tax: sale.tax,
