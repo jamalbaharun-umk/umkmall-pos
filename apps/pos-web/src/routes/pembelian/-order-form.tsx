@@ -53,6 +53,7 @@ export function OrderForm({
   const [supplierId, setSupplierId] = useState(order?.supplierId ?? suppliers[0]?.id ?? '')
   const [paymentMethod, setPaymentMethod] = useState(order ? (order.paymentMethod ?? '') : 'Tunai')
   const [note, setNote] = useState(order?.note ?? '')
+  const [dueDate, setDueDate] = useState(order?.dueDate ?? '')
   const [lines, setLines] = useState<Line[]>(
     order?.lines.map((l) => ({ productId: l.productId, qty: String(l.qty), unitCost: String(l.unitCost ?? '') })) ?? [
       { productId: '', qty: '1', unitCost: '' },
@@ -137,6 +138,7 @@ export function OrderForm({
             supplierId,
             paymentMethod: paymentMethod.trim() || null,
             note: note.trim() || null,
+            dueDate: dueDate || null,
             lines: lines.map((l) => ({ productId: l.productId, qty: toInt(l.qty), unitCost: toInt(l.unitCost) })),
           },
         }),
@@ -175,6 +177,13 @@ export function OrderForm({
               maxLength={60}
               error={errors.paymentMethod}
               placeholder="Tunai, Transfer, Tempo…"
+            />
+            <TextField
+              label="Jatuh tempo (boleh kosong)"
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              error={errors.dueDate}
             />
             <div className="md:col-span-2">
               <TextField

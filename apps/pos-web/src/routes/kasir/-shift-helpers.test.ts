@@ -45,6 +45,27 @@ describe('drawerRows', () => {
     expect(rows.map((r) => r.key)).toEqual(['opening', 'sales', 'expected'])
   })
 
+  it('names supplier payments from the drawer and their reversals (UMK-1970) instead of "lain"', () => {
+    const rows = drawerRows({
+      openingCash: 2_390_000,
+      cashSales: 0,
+      cashIn: 200_000,
+      cashOut: 1_200_000,
+      purchasePayments: 1_200_000,
+      purchasePaymentReversals: 200_000,
+      expectedCash: 1_390_000,
+    })
+    expect(rows.map((r) => [r.key, r.amount])).toEqual([
+      ['opening', 2_390_000],
+      ['sales', 0],
+      ['supplier-back', 200_000],
+      ['supplier', 1_200_000],
+      ['expected', 1_390_000],
+    ])
+    expect(drawerAddsUp(rows)).toBe(true)
+    expect(entryKindLabel('purchase_payment')).toBe('Bayar pemasok dari laci')
+  })
+
   it('shows cash the named kinds do not explain as "lain" so the rows still add up', () => {
     const rows = drawerRows({ ...shift, cashIn: 12_500, cashOut: 160_000, expectedCash: 1_382_500 + 10_000 })
     expect(rows.find((r) => r.key === 'in-other')?.amount).toBe(10_000)
