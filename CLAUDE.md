@@ -166,7 +166,7 @@ test per resource, idempotent money changes), with these differences:
   in payment-api: no route answers them. `POST /webhooks/:provider/accounts` follows the webhook rule below (the
   status is read again from the PG; the body is not stored).
 - **A bill's validity is per method** (UMK-2039): an adapter declares `validity` (`qr`, the default, or `va`) and
-  `PaymentSettings.ttlMs(adapter)` reads `PAYMENT_QR_TTL_SECONDS` (900) or `PAYMENT_VA_TTL_SECONDS` (3600: the
+  `PaymentSettings.ttlMs(adapter)` reads `PAYMENT_QR_TTL_SECONDS` (900) or `PAYMENT_VA_TTL_SECONDS` (both 60 to 604800, a boot error outside; 3600: the
   design's sample, **not yet an owner decision**). It sets `expires_at` at the charge; every window after it (the
   automatic `expired`, the late-money sweep) counts from the bill's own `expires_at`, never from a setting.
 - **The bank of a virtual account is chosen before the bill is made** (UMK-2037): an adapter declares `banks`
@@ -177,7 +177,7 @@ test per resource, idempotent money changes), with these differences:
 - **`checkout` has well-known keys** (`adapter.ts`): `qrString`, `paymentUrl`, `vaNumber`, `bank`, and
   `accountName` (UMK-2045), the name the payer's bank shows for a VA: the gateway's label as it answers it, never
   bank account or identity data of the store. pos-api passes only `qrString`, `bank`, `vaNumber` and `accountName`
-  on to the screen (`SalePayment.checkout`).
+  on to the screen (`SalePayment.checkout`), the name without control characters and cut to 100 (`accountNameOf`).
 - **Modes:** `PAYMENT_GATEWAY_MODE` (`fake` default, `sandbox`, `live`), one per environment. `live` needs
   `PAYMENT_LIVE_ENABLED` (default off; a boot error without it) and stays off until the legal gate (UMK-1977).
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;
@@ -262,9 +262,11 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   of a CASHAC sale 409 `use_void`, both before the PIN is checked). The refund is the void record with
   `sale_voids.refund_status` (`pending`, `succeeded`, `failed`): same reasons, same PIN approver, the sale reversed at
   once, the refund asked after the commit and followed by the job. Retry (`POST /sales/:id/refund/retry`) and
-  "dikembalikan manual" are the owner's alone (403 for anyone else); a retry is approved again by a PIN
-  (`{ approverId, pin }`, a `sales.void` holder, the void's lockout: wrong PIN 422, locked 429), checked before
-  payment-api is asked (UMK-2040).
+  "dikembalikan manual" are the owner's alone (403 for anyone else); a retry is approved again by the OWNER's
+  own PIN (owner decision 2026-11-26; `{ approverId, pin }`, `VoidPins.verifyOwner`): any other approver id, also an
+  admin's with `sales.void`, answers the generic "PIN salah" and counts nowhere; the owner's count and lock are the
+  void's (wrong PIN 422, locked 429). Checked before payment-api is asked; `sale_voids.approved_by` stays the
+  refund's approver (UMK-2040).
 - **Never call payment-api inside a database transaction or under a row lock** (guard test; the purge is the one
   exception). Read the pos row, call, then write; the one write of a sale's step 2 locks the sale and applies the
   answer only while it still awaits payment. Every transaction of `payments-client/` is in `payment-sync.service.ts`.

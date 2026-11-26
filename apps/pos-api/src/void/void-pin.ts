@@ -230,6 +230,21 @@ export class VoidPins {
     return approver;
   }
 
+  /**
+   * As `verify`, for an approval that is the OWNER's alone (the retry of a refused refund, owner decision
+   * 2026-11-26): `approverId` must be the store's owner, so only the owner's own PIN row is ever checked.
+   * Any other id, also an admin's who holds `sales.void` and has a PIN, gets the wrong-PIN answer and
+   * counts nowhere. The owner's count and lock are the void's own.
+   */
+  async verifyOwner(
+    tenantId: string,
+    approverId: string,
+    pin: string,
+  ): Promise<Approver> {
+    if ((await this.ownerId(tenantId)) !== approverId) throw wrongPin('pin');
+    return this.verify(tenantId, approverId, pin);
+  }
+
   /** Sets the actor's own PIN; changing an existing one needs the current PIN (counted like a void's). */
   async set(s: PosSession, pin: string, currentPin?: string) {
     const pinHash = await hashPin(pin);

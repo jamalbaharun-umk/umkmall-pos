@@ -89,5 +89,24 @@ online-payments controller), `src/sales/` (schemas, service), `src/db/schema/sal
 ## Open owner questions
 
 - **The VA validity.** 60 minutes is design 26's sample. Set `PAYMENT_VA_TTL_SECONDS` before deploy.
-- **Who may approve a retry.** Built as for a void: any `sales.void` holder's PIN, in the owner's session. If only
-  the owner's own PIN should count, it is one check.
+- ~~Who may approve a retry.~~ Decided 2026-11-26, see below.
+
+## After the PR 32 review (2026-11-26)
+
+- **Owner decision: a retry needs the owner's OWN PIN.** `VoidPins.verifyOwner`: the approver id must be the
+  store's owner; any other id, also an admin's with `sales.void` and the right PIN, answers the generic "PIN salah",
+  asks nothing and counts against nobody. The owner's count and lock are shared with void. This replaces "a
+  `sales.void` holder" in decision 1. `sale_voids.approved_by` keeps the refund's approver; the retry's approver is
+  on payment-api's audit row.
+- **Validity bounds.** `PAYMENT_QR_TTL_SECONDS` and `PAYMENT_VA_TTL_SECONDS` are 60 to 604800 (7 days): 0 or an
+  empty variable made every bill expired at birth, a huge value overflowed the date (500). A boot error outside.
+- **Decision 6, narrowed.** Only 400, 401, 403 and 429 are payment-api's own refusal (409 `payment_refused`). Any
+  other 4xx (a proxy's 408 or 499) says nothing about what was closed and stays the 503.
+- **`accountName`** reaches the screen without control characters and invisible direction marks, cut to 100
+  characters; dropped when nothing is left.
+- **Minors.** The banks of a store are kept in memory for 30 s (`PaymentSync.banksOf`; an answer only, never "no
+  answer"), so a busy till does not ask payment-api before every online sale. A repeat of a sale that payment-api
+  refused for its bank answers the same 422 and code (worked out again from the sale's bank and the method's
+  banks; 409 as before when payment-api cannot say).
+- `[test]` each of the above; revert-red on the owner check of the approver, the four statuses, the name's
+  cleaning and the repeat's 422.

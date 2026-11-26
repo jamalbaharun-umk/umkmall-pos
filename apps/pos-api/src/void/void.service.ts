@@ -412,13 +412,16 @@ export class VoidService {
 
   /**
    * `POST /sales/:id/refund/retry`: asks a refund the gateway refused again (V4). The owner only, approved by
-   * a PIN like the refund was (UMK-2040): an unknown sale answers 404 before the PIN is checked, so it costs
-   * no attempt; the PIN is checked (and committed) before payment-api is called.
+   * the owner's own PIN (UMK-2040): an unknown sale answers 404 before the PIN is checked, so it costs no
+   * attempt; the PIN is checked (and committed) before payment-api is called. The void record is not
+   * touched: `sale_voids.approved_by` stays who approved the refund; this retry's approver is on
+   * payment-api's audit row of the new request.
    */
   async retryRefund(s: PosSession, saleId: string, input: RefundRetryInput) {
     if (s.kind !== 'owner') throw new ForbiddenException();
     await this.refundView(s, saleId);
-    const approver = await this.pins.verify(
+    // The owner's own PIN (owner decision 2026-11-26): an admin's PIN approves a void, not this.
+    const approver = await this.pins.verifyOwner(
       s.tenantId,
       input.approverId,
       input.pin,

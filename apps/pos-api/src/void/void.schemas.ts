@@ -36,8 +36,8 @@ export const VoidInput = z
 export type VoidInput = z.infer<typeof VoidInput>;
 
 /**
- * UMK-2040: the retry of a refund the gateway refused is approved again, by the PIN of `approverId` (a
- * `sales.void` holder, as for a void). The reason and note stay those of the refund.
+ * UMK-2040: the retry of a refund the gateway refused is approved again, by the PIN of `approverId`, who
+ * must be the store's owner (an admin's PIN is refused). The reason and note stay those of the refund.
  */
 export const RefundRetryInput = z
   .object({ approverId: UuidField, pin: VoidPin })

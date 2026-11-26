@@ -681,6 +681,32 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       );
       expect(strict.body.checkout).toEqual(res.body.payment.checkout);
       mangle = null;
+      // The name is the gateway's text: control characters are dropped and it is cut to 100 characters.
+      mangle = (p) => {
+        p.checkout = {
+          ...(p.checkout as object),
+          accountName: `  WARUNG\u0000 BU\n SARI\u202e\u2028 ${'X'.repeat(200)}`,
+        };
+      };
+      const long = await get(s.auth, `/sales/${res.body.id}/payment`).expect(
+        200,
+      );
+      const name = long.body.checkout.accountName as string;
+      expect(name).toHaveLength(100);
+      expect(name.startsWith('WARUNG BU SARI')).toBe(true);
+      // eslint-disable-next-line no-control-regex
+      expect(name).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+      mangle = (p) => {
+        p.checkout = { ...(p.checkout as object), accountName: '\u0007\n ' };
+      };
+      const empty = await get(s.auth, `/sales/${res.body.id}/payment`).expect(
+        200,
+      );
+      expect(Object.keys(empty.body.checkout).sort()).toEqual([
+        'bank',
+        'vaNumber',
+      ]);
+      mangle = null;
       const [row] = await admin<{ payment_bank: string | null }[]>`
         select payment_bank from pos.sales where id = ${res.body.id}`;
       expect(row.payment_bank).toBe('FAKE2');
@@ -801,9 +827,12 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         c.init.method === 'GET' && c.url.endsWith('/merchant-accounts')
           ? new Response('{}', { status: 500 })
           : null;
-      const res = await sell(s, { paymentMethodId: va, bank: 'BCA' }).expect(
-        422,
-      );
+      const keyOfBca = randomUUID();
+      const res = await sell(
+        s,
+        { paymentMethodId: va, bank: 'BCA' },
+        keyOfBca,
+      ).expect(422);
       expect(res.body).toMatchObject({
         code: 'bank_unknown',
         status: 'cancelled',
@@ -812,6 +841,18 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const missing = await sell(s, { paymentMethodId: va }).expect(422);
       expect(missing.body.code).toBe('bank_required');
       answerInstead = null;
+      // A repeat of the request answers the same 422 with the same code, not a 409.
+      const again = await sell(
+        s,
+        { paymentMethodId: va, bank: 'BCA' },
+        keyOfBca,
+      ).expect(422);
+      expect(again.body).toMatchObject({
+        code: 'bank_unknown',
+        status: 'cancelled',
+        saleId: res.body.saleId,
+        errors: { bank: expect.any(String) },
+      });
       for (const id of [res.body.saleId, missing.body.saleId] as string[]) {
         expect((await saleRow(id)).status).toBe('cancelled');
         expect((await paymentsOf(id)).map((p) => p.status)).toEqual([
@@ -1251,7 +1292,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       });
     });
 
-    it('payment-api answers the close with a 4xx that is no refusal of the bill (400, 401, 429): 409 payment_refused, not "no answer"; a 500 stays 503', async () => {
+    it('payment-api answers the close with a 4xx of its own that is no refusal of the bill (400, 401, 403, 429): 409 payment_refused, not "no answer"; a 500 and a proxy’s 408 or 499 stay 503', async () => {
       const s = await shop();
       const saleId = (await sell(s).expect(201)).body.id as string;
       const answer = (status: number, code: string) => {
@@ -1276,6 +1317,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       for (const [status, code] of [
         [400, 'invalid'],
         [401, 'invalid_service_key'],
+        [403, 'forbidden'],
         [429, 'too_many_requests'],
       ] as const) {
         answer(status, code);
@@ -1294,14 +1336,17 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       }).expect(409);
       expect(refusedBill.body.code).toBe('cancel_refused');
       await unchanged();
-      // No usable answer (5xx): the close may have happened, so the cashier is told to check first.
-      answer(500, 'internal');
-      const none = await post(s.auth, `/sales/${saleId}/payment/cash`, {
-        paid: 6000,
-      }).expect(503);
-      expect(none.body.code).toBe('payment_unavailable');
-      expect(none.body.message).toMatch(/tidak menjawab/);
-      await unchanged();
+      // No usable answer: a 5xx, and a 4xx that is not payment-api's own word (a proxy's 408 or 499). The
+      // close may have happened, so the cashier is told to check first.
+      for (const status of [500, 408, 499, 418]) {
+        answer(status, 'x');
+        const none = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+          paid: 6000,
+        }).expect(503);
+        expect(none.body.code).toBe('payment_unavailable');
+        expect(none.body.message).toMatch(/tidak menjawab/);
+        await unchanged();
+      }
 
       answerInstead = null;
       const done = await post(s.auth, `/sales/${saleId}/payment/cash`, {
@@ -1969,11 +2014,31 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await retry(s, cash.body.id).expect(404);
     });
 
-    it('V4 the gateway refuses the refund: refund_failed, a retry by the owner with an admin PIN asks again, and it succeeds', async () => {
+    it('V4 the gateway refuses the refund: refund_failed, a retry by the owner with the owner’s own PIN asks again, and it succeeds; an admin’s PIN is refused', async () => {
       const s = await shop();
       const saleId = await paidSale(s);
+      // The refund itself is approved by an admin (`sales.void`), as a void may be.
+      const supervisor = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+      ]);
+      const SUPERVISOR_PIN = '271828';
+      await http()
+        .put('/void-pin')
+        .set('Authorization', supervisor.auth)
+        .send({ pin: SUPERVISOR_PIN })
+        .expect(200);
+      const approvedBySupervisor = {
+        approverId: supervisor.staffId,
+        pin: SUPERVISOR_PIN,
+      };
       await gatewaySettings('fail');
-      const res = await refund(s, saleId).expect(201);
+      const res = await post(
+        s.auth,
+        `/sales/${saleId}/refund`,
+        { reasonCode: 'customer_cancelled', ...approvedBySupervisor },
+        randomUUID(),
+      ).expect(201);
       expect(res.body.refundStatus).toBe('failed');
       // The sale stays reversed (V8); the money is still owed to the customer.
       expect((await saleRow(saleId)).status).toBe('void');
@@ -1993,27 +2058,40 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(still.body.refundStatus).toBe('failed');
 
       await gatewaySettings('pending');
-      // UMK-2040: `sales.void` is not enough to retry; the owner does, and a supervisor's PIN may approve it.
-      const supervisor = await createCashier(app, s, [
-        'sales.create',
-        'sales.void',
-      ]);
-      const SUPERVISOR_PIN = '271828';
-      await http()
-        .put('/void-pin')
-        .set('Authorization', supervisor.auth)
-        .send({ pin: SUPERVISOR_PIN })
-        .expect(200);
+      // UMK-2040: `sales.void` is not enough to retry, in the admin's own session…
       const before = (await billOf(s, saleId)).refunds.length;
-      const approvedBySupervisor = {
-        approverId: supervisor.staffId,
-        pin: SUPERVISOR_PIN,
-      };
       await retry(supervisor, saleId, approvedBySupervisor).expect(403);
       // 403 before the body is read: a supervisor learns nothing about it.
       await retry(supervisor, saleId, {}).expect(403);
+      // …and (owner decision 2026-11-26) not as the approver of the owner's retry either: the admin's RIGHT
+      // PIN gets the generic wrong-PIN answer, nothing is asked, and nothing is counted against the admin.
+      const pinRows = () =>
+        admin<{ actor_id: string; failures: number }[]>`
+          select actor_id, failures from pos.void_pins
+          where tenant_id = ${s.tenantId} order by actor_id`;
+      const counts = await pinRows();
+      for (const pin of [SUPERVISOR_PIN, '000000']) {
+        const notOwner = await retry(s, saleId, {
+          approverId: supervisor.staffId,
+          pin,
+        }).expect(422);
+        expect(notOwner.body.errors).toEqual({ pin: 'PIN salah' });
+      }
+      expect(await pinRows()).toEqual(counts);
       expect((await billOf(s, saleId)).refunds).toHaveLength(before);
-      const retried = await retry(s, saleId, approvedBySupervisor).expect(200);
+      // The admin's PIN still approves a void.
+      const cash = await sell(s, {
+        paymentMethodId: undefined,
+        paid: 10_000,
+      }).expect(201);
+      await post(
+        s.auth,
+        `/sales/${cash.body.id}/void`,
+        { reasonCode: 'customer_cancelled', ...approvedBySupervisor },
+        randomUUID(),
+      ).expect(201);
+
+      const retried = await retry(s, saleId).expect(200);
       expect(retried.body).toMatchObject({ saleId, refundStatus: 'pending' });
       const [payment] = await paymentsOf(saleId);
       expect(payment.status).toBe('refund_pending');
@@ -2021,11 +2099,16 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         { actor_ref: string; approved_by: string }[]
       >`select actor_ref, approved_by from payment.payment_events
         where payment_id = ${payment.id} and to_status = 'refund_pending' order by created_at desc limit 1`;
-      // Who retried, and the approver whose PIN approved this retry.
+      // Who retried, and whose PIN approved this retry: the owner, both.
       expect(event).toEqual({
         actor_ref: `owner:${s.userId}`,
-        approved_by: `cashier:${supervisor.staffId}`,
+        approved_by: `owner:${s.userId}`,
       });
+      // The void record keeps who approved the refund itself.
+      const [record] = await admin<{ approved_by: string }[]>`
+        select approved_by from pos.sale_voids where sale_id = ${saleId}`;
+      expect(record.approved_by).toBe(supervisor.staffId);
+      expect(retried.body.approvedBy.id).toBe(supervisor.staffId);
       // A retry of a refund that is on its way asks nothing new.
       const refunds = (await billOf(s, saleId)).refunds.length;
       await retry(s, saleId).expect(200);
@@ -2042,7 +2125,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await onHand(s)).toBe(20);
     });
 
-    it('UMK-2040 a retry needs the PIN of an approver: no body 422, a wrong PIN 422 and nothing asked, the 5th wrong PIN locks (429) like a void', async () => {
+    it('UMK-2040 a retry needs the owner’s own PIN: no body 422, a wrong PIN 422 and nothing asked, the 5th wrong PIN locks (429) like a void', async () => {
       const s = await shop();
       const saleId = await paidSale(s);
       await gatewaySettings('fail');
