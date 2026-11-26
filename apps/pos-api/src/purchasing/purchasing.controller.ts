@@ -17,7 +17,7 @@ import { ShiftsModule } from '../shifts/shifts.module';
 import { StockModule } from '../stock/stock.module';
 import { parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   PaymentInput,
@@ -63,6 +63,7 @@ export class PurchasingController {
     return { data: rows, summary: await this.orders.summary(s.tenantId) };
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('purchasing.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
@@ -162,6 +163,7 @@ export class PurchasingController {
     await this.orders.remove(s.tenantId, parseId(id));
   }
 
+  @AgentRoute()
   @Post(':id/approve')
   @RequirePermission('purchasing.manage')
   @HttpCode(200)
