@@ -58,8 +58,8 @@ rest of UMKMall needs from a shop:
 
 How it fits:
 
-- **One account, one ecosystem.** The owner signs in with their **UMKMall account** (shared login cookie on
-  `.umkmall.id`); no second password. One UMKMall account is one store. Cashiers are local POS users with a PIN on a
+- **One account, one ecosystem.** The owner signs in with their **UMKMall account** by a WhatsApp code (a one-time
+  password checked by UMKMall); no second password, and the POS never sees UMKMall's login cookie. One UMKMall account is one store. Cashiers are local POS users with a PIN on a
   paired device.
 - **UMKMall's agent works the POS for the owner** over MCP ([docs/agent-integration.md](docs/agent-integration.md)):
   it reads the catalog, stock, sales, margins and profit and loss, and fills the catalog, including importing HPP
@@ -225,7 +225,7 @@ Before the first customer, the shop owner teaches the system who they are.
 
 1. Open the POS address.
 2. Type the WhatsApp number of your UMKMall account (**Nomor WhatsApp**), press **Kirim kode** and enter the code you
-   receive. (Already signed in to UMKMall on the same domain? The shared login signs you in.)
+   receive. UMKMall checks the code; the POS keeps its own short session.
 3. You land on the **Dashboard**.
 
 On a local machine, use **Masuk (pengembangan)** instead.
@@ -592,7 +592,7 @@ flowchart LR
   A -->|service key + tenant header| P["payment-api<br/>NestJS · :3001"]
   A --> D1[("Postgres<br/>schema pos")]
   P --> D2[("Postgres database payment<br/>schema payment")]
-  A -->|"/api/auth/me"| U["UMKMall web<br/>owner sign-in"]
+  A -->|"WhatsApp OTP sign-in"| U["UMKMall API<br/>owner sign-in"]
   P -.->|adapter| G["Payment gateway<br/>fake, local only"]
   UI["@umkmall/ui"] --- W
 ```
