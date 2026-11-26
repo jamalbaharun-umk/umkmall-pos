@@ -1,5 +1,5 @@
 {
-  "id": "aadcb91b-15f0-47d7-a318-2add806c89af",
+  "id": "ec5560a7-33dd-4bc0-8988-bed39cf1c5f1",
   "prevId": "66b805f8-fade-4e0f-a963-934a3146d599",
   "version": "7",
   "dialect": "postgresql",
@@ -6149,11 +6149,25 @@
           "primaryKey": true,
           "notNull": true
         },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
         "revoked_before": {
           "name": "revoked_before",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {},

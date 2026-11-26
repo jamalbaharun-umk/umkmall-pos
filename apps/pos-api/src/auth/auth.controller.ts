@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Headers,
   HttpCode,
   Logger,
@@ -11,6 +12,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { fieldError, validate } from '../common/validation';
@@ -18,6 +20,7 @@ import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
+import { agentEnabled } from '../agent/usage';
 import { Public } from '../tenancy/decorators';
 import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
@@ -58,6 +61,7 @@ const AgentBody = z
   .strict();
 
 const parse = validate;
+const digest = (s: string) => createHash('sha256').update(s).digest();
 /** The `Cookie` header cut down to UMKMall's two auth cookies, or undefined when neither is there. */
 export function authCookies(header: string | undefined): string | undefined {
   const kept = (header ?? '')
@@ -74,6 +78,7 @@ const isMissingUser = (e: unknown) =>
 export class AuthController {
   private readonly env = loadEnv();
   private readonly logger = new Logger(AuthController.name);
+  private readonly serviceKey = digest(this.env.POS_SERVICE_KEY);
 
   constructor(@InjectDb() private readonly db: Db) {}
 
@@ -127,9 +132,14 @@ export class AuthController {
   @Post('agent/session')
   @HttpCode(200)
   async agentSession(
+    @Headers('x-pos-service-key') key: string | undefined,
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
   ) {
+    // Server to server only: the scopes and consent below are the caller's word, so only UMKMall's agent backend,
+    // holding the shared service key, may ask (the owner's token alone does not open an agent session).
+    if (!key || !timingSafeEqual(digest(key), this.serviceKey))
+      throw new UnauthorizedException({ message: 'Kunci layanan tidak valid' });
     const { token, scopes, consentRef } = parse(AgentBody, body);
     const { userId, setCookies, unavailable } = await this.askUmkmall(
       `auth_token=${token}`,
@@ -142,6 +152,7 @@ export class AuthController {
     if (unavailable) throw new ServiceUnavailableException();
     if (!userId) throw new UnauthorizedException();
     const tenantId = await this.tenantOfUmkmallUser(userId);
+    await this.assertAgentEnabled(tenantId);
     return this.issue({
       tenantId,
       actorId: userId,
@@ -162,6 +173,7 @@ export class AuthController {
     const { userId, scopes, consentRef } = parse(DevAgentBody, body);
     try {
       const tenantId = await this.findOrCreateTenant(this.db, userId);
+      await this.assertAgentEnabled(tenantId);
       return this.issue({
         tenantId,
         actorId: userId,
@@ -215,6 +227,15 @@ export class AuthController {
       setCookies,
       unavailable: false,
     };
+  }
+
+  /** 403 while the owner has UMKMall's agent turned off (POST /agent/access/revoke), until they turn it on. */
+  private async assertAgentEnabled(tenantId: string): Promise<void> {
+    if (!(await agentEnabled(this.db, tenantId)))
+      throw new ForbiddenException({
+        message:
+          'Pemilik toko mematikan akses agent UMKMall. Nyalakan lagi dari POS.',
+      });
   }
 
   private tenantOfUmkmallUser(userId: string): Promise<string> {

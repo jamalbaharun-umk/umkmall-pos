@@ -35,7 +35,7 @@ export class StaffAccess {
         .select({ before: agentAccess.revokedBefore })
         .from(agentAccess)
         .where(eq(agentAccess.tenantId, session.tenantId));
-      if (cut && (session.issuedAt ?? 0) * 1000 <= cut.before.getTime())
+      if (cut?.before && (session.issuedAt ?? 0) * 1000 <= cut.before.getTime())
         return null;
       return {
         ...session,

@@ -47,11 +47,31 @@ export class AgentAccessController {
     };
   }
 
-  /** The owner ends every agent session of the store now; UMKMall must ask for a new consent to come back. */
+  /**
+   * The owner turns UMKMall's agent off: every session issued so far is refused now, and no new one is issued until
+   * the owner turns it on again (`POST /agent/access/enable`).
+   */
   @Post('access/revoke')
   @HttpCode(200)
   async revoke(@CurrentSession() s: PosSession) {
     if (s.kind !== 'owner') throw new ForbiddenException();
-    return { revokedBefore: await this.usage.revokeAll(s.tenantId) };
+    return {
+      enabled: false,
+      revokedBefore: await this.usage.revokeAll(s.tenantId),
+    };
+  }
+
+  @Post('access/enable')
+  @HttpCode(200)
+  async enable(@CurrentSession() s: PosSession) {
+    if (s.kind !== 'owner') throw new ForbiddenException();
+    await this.usage.enable(s.tenantId);
+    return { enabled: true };
+  }
+
+  @Get('access')
+  async access(@CurrentSession() s: PosSession) {
+    if (s.kind !== 'owner') throw new ForbiddenException();
+    return { enabled: await this.usage.isEnabled(s.tenantId) };
   }
 }

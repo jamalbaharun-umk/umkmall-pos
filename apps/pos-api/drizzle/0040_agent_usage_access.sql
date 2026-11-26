@@ -1,6 +1,8 @@
 CREATE TABLE "pos"."agent_access" (
 	"tenant_id" uuid PRIMARY KEY NOT NULL,
-	"revoked_before" timestamp with time zone NOT NULL
+	"enabled" boolean DEFAULT true NOT NULL,
+	"revoked_before" timestamp with time zone,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 ALTER TABLE "pos"."agent_access" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint

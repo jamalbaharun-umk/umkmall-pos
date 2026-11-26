@@ -119,9 +119,9 @@ usage record and provenance on every tool.
 - **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, void or drawer cash-out):
   `PATCH /catalog/products/:id` is not an agent route, an agent creates with `AgentProductCreate` only, and the HPP
   import creates new `UMK-<ref>` SKUs and leaves existing ones untouched.
-- **The agent session relays `/auth/me`'s Set-Cookie** like owner sign-in; UMKMall's agent backend passes it to the
-  browser. Only that backend may hold the owner's token. The owner cuts every agent session with
-  `POST /agent/access/revoke`.
+- **The agent session is server to server** (`X-Pos-Service-Key`, then the owner's token checked at `/auth/me`) and
+  relays `/auth/me`'s Set-Cookie like owner sign-in; UMKMall's agent backend passes it to the browser. The owner's
+  switch is persistent (`pos.agent_access.enabled`): revoke refuses old sessions and every new one until enable.
 - **Tools call the REST routes over loopback** with the caller's token (`src/agent/loopback.ts`): never a service
   method, never a tenant id of their own. A new tool is one entry in `AGENT_TOOL_NAMES`, its registry entry and its
   section in `docs/agent-integration.md` (the e2e test compares all three).

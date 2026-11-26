@@ -12,6 +12,7 @@ are wired to, with the same registry description, consent, usage record and prov
 
 ```http
 POST /auth/agent/session
+X-Pos-Service-Key: <POS_SERVICE_KEY, the same value UMKMall uses for the purge>
 Content-Type: application/json
 
 {
@@ -21,6 +22,8 @@ Content-Type: application/json
 }
 ```
 
+- **Server to server only.** Without the service key (or with a wrong one) the route answers 401 before UMKMall is
+  asked: the scopes and consent are the caller's word, so only UMKMall's agent backend may ask.
 - `scopes`: what the owner consented to on UMKMall's Koneksi page. Reading and acting are separate permissions:
   `pos.read` (always granted) reads the catalog with cost and every report; `pos.write` also creates categories and
   products. Without `pos.write` every write tool answers "izin pos.write" and changes nothing.
@@ -41,8 +44,10 @@ owner's browser with its own answer; dropping them signs the owner out of UMKMal
 also open an owner session (`POST /auth/umkmall/session`). Never send it to a model, a log, a browser script or a
 third party. Follow-up: UMK-2059, an owner opt-in before any agent session is issued.
 
-**The owner can cut the agent off from the POS at once:** `POST /agent/access/revoke` (owner session only) refuses
-every agent session issued before that moment (401). UMKMall must get a new consent and a new session to come back.
+**The owner can turn the agent off from the POS, and it stays off:** `POST /agent/access/revoke` (owner session only)
+refuses every agent session issued so far (401) and every new one (403, "Pemilik toko mematikan akses agent UMKMall")
+until the owner calls `POST /agent/access/enable`. `GET /agent/access` answers `{ enabled }`. A store that never
+touched the switch is on (UMK-2059 makes it an explicit opt-in).
 
 Locally, without UMKMall: `POST /auth/dev/agent-session { "userId": "<a public.users id>", "scopes": [...] }`, only
 when `NODE_ENV` is `development` or `test` (an unset `NODE_ENV` refuses it).

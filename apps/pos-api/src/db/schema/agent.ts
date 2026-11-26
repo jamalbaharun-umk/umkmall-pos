@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -68,14 +69,18 @@ export const agentToolCalls = pos
   )
   .enableRLS();
 
-// Revocation the owner can do from the POS at once: agent sessions issued before `revoked_before` are refused.
+// The owner's switch for UMKMall's agent, persistent: `enabled = false` (set by revoke) refuses every new agent
+// session until the owner turns it on again, and sessions issued before `revoked_before` are refused at once.
+// No row = enabled (UMK-2059 makes the default off with an explicit opt-in).
 export const agentAccess = pos
   .table('agent_access', {
     tenantId: uuid('tenant_id')
       .primaryKey()
       .references(() => tenants.id, { onDelete: 'restrict' }),
-    revokedBefore: timestamp('revoked_before', {
-      withTimezone: true,
-    }).notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    revokedBefore: timestamp('revoked_before', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   })
   .enableRLS();

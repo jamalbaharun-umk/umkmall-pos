@@ -22,6 +22,7 @@ const stub = {
   cookies: [] as (string | undefined)[],
 };
 const READ_WRITE = ['pos.read', 'pos.write'];
+const KEY = process.env.POS_SERVICE_KEY!;
 
 describe('UMKMall agent: session and MCP tools', () => {
   let app: INestApplication;
@@ -153,6 +154,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       const r = await http()
         .post('/auth/agent/session')
+        .set('X-Pos-Service-Key', KEY)
         .send({ token: TOKEN, scopes: ['pos.write'], consentRef: 'consent:1' })
         .expect(200);
       expect(stub.cookies).toEqual([`auth_token=${TOKEN}`]);
@@ -172,6 +174,19 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(me.body).toEqual({ data: [] });
     });
 
+    it('refuses an agent session without the service key, before asking UMKMall', async () => {
+      stub.cookies = [];
+      for (const key of [undefined, 'wrong-key-wrong-key'])
+        await (
+          key
+            ? http().post('/auth/agent/session').set('X-Pos-Service-Key', key)
+            : http().post('/auth/agent/session')
+        )
+          .send({ token: TOKEN, scopes: ['pos.write'] })
+          .expect(401);
+      expect(stub.cookies).toEqual([]);
+    });
+
     it('maps 401 to 401, 5xx to 503 (cookies still relayed), and refuses a token that could break the cookie', async () => {
       stub.answer = (res) => {
         res.statusCode = 401;
@@ -179,6 +194,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       await http()
         .post('/auth/agent/session')
+        .set('X-Pos-Service-Key', KEY)
         .send({ token: TOKEN })
         .expect(401);
       stub.answer = (res) => {
@@ -188,12 +204,14 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       const down = await http()
         .post('/auth/agent/session')
+        .set('X-Pos-Service-Key', KEY)
         .send({ token: TOKEN })
         .expect(503);
       expect(down.headers['set-cookie']).toEqual(['auth_token=x; Path=/']);
       stub.cookies = [];
       await http()
         .post('/auth/agent/session')
+        .set('X-Pos-Service-Key', KEY)
         .send({ token: `${TOKEN}; auth_refresh=x` })
         .expect(422);
       expect(stub.cookies).toEqual([]);
@@ -300,7 +318,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(w.error).toMatch(/izin pos\.write/);
     });
 
-    it('the owner revokes every agent session at once; an agent cannot revoke', async () => {
+    it('the owner turns the agent off for good: old sessions 401, no new one until the owner turns it on', async () => {
       const store = await createStore();
       const token = await agentToken(store.userId);
       await http()
@@ -315,13 +333,46 @@ describe('UMKMall agent: session and MCP tools', () => {
         .get('/catalog/categories')
         .set('Authorization', `Bearer ${token}`)
         .expect(401);
-      // A consent given after the cut works again (a new session, issued a second later).
+      // persistent: a second later the same owner's login still gets no agent session, by either route
       await new Promise((r) => setTimeout(r, 1100));
+      const refused = await http()
+        .post('/auth/dev/agent-session')
+        .send({ userId: store.userId })
+        .expect(403);
+      expect(refused.body.message).toMatch(/mematikan akses agent/);
+      stub.answer = (res) => {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ success: true, user: { id: store.userId } }));
+      };
+      await http()
+        .post('/auth/agent/session')
+        .set('X-Pos-Service-Key', KEY)
+        .send({ token: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig-part_1' })
+        .expect(403);
+      const state = await http()
+        .get('/agent/access')
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(state.body).toEqual({ enabled: false });
+      // only the owner turns it on again; sessions revoked before stay refused
+      await http()
+        .post('/agent/access/enable')
+        .set('Authorization', store.auth)
+        .expect(200);
       const fresh = await agentToken(store.userId);
       await http()
         .get('/catalog/categories')
         .set('Authorization', `Bearer ${fresh}`)
         .expect(200);
+      await http()
+        .get('/catalog/categories')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(401);
+      for (const path of ['/agent/access/enable', '/agent/access/revoke'])
+        await http()
+          .post(path)
+          .set('Authorization', `Bearer ${fresh}`)
+          .expect(403);
     });
   });
 

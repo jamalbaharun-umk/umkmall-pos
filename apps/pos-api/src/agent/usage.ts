@@ -22,6 +22,18 @@ export type CallRecord = CallContext & {
   durationMs: number;
 };
 
+/** False only after the owner turned UMKMall's agent off (no row = on until UMK-2059's opt-in). */
+export async function agentEnabled(
+  db: Pick<Db, 'select'>,
+  tenantId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: agentAccess.enabled })
+    .from(agentAccess)
+    .where(eq(agentAccess.tenantId, tenantId));
+  return row?.enabled ?? true;
+}
+
 /** New Teman AI usage and provenance for the POS side: every agent call, and the owner's revocation. */
 @Injectable()
 export class AgentUsage {
@@ -80,15 +92,32 @@ export class AgentUsage {
       .limit(limit);
   }
 
+  /** Turns the agent off for good (until the owner turns it on) and refuses every session issued so far. */
   async revokeAll(tenantId: string): Promise<Date> {
     const now = new Date();
     await this.db
       .insert(agentAccess)
-      .values({ tenantId, revokedBefore: now })
+      .values({ tenantId, enabled: false, revokedBefore: now, updatedAt: now })
       .onConflictDoUpdate({
         target: agentAccess.tenantId,
-        set: { revokedBefore: now },
+        set: { enabled: false, revokedBefore: now, updatedAt: now },
       });
     return now;
+  }
+
+  /** The owner lets the agent in again; sessions revoked before stay refused. */
+  async enable(tenantId: string): Promise<void> {
+    const now = new Date();
+    await this.db
+      .insert(agentAccess)
+      .values({ tenantId, enabled: true, updatedAt: now })
+      .onConflictDoUpdate({
+        target: agentAccess.tenantId,
+        set: { enabled: true, updatedAt: now },
+      });
+  }
+
+  isEnabled(tenantId: string): Promise<boolean> {
+    return agentEnabled(this.db, tenantId);
   }
 }
