@@ -30,6 +30,12 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
 
+  // The PIN a refusal kept (`keepsPin`) must not outlive the dialog: closed by the parent or unmounted, it is gone.
+  useEffect(() => {
+    if (!open) setPin('')
+    return () => setPin('')
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     setApproverId('')

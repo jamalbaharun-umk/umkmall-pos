@@ -50,6 +50,12 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
   // One key per attempt (per opening): a retry after a lost answer replays the first result, never voids twice.
   const key = useRef('')
 
+  // The PIN a refusal kept (`keepsPin`) must not outlive the dialog: closed by the parent or unmounted, it is gone.
+  useEffect(() => {
+    if (!open) setPin('')
+    return () => setPin('')
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     key.current = crypto.randomUUID()
