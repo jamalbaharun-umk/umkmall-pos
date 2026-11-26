@@ -50,6 +50,7 @@ export class AgentUsage {
    * Rows older than AGENT_CALL_RETENTION_DAYS of the same store are dropped on the way (retention).
    */
   async record(r: CallRecord): Promise<void> {
+    // Separate steps: a failed clean-up never costs the audit row.
     try {
       await this.db
         .delete(agentToolCalls)
@@ -62,6 +63,12 @@ export class AgentUsage {
             ),
           ),
         );
+    } catch (error) {
+      this.logger.warn(
+        `agent call retention skipped: ${(error as Error).name}`,
+      );
+    }
+    try {
       await this.db.insert(agentToolCalls).values({
         tenantId: r.tenantId,
         actorId: r.actorId,

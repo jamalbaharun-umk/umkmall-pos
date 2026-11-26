@@ -8,11 +8,11 @@ import { notifySuccess } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
 import { getSessionToken, signedOut, umkmallSession } from '@/lib/session.server'
-import { failureText } from '@/lib/sign-in'
+import { devSignInUser, failureText } from '@/lib/sign-in'
 import { MetricWidgets } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
-  const devSignIn = process.env.NODE_ENV !== 'production' && Boolean(process.env.POS_DEV_USER_ID)
+  const devSignIn = Boolean(devSignInUser())
   if (!getSessionToken()) {
     // Signed in to UMKMall already (shared cookie, UMK-1945): straight to the dashboard, unless just signed out here.
     // The redirect reloads the page so the shell reads the new session too.

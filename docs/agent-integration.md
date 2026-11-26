@@ -24,8 +24,8 @@ Content-Type: application/json
 
 - **Server to server only.** Without the agent key (or with a wrong one, the purge key included) the route answers
   401 before UMKMall is asked: the scopes and consent are the caller's word, so only UMKMall's agent backend may ask.
-  `POS_AGENT_SERVICE_KEY` unset → 404 (no agent sessions in that environment). At most 30 requests per minute per
-  network address, counted before the key check (429).
+  `POS_AGENT_SERVICE_KEY` unset → 404 (no agent sessions in that environment). At most 30 FAILED key checks per minute per
+  network address (429 after that); requests with the right key are never limited here.
 - `scopes`: what the owner consented to on UMKMall's Koneksi page. Reading and acting are separate permissions:
   `pos.read` (always granted) reads the catalog with cost and every report; `pos.write` also creates categories and
   products. Without `pos.write` every write tool answers "izin pos.write" and changes nothing.

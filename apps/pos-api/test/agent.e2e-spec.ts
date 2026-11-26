@@ -974,7 +974,27 @@ describe('UMKMall agent: session and MCP tools', () => {
     });
 
     // Last in the file: it spends this address's agent-session budget.
-    it('limits agent session requests per address, counted before the key check', async () => {
+    it('limits /mcp per store, with an Indonesian 429', async () => {
+      const store = await createStore();
+      const auth = `Bearer ${await agentToken(store.userId)}`;
+      let status = 0;
+      for (let i = 0; i <= 300 && status !== 429; i += 1)
+        status = (await http().post('/mcp').set('Authorization', auth).send({}))
+          .status;
+      expect(status).toBe(429);
+      const r = await http().post('/mcp').set('Authorization', auth).send({});
+      expect(r.status).toBe(429);
+      expect(r.body.message).toMatch(/Terlalu banyak permintaan agent/);
+      // another store is not affected
+      const other = await createStore();
+      const ok = await http()
+        .post('/mcp')
+        .set('Authorization', `Bearer ${await agentToken(other.userId)}`)
+        .send({});
+      expect(ok.status).not.toBe(429);
+    });
+
+    it('limits failed agent-key checks per address; a valid key is never limited', async () => {
       const codes: number[] = [];
       for (let i = 0; i < 40 && !codes.includes(429); i += 1)
         codes.push(
@@ -987,6 +1007,17 @@ describe('UMKMall agent: session and MCP tools', () => {
         );
       expect(codes.at(-1)).toBe(429);
       expect(codes.length).toBeLessThanOrEqual(31);
+      // UMKMall's backend shares the address but holds the key: it still gets its session.
+      const store = await createStore();
+      stub.answer = (res) => {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ success: true, user: { id: store.userId } }));
+      };
+      await http()
+        .post('/auth/agent/session')
+        .set('X-Pos-Agent-Key', KEY)
+        .send({ token: 'x'.repeat(20) })
+        .expect(200);
     });
   });
 });
