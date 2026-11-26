@@ -1324,6 +1324,12 @@ describe('void a full sale (UMK-1962)', () => {
       ).toEqual({ hasPin: true, lockedUntil: null });
       const after = await pinRow(s.userId);
       expect(after).toMatchObject({ failures: 0, locked_until: null });
+      // The lock it cleared is recorded like an unlock (PR 51 review).
+      const [audit] = await admin<
+        { unlocked_at: Date | null; unlocked_by: string | null }[]
+      >`select unlocked_at, unlocked_by from pos.void_pins where actor_id = ${s.userId}`;
+      expect(audit.unlocked_by).toBe(s.userId);
+      expect(audit.unlocked_at).toBeInstanceOf(Date);
       expect(after.pin_hash).not.toBe(before.pin_hash);
       await open(s.auth);
       const sale = await sell(s.auth, {
@@ -1341,6 +1347,11 @@ describe('void a full sale (UMK-1962)', () => {
       expect(await pinRow(s.userId)).toBeUndefined();
       await forgotten(s.freshAuth, { pin: '135790' }).expect(200);
       expect(await pinRow(s.userId)).toMatchObject({ failures: 0 });
+      // Nothing was locked: no unlock is recorded.
+      const [first] = await admin<
+        { unlocked_at: Date | null }[]
+      >`select unlocked_at from pos.void_pins where actor_id = ${s.userId}`;
+      expect(first.unlocked_at).toBeNull();
       // Another store's fresh owner changes only their own PIN.
       const b = await shop();
       const hashOfA = (await pinRow(s.userId)).pin_hash;
