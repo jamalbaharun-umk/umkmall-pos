@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { loadPicker, pinSignIn } from '../staf/-api'
 import { PairingScreen } from './-pairing-screen'
+import { pinKeyOf } from './-pin-keys'
 
 // Cashier sign-in on a bound device (U4, POS-only): pick your name, enter your PIN. Full-screen, no shell.
 export const Route = createFileRoute('/kasir/masuk')({
@@ -132,9 +133,8 @@ function PinPad({ staff, onBack }: { staff: { id: string; name: string }; onBack
   // A hardware keyboard works too: digits, Backspace, Enter.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (/^\d$/.test(e.key)) press(e.key as (typeof KEYS)[number])
-      else if (e.key === 'Backspace') press('hapus')
-      else if (e.key === 'Enter') press('masuk')
+      const k = pinKeyOf({ key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, repeat: e.repeat, target: e.target as HTMLElement | null })
+      if (k) press(k as (typeof KEYS)[number])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
