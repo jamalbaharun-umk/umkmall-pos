@@ -104,8 +104,9 @@ export class SaleVoidController {
   }
 
   /**
-   * Asks a refund the gateway refused again (UMK-2040). The owner only, and approved again by a PIN like the
-   * refund itself: `approverId` holds `sales.void` and their PIN is in the body, with the void's lockout.
+   * Asks a refund the gateway refused again (UMK-2040). The owner only, and approved again by the owner's own
+   * PIN: `approverId` is the owner and their PIN is in the body, with the void's lockout. Anyone else's id,
+   * also an admin's with `sales.void`, answers "PIN salah".
    */
   @Post(':id/refund/retry')
   @HttpCode(200)

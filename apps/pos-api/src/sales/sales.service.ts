@@ -191,7 +191,16 @@ export class SalesService {
       });
     // UMK-2037: payment-api refused the bank (the check before the sale could not be made, or its banks have
     // changed since). No bill was made; the sale is cancelled with its stock and voucher back.
-    if (status === 'cancelled' && refusedCode && BANK_REFUSALS.has(refusedCode))
+    // A repeat of that sale answers the same 422, not the 409 of a payment that failed.
+    const bankCode =
+      status === 'cancelled'
+        ? refusedCode && BANK_REFUSALS.has(refusedCode)
+          ? refusedCode
+          : refusedCode
+            ? null
+            : await this.bankRefusalOf(s, id)
+        : null;
+    if (bankCode)
       throw new UnprocessableEntityException({
         message:
           'Bank tidak bisa dipakai untuk metode ini. Penjualan dibatalkan, pilih bank lalu buat transaksi baru.',
@@ -200,7 +209,7 @@ export class SalesService {
         },
         saleId: id,
         status,
-        code: refusedCode,
+        code: bankCode,
       });
     if (status === 'cancelled')
       throw new ConflictException({
@@ -212,6 +221,30 @@ export class SalesService {
         ...(refusedCode ? { code: refusedCode } : {}),
       });
     return this.get(s, id, true);
+  }
+
+  /**
+   * For a repeat of a sale that was cancelled because no bill could be made (`gateway_refused`): payment-api's
+   * bank refusal of it, worked out again from the sale's bank and the method's banks. Null when it was
+   * refused for another reason, or when payment-api cannot say (the repeat then answers the plain 409).
+   */
+  private async bankRefusalOf(s: PosSession, id: string) {
+    const [sale] = await this.db
+      .select({
+        reason: sales.cancelReason,
+        method: sales.paymentMethodCode,
+        bank: sales.paymentBank,
+      })
+      .from(sales)
+      .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, id)));
+    if (sale?.reason !== 'gateway_refused' || !isOnlineMethod(sale.method))
+      return null;
+    const banks = await this.payments.banksOf(s.tenantId, sale.method);
+    if (banks === null) return null;
+    if (banks.length === 0)
+      return sale.bank === null ? null : 'bank_not_supported';
+    if (sale.bank === null) return 'bank_required';
+    return banks.some((b) => b.code === sale.bank) ? null : 'bank_unknown';
   }
 
   async create(s: PosSession, key: string, input: SaleInput) {
@@ -811,8 +844,9 @@ export class SalesService {
    * of its last answer. Listed:
    * - a sale paid through a payment gateway that was completed (`completed`; `void` when refunded since);
    * - a cash or EDC sale that the JOB completed (`completedByJob`): its payment could not be confirmed when
-   *   it was rung up. One completed by a request of the till is not listed: the cashier saw it. Nor is a
-   *   sale the cashier switched to cash;
+   *   it was rung up, or it was switched to cash by a request that died and the job finished the switch.
+   *   One completed by a request of the till (the sale, its repeat, the switch to cash) is not listed: the
+   *   cashier saw it;
    * - a sale that was cancelled: `expired` when its QR or VA ran out, else `cancelled`, with `reason`
    *   (CANCEL_REASONS; null when unknown). Its stock and voucher are back and it has no receipt number.
    *

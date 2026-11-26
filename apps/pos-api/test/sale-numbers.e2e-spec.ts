@@ -922,17 +922,26 @@ describe('hold number and receipt number (UMK-2038)', () => {
       const close = await post(s.auth, '/shifts/current/close', {
         countedCash: 0,
       }).expect(409);
-      expect(
-        (close.body.sales as { id: string; holdNumber: number }[]).map((x) => [
-          x.id,
-          x.holdNumber,
-        ]),
-      ).toEqual(
-        expect.arrayContaining([
-          [old.id, 2],
-          [today.id, 2],
-        ]),
+      // Yesterday's first, and the message says which day it is of: never "#2, #2".
+      const [{ label }] = await admin<{ label: string }[]>`
+        select to_char(hold_day, 'DD/MM') as label from pos.sales where id = ${old.id as string}`;
+      expect(close.body.message).toBe(
+        `Masih ada penjualan yang menunggu pembayaran: #2 (${label}), #2`,
       );
+      expect(
+        (
+          close.body.sales as {
+            id: string;
+            holdNumber: number;
+            holdToday: boolean;
+            holdDayLabel: string | null;
+          }[]
+        ).map((x) => [x.id, x.holdNumber, x.holdToday, x.holdDayLabel]),
+      ).toEqual([
+        [old.id, 2, false, label],
+        [today.id, 2, true, null],
+      ]);
+      expect(close.body.sales[0].holdDay).not.toBe(close.body.sales[1].holdDay);
       // Yesterday's sale is paid today: the next receipt number, its own hold number.
       await onBill(s, old.id as string, 'pay');
       expect((await poll(s, old.id as string).expect(200)).body).toMatchObject({
@@ -968,6 +977,9 @@ describe('hold number and receipt number (UMK-2038)', () => {
           amountDue: PRICE,
           paymentMethod: 'QRIS Dinamis',
           onlinePayment: true,
+          holdDay: expect.any(String),
+          holdToday: true,
+          holdDayLabel: null,
           createdAt: expect.any(String),
         },
         {
@@ -977,6 +989,9 @@ describe('hold number and receipt number (UMK-2038)', () => {
           amountDue: 5200,
           paymentMethod: 'Tunai',
           onlinePayment: false,
+          holdDay: expect.any(String),
+          holdToday: true,
+          holdDayLabel: null,
           createdAt: expect.any(String),
         },
       ]);

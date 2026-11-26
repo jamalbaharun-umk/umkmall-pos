@@ -105,6 +105,10 @@ const GATE_REFUSALS = new Set([
  * before the sale is written; these are payment-api's own answer when that check could not be made or its
  * list has changed since. No bill exists after one of these either.
  */
+/** How long a store's banks are kept in memory, and for how many stores at most. */
+const BANKS_CACHE_MS = 30_000;
+const BANKS_CACHE_STORES = 1000;
+
 export const BANK_REFUSALS = new Set([
   'bank_required',
   'bank_unknown',
@@ -186,18 +190,37 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
    * The banks a sale with this gateway method chooses from (UMK-2037): empty when the method needs none.
    * Null when payment-api gives no answer: the caller goes on without the check, and payment-api's own
    * check of the charge decides (`BANK_REFUSALS`). Called before the sale's transaction, never inside one.
+   *
+   * Kept per store for `BANKS_CACHE_MS`, so a busy till does not ask payment-api before every online sale.
+   * A list that changed meanwhile costs nothing: payment-api checks the charge itself. Only an answer is
+   * kept, never "no answer".
    */
+  private readonly banksCache = new Map<
+    string,
+    { at: number; byMethod: Map<string, Bank[]> }
+  >();
+
   async banksOf(tenantId: string, method: string): Promise<Bank[] | null> {
-    try {
-      const { accounts } = await this.client.merchantAccounts(tenantId);
-      return (
-        accounts.flatMap((a) => a.methods).find((m) => m.method === method)
-          ?.banks ?? []
-      );
-    } catch (error) {
-      if (!(error instanceof PaymentApiError)) throw error;
-      return null;
+    const now = Date.now();
+    let known = this.banksCache.get(tenantId);
+    if (!known || now - known.at >= BANKS_CACHE_MS) {
+      try {
+        const { accounts } = await this.client.merchantAccounts(tenantId);
+        known = {
+          at: now,
+          byMethod: new Map(
+            accounts.flatMap((a) => a.methods).map((m) => [m.method, m.banks]),
+          ),
+        };
+      } catch (error) {
+        if (!(error instanceof PaymentApiError)) throw error;
+        return null;
+      }
+      // Bounded: a store that sells online asks again within the minute anyway.
+      if (this.banksCache.size >= BANKS_CACHE_STORES) this.banksCache.clear();
+      this.banksCache.set(tenantId, known);
     }
+    return known.byMethod.get(method) ?? [];
   }
 
   async onModuleInit() {

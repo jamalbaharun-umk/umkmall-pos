@@ -89,6 +89,19 @@ export function paymentHttpError(error: unknown): unknown {
   );
 }
 
+/** payment-api's own refusals of a request that are not about the bill; it did nothing on these. */
+const REFUSED_STATUSES = new Set([400, 401, 403, 429]);
+
+/**
+ * The holder name of a VA as the screen may show it (UMK-2045): the gateway's text, so control characters
+ * (and the invisible direction marks) are dropped and it is cut to 100 characters. Null when nothing is left.
+ */
+const UNPRINTABLE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+export const accountNameOf = (v: string): string | null =>
+  v.replace(UNPRINTABLE, '').trim().slice(0, 100).trim() || null;
+
 /** 503: the sale is a cash sale already and only the record of its cash is missing. */
 const cashPending = () =>
   new ServiceUnavailableException({
@@ -216,8 +229,9 @@ export class SalePayments {
       // payment-api would not close the bill: the sale still waits for the PG payment.
       if (error.kind === 'rejected') throw refusal('cancel_refused');
       // payment-api did answer, and refused the request itself (400, 401, 403, 429): it closed nothing, so
-      // this is a refusal, not a call that went unanswered.
-      if (error.status !== null && error.status >= 400 && error.status < 500)
+      // this is a refusal, not a call that went unanswered. Only these four: any other 4xx (a proxy's 408
+      // or 499) says nothing about what payment-api did, and stays "no answer".
+      if (error.status !== null && REFUSED_STATUSES.has(error.status))
         throw refusal('payment_refused');
       // No answer: the close may or may not have reached payment-api. The cashier must look before acting.
       throw new ServiceUnavailableException({
@@ -327,7 +341,13 @@ export class SalePayments {
             // labels it. Only these keys reach the screen, whatever else a gateway may answer.
             ['qrString', 'bank', 'vaNumber', 'accountName']
               .filter((k) => k in payment.checkout!)
-              .map((k) => [k, payment.checkout![k]]),
+              .map((k): [string, string | null] => [
+                k,
+                k === 'accountName'
+                  ? accountNameOf(payment.checkout![k])
+                  : payment.checkout![k],
+              ])
+              .filter((e): e is [string, string] => e[1] !== null),
           )
         : null;
     const numbers = saleNumbers(sale);
