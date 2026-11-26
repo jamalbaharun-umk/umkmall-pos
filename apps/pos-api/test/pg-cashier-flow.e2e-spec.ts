@@ -2156,6 +2156,87 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   });
 
   describe('who may act', () => {
+    /** `GET /sales?status=awaiting_payment` as `auth` sees it. */
+    const awaitingIds = async (auth: string) => {
+      const res = await get(auth, '/sales?status=awaiting_payment').expect(200);
+      const data = res.body.data as {
+        id: string;
+        actorId: string;
+        mine: boolean;
+      }[];
+      return {
+        ids: data.map((x) => x.id).sort(),
+        total: res.body.total as number,
+        data,
+      };
+    };
+
+    it('UMK-2047 the waiting list holds what the caller may act on: their own, or all with sales.void; reports.view alone is not enough', async () => {
+      const s = await shop();
+      const ayu = await createCashier(app, s);
+      const budi = await createCashier(app, s);
+      const reader = await createCashier(app, s, [
+        'sales.create',
+        'reports.view',
+      ]);
+      const supervisor = await createCashier(app, s, [
+        'sales.create',
+        'sales.void',
+      ]);
+      for (const c of [ayu, reader])
+        await post(c.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const sale = async (auth: string) =>
+        (await sell(s, {}, randomUUID(), auth).expect(201)).body.id as string;
+      const ofAyu = await sale(ayu.auth);
+      const ofReader = await sale(reader.auth);
+      const ofOwner = await sale(s.auth);
+      const all = [ofAyu, ofReader, ofOwner].sort();
+
+      const mineOnly = await awaitingIds(ayu.auth);
+      expect(mineOnly).toMatchObject({ ids: [ofAyu], total: 1 });
+      expect(mineOnly.data[0]).toMatchObject({
+        actorId: ayu.staffId,
+        mine: true,
+      });
+      expect(await awaitingIds(budi.auth)).toMatchObject({ ids: [], total: 0 });
+      // `reports.view` reads every receipt, but a waiting sale of someone else is not theirs to act on:
+      // its payment route answers 404, so the list does not offer it.
+      expect(await awaitingIds(reader.auth)).toMatchObject({
+        ids: [ofReader],
+        total: 1,
+      });
+      await get(reader.auth, `/sales/${ofAyu}/payment`).expect(404);
+      // `sales.void` (no `reports.view`) recovers any stuck payment of the store.
+      const seen = await awaitingIds(supervisor.auth);
+      expect(seen).toMatchObject({ ids: all, total: 3 });
+      expect(seen.data.every((x) => !x.mine)).toBe(true);
+      await get(supervisor.auth, `/sales/${ofAyu}/payment`).expect(200);
+      const owner = await awaitingIds(s.auth);
+      expect(owner.ids).toEqual(all);
+      expect(owner.data.map((x) => [x.id, x.actorId, x.mine]).sort()).toEqual(
+        [
+          [ofAyu, ayu.staffId, false],
+          [ofReader, reader.staffId, false],
+          [ofOwner, s.userId, true],
+        ].sort(),
+      );
+      // Receipts keep their scope: a reader still lists every completed sale of the store.
+      await onBill(s, ofAyu, 'pay');
+      await get(ayu.auth, `/sales/${ofAyu}/payment`).expect(200);
+      const receipts = await get(reader.auth, '/sales').expect(200);
+      expect(
+        (receipts.body.data as { id: string; mine: boolean }[]).map((x) => [
+          x.id,
+          x.mine,
+        ]),
+      ).toEqual([[ofAyu, false]]);
+      for (const [auth, id] of [
+        [reader.auth, ofReader],
+        [s.auth, ofOwner],
+      ])
+        await post(auth, `/sales/${id}/payment/cancel`).expect(200);
+    });
+
     it('cross-tenant: store B gets 404 on every payment route of store A’s sale, and nothing of A changes', async () => {
       const a = await shop();
       const b = await shop();
@@ -2182,6 +2263,9 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
         note: 'x',
       }).expect(404);
       await get(b.auth, `/sales/${refunded}/void`).expect(404);
+      // UMK-2047: the waiting list is the session's store only.
+      expect((await awaitingIds(b.auth)).ids).toEqual([]);
+      expect((await awaitingIds(a.auth)).ids).toEqual([waiting]);
 
       expect(await saleRow(waiting)).toMatchObject({
         status: 'awaiting_payment',
@@ -2229,7 +2313,13 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       ).expect(200);
       expect(seen.body.checkout.qrString).toEqual(expect.any(String));
 
-      await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      // UMK-2047: the payment says whose sale it is, so the screen offers the cash switch to its cashier only.
+      expect(seen.body).toMatchObject({ actorId: ayu.staffId, mine: false });
+      const own = await get(ayu.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(own.body).toMatchObject({ actorId: ayu.staffId, mine: true });
+
+      const asOwner = await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(asOwner.body).toMatchObject({ actorId: ayu.staffId, mine: false });
       const notOwn = await post(s.auth, `/sales/${saleId}/payment/cash`, {
         paid: 10_000,
       }).expect(409);

@@ -333,6 +333,10 @@ export class SalePayments {
       receiptNumber: numbers.receiptNumber,
       holdNumber: numbers.holdNumber,
       saleStatus: sale.status,
+      // UMK-2047: who rang the sale up. Only they switch it to cash (`not_own_sale`); a `sales.void` holder
+      // may still check, cancel and refund it.
+      actorId: sale.actorId,
+      mine: sale.actorId === s.actorId,
       status,
       online,
       method: sale.method,

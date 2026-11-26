@@ -610,9 +610,20 @@ export class SalesService {
       : and(eq(sales.tenantId, s.tenantId), eq(sales.actorId, s.actorId))!;
   }
 
+  /**
+   * The waiting sales the actor may act on (UMK-2047), the rule of the payment routes (`SalePayments`): their
+   * own, or every one of the store's with `sales.void`. `reports.view` alone does not list another cashier's
+   * waiting sale: its payment route would answer 404.
+   */
+  private awaitingScope(s: PosSession): SQL {
+    return hasPermission(s, 'sales.void')
+      ? eq(sales.tenantId, s.tenantId)
+      : and(eq(sales.tenantId, s.tenantId), eq(sales.actorId, s.actorId))!;
+  }
+
   async list(s: PosSession, q: SalesQuery) {
     const where = and(
-      this.scope(s),
+      q.status === 'awaiting_payment' ? this.awaitingScope(s) : this.scope(s),
       // Receipts only, unless the waiting (or cancelled) ones are asked for (UMK-1991).
       q.status
         ? eq(sales.status, q.status)
@@ -630,6 +641,7 @@ export class SalesService {
           number: sales.number,
           holdNumber: sales.holdNumber,
           shiftId: sales.shiftId,
+          actorId: sales.actorId,
           actorKind: sales.actorKind,
           // Owner sales have no staff row (Lakasir's "user.name" column).
           cashier: sql<string>`coalesce(${staff.name}, 'Pemilik')`,
@@ -715,6 +727,8 @@ export class SalesService {
       data: rows.map(({ paymentMethodCode: code, ...r }) => ({
         ...r,
         ...saleNumbers(r),
+        // UMK-2047: the caller rang it up (only its cashier takes its cash).
+        mine: r.actorId === s.actorId,
         // UMK-1991: paid through a payment gateway: waited for on the payment screen, cancelled by refund.
         onlinePayment: isOnlineMethod(code),
         amountDue: r.total + r.rounding,
