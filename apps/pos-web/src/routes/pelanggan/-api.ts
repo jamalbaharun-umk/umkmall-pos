@@ -9,7 +9,8 @@ export type Member = { id: string; name: string; code: string; phone: string | n
 export type PaymentKind = 'cash' | 'debit' | 'credit' | 'wallet' | 'online'
 /** `gatewayMethod` (UMK-1991): payment-api's method of an `online` method (fake_qris, fake_va); null otherwise. */
 export type PaymentMethod = { id: string; name: string; kind: PaymentKind; gatewayMethod?: string | null }
-export type OpenShift = { id: string; openedAt: string } | null
+/** `number` (the store's shift number) when pos-api sent it. */
+export type OpenShift = { id: string; openedAt: string; number?: number } | null
 export type Voucher = {
   id: string
   name: string
@@ -46,7 +47,19 @@ export type Receivable = ReceivableSummary & {
     actorName: string
     collectedOutsideShift: boolean
     shiftId: string | null
+    // UMK-1971 (koreksi): the row's state, whether it may be corrected, and the correction's links.
+    status?: 'active' | 'reversed' | 'reversal'
+    correctable?: boolean
+    shiftClosed?: boolean
+    isCash?: boolean
+    downPayment?: boolean
+    reversesId?: string | null
+    replacesId?: string | null
+    reversedById?: string | null
+    reasonCode?: string | null
+    note?: string | null
   }[]
+  cancelledAt?: string | null
 }
 /** A list row as JSON; each screen narrows it to its own type. */
 type Row = Record<string, string | number | null>
@@ -105,9 +118,9 @@ async function openShiftOf(): Promise<OpenShift> {
   })
   if (!res?.ok) return null
   const body = (await res.json().catch(() => null)) as { shift?: { id?: unknown; openedAt?: unknown } | null } | null
-  const shift = body?.shift
+  const shift = body?.shift as { id?: unknown; openedAt?: unknown; number?: unknown } | null | undefined
   return typeof shift?.id === 'string' && typeof shift.openedAt === 'string'
-    ? { id: shift.id, openedAt: shift.openedAt }
+    ? { id: shift.id, openedAt: shift.openedAt, ...(Number.isInteger(shift.number) ? { number: shift.number as number } : {}) }
     : null
 }
 
@@ -171,3 +184,55 @@ export const payReceivable = createServerFn({ method: 'POST' })
   .handler(({ data: { id, key, ...body } }) =>
     mutate(`/receivables/${enc(id)}/payments`, 'POST', body, { 'idempotency-key': key }),
   )
+
+export type Correction = {
+  id: string
+  paymentId: string
+  oldAmount: number
+  newAmount: number | null
+  newPaymentId: string | null
+  reasonCode: string
+  restAfter: number
+  createdAt: string
+}
+export type CorrectionResult =
+  | { ok: true; correction: Correction }
+  | { ok: false; status: number; error: string; errors?: Record<string, string>; code?: string; retryAfter?: number }
+
+type CorrectionInput = {
+  id: string
+  paymentId: string
+  /** One per opened dialog: a double tap or a retry after a lost answer makes one correction. */
+  key: string
+  replacement: { amount: number; paymentMethodId?: string } | null
+  reasonCode: string
+  note?: string
+  approverId: string
+  pin: string
+}
+
+/**
+ * "Koreksi pembayaran" (UMK-1971): pos-api writes a reversal line and, unless `replacement` is null, the new payment.
+ * The PIN passes through to pos-api and is never stored, logged or echoed.
+ */
+export const correctPayment = createServerFn({ method: 'POST' })
+  .validator((d: CorrectionInput) => d)
+  .handler(async ({ data: { id, paymentId, key, ...body } }): Promise<CorrectionResult> => {
+    const res = await api(`/receivables/${enc(id)}/payments/${enc(paymentId)}/correction`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'idempotency-key': key },
+    }).catch((e: unknown) => {
+      if (isRedirect(e)) throw e // session ended: go to sign-in
+      return null
+    })
+    if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.' }
+    if (res.ok) return { ok: true, correction: ((await res.json()) as { correction: Correction }).correction }
+    const err = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown; code?: unknown; retryAfter?: unknown }
+    const errors = err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined
+    const code = typeof err.code === 'string' && /^[A-Z_]{3,40}$/.test(err.code) ? err.code : undefined
+    const retryAfter = typeof err.retryAfter === 'number' ? err.retryAfter : undefined
+    if ((res.status === 409 || res.status === 422 || res.status === 429) && typeof err.message === 'string')
+      return { ok: false, status: res.status, error: err.message, errors, code, retryAfter }
+    return { ok: false, status: res.status, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
+  })

@@ -40,6 +40,29 @@ describe('drawerRows', () => {
     expect(drawerAddsUp(rows)).toBe(true)
   })
 
+  it('UMK-1971: a corrected cash kasbon instalment is its own cash-out line, and the rows still add up', () => {
+    // The design's closed-shift case in the open drawer: Rp2.500 out (the old cash), Rp3.000 in (the new): +Rp500.
+    const rows = drawerRows({
+      openingCash: 0,
+      cashSales: 0,
+      cashIn: 3_000,
+      cashOut: 2_500,
+      receivablePayments: 3_000,
+      receivableReversals: 2_500,
+      expectedCash: 500,
+    })
+    expect(rows.map((r) => [r.key, r.amount])).toEqual([
+      ['opening', 0],
+      ['sales', 0],
+      ['receivables', 3_000],
+      ['kasbon-corrections', 2_500],
+      ['expected', 500],
+    ])
+    expect(drawerAddsUp(rows)).toBe(true)
+    expect(entryKindLabel('receivable_reversal')).toBe('Koreksi kasbon (uang dikeluarkan)')
+    expect(storeKindLabel('receivable_reversal')).toBe('Koreksi kasbon yang dikumpulkan di luar shift')
+  })
+
   it('drops zero ledger lines but keeps opening cash and sales', () => {
     const rows = drawerRows({ openingCash: 0, cashSales: 0, expectedCash: 0 })
     expect(rows.map((r) => r.key)).toEqual(['opening', 'sales', 'expected'])

@@ -16,6 +16,8 @@ export type CashTotals = {
   purchasePayments?: number
   /** Those payments voided while the shift was open (part of cashIn). */
   purchasePaymentReversals?: number
+  /** Cash of corrected kasbon instalments taken back out of the drawer (part of cashOut, UMK-1971). */
+  receivableReversals?: number
 }
 
 export const NO_CASH: CashTotals = {
@@ -27,6 +29,7 @@ export const NO_CASH: CashTotals = {
   expenseReversals: 0,
   purchasePayments: 0,
   purchasePaymentReversals: 0,
+  receivableReversals: 0,
 }
 
 export type DrawerRow = { key: string; label: string; amount: number; sign: '+' | '-' | ''; strong?: boolean }
@@ -47,8 +50,9 @@ export function drawerRows(
   const c = { ...NO_CASH, ...s }
   const supplierPaid = c.purchasePayments ?? 0
   const supplierBack = c.purchasePaymentReversals ?? 0
+  const kasbonOut = c.receivableReversals ?? 0
   const otherIn = c.cashIn - c.receivablePayments - c.expenseReversals - supplierBack
-  const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid
+  const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid - kasbonOut
   const rows: DrawerRow[] = [
     { key: 'opening', label: 'Uang awal di laci', amount: s.openingCash, sign: '' },
     {
@@ -65,6 +69,7 @@ export function drawerRows(
     { key: 'expenses', label: 'Pengeluaran dari laci', amount: c.expenses, sign: '-' },
     { key: 'supplier', label: 'Bayar pemasok dari laci', amount: supplierPaid, sign: '-' },
     { key: 'voids', label: 'Uang dikembalikan (batalkan struk)', amount: c.voidRefunds, sign: '-' },
+    { key: 'kasbon-corrections', label: 'Koreksi kasbon tunai (uang keluar)', amount: kasbonOut, sign: '-' },
     { key: 'out-other', label: 'Kas keluar lain', amount: otherOut, sign: '-' },
   ]
   const shown = rows.filter((r) => r.key === 'opening' || r.key === 'sales' || r.amount !== 0)
@@ -98,6 +103,7 @@ const KIND_LABELS: Record<string, string> = {
   collector_deposit: 'Setoran penagih diterima',
   purchase_payment: 'Bayar pemasok dari laci',
   purchase_payment_reversal: 'Bayar pemasok dibatalkan',
+  receivable_reversal: 'Koreksi kasbon (uang dikeluarkan)',
 }
 
 /** The reason of a cash in/out entry in words; an unknown kind (a newer server) is shown as what it is. */
@@ -225,6 +231,7 @@ const STORE_KIND_LABELS: Record<string, string> = {
   expense_void: 'Pengeluaran laci dibatalkan setelah shift ditutup',
   collector_deposit: 'Setoran penagih masuk ke laci shift',
   purchase_payment_void: 'Bayar pemasok dari laci dibatalkan setelah shift ditutup',
+  receivable_reversal: 'Koreksi kasbon yang dikumpulkan di luar shift',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'
 
