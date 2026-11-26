@@ -13,6 +13,10 @@ import {
   refundGuidance,
   refundStateText,
   manualNoteError,
+  retryBody,
+  retryErrorOf,
+  retryFailure,
+  retryFormErrors,
   voidBody,
   voidFailure,
   voidFormErrors,
@@ -207,5 +211,46 @@ describe('needsRefundFollow', () => {
     expect(needsRefundFollow({ refundStatus: 'failed' })).toBe(false)
     expect(needsRefundFollow({ refundStatus: null })).toBe(false)
     expect(needsRefundFollow(null)).toBe(false)
+  })
+})
+
+describe('refund retry, UMK-2040', () => {
+  it('needs an approver and a 6-digit PIN before anything is sent', () => {
+    expect(retryFormErrors({ approverId: '', pin: '123456' }).approverId).toMatch(/Pilih admin/)
+    expect(retryFormErrors({ approverId: 'a1', pin: '12345' }).pin).toBe('PIN harus 6 angka')
+    expect(retryFormErrors({ approverId: 'a1', pin: '123456' })).toEqual({})
+  })
+  it('sends exactly approverId and pin: the strict body takes nothing else', () => {
+    expect(retryBody({ approverId: 'a1', pin: '123456' })).toEqual({ approverId: 'a1', pin: '123456' })
+    expect(Object.keys(retryBody({ approverId: 'a1', pin: '123456' })).sort()).toEqual(['approverId', 'pin'])
+  })
+  it('a wrong PIN is the void\'s 422, a lock keeps its wait, a non-owner is told it is the owner\'s', () => {
+    const wrong = retryFailure(422, { message: 'x', errors: { pin: 'PIN salah' } })
+    expect(isWrongPin(wrong)).toBe(true)
+    const locked = retryFailure(429, { message: 'Terkunci', retryAfter: 120 })
+    expect(failureOf(locked)).toMatchObject({ status: 429, retryAfter: 120 })
+    const forbidden = retryFailure(403, null)
+    expect(forbidden.kind).toBe('forbidden')
+    expect(forbidden.error).toMatch(/Hanya pemilik/)
+    expect(retryFailure(404, null).error).toMatch(/Refund untuk struk ini/)
+    expect(retryFailure(409, null).kind).toBe('done')
+    expect(retryFailure(0, null).kind).toBe('offline')
+  })
+})
+
+describe('retryErrorOf: the owner\'s own PIN', () => {
+  it('a wrong PIN says to check the owner\'s PIN, never to ask another admin', () => {
+    const e = retryErrorOf(retryFailure(422, { message: 'x', errors: { pin: 'PIN salah' } }))
+    expect(e.todo).toBe('Periksa PIN pemilik lalu coba lagi.')
+    expect(e.code).toBeUndefined()
+    expect(JSON.stringify(e)).not.toMatch(/admin lain/)
+  })
+  it('a lock keeps its wait and says it is the owner\'s PIN', () => {
+    const e = retryErrorOf(retryFailure(429, { retryAfter: 240 }))
+    expect(e).toMatchObject({ status: 429, retryAfter: 240 })
+    expect(e.error).toMatch(/PIN pemilik/)
+  })
+  it('other refusals keep the shared mapping', () => {
+    expect(retryErrorOf(retryFailure(403, null))).toEqual({ status: 403 })
   })
 })

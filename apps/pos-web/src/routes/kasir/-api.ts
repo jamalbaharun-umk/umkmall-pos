@@ -3,6 +3,8 @@ import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import type { Quote, SaleUnit } from './-helpers'
 import type { SalePayment } from './-online'
+import { parseWaitingSales, type WaitingSale } from './-shift-helpers'
+import { parseOnlineMethods, type Bank, type OnlineMethods } from './-pay-step'
 import type { CashTotals } from './-shift-helpers'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
@@ -105,6 +107,8 @@ export type Result<T = undefined> =
       code?: string
       /** UMK-1991: the sale a refused PG sale left behind (cancelled, or still waiting for its payment). */
       saleId?: string
+      /** UMK-2044: the sales that hold a shift open (a 409 `sales_awaiting_payment`). */
+      waiting?: WaitingSale[]
     }
 
 const ERRORS: Record<number, string> = {
@@ -119,6 +123,7 @@ type Refusal = {
   status?: number
   code?: string
   saleId?: string
+  waiting?: WaitingSale[]
 }
 
 /** pos-api's 409/422 bodies are Indonesian and internals-free (`{ message, errors, total? }`): pass them on. */
@@ -143,6 +148,7 @@ async function refusalOf(res: Response): Promise<Refusal> {
       total: typeof body?.total === 'number' ? body.total : undefined,
       code: typeof body?.code === 'string' && /^[a-z][a-z_]{1,39}$/.test(body.code) ? body.code : undefined,
       saleId: typeof body?.saleId === 'string' ? body.saleId : undefined,
+      waiting: res.status === 409 ? parseWaitingSales(body) : undefined,
     }
   }
   return { status: res.status, error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }
@@ -169,7 +175,7 @@ export const loadCashier = createServerFn().handler(async () => {
   const { shift } = await load<{ shift: (Shift & { expectedCash: number }) | null }>('/shifts/current')
   const noQris = { configured: false, version: '' }
   if (!shift)
-    return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[] }
+    return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[], banks: {} as Record<string, Bank[]> }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
   const [page, settings, methods, profile, chargeable] = await Promise.all([
     load<{ data: Product[] }>('/catalog/products?perPage=100'),
@@ -186,15 +192,15 @@ export const loadCashier = createServerFn().handler(async () => {
     taxBps: settings.taxBps,
     methods: methods.data,
     qris: { configured: profile.qrisConfigured, version: profile.updatedAt ?? '' },
-    chargeable,
+    chargeable: chargeable.methods,
+    banks: chargeable.banks,
   }
 })
 
-async function chargeableMethods(): Promise<string[]> {
+async function chargeableMethods(): Promise<OnlineMethods> {
   const res = await api('/online-payments/methods').catch(() => null)
-  if (!res?.ok) return []
-  const body = (await res.json().catch(() => null)) as { methods?: unknown } | null
-  return Array.isArray(body?.methods) ? body.methods.filter((m): m is string => typeof m === 'string') : []
+  if (!res?.ok) return { methods: [], banks: {} }
+  return parseOnlineMethods(await res.json().catch(() => null))
 }
 
 export const openShift = createServerFn({ method: 'POST' })
@@ -216,6 +222,8 @@ type SaleInput = {
   memberId?: string
   voucherCode?: string
   paymentMethodId?: string
+  /** UMK-2037: the bank of a virtual account sale (a code of `GET /online-payments/methods`); none for any other. */
+  bank?: string
 }
 export const createSale = createServerFn({ method: 'POST' })
   .validator((d: SaleInput) => d)

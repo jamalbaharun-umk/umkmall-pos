@@ -22,16 +22,17 @@ import type { ResumeDecision } from './-online'
 //
 //   event                         | condition                                  | change
 //   ------------------------------|--------------------------------------------|------------------------------------------
-//   sale_sending(method)          | own sale has a pay code shown, or recorded  | none (sendPlan answers `blocked`)
-//                                 | H online, another method                    | new order (H's sale stays tracked)
+//   sale_sending(method, bank)    | own sale has a pay code shown, or recorded  | none (sendPlan answers `blocked`)
+//                                 | H online, another method or another bank    | new order (H's sale stays tracked)
 //                                 | every request that goes out                 | sending = true, STORED before it is sent
 //   sale_paid(k)                  | k = K                                       | drop sales under k; new order
 //   sale_awaiting(k, id)          |                                             | track id under k, code shown, open
 //                                 | answer unreadable                           | ... as `unchecked` (asked again)
 //   sale_held(k, id) [503+saleId] | online                                      | track id under k as `held`; H = it
 //                                 | cash/EDC                                    | H = it (the job completes it; not listed)
-//   sale_cancelled(k, id) [409]   |                                             | drop id; k = K: new order
-//   sale_mismatch(k) [422]        | k = K                                       | recorded = true (K kept until acked)
+//   sale_cancelled(k, id)         | [409 with a sale id, or the 422 bank       | drop id; k = K: new order
+//                                 |  refusal of UMK-2037: 422 with a sale id]   |
+//   sale_mismatch(k) [422, no id] | k = K                                       | recorded = true (K kept until acked)
 //   sale_unanswered(k) [0, 5xx]   | k = K                                       | unanswered = true (K kept)
 //   sale_refused(k) [other 4xx]   | k = K                                       | sending = false (this request wrote nothing)
 //   (every answer for K ends `sending`; "in doubt" = sending or unanswered: a sale may exist under K.
@@ -82,7 +83,8 @@ export type Tracked = {
   phase: TrackedPhase
 }
 
-export type Held = { saleId: string; methodId: string; online: boolean }
+/** `bank`: the bank of a virtual account sale (UMK-2037); null when the method needs none. Part of the body the key is bound to. */
+export type Held = { saleId: string; methodId: string; online: boolean; bank: string | null }
 
 /** The sale of a paid answer, for the receipt (never stored). */
 export type PaidSaleInfo = { id: string; change: number | null; receivableRest: number | null }
@@ -127,10 +129,10 @@ export type PendingState = {
 }
 
 export type PendingEvent =
-  | { type: 'sale_sending'; methodId: string }
+  | { type: 'sale_sending'; methodId: string; bank?: string | null }
   | { type: 'sale_paid'; key: string; sale?: PaidSaleInfo }
   | { type: 'sale_awaiting'; key: string; saleId: string; readable: boolean }
-  | { type: 'sale_held'; key: string; saleId: string; methodId: string; online: boolean }
+  | { type: 'sale_held'; key: string; saleId: string; methodId: string; online: boolean; bank?: string | null }
   | { type: 'sale_cancelled'; key: string; saleId: string }
   | { type: 'sale_mismatch'; key: string }
   | { type: 'sale_unanswered'; key: string }
@@ -186,6 +188,9 @@ export function gateOf(s: PendingState): 'none' | 'checking' | 'unreachable' {
   if (s.aside || !s.sales.some(needsCheck)) return 'none'
   return s.sales.some((t) => t.phase === 'unreachable') ? 'unreachable' : 'checking'
 }
+/** The bank of a held online sale of this method: the repeat of its request must send the same body, so it is offered again. */
+export const heldBank = (s: PendingState, methodId: string): string =>
+  s.held?.online && s.held.methodId === methodId ? (s.held.bank ?? '') : ''
 /** An online sale written but never charged still holds its stock until the job closes it. */
 export const holdsStock = (s: PendingState): boolean => s.sales.some((t) => t.phase === 'held')
 
@@ -204,11 +209,11 @@ export function sendPlan(s: PendingState): SendPlan {
 }
 
 /** What a sale request does to the state and which key it sends: both a pure function of the state. */
-export function planSend(s: PendingState, methodId: string, fresh: string): { state: PendingState; plan: SendPlan } {
+export function planSend(s: PendingState, methodId: string, fresh: string, bank: string | null = null): { state: PendingState; plan: SendPlan } {
   // A request under this key of this page load is still out (the cashier left the register and came back): its
   // answer comes first, so no second one goes out under the same key.
   if (requestOut(s)) return { state: s, plan: { blocked: 'request_out' } }
-  const state = reduce(s, { type: 'sale_sending', methodId }, fresh)
+  const state = reduce(s, { type: 'sale_sending', methodId, bank }, fresh)
   return { state, plan: sendPlan(state) }
 }
 
@@ -266,17 +271,18 @@ export type SaleAnswer =
   /** `readable`: the answer carried a payment this screen could read (it goes straight to the waiting screen). */
   | { ok: true; awaiting: true; saleId: string; readable: boolean }
   | { ok: false; status: number; saleId?: string; error?: string }
+// A 422 that carries a `saleId` is pos-api's bank refusal after the sale was written (UMK-2037): the sale is cancelled.
 
 /** Pure: which event an answer of POST /sales is, for the request that was sent (its key, method and kind). */
 export function saleAnswerEvent(
   s: PendingState,
-  sent: { key: string; methodId: string; online: boolean },
+  sent: { key: string; methodId: string; online: boolean; bank?: string | null },
   a: SaleAnswer,
 ): PendingEvent {
   const { key } = sent
   if (a.ok) return a.awaiting ? { type: 'sale_awaiting', key, saleId: a.saleId, readable: a.readable } : { type: 'sale_paid', key }
-  if (a.status === 409 && a.saleId) return { type: 'sale_cancelled', key, saleId: a.saleId }
-  if (a.status === 503 && a.saleId) return { type: 'sale_held', key, saleId: a.saleId, methodId: sent.methodId, online: sent.online }
+  if ((a.status === 409 || a.status === 422) && a.saleId) return { type: 'sale_cancelled', key, saleId: a.saleId }
+  if (a.status === 503 && a.saleId) return { type: 'sale_held', key, saleId: a.saleId, methodId: sent.methodId, online: sent.online, bank: sent.bank ?? null }
   // Another body under a known key; also any 422 while a sale may exist under the key (the text is pos-api's, not a contract).
   if (a.status === 422 && (a.error === KEY_REUSED_TEXT || (s.key === key && (s.unanswered || s.held !== null))))
     return { type: 'sale_mismatch', key }
@@ -356,7 +362,8 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
     case 'sale_sending': {
       if (ownSale(s)?.shown || s.recorded) return s // nothing goes out (`sendPlan`)
       // An online sale was written but never charged and no code was shown: another method is another sale.
-      const next = s.held?.online && s.held.methodId !== ev.methodId ? newOrder(s, fresh) : s
+      const next =
+        s.held?.online && (s.held.methodId !== ev.methodId || s.held.bank !== (ev.bank ?? null)) ? newOrder(s, fresh) : s
       // In doubt from now until an answer: stored before the request, so a reload in the middle still knows.
       return { ...next, sending: true, out: next.key }
     }
@@ -380,7 +387,7 @@ function step(s: PendingState, ev: PendingEvent, fresh: string): PendingState {
       if (ev.key !== s.key) return { ...s, sales }
       // `recorded` is left as it is: an answer that comes after the order was cleared, edited or reopened says the
       // sale exists, not that the order on screen is still its order
-      return { ...s, sales, held: { saleId: ev.saleId, methodId: ev.methodId, online: ev.online }, sending: false, unanswered: false }
+      return { ...s, sales, held: { saleId: ev.saleId, methodId: ev.methodId, online: ev.online, bank: ev.bank ?? null }, sending: false, unanswered: false }
     }
     case 'sale_cancelled': {
       const next = { ...s, sales: without(s, ev.saleId) }
@@ -480,7 +487,7 @@ export function rehydrate(text: string | null, legacyText: string | null, fresh:
     const h = raw.held
     const held: Held | null =
       isObject(h) && uuid(h.saleId) && typeof h.methodId === 'string' && h.methodId.length > 0 && h.methodId.length <= 64
-        ? { saleId: h.saleId, methodId: h.methodId, online: h.online === true }
+        ? { saleId: h.saleId, methodId: h.methodId, online: h.online === true, bank: typeof h.bank === 'string' && /^[A-Za-z0-9_-]{1,30}$/.test(h.bank) ? h.bank : null }
         : null
     const sales: Tracked[] = []
     for (const t of Array.isArray(raw.sales) ? raw.sales : []) {

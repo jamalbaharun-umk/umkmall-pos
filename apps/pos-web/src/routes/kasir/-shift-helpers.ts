@@ -97,9 +97,55 @@ export const directionLabel = (d: 'in' | 'out') => (d === 'in' ? 'Kas masuk' : '
 export const signedAmount = (e: { direction: 'in' | 'out'; amount: number }, fmt: (n: number) => string) =>
   `${e.direction === 'in' ? '+' : '-'}${fmt(e.amount)}`
 
-/** What to do about a close refused for pending payments. */
+/** What to do about a close refused for pending payments: they are opened from the register's waiting list. */
 export const CLOSE_BLOCKED_HINT =
-  'Selesaikan atau batalkan pembayaran itu dari Riwayat penjualan, lalu tutup shift lagi.'
+  'Buka tiap penjualan di bawah untuk melanjutkan atau membatalkannya, lalu tutup shift lagi. Penjualan tunai atau EDC yang menunggu selesai lewat tombol bayar yang sama di kasir.'
+
+/** The `code` of the 409 that refuses a close while sales of the shift await payment (UMK-2044). */
+export const SALES_AWAITING_CODE = 'sales_awaiting_payment'
+
+/** One sale that holds the shift open (the refusal's `sales`). */
+export type WaitingSale = {
+  id: string
+  holdNumber: number | null
+  /** Set by the server when it says which store day the hold number belongs to; absent on older answers. */
+  holdDayLabel?: string
+  /** True when `holdDayLabel` is a day other than today (a sale held over midnight). */
+  holdToday?: boolean
+  amountDue: number
+  paymentMethod: string
+  /** Waits for a payment gateway: its waiting screen opens it. Else cash or EDC between its two steps. */
+  onlinePayment: boolean
+  createdAt: string
+}
+
+const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object'
+
+/**
+ * The sales a refused close names (UMK-2044): `[]` unless the answer is the 409 with `code: 'sales_awaiting_payment'`.
+ * Only known fields are copied; a row without an id or an amount is left out, and the screen still has the message.
+ */
+export function parseWaitingSales(body: unknown): WaitingSale[] {
+  if (!isRec(body) || body.code !== SALES_AWAITING_CODE || !Array.isArray(body.sales)) return []
+  return body.sales.flatMap((x): WaitingSale[] => {
+    if (!isRec(x) || typeof x.id !== 'string' || !Number.isInteger(x.amountDue)) return []
+    return [
+      {
+        id: x.id,
+        holdNumber: Number.isInteger(x.holdNumber) ? (x.holdNumber as number) : null,
+        ...(typeof x.holdDayLabel === 'string' && x.holdDayLabel ? { holdDayLabel: x.holdDayLabel.slice(0, 40) } : {}),
+        ...(typeof x.holdToday === 'boolean' ? { holdToday: x.holdToday } : {}),
+        amountDue: x.amountDue as number,
+        paymentMethod: typeof x.paymentMethod === 'string' ? x.paymentMethod : '',
+        onlinePayment: x.onlinePayment === true,
+        createdAt: typeof x.createdAt === 'string' ? x.createdAt : '',
+      },
+    ]
+  })
+}
+
+/** Where a waiting sale is opened: the register, which reads `?menunggu=`; the list when no sale is named. */
+export const waitingSearch = (id?: string) => ({ menunggu: id ?? 'daftar' })
 
 /** pos-api answers 409 with this message prefix while a sale of the shift awaits payment. */
 export const isPendingPaymentRefusal = (message: string) => message.startsWith('Masih ada penjualan yang menunggu')

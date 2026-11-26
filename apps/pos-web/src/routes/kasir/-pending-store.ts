@@ -20,7 +20,7 @@ export type PendingStore = {
    * A sale request is about to be sent with this method: the key to send, or why it must not be sent. The state that
    * says "a request is out" is stored before this returns, so a reload in the middle of the request still knows.
    */
-  send: (methodId: string) => SendPlan
+  send: (methodId: string, bank?: string | null) => SendPlan
   /**
    * The register opened (a reload, or coming back from another page): the stored state is read as after a reload,
    * because what the last screen knew of each sale (its payment, its waiting screen) is gone with it.
@@ -78,8 +78,8 @@ export function createPendingStore(io: PendingIo): PendingStore {
   return {
     current,
     dispatch: (ev) => apply(reduce(current(), ev, io.fresh())),
-    send: (methodId) => {
-      const { state: next, plan } = planSend(current(), methodId, io.fresh())
+    send: (methodId, bank) => {
+      const { state: next, plan } = planSend(current(), methodId, io.fresh(), bank ?? null)
       apply(next)
       return plan
     },
@@ -128,6 +128,6 @@ export function usePending(): PendingHandle {
     durable: state === NOTHING || store().durable(),
     current: () => store().current(),
     dispatch: (ev) => store().dispatch(ev),
-    send: (methodId) => store().send(methodId),
+    send: (methodId, bank) => store().send(methodId, bank),
   }
 }

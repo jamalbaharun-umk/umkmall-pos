@@ -7,7 +7,6 @@ import { notifySuccess, showError, type FailureLike } from '@/lib/feedback'
 import {
   loadAwaitingSales,
   loadPaidFigures,
-  type AwaitingSale,
   cancelSalePayment,
   checkSalePayment,
   getSalePayment,
@@ -33,8 +32,13 @@ import {
   isQris,
   keepPolling,
   numberBadge,
+  closedLabel,
+  holdLabel,
+  receiptLabel,
   lateReceiptText,
   outcomeOf,
+  type AwaitingSale,
+  holdDisambiguation,
   type SalePayment,
 } from './-online'
 import { parseRupiah, quickAmounts } from './-money'
@@ -110,7 +114,7 @@ export function OnlineWait({
   const [figures, setFigures] = useState<{ s: 'loading' } | { s: 'error' } | { s: 'ready'; paid: number; change: number }>({ s: 'loading' })
   const [figuresTry, setFiguresTry] = useState(0)
   // pos-api refused the cash switch because another cashier's sale cannot be taken in cash: the button goes away.
-  const [notMine, setNotMine] = useState(false)
+  const [notMine, setNotMine] = useState(initial.mine === false)
   const [fails, setFails] = useState(0)
   const lock = useRef(false) // a double tap arrives before `busy` re-renders
   const seq = useRef(0) // an answer to an older request never overwrites a newer one
@@ -189,7 +193,7 @@ export function OnlineWait({
     if (outcome.kind === 'paid' && outcome.completed && !announced.current) {
       announced.current = true
       notifySuccess(
-        `Pembayaran ${payment.paymentMethodName || gatewayLabel(payment.method)} ${rupiah(payment.amount)} diterima. Struk #${payment.saleNumber}`,
+        `Pembayaran ${payment.paymentMethodName || gatewayLabel(payment.method)} ${rupiah(payment.amount)} diterima. ${receiptLabel(payment.receiptNumber)}`,
       )
     }
   }, [outcome.kind, outcome.kind === 'paid' && outcome.completed, payment.amount])
@@ -317,7 +321,7 @@ export function OnlineWait({
               {title}
             </Text>
             <Badge color={outcome.kind === 'paid' ? 'success' : outcome.kind === 'closed' ? 'danger' : 'warning'} size="small">
-              {numberBadge(outcome.kind, payment.saleNumber)}
+              {numberBadge(outcome.kind, payment)}
             </Badge>
           </div>
 
@@ -364,7 +368,7 @@ export function OnlineWait({
               ) : (
                 <>
                   <p className="font-semibold">Lunas lewat {method}</p>
-                  <p className="text-sm text-default-secondary">Struk #{payment.saleNumber}</p>
+                  <p className="text-sm text-default-secondary">{receiptLabel(payment.receiptNumber)}</p>
                   <dl className="mt-2 w-full max-w-xs space-y-1 text-left text-sm">
                     <div className="flex justify-between gap-3">
                       <dt>Metode</dt>
@@ -395,7 +399,7 @@ export function OnlineWait({
               )}
               <div className="text-center">
                 <p className="text-sm text-default-secondary">
-                  Menunggu #{payment.saleNumber} · {method}
+                  {holdLabel(payment.holdNumber)} · {method}
                 </p>
                 <Text variant="h3" weight="bold">
                   {rupiah(payment.amount)}
@@ -443,6 +447,12 @@ export function OnlineWait({
                     <span>Bank</span>
                     <span className="font-semibold">{payment.checkout.bank || '-'}</span>
                   </div>
+                  {payment.checkout.accountName && (
+                    <div className="mt-1 flex justify-between gap-3 text-sm">
+                      <span>a.n.</span>
+                      <span className="text-right font-semibold">{payment.checkout.accountName}</span>
+                    </div>
+                  )}
                   <p className="mt-2 text-sm text-default-secondary">Nomor Virtual Account</p>
                   <p className="my-1 break-all font-mono text-2xl font-bold tracking-wider">{vaGroups(payment.checkout.vaNumber)}</p>
                   <Button
@@ -615,6 +625,11 @@ export function OnlineWait({
                   >
                     Ganti ke tunai
                   </Button>
+                )}
+                {notMine && (
+                  <p className="text-center text-xs text-default-secondary">
+                    Penjualan kasir lain: hanya kasirnya yang bisa menggantinya ke tunai. Anda tetap bisa mengecek atau membatalkannya.
+                  </p>
                 )}
                 <Button
                   width="auto"
@@ -816,13 +831,14 @@ export function AwaitingList({
     setOpening(null)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'membuka penjualan menunggu', retry: () => void pick(id) })
     if (!keepPolling(r.data)) {
-      notifySuccess(`Penjualan #${r.data.saleNumber} sudah selesai atau ditutup`)
+      notifySuccess(`${closedLabel(r.data.holdNumber)} sudah selesai atau ditutup`)
       return load()
     }
     onClose()
     onPick(r.data)
   }
   const now = Date.now()
+  const tags = state.s === 'ready' ? holdDisambiguation(state.rows) : {}
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()} title="Menunggu pembayaran" size="medium">
       <div className="flex max-h-[80dvh] flex-col gap-3 overflow-y-auto px-6 pb-6">
@@ -860,9 +876,11 @@ export function AwaitingList({
               onClick={() => void pick(r.id)}
             >
               <span>
-                <b>Menunggu #{r.number}</b>
+                <b>{holdLabel(r.holdNumber)}</b>
                 <span className="block text-xs text-default-secondary">
                   {rupiah(r.amountDue)} · {waitingFor(r.createdAt, now)}
+                  {tags[r.id] ? ` · ${tags[r.id]}` : ''}
+                  {!r.mine ? ' · kasir lain' : ''}
                 </span>
               </span>
               <Badge color="warning" size="small">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { confirmButtonLabel, isStaticQris, offeredMethods, payStepOf, qrisScanHint, qrisSrc, saleToast } from './-pay-step'
+import { bankError, bankRefusalText, bankToSend, banksFor, parseOnlineMethods, confirmButtonLabel, isStaticQris, offeredMethods, payStepOf, qrisScanHint, qrisSrc, saleToast } from './-pay-step'
 
 describe('payStepOf', () => {
   it('maps each kind to its step', () => {
@@ -63,5 +63,41 @@ describe('saleToast', () => {
     expect(saleToast(50, null, rp)).toBe('Pembayaran berhasil')
     expect(saleToast(0, 80, rp)).toBe('Kasbon Rp80 dicatat')
     expect(saleToast(30, 50, rp)).toBe('Pembayaran Rp30 diterima. Sisa kasbon Rp50')
+  })
+})
+
+describe('banks of a virtual account (UMK-2037)', () => {
+  const answer = {
+    methods: ['fake_qris', 'fake_va'],
+    banks: { fake_va: [{ code: 'FAKE', name: 'Bank Fake' }, { code: 'FAKE2', name: 'Bank Fake 2' }, { code: 'bad code!', name: 'x' }, { name: 'no code' }] },
+  }
+  it('reads the methods as a list of names and the banks by method, dropping malformed banks', () => {
+    const r = parseOnlineMethods(answer)
+    expect(r.methods).toEqual(['fake_qris', 'fake_va'])
+    expect(r.banks).toEqual({ fake_va: [{ code: 'FAKE', name: 'Bank Fake' }, { code: 'FAKE2', name: 'Bank Fake 2' }] })
+    expect(parseOnlineMethods(null)).toEqual({ methods: [], banks: {} })
+    expect(parseOnlineMethods({ methods: 'x', banks: [] })).toEqual({ methods: [], banks: {} })
+  })
+  it('only a method with banks asks for one', () => {
+    const { banks } = parseOnlineMethods(answer)
+    expect(banksFor(banks, 'fake_qris')).toEqual([])
+    expect(banksFor(banks, null)).toEqual([])
+    const list = banksFor(banks, 'fake_va')
+    expect(bankError(list, '')).toMatch(/Pilih bank/)
+    expect(bankError(list, 'NOPE')).toMatch(/Pilih bank/)
+    expect(bankError(list, 'FAKE2')).toBeUndefined()
+    expect(bankError([], '')).toBeUndefined()
+  })
+  it('sends the chosen bank only when it is one of the method\'s, never a stale one', () => {
+    const list = [{ code: 'FAKE', name: 'Bank Fake' }]
+    expect(bankToSend(list, 'FAKE')).toBe('FAKE')
+    expect(bankToSend(list, 'FAKE2')).toBeNull()
+    expect(bankToSend([], 'FAKE')).toBeNull()
+  })
+  it('each refusal code has its own advice, an unknown one gets the general one', () => {
+    expect(bankRefusalText('bank_required')).toMatch(/belum dipilih/)
+    expect(bankRefusalText('bank_unknown')).toMatch(/tidak dikenal/)
+    expect(bankRefusalText('bank_not_supported')).toMatch(/tidak memakai bank/)
+    expect(bankRefusalText(undefined)).toMatch(/Pilih bank lagi/)
   })
 })

@@ -240,3 +240,43 @@ export const keepsPin = (f: VoidFailure) => f.kind === 'invalid' && !f.errors.pi
 /** A refund the gateway has not settled yet: its stored status is old until pos-api asks, so the page asks. */
 export const needsRefundFollow = (v: { refundStatus?: 'pending' | 'succeeded' | 'failed' | null } | null | undefined) =>
   v?.refundStatus === 'pending'
+
+// ---- UMK-2040: "Coba lagi" of a failed refund is the owner's and is approved by a PIN, like the refund itself ----
+
+export type RetryForm = { approverId: string; pin: string }
+
+/** The two checks pos-api repeats for the retry body (`{ approverId, pin }`), so a bad form never costs a PIN attempt. */
+export function retryFormErrors(f: RetryForm): VoidFormErrors {
+  const e: VoidFormErrors = {}
+  if (!f.approverId) e.approverId = 'Pilih admin yang menyetujui'
+  if (!/^[0-9]{6}$/.test(f.pin)) e.pin = 'PIN harus 6 angka'
+  return e
+}
+
+/** The retry's request body: exactly the two keys pos-api's strict schema takes. */
+export const retryBody = (f: RetryForm) => ({ approverId: f.approverId, pin: f.pin })
+
+/**
+ * The void's failure kinds for the retry route, with its own words for 403 (owner only) and 409 (the refund is not
+ * refused any more). A wrong PIN (422 on `errors.pin`) and a lock (429 with `retryAfter`) are the void's.
+ */
+export function retryFailure(status: number, body: unknown): VoidFailure {
+  const f = voidFailure(status, body)
+  if (status === 403)
+    return { ...f, error: 'Hanya pemilik yang bisa mencoba refund ini lagi. Masuk sebagai pemilik, lalu ulangi.' }
+  if (status === 404) return { ...f, error: 'Refund untuk struk ini tidak ditemukan.' }
+  if (status === 409 && !(body as { message?: unknown } | null)?.message)
+    return { ...f, error: 'Refund ini tidak lagi berstatus gagal, jadi tidak bisa diminta lagi. Muat ulang halaman.' }
+  return f
+}
+
+/**
+ * The retry's failure as the error dialog reads it. The approver is the owner's own PIN, so a wrong PIN never says
+ * "ask another admin" (the generic PIN text does) and a lock says whose PIN is locked and for how long.
+ */
+export function retryErrorOf(f: VoidFailure): FailureLike {
+  if (isWrongPin(f)) return { status: 422, error: 'PIN yang dimasukkan tidak cocok.', todo: 'Periksa PIN pemilik lalu coba lagi.' }
+  if (f.kind === 'locked')
+    return { status: 429, retryAfter: f.retryAfter, error: 'PIN pemilik dikunci karena terlalu banyak PIN salah.' }
+  return failureOf(f)
+}

@@ -19,6 +19,10 @@ own commit. The legal lock (UMK-1977) stays: the only gateway is the local fake 
    retries). Order: 403, 422 (body), 404 (no refund on that sale, also another store's), PIN, then payment-api. The
    reason and note stay those of the refund; payment-api's audit row of the new refund request names the owner as
    actor and this retry's approver.
+
+   Open gap: the owner PIN can be reset/unlocked by a signed-in session without the old PIN — UMK-2054
+   (https://linear.app/umkmall/issue/UMK-2054); decided: change needs the old PIN, reset/unlock needs a fresh UMKMall
+   re-login; not built yet.
 2. **UMK-2047: the cashier on the payment and on the list.** `SalePayment` and every row of `GET /sales` carry
    `actorId` and `mine` (the caller rang it up). `GET /sales?status=awaiting_payment` lists what the caller may act
    on, the rule of the payment routes: their own sales, or every waiting sale of the store with `sales.void`.

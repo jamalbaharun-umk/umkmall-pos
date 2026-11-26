@@ -18,7 +18,7 @@ export type PaymentStatus =
   | 'voided'
 export type SaleStatus = 'awaiting_payment' | 'completed' | 'void' | 'cancelled'
 /** A QR, a virtual account, or (a PG with its own payment page) a link. The server decides which; the screen follows. */
-export type Checkout = { qrString: string } | { bank: string; vaNumber: string } | { paymentUrl: string }
+export type Checkout = { qrString: string } | { bank: string; vaNumber: string; /** UMK-2045: the name the customer's bank shows for the account ("a.n."). */ accountName?: string } | { paymentUrl: string }
 export type RefundStatus = 'pending' | 'succeeded' | 'failed'
 export type LateReceipt = {
   id: string
@@ -30,7 +30,14 @@ export type LateReceipt = {
 }
 export type SalePayment = {
   saleId: string
+  /** The number to show now (UMK-2038): the receipt number once completed, else the hold number. Read the two below to know which. */
   saleNumber: number
+  /** The receipt number: null until the sale is completed (a cancelled sale never gets one). */
+  receiptNumber: number | null
+  /** The queue number of a sale that waited for its payment; starts again every store day. */
+  holdNumber: number | null
+  /** UMK-2047: the caller rang this sale up (only its cashier can switch it to cash). `undefined` when the server did not say. */
+  mine: boolean | undefined
   saleStatus: SaleStatus
   status: PaymentStatus
   online: boolean
@@ -72,7 +79,10 @@ const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) ? v : 
 function parseCheckout(v: unknown): Checkout | null {
   if (!isObject(v)) return null
   if (typeof v.qrString === 'string' && v.qrString) return { qrString: v.qrString }
-  if (typeof v.vaNumber === 'string' && v.vaNumber) return { bank: str(v.bank) ?? '', vaNumber: v.vaNumber }
+  if (typeof v.vaNumber === 'string' && v.vaNumber) {
+    const accountName = str(v.accountName)?.trim()
+    return { bank: str(v.bank) ?? '', vaNumber: v.vaNumber, ...(accountName ? { accountName: accountName.slice(0, 80) } : {}) }
+  }
   // only an https link is ever offered to open or share
   if (typeof v.paymentUrl === 'string' && /^https:\/\/\S+$/.test(v.paymentUrl)) return { paymentUrl: v.paymentUrl }
   return null
@@ -119,6 +129,9 @@ export function parsePayment(raw: unknown): SalePayment | null {
   return {
     saleId,
     saleNumber,
+    receiptNumber: int(raw.receiptNumber) ?? null,
+    holdNumber: int(raw.holdNumber) ?? null,
+    mine: typeof raw.mine === 'boolean' ? raw.mine : undefined,
     saleStatus: saleStatus as SaleStatus,
     status: status as PaymentStatus,
     online: raw.online === true,
@@ -274,9 +287,50 @@ export function paidLater(createdAt: string, paidAt: string | null | undefined):
   return Number.isFinite(d) && Math.abs(d) > 60_000
 }
 
-/** The badge by the dialog title: a receipt exists only for a paid sale; a waiting or closed one has just its queue number. */
-export const numberBadge = (kind: 'waiting' | 'paid' | 'closed', n: number) =>
-  kind === 'paid' ? `Struk #${n}` : kind === 'waiting' ? `Menunggu #${n}` : `Nomor tunggu #${n}`
+/**
+ * The badge by the dialog title: a receipt number exists only for a paid sale ("Struk #n", never a hold number); a
+ * waiting sale has its hold number ("Menunggu #n"), and so does one that was closed ("Nomor tunggu #n"). A number the
+ * server did not give is not made up from the other one.
+ */
+export function numberBadge(kind: 'waiting' | 'paid' | 'closed', p: Pick<SalePayment, 'receiptNumber' | 'holdNumber'>): string {
+  if (kind === 'paid') return p.receiptNumber !== null ? `Struk #${p.receiptNumber}` : 'Struk'
+  if (p.holdNumber === null) return kind === 'waiting' ? 'Menunggu' : 'Nomor tunggu'
+  return kind === 'waiting' ? `Menunggu #${p.holdNumber}` : `Nomor tunggu #${p.holdNumber}`
+}
+
+/** "Struk #n" or, while the receipt number is not there yet, just "Struk". */
+export const receiptLabel = (n: number | null | undefined) => (typeof n === 'number' ? `Struk #${n}` : 'Struk')
+/** "Nomor tunggu #n": a waiting sale that has ended (closed, expired or cancelled) is no longer "Menunggu". */
+export const closedLabel = (n: number | null | undefined) => (typeof n === 'number' ? `Nomor tunggu #${n}` : 'Nomor tunggu')
+/** "Menunggu #n" for a sale's hold number. */
+export const holdLabel = (n: number | null | undefined) => (typeof n === 'number' ? `Menunggu #${n}` : 'Menunggu')
+
+/** The day and time of a sale in the store's zone ("Kam, 26 Nov 10.15"), for telling two waiting sales of one number apart. */
+export function dayTimeText(iso: string): string {
+  const day = dayText(iso)
+  const time = clockText(iso)
+  return day && time ? `${day} ${time}` : ''
+}
+
+/** "Kam, 26 Nov" in the store's zone; '' for a time that is not one. */
+export function dayText(iso: string): string {
+  const t = new Date(iso)
+  return Number.isNaN(t.getTime())
+    ? ''
+    : t.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' })
+}
+
+/**
+ * Hold numbers start again every store day, so a sale held over midnight can share its number with today's. Only
+ * rows whose number is shared get the day and time (by id); the rest need none.
+ */
+export function holdDisambiguation(rows: { id: string; holdNumber: number | null; createdAt: string }[]): Record<string, string> {
+  const count = new Map<number, number>()
+  for (const r of rows) if (r.holdNumber !== null) count.set(r.holdNumber, (count.get(r.holdNumber) ?? 0) + 1)
+  const out: Record<string, string> = {}
+  for (const r of rows) if (r.holdNumber !== null && (count.get(r.holdNumber) ?? 0) > 1) out[r.id] = dayTimeText(r.createdAt)
+  return out
+}
 
 export const gatewayLabel = (m: string | null | undefined) =>
   m === 'fake_qris' ? 'QRIS online' : m === 'fake_va' ? 'Virtual Account' : 'Pembayaran online'
@@ -347,9 +401,9 @@ export type ResumeDecision =
   /** Still open (or paid and being completed): show the waiting screen. */
   | { do: 'wait'; payment: SalePayment }
   /** Completed while the till was away: forget it and show its receipt; the order is rung up, so an own cart is cleared. */
-  | { do: 'completed'; saleId: string; saleNumber: number }
+  | { do: 'completed'; saleId: string; receiptNumber: number | null }
   /** Ended unpaid (cancelled, expired, failed): forget it; the cart, if it is the sale's own, stays for another way to pay. */
-  | { do: 'ended'; saleNumber: number; reversed: boolean }
+  | { do: 'ended'; holdNumber: number | null; receiptNumber: number | null; reversed: boolean }
   /** pos-api says the sale does not exist for this actor (404), or the request can never be answered (other 4xx): forget it and say so. */
   | { do: 'forget' }
   /** No usable answer (offline, 5xx, a 403/408/429 that may pass): keep the memory, block new online sales and ask again. */
@@ -367,8 +421,8 @@ export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
   const p = answer.data
   if (keepPolling(p)) return { do: 'wait', payment: p }
   return p.saleStatus === 'completed'
-    ? { do: 'completed', saleId: p.saleId, saleNumber: p.saleNumber }
-    : { do: 'ended', saleNumber: p.saleNumber, reversed: p.saleStatus === 'void' || p.status === 'refunded' || p.status === 'refund_pending' || p.status === 'voided' }
+    ? { do: 'completed', saleId: p.saleId, receiptNumber: p.receiptNumber }
+    : { do: 'ended', holdNumber: p.holdNumber, receiptNumber: p.receiptNumber, reversed: p.saleStatus === 'void' || p.status === 'refunded' || p.status === 'refund_pending' || p.status === 'voided' }
 }
 
 /**
@@ -414,4 +468,41 @@ export function paymentFailure(
   if (status === 409) return { status, code, error: message }
   if (status === 422) return { status, error: message, code: undefined }
   return { status, code: status === 401 || status === 403 || status === 404 ? undefined : code }
+}
+
+// ---- The list of waiting sales ----
+
+/** A sale of the waiting list (`GET /sales?status=awaiting_payment`). */
+export type AwaitingSale = {
+  id: string
+  /** The hold number ("Menunggu #n"); starts again every store day, so two rows can share one (`holdDisambiguation`). */
+  holdNumber: number | null
+  total: number
+  amountDue: number
+  createdAt: string
+  /** UMK-2047: the caller rang it up; another cashier's sale cannot be switched to cash here. */
+  mine: boolean
+}
+
+/**
+ * Only sales paid through a gateway are listed: a cash or EDC sale that is between its two steps is not something to
+ * pick up. The hold number is read from `holdNumber`, never from `number` (a receipt number once completed).
+ */
+export function parseAwaiting(rows: unknown): AwaitingSale[] {
+  if (!Array.isArray(rows)) return []
+  return rows.flatMap((x): AwaitingSale[] => {
+    if (!isObject(x) || x.onlinePayment !== true || typeof x.id !== 'string') return []
+    const total = int(x.total)
+    if (total === undefined) return []
+    return [
+      {
+        id: x.id,
+        holdNumber: int(x.holdNumber) ?? null,
+        total,
+        amountDue: int(x.amountDue) ?? total,
+        createdAt: str(x.createdAt) ?? '',
+        mine: x.mine === true,
+      },
+    ]
+  })
 }

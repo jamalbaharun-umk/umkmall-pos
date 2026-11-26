@@ -1,22 +1,20 @@
-import { Alert, Button, Dialog, Select, Spinner, TextField } from '@umkmall/ui/primitives'
+import { Alert, Button, Dialog, Select, TextField } from '@umkmall/ui/primitives'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { rupiah } from '@/components/page'
 import { notifySuccess, showError } from '@/lib/feedback'
-import { loadApprovers, voidSale, type SaleVoid } from './-void-api'
+import { ApproverPinFields, ApproverStatus, useApprovers } from './-approver-fields'
+import { voidSale, type SaleVoid } from './-void-api'
 import { refundSale } from './-online-api'
 import { useLost } from './-use-lost'
 import {
   NOTE_MAX,
   VOID_REASONS,
-  approverOptions,
   failureOf,
   isWrongPin,
   keepsPin,
-  pinDigits,
   refundGuidance,
   voidBody,
   voidFormErrors,
-  type Approver,
   type MethodKind,
   type VoidFormErrors,
 } from './-void-helpers'
@@ -33,8 +31,6 @@ type Props = {
   online?: boolean
 }
 
-type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ready'; list: Approver[] }
-
 /**
  * "Batalkan transaksi" (UMK-1962): reason, the admin who approves and their 6-digit PIN. The cashier starts it; the
  * approver types the PIN on the same device. The PIN lives only in this component's state: it is cleared after every
@@ -43,7 +39,7 @@ type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { st
 export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online = false }: Props) {
   const lost = useLost()
   const what = online ? 'refund struk' : 'membatalkan struk'
-  const [approvers, setApprovers] = useState<Approvers>({ state: 'loading' })
+  const { approvers, reload: fetchApprovers, list, anyApprover } = useApprovers(open)
   const [reasonCode, setReasonCode] = useState('')
   const [note, setNote] = useState('')
   const [approverId, setApproverId] = useState('')
@@ -54,13 +50,11 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
   // One key per attempt (per opening): a retry after a lost answer replays the first result, never voids twice.
   const key = useRef('')
 
-  const fetchApprovers = () => {
-    setApprovers({ state: 'loading' })
-    loadApprovers().then(
-      (r) => setApprovers(r.ok ? { state: 'ready', list: r.approvers } : { state: 'error', error: r.error }),
-      () => setApprovers({ state: 'error', error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }),
-    )
-  }
+  // The PIN a refusal kept (`keepsPin`) must not outlive the dialog: closed by the parent or unmounted, it is gone.
+  useEffect(() => {
+    if (!open) setPin('')
+    return () => setPin('')
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -70,7 +64,6 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
     setApproverId('')
     setPin('')
     setErrors({})
-    fetchApprovers()
   }, [open])
 
   const guidance = refundGuidance(online ? 'online' : methodKind, sale.amountDue, rupiah)
@@ -122,9 +115,6 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
     if (f.kind === 'done') onChanged(null)
   }
 
-  const list = approvers.state === 'ready' ? approvers.list : []
-  const anyApprover = list.some((a) => a.hasPin)
-
   return (
     <Dialog
       open={open}
@@ -149,31 +139,7 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
           {guidance.text}
         </Alert>
 
-        {approvers.state === 'loading' && (
-          <div className="flex items-center gap-2 text-sm text-default-secondary" role="status">
-            <Spinner /> Memuat daftar admin…
-          </div>
-        )}
-        {approvers.state === 'error' && (
-          <Alert
-            variant="danger"
-            size="small"
-            role="alert"
-            action={
-              <Button type="outline" color="light" size="small" width="auto" onClick={fetchApprovers}>
-                Coba lagi
-              </Button>
-            }
-          >
-            {approvers.error}
-          </Alert>
-        )}
-        {approvers.state === 'ready' && !anyApprover && (
-          <Alert variant="warning" size="small" role="alert">
-            Belum ada pemilik atau admin dengan PIN pembatalan. Minta pemilik membuat PIN di menu Keamanan sebelum ada
-            struk yang bisa dibatalkan.
-          </Alert>
-        )}
+        <ApproverStatus approvers={approvers} anyApprover={anyApprover} reload={fetchApprovers} />
 
         <Select
           label="Alasan (wajib, pilih satu)"
@@ -196,36 +162,21 @@ export function VoidDialog({ open, onClose, onChanged, sale, methodKind, online 
           }}
           error={errors.note}
         />
-        <Select
-          label="Admin yang menyetujui"
-          options={approverOptions(list)}
-          value={approverId}
-          onValueChange={(v) => {
+        <ApproverPinFields
+          approvers={approvers}
+          list={list}
+          approverId={approverId}
+          pin={pin}
+          errors={errors}
+          onApprover={(v) => {
             setApproverId(v)
             setErrors((x) => ({ ...x, approverId: undefined }))
           }}
-          placeholder="Pilih pemilik atau admin"
-          emptyMessage="Belum ada admin"
-          disabled={approvers.state !== 'ready'}
-          error={errors.approverId}
-        />
-        <TextField
-          label="PIN admin (6 angka)"
-          type="password"
-          inputMode="numeric"
-          autoComplete="off"
-          maxLength={6}
-          value={pin}
-          onChange={(e) => {
-            setPin(pinDigits(e.target.value))
+          onPin={(v) => {
+            setPin(v)
             setErrors((x) => ({ ...x, pin: undefined }))
           }}
-          error={errors.pin}
         />
-        <p className="-mt-2 text-xs text-default-secondary">
-          Minta admin mengetik PIN di perangkat ini. PIN tidak ditampilkan dan tidak disimpan. Salah 5 kali mengunci
-          admin itu 5 menit.
-        </p>
 
         <div className="flex justify-end gap-2">
           <Button

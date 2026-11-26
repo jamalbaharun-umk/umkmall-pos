@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   cashRoute,
+  parseWaitingSales,
+  waitingSearch,
   cashRouteNotice,
   CLOSE_BLOCKED_HINT,
   directionLabel,
@@ -86,7 +88,7 @@ describe('close refusal', () => {
   it('recognises the pending-payment refusal', () => {
     expect(isPendingPaymentRefusal('Masih ada penjualan yang menunggu pembayaran: #12, #13')).toBe(true)
     expect(isPendingPaymentRefusal('Tidak ada shift yang terbuka')).toBe(false)
-    expect(CLOSE_BLOCKED_HINT).toContain('Riwayat penjualan')
+    expect(CLOSE_BLOCKED_HINT).toContain('Buka tiap penjualan')
   })
 })
 
@@ -137,5 +139,35 @@ describe('store cash', () => {
     expect(storeKindLabel('collector_deposit')).toMatch(/laci shift/)
     expect(entryKindLabel('collector_deposit')).toBe('Setoran penagih diterima')
     expect(storeKindLabel('x')).toBe('Kas toko lain')
+  })
+})
+
+describe('the refusal of a close with waiting sales (UMK-2044)', () => {
+  const body = {
+    message: 'Masih ada penjualan yang menunggu pembayaran: #1, #2',
+    code: 'sales_awaiting_payment',
+    sales: [
+      { id: 'a', holdNumber: 1, amountDue: 5000, paymentMethod: 'QRIS', onlinePayment: true, createdAt: '2026-11-26T03:00:00Z', holdToday: true, holdDayLabel: 'Kam, 26 Nov' },
+      { id: 'b', holdNumber: 1, amountDue: 7000, paymentMethod: 'Tunai', onlinePayment: false, createdAt: '2026-11-25T03:00:00Z', holdToday: false },
+      { holdNumber: 3, amountDue: 1 },
+      { id: 'c', amountDue: 1.5 },
+    ],
+  }
+  it('lists the sales with their hold number, amount and kind; a row without an id or whole rupiah is dropped', () => {
+    const r = parseWaitingSales(body)
+    expect(r.map((x) => x.id)).toEqual(['a', 'b'])
+    expect(r[0]).toMatchObject({ holdNumber: 1, amountDue: 5000, paymentMethod: 'QRIS', onlinePayment: true, holdToday: true, holdDayLabel: 'Kam, 26 Nov' })
+    expect(r[1]).toMatchObject({ onlinePayment: false, holdToday: false })
+    expect(r[1].holdDayLabel).toBeUndefined()
+  })
+  it('is empty for any other answer, so only that code ever shows the list', () => {
+    expect(parseWaitingSales({ ...body, code: 'something_else' })).toEqual([])
+    expect(parseWaitingSales({ message: 'x', sales: body.sales })).toEqual([])
+    expect(parseWaitingSales(null)).toEqual([])
+    expect(parseWaitingSales({ code: 'sales_awaiting_payment', sales: 'x' })).toEqual([])
+  })
+  it('links to one sale, or to the list when none is named', () => {
+    expect(waitingSearch('abc')).toEqual({ menunggu: 'abc' })
+    expect(waitingSearch()).toEqual({ menunggu: 'daftar' })
   })
 })

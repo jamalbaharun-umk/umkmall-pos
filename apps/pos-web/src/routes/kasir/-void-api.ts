@@ -51,13 +51,14 @@ export const loadSaleDetail = createServerFn()
     const res = await api(`/sales/${id}/receipt`)
     if (!res.ok) throw new Error((await refusalOf(res)).error)
     const receipt = (await res.json()) as Receipt
-    let [saleVoid, methods, meta] = await Promise.all([
+    const [firstVoid, methods, meta] = await Promise.all([
       receipt.status === 'void' ? read<SaleVoid>(`/sales/${id}/void`) : null,
       receipt.status === 'completed' ? read<{ data: { name: string; kind: MethodKind }[] }>('/payment-methods') : null,
       read<{ onlinePayment?: boolean; paidAt?: string | null }>(`/sales/${id}`),
     ])
     // The stored refund status is old until pos-api asks the gateway; reading the sale's payment does that, so a
     // pending refund is followed here (best effort, a failure leaves the stored status) and the void read again.
+    let saleVoid = firstVoid
     if (needsRefundFollow(saleVoid)) {
       await api(`/sales/${id}/payment`).catch(() => null)
       saleVoid = (await read<SaleVoid>(`/sales/${id}/void`)) ?? saleVoid

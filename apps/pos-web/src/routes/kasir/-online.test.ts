@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  dayTimeText,
+  parseAwaiting,
+  holdDisambiguation,
+  holdLabel,
+  receiptLabel,
   OPEN_PAST_CODE_TIME,
   cancelBody,
   numberBadge,
@@ -61,6 +66,10 @@ describe('parsePayment', () => {
     expect(q.amount).toBe(5123)
     const v = pay({ method: 'fake_va', checkout: { bank: 'BCA', vaNumber: '8800123' } })
     expect(v.checkout).toEqual({ bank: 'BCA', vaNumber: '8800123' })
+    // UMK-2045: the account holder name ("a.n.") rides along only when there is one
+    const named = pay({ method: 'fake_va', checkout: { bank: 'FAKE', vaNumber: '8800123', accountName: '  Toko Contoh  ' } })
+    expect(named.checkout).toEqual({ bank: 'FAKE', vaNumber: '8800123', accountName: 'Toko Contoh' })
+    expect(pay({ method: 'fake_va', checkout: { bank: 'FAKE', vaNumber: '1', accountName: '  ' } }).checkout).toEqual({ bank: 'FAKE', vaNumber: '1' })
     expect(isQris(v.checkout)).toBe(false)
   })
 
@@ -347,17 +356,17 @@ describe('resumeDecision: what a reload does with the remembered sale', () => {
     expect(resumeDecision(ok({ status: 'paid' })).do).toBe('wait')
   })
   it('a sale completed while the till was away is reported completed (the cart that made it is cleared)', () => {
-    expect(resumeDecision(ok({ saleStatus: 'completed', status: 'paid' }))).toEqual({
+    expect(resumeDecision(ok({ saleStatus: 'completed', status: 'paid', receiptNumber: 12 }))).toEqual({
       do: 'completed',
       saleId: ID,
-      saleNumber: 12,
+      receiptNumber: 12,
     })
   })
   it('a cancelled sale is only "ended"', () => {
-    expect(resumeDecision(ok({ saleStatus: 'cancelled', status: 'expired' }))).toEqual({ do: 'ended', saleNumber: 12, reversed: false })
+    expect(resumeDecision(ok({ saleStatus: 'cancelled', status: 'expired', holdNumber: 4 }))).toEqual({ do: 'ended', holdNumber: 4, receiptNumber: null, reversed: false })
   })
   it('a sale voided or refunded while the till was away is "ended" and says it was reversed', () => {
-    expect(resumeDecision(ok({ saleStatus: 'void', status: 'refunded' }))).toEqual({ do: 'ended', saleNumber: 12, reversed: true })
+    expect(resumeDecision(ok({ saleStatus: 'void', status: 'refunded', receiptNumber: 12 }))).toEqual({ do: 'ended', holdNumber: null, receiptNumber: 12, reversed: true })
   })
   it('404 (a deleted sale, or another cashier\'s: the payment route hides it the same way) forgets the sale', () => {
     expect(resumeDecision({ ok: false, failure: paymentFailure('poll', 404, { message: 'x' }) }).do).toBe('forget')
@@ -401,9 +410,47 @@ describe('paidFigures', () => {
 })
 
 describe('numberBadge', () => {
-  it('calls it a receipt only when paid', () => {
-    expect(numberBadge('paid', 7)).toBe('Struk #7')
-    expect(numberBadge('waiting', 7)).toBe('Menunggu #7')
-    expect(numberBadge('closed', 7)).toBe('Nomor tunggu #7')
+  it('calls it a receipt only when paid, and only with a receipt number', () => {
+    expect(numberBadge('paid', { receiptNumber: 7, holdNumber: 3 })).toBe('Struk #7')
+    expect(numberBadge('waiting', { receiptNumber: null, holdNumber: 3 })).toBe('Menunggu #3')
+    expect(numberBadge('closed', { receiptNumber: null, holdNumber: 3 })).toBe('Nomor tunggu #3')
+  })
+  it('never prints a hold number as a receipt number, nor a receipt number as a hold number', () => {
+    expect(numberBadge('paid', { receiptNumber: null, holdNumber: 3 })).toBe('Struk')
+    expect(numberBadge('waiting', { receiptNumber: 7, holdNumber: null })).toBe('Menunggu')
+    expect(receiptLabel(null)).toBe('Struk')
+    expect(holdLabel(undefined)).toBe('Menunggu')
+  })
+  it('reads the explicit numbers of a payment, and who rang it up', () => {
+    const p = pay({ saleNumber: 3, receiptNumber: null, holdNumber: 3, mine: false })
+    expect([p.saleNumber, p.receiptNumber, p.holdNumber, p.mine]).toEqual([3, null, 3, false])
+    expect(pay({}).mine).toBeUndefined()
+  })
+  it('tells two waiting sales of one hold number apart by day and time, and no others', () => {
+    const rows = [
+      { id: 'a', holdNumber: 1, createdAt: '2026-11-25T23:30:00Z' },
+      { id: 'b', holdNumber: 1, createdAt: '2026-11-26T03:00:00Z' },
+      { id: 'c', holdNumber: 2, createdAt: '2026-11-26T03:05:00Z' },
+    ]
+    const d = holdDisambiguation(rows)
+    expect(Object.keys(d).sort()).toEqual(['a', 'b'])
+    expect(d.a).not.toBe(d.b)
+    expect(d.a).toMatch(/06\.30|06:30/) // 23:30Z is 06:30 the next morning in Jakarta
+    expect(dayTimeText('nope')).toBe('')
+  })
+})
+
+describe('parseAwaiting (the waiting list)', () => {
+  const row = (o: Record<string, unknown> = {}) => ({ id: 'a', number: 9, holdNumber: 2, total: 5000, amountDue: 5000, createdAt: '2026-11-26T03:00:00Z', mine: true, onlinePayment: true, ...o })
+  it('reads the hold number, not `number`, and who rang it up', () => {
+    expect(parseAwaiting([row({ number: 99 }), row({ id: 'b', mine: false })])).toEqual([
+      { id: 'a', holdNumber: 2, total: 5000, amountDue: 5000, createdAt: '2026-11-26T03:00:00Z', mine: true },
+      { id: 'b', holdNumber: 2, total: 5000, amountDue: 5000, createdAt: '2026-11-26T03:00:00Z', mine: false },
+    ])
+  })
+  it('leaves out cash/EDC sales between their steps and malformed rows; another cashier is not "mine" unless said', () => {
+    expect(parseAwaiting([row({ onlinePayment: false }), row({ id: 3 }), row({ total: 1.5 }), 'x'])).toEqual([])
+    expect(parseAwaiting([row({ mine: undefined })])[0].mine).toBe(false)
+    expect(parseAwaiting(null)).toEqual([])
   })
 })
