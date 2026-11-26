@@ -4,28 +4,33 @@ import {
   ForbiddenException,
   Headers,
   HttpCode,
+  HttpException,
   Logger,
   NotFoundException,
   Post,
+  Req,
   Res,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { fieldError, validate } from '../common/validation';
 import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
+import { WindowLimiter } from '../agent/rate-limit';
 import { agentEnabled } from '../agent/usage';
 import { Public } from '../tenancy/decorators';
 import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
 
 const SESSION_TTL = 15 * 60;
+/** Agent session requests per network address per minute (UMK-1978 review). */
+export const AGENT_SESSIONS_PER_MINUTE = 30;
 const UMKMALL_TIMEOUT_MS = 5_000;
 /** UMKMall's login cookies (`@umkmall/auth` AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME); no other cookie leaves the POS. */
 const UMKMALL_COOKIES = new Set(['auth_token', 'auth_refresh']);
@@ -78,7 +83,13 @@ const isMissingUser = (e: unknown) =>
 export class AuthController {
   private readonly env = loadEnv();
   private readonly logger = new Logger(AuthController.name);
-  private readonly serviceKey = digest(this.env.POS_SERVICE_KEY);
+  private readonly agentKey = this.env.POS_AGENT_SERVICE_KEY
+    ? digest(this.env.POS_AGENT_SERVICE_KEY)
+    : null;
+  private readonly agentLimit = new WindowLimiter(
+    AGENT_SESSIONS_PER_MINUTE,
+    60_000,
+  );
 
   constructor(@InjectDb() private readonly db: Db) {}
 
@@ -105,12 +116,14 @@ export class AuthController {
     return this.issue({ tenantId, actorId: userId, kind: 'owner' });
   }
 
-  /** Local work without UMKMall (localhost cookies carry no UMKMall login). Refused in production. */
+  /** Local work without UMKMall (localhost cookies carry no UMKMall login). Only in development or test. */
   @Public()
   @Post('dev/sign-in')
   @HttpCode(200)
   async devSignIn(@Body() body: unknown) {
-    if (process.env.NODE_ENV === 'production') throw new NotFoundException();
+    // Fails closed: only an explicit development or test environment has it (an unset NODE_ENV does not).
+    if (!['development', 'test'].includes(process.env.NODE_ENV ?? ''))
+      throw new NotFoundException();
     const { userId } = parse(DevBody, body);
     try {
       const tenantId = await this.findOrCreateTenant(this.db, userId);
@@ -132,13 +145,21 @@ export class AuthController {
   @Post('agent/session')
   @HttpCode(200)
   async agentSession(
-    @Headers('x-pos-service-key') key: string | undefined,
+    @Headers('x-pos-agent-key') key: string | undefined,
+    @Req() req: Request,
     @Body() body: unknown,
     @Res({ passthrough: true }) res: Response,
   ) {
+    if (!this.agentKey) throw new NotFoundException();
+    // Counted before the key check, per network address, so the key cannot be guessed at speed.
+    if (!this.agentLimit.hit(req.ip ?? 'unknown'))
+      throw new HttpException(
+        { message: 'Terlalu banyak permintaan sesi agent, coba lagi sebentar' },
+        429,
+      );
     // Server to server only: the scopes and consent below are the caller's word, so only UMKMall's agent backend,
     // holding the shared service key, may ask (the owner's token alone does not open an agent session).
-    if (!key || !timingSafeEqual(digest(key), this.serviceKey))
+    if (!key || !timingSafeEqual(digest(key), this.agentKey))
       throw new UnauthorizedException({ message: 'Kunci layanan tidak valid' });
     const { token, scopes, consentRef } = parse(AgentBody, body);
     const { userId, setCookies, unavailable } = await this.askUmkmall(

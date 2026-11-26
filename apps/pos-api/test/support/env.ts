@@ -29,6 +29,7 @@ process.env.POS_STORAGE_DIR ??= mkdtempSync(
 // Placeholder so AppModule boots; test/auth.e2e-spec.ts points it at its fake UMKMall `/api/auth/me`.
 process.env.UMKMALL_WEB_URL ??= 'http://127.0.0.1:9';
 process.env.POS_SERVICE_KEY ??= randomBytes(16).toString('hex');
+process.env.POS_AGENT_SERVICE_KEY ??= randomBytes(32).toString('hex');
 
 const ADMIN_KEY = process.env.PGTEST_ADMIN_KEY ?? 'pos';
 export const TEST_DB = DB;

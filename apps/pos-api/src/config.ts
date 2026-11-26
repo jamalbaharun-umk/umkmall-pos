@@ -20,6 +20,12 @@ const EnvSchema = z
     UMKMALL_WEB_URL: z.string().url(),
     // Shared with UMKMall: authenticates its call to POST /internal/tenants/purge (U8).
     POS_SERVICE_KEY: z.string().min(16),
+    // UMKMall's agent backend only: authenticates POST /auth/agent/session (UMK-1978). Its own key, never the purge
+    // key. Unset = no agent session is issued (the route answers 404).
+    POS_AGENT_SERVICE_KEY: z.preprocess(
+      blankIsUnset,
+      z.string().min(32).optional(),
+    ),
     // payment-api (UMK-1991). Unset = off: sales complete in one step and nothing is sent. Set = every sale,
     // kasbon payment and void is recorded there, and PAYMENT_SERVICE_KEY (the same value as payment-api's) is required.
     PAYMENT_API_URL: z.preprocess(blankIsUnset, z.string().url().optional()),
@@ -58,6 +64,9 @@ const EnvSchema = z
     NODE_ENV: z
       .enum(['development', 'test', 'production'])
       .default('development'),
+  })
+  .refine((env) => env.POS_AGENT_SERVICE_KEY !== env.POS_SERVICE_KEY, {
+    path: ['POS_AGENT_SERVICE_KEY'],
   })
   .refine((env) => !env.PAYMENT_API_URL || !!env.PAYMENT_SERVICE_KEY, {
     path: ['PAYMENT_SERVICE_KEY'],

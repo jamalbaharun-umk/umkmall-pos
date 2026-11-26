@@ -5,7 +5,7 @@ export const HPP_CATEGORY = 'Dari HPP UMKMall';
 export const HPP_SKU_PREFIX = 'UMK-';
 export const HPP_MAX_ROWS = 50;
 
-/** The SKU that links a POS product to its UMKMall HPP product, so a second import updates it. */
+/** The SKU that links a POS product to its UMKMall HPP product; an import finds it and leaves it untouched. */
 export const hppSku = (ref: string) => `${HPP_SKU_PREFIX}${ref}`;
 
 /**
