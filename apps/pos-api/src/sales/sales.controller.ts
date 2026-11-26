@@ -60,11 +60,11 @@ export class SalesController {
 
   /**
    * UMK-2046: the sales that waited for a payment gateway and were completed after `since`, for a till that
-   * was off or away. The actor's own, or the store's with `sales.void`.
+   * was off or away. The actor's own, or the store's with `reports.view` (as `GET /sales`).
    */
   @Get('paid-since')
   paidSince(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    return this.sales.paidSince(s, validate(PaidSinceQuery, query).since);
+    return this.sales.paidSince(s, validate(PaidSinceQuery, query));
   }
 
   @Get('settings')

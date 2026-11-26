@@ -8,6 +8,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PaymentSync } from '../src/payments-client/payment-sync.service';
 import { PAYMENT_FETCH } from '../src/payments-client/payments.client';
+import { PAID_SINCE_LIMIT } from '../src/sales/sales.service';
 import { seedMerchant } from '../../payment-api/test/support/merchants';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createStore } from './support/fixtures';
@@ -149,7 +150,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
   };
 
   /** A store with one product (Rp5.123, stock 50), an open shift and a QRIS method. */
-  async function shop(merchant = true) {
+  async function shop(merchant = true, stock = 50) {
     const s = await createStore();
     tenants.push(s.tenantId);
     if (merchant) await seedMerchant(pay.sql, { tenantId: s.tenantId });
@@ -163,7 +164,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
       sellingPrice: PRICE,
     }).expect(201);
     const productId = p.body.id as string;
-    await post(s.auth, '/stock/opening', { productId, qty: 50 }).expect(201);
+    await post(s.auth, '/stock/opening', { productId, qty: stock }).expect(201);
     await post(s.auth, '/shifts/open', { openingCash: 100_000 }).expect(201);
     const qris = (
       await post(s.auth, '/payment-methods', {
@@ -385,6 +386,15 @@ describe('hold number and receipt number (UMK-2038)', () => {
     });
 
     const failed = (await sell(s).expect(201)).body.id as string;
+    // Neither a waiting nor a cancelled sale has a receipt: its hold number is never printed as "No.".
+    for (const [id, status] of [
+      [failed, 'awaiting_payment'],
+      [cancelled, 'cancelled'],
+    ]) {
+      const none = await get(s.auth, `/sales/${id}/receipt`).expect(409);
+      expect(none.body).toMatchObject({ code: 'not_a_receipt', status });
+      expect(none.body).not.toHaveProperty('number');
+    }
     await onBill(s, failed, 'fail');
     expect((await poll(s, failed).expect(200)).body).toMatchObject({
       saleStatus: 'cancelled',
@@ -541,7 +551,6 @@ describe('hold number and receipt number (UMK-2038)', () => {
 
   describe('workers at once', () => {
     it('a cancel, a switch to cash, the customer’s payment and a poll at once: the sale is one receipt with one number, or cancelled with none', async () => {
-      const outcomes = new Set<string>();
       for (let i = 0; i < 6; i += 1) {
         const s = await shop();
         await sellCash(s).expect(201);
@@ -559,7 +568,6 @@ describe('hold number and receipt number (UMK-2038)', () => {
           await post(s.auth, `/sales/${saleId}/payment/cancel`);
         await sync.tick(later());
         const sale = await row(saleId);
-        outcomes.add(sale.status);
         expect(['completed', 'cancelled']).toContain(sale.status);
         expect(sale.number).toBe(sale.status === 'completed' ? 2 : null);
         expect(sale.hold_number).toBe(2);
@@ -570,8 +578,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
         );
         await gapFree(s.tenantId);
       }
-      expect(outcomes.size).toBeGreaterThan(0);
-    });
+    }, 30_000);
 
     it('polls, checks and the job at once on several paid sales, while new sales are rung up: every sale gets one number', async () => {
       const s = await shop();
@@ -728,7 +735,7 @@ describe('hold number and receipt number (UMK-2038)', () => {
       expect((await poll(s, second).expect(200)).body.receiptNumber).toBe(3);
       await post(other.auth, `/sales/${theirs}/payment/cancel`).expect(200);
       expect(await gapFree(s.tenantId)).toBe(3);
-    });
+    }, 30_000);
   });
 
   describe('closing a shift while sales await payment (UMK-2044)', () => {
@@ -780,6 +787,35 @@ describe('hold number and receipt number (UMK-2038)', () => {
       await post(s.auth, `/sales/${held}/payment/cancel`).expect(200);
       await close().expect(200);
       await gapFree(s.tenantId);
+    });
+
+    it('a close and a new PG sale at once: the shift closes without the sale, or the sale is rung up and blocks the close; never a closed shift with a waiting sale', async () => {
+      for (let i = 0; i < 6; i += 1) {
+        const s = await shop();
+        const [close, sale] = await Promise.all([
+          post(s.auth, '/shifts/current/close', { countedCash: 100_000 }),
+          sell(s),
+        ]);
+        if (close.status === 200) {
+          // The sale found no open shift: nothing was rung up, no number was taken.
+          expect(sale.status).toBe(422);
+          expect(await rows(s.tenantId)).toEqual([]);
+        } else {
+          expect(sale.status).toBe(201);
+          expect(close.status).toBe(409);
+          expect(close.body).toMatchObject({
+            code: 'sales_awaiting_payment',
+            sales: [{ id: sale.body.id, holdNumber: 1 }],
+          });
+          await post(s.auth, `/sales/${sale.body.id}/payment/cancel`).expect(
+            200,
+          );
+        }
+        const [stuck] = await admin<{ n: number }[]>`
+          select count(*)::int as n from pos.sales x join pos.shifts h on h.id = x.shift_id
+          where x.tenant_id = ${s.tenantId} and x.status = 'awaiting_payment' and h.closed_at is not null`;
+        expect(stuck.n).toBe(0);
+      }
     });
 
     it('only the closing actor’s own shift in their own store: another cashier’s and another store’s waiting sales neither block nor show', async () => {
@@ -884,8 +920,10 @@ describe('hold number and receipt number (UMK-2038)', () => {
       const asOf = new Date(res.body.asOf as string).getTime();
       expect(Date.now() - asOf).toBeGreaterThanOrEqual(9_000);
       expect(Date.now() - asOf).toBeLessThan(60_000);
+      expect(res.body).toMatchObject({ hasMore: false, afterId: null });
+      // Oldest first.
       expect(idsOf(await paidSince(s.auth, res.body.asOf).expect(200))).toEqual(
-        [paid, before],
+        [before, paid],
       );
       // Nothing after the completion.
       await pause();
@@ -918,53 +956,133 @@ describe('hold number and receipt number (UMK-2038)', () => {
       );
     });
 
-    it('a cashier sees their own, another cashier nothing, a `sales.void` holder the store’s; store B sees nothing of store A', async () => {
+    it('a cashier sees their own, also with `sales.void`; a `reports.view` holder and the owner see the store’s, as on GET /sales; store B sees nothing of store A', async () => {
       const a = await shop();
       const b = await shop();
       const mine = await createCashier(app, a, ['sales.create']);
       const other = await createCashier(app, a, ['sales.create']);
+      // May open every sale's payment, but the totals of other people's sales are for `reports.view`.
       const supervisor = await createCashier(app, a, [
         'sales.create',
         'sales.void',
       ]);
-      // `reports.view` reads the sales list, but not this: the payment routes are not theirs either.
       const reader = await createCashier(app, a, ['reports.view']);
       await post(mine.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      await post(supervisor.auth, '/shifts/open', { openingCash: 0 }).expect(
+        201,
+      );
       const since = new Date(Date.now() - MINUTES).toISOString();
       const owners = (await sell(a).expect(201)).body.id as string;
       const cashiers = (await sellAs(a, mine.auth).expect(201)).body
         .id as string;
-      for (const id of [owners, cashiers]) await onBill(a, id, 'pay');
-      await poll(a, owners).expect(200);
-      await poll(a, cashiers).expect(200);
+      const supervisors = (await sellAs(a, supervisor.auth).expect(201)).body
+        .id as string;
+      for (const id of [owners, cashiers, supervisors]) {
+        await onBill(a, id, 'pay');
+        await poll(a, id).expect(200);
+      }
 
       expect(idsOf(await paidSince(mine.auth, since).expect(200))).toEqual([
         cashiers,
       ]);
       expect(idsOf(await paidSince(other.auth, since).expect(200))).toEqual([]);
-      expect(idsOf(await paidSince(reader.auth, since).expect(200))).toEqual(
-        [],
-      );
       expect(
         idsOf(await paidSince(supervisor.auth, since).expect(200)),
-      ).toEqual([cashiers, owners]);
-      expect(idsOf(await paidSince(a.auth, since).expect(200))).toEqual([
-        cashiers,
-        owners,
-      ]);
+      ).toEqual([supervisors]);
+      const all = [owners, cashiers, supervisors];
+      expect(idsOf(await paidSince(reader.auth, since).expect(200))).toEqual(
+        all,
+      );
+      expect(idsOf(await paidSince(a.auth, since).expect(200))).toEqual(all);
+      // The same sales as the list shows each of them.
+      for (const who of [mine, other, supervisor, reader]) {
+        const list = await get(who.auth, '/sales').expect(200);
+        expect(idsOf(list).sort()).toEqual(
+          idsOf(await paidSince(who.auth, since).expect(200)).sort(),
+        );
+      }
       expect(idsOf(await paidSince(b.auth, since).expect(200))).toEqual([]);
     });
 
-    it('needs a session and a time with an offset: 401, 422', async () => {
+    it('more sales than one answer holds: oldest first, `hasMore` with a cursor, and paging sees every sale exactly once, also sales completed at the same instant', async () => {
+      const s = await shop(true, 200);
+      const since = new Date(Date.now() - 1000).toISOString();
+      const ids: string[] = [];
+      for (let i = 0; i < 2 * PAID_SINCE_LIMIT + 20; i += 1) {
+        const id = (await sell(s).expect(201)).body.id as string;
+        await onBill(s, id, 'pay');
+        ids.push(id);
+      }
+      // The job completes them (100 a run).
+      for (let i = 0; i < 2; i += 1) await sync.tick(later());
+      expect(await gapFree(s.tenantId)).toBe(ids.length);
+      // Three instants only, so each page ends in the middle of sales completed at the same instant.
+      await admin`
+        update pos.sales set completed_at = date_trunc('second', now()) - make_interval(secs => number % 3)
+        where tenant_id = ${s.tenantId}`;
+
+      const seen: string[] = [];
+      const pages: number[] = [];
+      let query = `since=${encodeURIComponent(since)}`;
+      for (let page = 0; page < 10; page += 1) {
+        const res = await get(s.auth, `/sales/paid-since?${query}`).expect(200);
+        const body = res.body as {
+          data: { id: string; completedAt: string }[];
+          hasMore: boolean;
+          asOf: string;
+          afterId: string | null;
+        };
+        pages.push(body.data.length);
+        seen.push(...body.data.map((x) => x.id));
+        // Oldest first within the page.
+        const times = body.data.map((x) => x.completedAt);
+        expect(times).toEqual([...times].sort());
+        if (!body.hasMore) {
+          expect(body.afterId).toBeNull();
+          break;
+        }
+        expect(body.afterId).toBe(body.data[body.data.length - 1].id);
+        query = `since=${encodeURIComponent(body.asOf)}&afterId=${body.afterId}`;
+      }
+      expect(pages).toEqual([PAID_SINCE_LIMIT, PAID_SINCE_LIMIT, 20]);
+      expect(new Set(seen).size).toBe(seen.length);
+      expect([...seen].sort()).toEqual([...ids].sort());
+      // Store B pages through nothing of it, with store A's cursor.
+      const b = await shop();
+      expect(
+        idsOf(await get(b.auth, `/sales/paid-since?${query}`).expect(200)),
+      ).toEqual([]);
+    }, 120_000);
+
+    it('needs a session and a time with an offset that a sale can have: 401, 422', async () => {
       const s = await shop();
       await http()
         .get('/sales/paid-since?since=2026-11-26T00:00:00Z')
         .expect(401);
       const missing = await get(s.auth, '/sales/paid-since').expect(422);
       expect(missing.body.errors).toHaveProperty('since');
-      for (const bad of ['kemarin', '2026-11-26', '2026-11-26T10:00:00'])
+      for (const bad of [
+        'kemarin',
+        '2026-11-26',
+        '2026-11-26T10:00:00',
+        // Times the database cannot hold or no sale has: a 422, not a failed query.
+        '0000-01-01T00:00:00Z',
+        '1999-12-31T23:59:59Z',
+        '9999-12-31T23:59:59Z',
+        new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      ])
         await paidSince(s.auth, bad).expect(422);
-      await paidSince(s.auth, '2026-11-26T10:00:00+07:00').expect(200);
+      const ok = '2026-11-26T10:00:00%2B07:00';
+      await get(s.auth, `/sales/paid-since?since=${ok}`).expect(200);
+      const badId = await get(
+        s.auth,
+        `/sales/paid-since?since=${ok}&afterId=1`,
+      ).expect(422);
+      expect(badId.body.errors).toHaveProperty('afterId');
+      await get(
+        s.auth,
+        `/sales/paid-since?since=${ok}&afterId=${randomUUID()}`,
+      ).expect(200);
     });
   });
 });

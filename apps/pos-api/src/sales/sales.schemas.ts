@@ -78,11 +78,21 @@ export const SalesQuery = z.object({
   perPage: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-/** `GET /sales/paid-since` (UMK-2046): the time the till last looked, with its offset. */
+/**
+ * `GET /sales/paid-since` (UMK-2046): the time the till last looked, with its offset; `afterId` with it when
+ * the answer before said `hasMore`. A time the database cannot hold, or one that is no time of a POS sale
+ * (before 2020, more than a day ahead), is a 422, never a query that fails.
+ */
+const PAID_SINCE_EARLIEST = Date.parse('2020-01-01T00:00:00Z');
 export const PaidSinceQuery = z.object({
   since: z
     .string({ required_error: 'Wajib diisi' })
-    .datetime({ offset: true, message: 'Waktu tidak valid' }),
+    .datetime({ offset: true, message: 'Waktu tidak valid' })
+    .refine((v) => {
+      const t = Date.parse(v);
+      return t >= PAID_SINCE_EARLIEST && t <= Date.now() + 86_400_000;
+    }, 'Waktu tidak valid'),
+  afterId: Uuid.optional(),
 });
 
 export const SettingsInput = z

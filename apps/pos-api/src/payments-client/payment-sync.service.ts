@@ -558,7 +558,8 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
           .set({
             status: 'completed',
             number,
-            completedAt: sql`now()`,
+            // The clock, not the transaction's start: `paid-since` pages through sales in this order.
+            completedAt: sql`clock_timestamp()`,
             paymentId,
             switchCashPaid: null,
             paidAt: paidAt
