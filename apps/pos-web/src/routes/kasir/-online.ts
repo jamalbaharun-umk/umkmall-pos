@@ -347,7 +347,38 @@ export function waitingFor(createdAt: string, now: number): string {
 export const isLink = (c: Checkout | null): c is { paymentUrl: string } => !!c && 'paymentUrl' in c
 
 /** A VA number in groups of four, as it is read out and typed: "8077 1234 5678 9012". */
-export const vaGroups = (va: string) => va.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim()
+export const vaGroups = (va: string) => vaChunks(va).join(' ')
+
+/** The groups of `vaGroups`, one by one. A lone last digit joins the group before it (UMK-2058): never a line of its own. */
+export function vaChunks(va: string): string[] {
+  const chunks = va.replace(/\s+/g, '').match(/.{1,4}/g) ?? []
+  if (chunks.length > 1 && chunks[chunks.length - 1].length === 1) {
+    const last = chunks.pop() as string
+    chunks[chunks.length - 1] += last
+  }
+  return chunks
+}
+
+/** Bank names the waiting screen shows for a code (the gateway sends only the code). An unknown code is shown as it is. */
+const BANK_NAMES: Record<string, string> = {
+  FAKE: 'Bank Fake',
+  FAKE2: 'Bank Fake Dua',
+  BCA: 'BCA',
+  BNI: 'BNI',
+  BRI: 'BRI',
+  MANDIRI: 'Mandiri',
+  PERMATA: 'Permata',
+  CIMB: 'CIMB Niaga',
+  BSI: 'BSI',
+  BJB: 'BJB',
+  DANAMON: 'Danamon',
+  MAYBANK: 'Maybank',
+  SAHABAT_SAMPOERNA: 'Bank Sahabat Sampoerna',
+}
+export const bankName = (code: string | null | undefined): string => {
+  if (!code) return '-'
+  return BANK_NAMES[code.toUpperCase()] ?? code
+}
 
 /** "3 detik lalu" for the last check; null when there is none. */
 export function agoText(iso: string | null, now: number): string | null {
@@ -401,7 +432,7 @@ export type ResumeDecision =
   /** Still open (or paid and being completed): show the waiting screen. */
   | { do: 'wait'; payment: SalePayment }
   /** Completed while the till was away: forget it and show its receipt; the order is rung up, so an own cart is cleared. */
-  | { do: 'completed'; saleId: string; receiptNumber: number | null }
+  | { do: 'completed'; saleId: string; receiptNumber: number | null; amount: number; paymentMethodName: string }
   /** Ended unpaid (cancelled, expired, failed): forget it; the cart, if it is the sale's own, stays for another way to pay. */
   | { do: 'ended'; holdNumber: number | null; receiptNumber: number | null; reversed: boolean }
   /** pos-api says the sale does not exist for this actor (404), or the request can never be answered (other 4xx): forget it and say so. */
@@ -421,7 +452,7 @@ export function resumeDecision(answer: ResumeAnswer): ResumeDecision {
   const p = answer.data
   if (keepPolling(p)) return { do: 'wait', payment: p }
   return p.saleStatus === 'completed'
-    ? { do: 'completed', saleId: p.saleId, receiptNumber: p.receiptNumber }
+    ? { do: 'completed', saleId: p.saleId, receiptNumber: p.receiptNumber, amount: p.amount, paymentMethodName: p.paymentMethodName }
     : { do: 'ended', holdNumber: p.holdNumber, receiptNumber: p.receiptNumber, reversed: p.saleStatus === 'void' || p.status === 'refunded' || p.status === 'refund_pending' || p.status === 'voided' }
 }
 

@@ -20,7 +20,8 @@ import {
   agoText,
   cashSwitchWarning,
   isLink,
-  vaGroups,
+  vaChunks,
+  bankName,
   waitingFor,
   cancelBody,
   cashDue,
@@ -445,7 +446,7 @@ export function OnlineWait({
                 <div className="rounded-lg border border-default-primary p-4" aria-label="Nomor Virtual Account">
                   <div className="flex justify-between text-sm">
                     <span>Bank</span>
-                    <span className="font-semibold">{payment.checkout.bank || '-'}</span>
+                    <span className="font-semibold">{bankName(payment.checkout.bank)}</span>
                   </div>
                   {payment.checkout.accountName && (
                     <div className="mt-1 flex justify-between gap-3 text-sm">
@@ -454,7 +455,17 @@ export function OnlineWait({
                     </div>
                   )}
                   <p className="mt-2 text-sm text-default-secondary">Nomor Virtual Account</p>
-                  <p className="my-1 break-all font-mono text-2xl font-bold tracking-wider">{vaGroups(payment.checkout.vaNumber)}</p>
+                  <p
+                    className="my-1 flex flex-wrap gap-x-3 font-mono text-xl font-bold tracking-wider sm:text-2xl"
+                    aria-label={payment.checkout.vaNumber}
+                  >
+                    {/* each group stays whole: a wrap falls between groups, never inside one (UMK-2058) */}
+                    {vaChunks(payment.checkout.vaNumber).map((g, i) => (
+                      <span key={i} className="whitespace-nowrap">
+                        {g}
+                      </span>
+                    ))}
+                  </p>
                   <Button
                     type="outline"
                     color="light"
