@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { devSignInUser, failureText, loginUrl, sessionKind } from './sign-in'
+import { devSignInUser, failureText, landingPath, loginUrl, sessionKind } from './sign-in'
 
 const token = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`
 
@@ -39,5 +39,12 @@ describe('sign-in helpers', () => {
   it('falls back to the POS sign-in page when UMKMall or the POS URL is not configured (localhost)', () => {
     expect(loginUrl(undefined, 'https://pos.umkmall.id')).toBe('/')
     expect(loginUrl('https://umkmall.id', undefined)).toBe('/')
+  })
+
+  it('UMK-2054 lands a sign-in on a listed page by its key only', () => {
+    expect(landingPath('keamanan')).toBe('/pengaturan/keamanan?lupa=1')
+    expect(landingPath(undefined)).toBe('/?masuk=1')
+    expect(landingPath('toString')).toBe('/?masuk=1')
+    expect(landingPath('/pengaturan/keamanan?lupa=1')).toBe('/?masuk=1')
   })
 })

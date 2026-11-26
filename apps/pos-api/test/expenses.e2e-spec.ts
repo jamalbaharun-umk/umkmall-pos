@@ -1462,7 +1462,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         lines: [{ productId: kopi, qty: 2 }],
         paid: 17_600,
       });
-      await put(s.auth, '/void-pin', { pin: '482913' }).expect(200);
+      await put(s.freshAuth, '/void-pin', { pin: '482913' }).expect(200);
       await post(
         s.auth,
         `/sales/${e.id}/void`,

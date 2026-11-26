@@ -37,4 +37,16 @@ export function loginUrl(umkmallWebUrl: string | undefined, posWebUrl: string | 
   return url.toString()
 }
 
+/**
+ * Where a sign-in may land instead of the POS home (UMK-2054). The cookie holds only a key of this list, never a
+ * path, so a sign-in cannot be sent anywhere else. `keamanan`: the owner asked to sign in again to reset their PIN.
+ */
+export const RETURN_PATHS = { keamanan: '/pengaturan/keamanan?lupa=1' } as const
+export type ReturnKey = keyof typeof RETURN_PATHS
+
+/** The landing path of a sign-in for the cookie's value: the listed path, or the POS home's "signed in" toast. */
+export function landingPath(key: string | undefined): string {
+  return key !== undefined && Object.hasOwn(RETURN_PATHS, key) ? RETURN_PATHS[key as ReturnKey] : '/?masuk=1'
+}
+
 export const seeOther = (location: string) => new Response(null, { status: 303, headers: { location } })

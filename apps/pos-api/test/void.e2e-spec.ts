@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import postgres from 'postgres';
 import request from 'supertest';
 import { ADMIN_DATABASE_URL } from './support/env';
+import { signSession } from '../src/tenancy/session';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
 
@@ -118,7 +119,7 @@ describe('void a full sale (UMK-1962)', () => {
       code: `M${randomUUID().slice(0, 6)}`,
       phone: '081234567890',
     }).expect(201);
-    await setPin(s.auth, OWNER_PIN).expect(200);
+    await setPin(s.freshAuth, OWNER_PIN).expect(200);
     /** The owner approving with their own PIN. */
     const approval = {
       reasonCode: 'wrong_item_or_qty',
@@ -300,7 +301,7 @@ describe('void a full sale (UMK-1962)', () => {
       await post(s.auth, `/purchasing/orders/${po.body.id}/approve`).expect(
         200,
       );
-      await setPin(s.auth, OWNER_PIN).expect(200);
+      await setPin(s.freshAuth, OWNER_PIN).expect(200);
       await open(s.auth);
       const sale = await sell(s.auth, {
         lines: [{ productId, qty: 5 }],
@@ -1142,6 +1143,168 @@ describe('void a full sale (UMK-1962)', () => {
       expect(res.body.errors.approverId).toMatch(/belum membuat PIN/);
       await setPin(rina.auth, '909090').expect(200);
       await voidSale(ayu.auth, saleId, by(rina.staffId, '909090')).expect(201);
+    });
+  });
+
+  describe("the owner's own PIN (UMK-2054)", () => {
+    const reset = (auth: string, actorId: string) =>
+      http().delete(`/void-pin/${actorId}`).set('Authorization', auth);
+    const unlock = (auth: string, actorId: string) =>
+      post(auth, `/void-pin/${actorId}/unlock`);
+    /** An owner session whose sign-in was `ageSeconds` ago. */
+    const signedIn = async (
+      s: { tenantId: string; userId: string },
+      ageSeconds: number,
+    ) =>
+      `Bearer ${await signSession(
+        {
+          tenantId: s.tenantId,
+          actorId: s.userId,
+          kind: 'owner',
+          signedInAt: Math.floor(Date.now() / 1000) - ageSeconds,
+        },
+        process.env.POS_SESSION_SECRET!,
+      )}`;
+    const FRESH = {
+      message: expect.stringMatching(/masuk lagi/i),
+      code: 'fresh_sign_in_required',
+    };
+
+    it('changing it needs the old PIN: missing or wrong changes nothing, and wrong ones count toward the lock', async () => {
+      const s = await shop();
+      const hash = (await pinRow(s.userId)).pin_hash;
+      // A fresh sign-in does not stand in for the old PIN either.
+      for (const auth of [s.auth, s.freshAuth]) {
+        const missing = await setPin(auth, '270183').expect(422);
+        expect(missing.body.errors.currentPin).toMatch(/PIN lama/);
+      }
+      expect((await pinRow(s.userId)).failures).toBe(0);
+      const wrong = await setPin(s.auth, '270183', '000000').expect(422);
+      expect(wrong.body.errors).toEqual({ currentPin: 'PIN salah' });
+      expect(await pinRow(s.userId)).toMatchObject({
+        failures: 1,
+        pin_hash: hash,
+      });
+      for (let i = 0; i < 3; i++)
+        await setPin(s.freshAuth, '270183', '000000').expect(422);
+      // The 5th wrong old PIN locks the PIN itself: the void's lock, so the right old PIN waits too.
+      const fifth = await setPin(s.auth, '270183', '000000').expect(429);
+      expect(fifth.body.retryAfter).toBe(300);
+      await setPin(s.auth, '270183', OWNER_PIN).expect(429);
+      expect((await pinRow(s.userId)).pin_hash).toBe(hash);
+      await open(s.auth);
+      const sale = await sell(s.auth, {
+        lines: [{ productId: s.productId, qty: 1 }],
+        paid: 5000,
+      });
+      await voidSale(s.auth, sale.body.id, s.approval).expect(429);
+
+      await admin`update pos.void_pins set locked_until = now() - interval '1 second' where actor_id = ${s.userId}`;
+      // With the old PIN it changes, in a session that is not fresh.
+      expect(
+        (await setPin(s.auth, '270183', OWNER_PIN).expect(200)).body,
+      ).toEqual({ hasPin: true, lockedUntil: null });
+      await voidSale(s.auth, sale.body.id, s.approval).expect(422);
+      await voidSale(s.auth, sale.body.id, {
+        ...s.approval,
+        pin: '270183',
+      }).expect(201);
+    });
+
+    it('removing it (forgot PIN) needs a fresh sign-in: 403 fresh_sign_in_required otherwise, and nothing changes', async () => {
+      const s = await shop();
+      const hash = (await pinRow(s.userId)).pin_hash;
+      const stale = [
+        s.auth, // no sign-in time: a refreshed session
+        await signedIn(s, 301), // signed in more than 5 minutes ago
+        await signedIn(s, -60), // a sign-in time in the future
+        await signedIn(s, -10), // ahead of this clock by more than the skew allowed
+      ];
+      for (const auth of stale) {
+        const res = await reset(auth, s.userId).expect(403);
+        expect(res.body).toEqual(FRESH);
+      }
+      expect((await pinRow(s.userId)).pin_hash).toBe(hash);
+
+      // An upper-case spelling of the owner's id is the same row, and the same refusal.
+      const upper = s.userId.toUpperCase();
+      expect(upper).not.toBe(s.userId);
+      for (const auth of stale) {
+        expect((await reset(auth, upper).expect(403)).body).toEqual(FRESH);
+        expect((await unlock(auth, upper).expect(403)).body).toEqual(FRESH);
+      }
+      expect((await pinRow(s.userId)).pin_hash).toBe(hash);
+      // A sign-in a few seconds ahead of this clock (another instance's) is still fresh.
+      await unlock(await signedIn(s, -3), upper).expect(200);
+
+      await reset(await signedIn(s, 290), upper).expect(200);
+      expect(await pinRow(s.userId)).toBeUndefined();
+      // The first PIN after it has no old PIN to ask for: it needs the fresh sign-in too.
+      for (const auth of stale) {
+        const res = await setPin(auth, '270183').expect(403);
+        expect(res.body).toEqual(FRESH);
+        expect(
+          (await setPin(auth, '270183', OWNER_PIN).expect(403)).body,
+        ).toEqual(FRESH);
+      }
+      expect(await pinRow(s.userId)).toBeUndefined();
+      await setPin(s.freshAuth, '270183').expect(200);
+      expect((await get(s.auth, '/void-pin').expect(200)).body).toEqual({
+        hasPin: true,
+        lockedUntil: null,
+      });
+    });
+
+    it('clearing its lock needs a fresh sign-in; the lock and the count stay otherwise', async () => {
+      const s = await shop();
+      for (let i = 0; i < 4; i++)
+        await setPin(s.auth, '270183', '000000').expect(422);
+      await setPin(s.auth, '270183', '000000').expect(429);
+      const lockedUntil = (await pinRow(s.userId)).locked_until;
+      for (const auth of [s.auth, await signedIn(s, 301)])
+        expect((await unlock(auth, s.userId).expect(403)).body).toEqual(FRESH);
+      expect(await pinRow(s.userId)).toMatchObject({
+        failures: 5,
+        locked_until: lockedUntil,
+      });
+      await setPin(s.auth, '270183', OWNER_PIN).expect(429);
+
+      await unlock(s.freshAuth, s.userId).expect(200);
+      expect(await pinRow(s.userId)).toMatchObject({
+        failures: 0,
+        locked_until: null,
+      });
+      await setPin(s.auth, '270183', OWNER_PIN).expect(200);
+    });
+
+    it("an admin's PIN works as before: first PIN, reset and unlock by the owner need no fresh sign-in", async () => {
+      const s = await shop();
+      const rina = await createCashier(app, s, ['sales.create', 'sales.void']);
+      await setPin(rina.auth, '715064').expect(200);
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '5 minutes' where actor_id = ${rina.staffId}`;
+      await unlock(s.auth, rina.staffId).expect(200);
+      await reset(s.auth, rina.staffId).expect(200);
+      await setPin(rina.auth, '909090').expect(200);
+      // An admin never reaches the owner's PIN, fresh or not.
+      await reset(rina.auth, s.userId).expect(403);
+      await unlock(rina.auth, s.userId).expect(403);
+      expect((await pinRow(s.userId)).pin_hash).toMatch(/^scrypt\$/);
+    });
+
+    it("another store's owner, freshly signed in, gets 404 on this owner's PIN", async () => {
+      const a = await shop();
+      const b = await shop();
+      const hash = (await pinRow(a.userId)).pin_hash;
+      await admin`update pos.void_pins set failures = 5, locked_until = now() + interval '5 minutes' where actor_id = ${a.userId}`;
+      await reset(b.freshAuth, a.userId).expect(404);
+      await unlock(b.freshAuth, a.userId).expect(404);
+      expect(await pinRow(a.userId)).toMatchObject({
+        failures: 5,
+        pin_hash: hash,
+      });
+      // And B's own fresh session changes B's PIN only.
+      await reset(b.freshAuth, b.userId).expect(200);
+      expect((await pinRow(a.userId)).pin_hash).toBe(hash);
     });
   });
 

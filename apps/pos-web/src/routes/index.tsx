@@ -7,8 +7,8 @@ import { useEffect, type ReactNode } from 'react'
 import { notifySuccess } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { api } from '@/lib/api.server'
-import { getSessionToken, signedOut, umkmallSession } from '@/lib/session.server'
-import { devSignInUser, failureText } from '@/lib/sign-in'
+import { getSessionToken, signedOut, takeLandingPath, umkmallSession } from '@/lib/session.server'
+import { devSignInUser, failureText, RETURN_PATHS } from '@/lib/sign-in'
 import { MetricWidgets } from './laporan/-dashboard-widgets'
 
 const getHome = createServerFn().handler(async () => {
@@ -16,8 +16,13 @@ const getHome = createServerFn().handler(async () => {
   if (!getSessionToken()) {
     // Signed in to UMKMall already (shared cookie, UMK-1945): straight to the dashboard, unless just signed out here.
     // The redirect reloads the page so the shell reads the new session too.
-    const result = signedOut() ? 401 : await umkmallSession()
-    if (typeof result === 'string') throw redirect({ to: '/', search: { masuk: 1 } })
+    // A sign-in, not a refresh (UMK-2054): the owner came here without a POS session, usually from UMKMall's login.
+    const result = signedOut() ? 401 : await umkmallSession(true)
+    // Lands on the page that asked for the sign-in ("Lupa PIN"), else here with the "Berhasil masuk" toast.
+    if (typeof result === 'string')
+      throw takeLandingPath() === RETURN_PATHS.keamanan
+        ? redirect({ to: '/pengaturan/keamanan', search: { lupa: 1 } })
+        : redirect({ to: '/', search: { masuk: 1 } })
     return { signedIn: false as const, devSignIn, unreachable: result === 0 || result >= 500 }
   }
   const res = await api('/catalog/products?perPage=1')

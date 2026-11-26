@@ -12,10 +12,14 @@ export function parseBody<T extends z.ZodTypeAny>(
 
 const Uuid = z.string().uuid();
 
-/** A path id that is not a UUID is no row of this store: 404, not a 500 from Postgres. */
+/**
+ * A path id that is not a UUID is no row of this store: 404, not a 500 from Postgres. Answers the id in lower
+ * case, the form Postgres and the session hold: an upper-case uuid still matches its row, so a comparison with
+ * the session's actor id must not depend on the caller's spelling (UMK-2054).
+ */
 export function parseId(id: string): string {
   if (!Uuid.safeParse(id).success) throw new NotFoundException();
-  return id;
+  return id.toLowerCase();
 }
 
 export function isUniqueViolation(err: unknown): boolean {

@@ -86,7 +86,7 @@ describe('cash rounding to the next Rp100 (UMK-1993)', () => {
       phone: '081234567890',
     }).expect(201);
     await put(s.auth, '/sales/settings', { taxBps }).expect(200);
-    await put(s.auth, '/void-pin', { pin: OWNER_PIN }).expect(200);
+    await put(s.freshAuth, '/void-pin', { pin: OWNER_PIN }).expect(200);
     const shift = await post(s.auth, '/shifts/open', {
       openingCash: 100_000,
     }).expect(201);

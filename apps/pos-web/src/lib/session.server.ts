@@ -1,5 +1,5 @@
 import { appendResponseHeader, deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
-import { loginUrl, sessionKind } from './sign-in'
+import { landingPath, loginUrl, sessionKind, type ReturnKey } from './sign-in'
 
 // The POS session lives only in this httpOnly cookie; the browser never sees the token in JS or a URL.
 const COOKIE = 'pos_session'
@@ -84,13 +84,17 @@ const UMKMALL_COOKIES = ['auth_token', 'auth_refresh'] as const
 /**
  * Owner sign-in and refresh from the shared UMKMall login cookie (UMK-1945). 401 without a call when the browser
  * sent neither cookie (localhost, or not signed in to UMKMall).
+ *
+ * `signIn` (UMK-2054) is true only where a person signs in (the sign-in page, the landing after UMKMall's login):
+ * pos-api then marks the session fresh for a few minutes, which resetting or unlocking the owner's PIN asks for.
+ * The refresh of a session (`api()` after a 401) never passes it.
  */
-export async function umkmallSession(): Promise<string | number> {
+export async function umkmallSession(signIn = false): Promise<string | number> {
   const cookie = UMKMALL_COOKIES.flatMap((name) => {
     const value = getCookie(name)
     return value === undefined ? [] : [`${name}=${value}`]
   }).join('; ')
-  return cookie ? startSession('/auth/umkmall/session', {}, { cookie }) : 401
+  return cookie ? startSession('/auth/umkmall/session', signIn ? { signIn: true } : {}, { cookie }) : 401
 }
 
 /** UMKMall's login page, coming back to the POS home afterwards; `/` (the POS sign-in page) when not configured. */
@@ -104,4 +108,24 @@ export const signedOut = () => getCookie(SIGNED_OUT) === '1'
 export function setSignedOut(on: boolean): void {
   if (!on) return deleteCookie(SIGNED_OUT, { path: '/' })
   setCookie(SIGNED_OUT, '1', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' })
+}
+
+// Set by /masuk/ulang (UMK-2054): the next sign-in lands on the page that asked for it. Holds a key of RETURN_PATHS.
+const RETURN_TO = 'pos_kembali'
+
+export function setReturnTo(key: ReturnKey): void {
+  setCookie(RETURN_TO, key, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 5 * 60,
+  })
+}
+
+/** Where the sign-in that just succeeded lands; the cookie is used once. */
+export function takeLandingPath(): string {
+  const key = getCookie(RETURN_TO)
+  if (key !== undefined) deleteCookie(RETURN_TO, { path: '/' })
+  return landingPath(key)
 }

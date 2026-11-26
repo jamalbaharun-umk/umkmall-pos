@@ -277,7 +277,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     await post(s.auth, '/shifts/open', { openingCash: 100_000 }).expect(201);
     await http()
       .put('/void-pin')
-      .set('Authorization', s.auth)
+      .set('Authorization', s.freshAuth)
       .send({ pin: OWNER_PIN })
       .expect(200);
     const qris = await method(s, 'QRIS Dinamis', 'fake_qris');
@@ -2169,14 +2169,54 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await asked()).toBe(before);
       expect((await voidsOf(saleId))[0].refund_status).toBe('failed');
 
-      await http()
-        .post(`/void-pin/${s.userId}/unlock`)
-        .set('Authorization', s.auth)
-        .expect(200);
+      // UMK-2054: the session that is locked out cannot clear its own lock; an owner who just signed in can.
+      const unlock = (auth: string) =>
+        http().post(`/void-pin/${s.userId}/unlock`).set('Authorization', auth);
+      const refused = await unlock(s.auth).expect(403);
+      expect(refused.body.code).toBe('fresh_sign_in_required');
+      await retry(s, saleId).expect(429);
+      await unlock(s.freshAuth).expect(200);
       const ok = await retry(s, saleId).expect(200);
       expect(ok.body.refundStatus).toBe('pending');
       expect(await asked()).toBe(before + 1);
       // Leave nothing in flight for the file's balance check.
+      await gateway(
+        s.tenantId,
+        'POST',
+        `/refunds/${(await paymentsOf(saleId))[0].refund_key}/succeed`,
+      );
+      await sync.tick(later());
+    });
+
+    it('UMK-2054 the owner session alone cannot get around the PIN of a retry: no removal, no new PIN, no unlock without a fresh sign-in', async () => {
+      const s = await shop();
+      const saleId = await paidSale(s);
+      await gatewaySettings('fail');
+      await refund(s, saleId).expect(201);
+      await gatewaySettings('pending');
+      const asked = async () => (await billOf(s, saleId)).refunds.length;
+      const before = await asked();
+      const mine = { approverId: s.userId, pin: '270183' };
+
+      // The reported way in: remove the PIN, make a new one, approve the retry with it.
+      const removed = await http()
+        .delete(`/void-pin/${s.userId}`)
+        .set('Authorization', s.auth)
+        .expect(403);
+      expect(removed.body.code).toBe('fresh_sign_in_required');
+      await http()
+        .put('/void-pin')
+        .set('Authorization', s.auth)
+        .send({ pin: mine.pin })
+        .expect(422);
+      const refused = await retry(s, saleId, mine).expect(422);
+      expect(refused.body.errors).toEqual({ pin: 'PIN salah' });
+      expect(await asked()).toBe(before);
+      expect((await voidsOf(saleId))[0].refund_status).toBe('failed');
+
+      // The owner's own PIN still approves it.
+      await retry(s, saleId).expect(200);
+      expect(await asked()).toBe(before + 1);
       await gateway(
         s.tenantId,
         'POST',

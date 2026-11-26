@@ -1,14 +1,17 @@
-import { Alert, Badge, Button, TextField } from '@umkmall/ui/primitives'
-import { createFileRoute, getRouteApi, useRouter } from '@tanstack/react-router'
+import { Alert, Badge, Button, Dialog, TextField } from '@umkmall/ui/primitives'
+import { createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router'
 import { useRef, useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { Empty, NoAccess, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { useCan, type Me } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { failureOf, pinDigits, pinSetErrors, lockText, type VoidFailure } from '../kasir/-void-helpers'
-import { loadSecurity, resetPin, setPin, unlockPin } from './-keamanan-api'
+import { loadSecurity, replaceForgottenPin, resetPin, setPin, unlockPin } from './-keamanan-api'
+import { freshSignInText, wrongOldPin, type FreshReason } from './-keamanan-helpers'
 
 export const Route = createFileRoute('/pengaturan/keamanan')({
+  // `lupa`: the owner pressed "Lupa PIN", signed in again and landed here to make a new PIN (UMK-2054).
+  validateSearch: (search): { lupa?: 1 } => (search.lupa ? { lupa: 1 } : {}),
   loader: () => loadSecurity(),
   pendingComponent: PageLoading,
   errorComponent: PageError,
@@ -19,28 +22,167 @@ const root = getRouteApi('__root__')
 
 /**
  * Keamanan: each admin's own 6-digit void PIN (UMK-1962). An actor holding `sales.void` sets and changes their own;
- * the owner also sees who has one, unlocks a locked admin and removes a forgotten PIN.
+ * the owner also sees who has one, unlocks a locked admin and removes an admin's forgotten PIN.
+ *
+ * The owner's own PIN (UMK-2054) is never changed by the session alone: the change form asks the old PIN, and
+ * "Lupa PIN" (also the first PIN and the owner's own lock) sends the owner to sign in again with UMKMall
+ * (`POST /masuk/ulang`), back to this page with `?lupa=1`, where a new PIN is made within 5 minutes.
  */
 function SecurityPage() {
   const { status, approvers } = Route.useLoaderData()
+  const { lupa } = Route.useSearch()
   const canSet = useCan('sales.void')
   const me = root.useLoaderData() as Me | null
   const isOwner = me?.actor.kind === 'owner'
+  const [fresh, setFresh] = useState<FreshReason | null>(null)
   return (
     <Page title="Keamanan" crumbs={[{ label: 'Pengaturan', to: '/pengaturan' }, { label: 'Keamanan' }]}>
       {!canSet || !status ? (
         <NoAccess permission="Menyetujui pembatalan struk" />
       ) : (
         <div className="flex flex-col gap-6">
-          <PinForm status={status} />
-          {approvers && <ApproverList approvers={approvers} selfId={me?.actor.id} isOwner={isOwner} />}
+          {isOwner && lupa && me ? (
+            <ForgotPinForm ownerId={me.actor.id} askSignIn={setFresh} />
+          ) : (
+            <PinForm status={status} isOwner={isOwner} askSignIn={setFresh} />
+          )}
+          {approvers && (
+            <ApproverList approvers={approvers} selfId={me?.actor.id} isOwner={isOwner} askSignIn={setFresh} />
+          )}
         </div>
       )}
+      <SignInAgainDialog reason={fresh} onClose={() => setFresh(null)} />
     </Page>
   )
 }
 
-function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | null } }) {
+/**
+ * "Masuk lagi": a full-page POST to `/masuk/ulang`, which drops the POS session and sends the owner to UMKMall's
+ * login; the sign-in that follows lands back here with `?lupa=1`.
+ */
+function SignInAgainDialog({ reason, onClose }: { reason: FreshReason | null; onClose: () => void }) {
+  const [busy, setBusy] = useState(false)
+  // The text stays while the dialog closes.
+  const last = useRef<FreshReason>('forgot')
+  if (reason) last.current = reason
+  const text = freshSignInText(last.current)
+  return (
+    <Dialog open={reason !== null} onOpenChange={(open) => !open && !busy && onClose()} title={text.title} size="small" centered>
+      <form method="post" action="/masuk/ulang" onSubmit={() => setBusy(true)} className="flex flex-col gap-4 px-6 pt-2 pb-6">
+        <p className="text-sm text-default-secondary">{text.body}</p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="outline" color="light" size="small" width="auto" disabled={busy} onClick={onClose}>
+            Batal
+          </Button>
+          <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
+            Masuk lagi
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  )
+}
+
+/** The owner after "Lupa PIN" and a new sign-in: a new PIN without the old one, within 5 minutes of signing in. */
+function ForgotPinForm({ ownerId, askSignIn }: { ownerId: string; askSignIn: (reason: FreshReason) => void }) {
+  const router = useRouter()
+  const navigate = useNavigate({ from: '/pengaturan/keamanan' })
+  const [pin, setPinText] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [errors, setErrors] = useState<Partial<Record<'pin' | 'confirm', string>>>({})
+  const [busy, setBusy] = useState(false)
+  const lock = useRef(false)
+
+  const leave = () => navigate({ search: {}, replace: true })
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (lock.current) return
+    const bad = pinSetErrors({ pin, confirm, currentPin: '' }, false)
+    setErrors(bad)
+    if (Object.keys(bad).length > 0) return
+    lock.current = true
+    setBusy(true)
+    const r = await replaceForgottenPin({ data: { actorId: ownerId, pin } }).catch(() => null)
+    setPinText('')
+    setConfirm('')
+    lock.current = false
+    setBusy(false)
+    if (!r) {
+      showError({ status: 0 }, 'menyimpan PIN baru')
+      return
+    }
+    if (r.ok) {
+      notifySuccess('PIN baru disimpan')
+      await router.invalidate()
+      await leave()
+      return
+    }
+    if (r.fresh) {
+      askSignIn('expired')
+      return
+    }
+    setErrors({ pin: r.failure.errors.pin })
+    showError(failureOf(r.failure), 'menyimpan PIN baru')
+    await router.invalidate()
+  }
+
+  return (
+    <Panel className="p-6">
+      <form noValidate onSubmit={submit} className="flex max-w-md flex-col gap-4">
+        <h2 className="text-base font-semibold">Buat PIN baru</h2>
+        <Alert variant="info" size="small">
+          Anda sudah masuk lagi dengan akun UMKMall. Buat PIN baru dalam 5 menit sejak masuk. PIN lama dan kuncinya
+          dihapus saat PIN baru disimpan.
+        </Alert>
+        <TextField
+          label="PIN baru (6 angka)"
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={6}
+          value={pin}
+          onChange={(e) => {
+            setPinText(pinDigits(e.target.value))
+            setErrors((x) => ({ ...x, pin: undefined }))
+          }}
+          error={errors.pin}
+        />
+        <TextField
+          label="Ulangi PIN baru"
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={6}
+          value={confirm}
+          onChange={(e) => {
+            setConfirm(pinDigits(e.target.value))
+            setErrors((x) => ({ ...x, confirm: undefined }))
+          }}
+          error={errors.confirm}
+        />
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="outline" color="light" width="auto" disabled={busy} onClick={() => void leave()}>
+            Batal
+          </Button>
+          <Button htmlType="submit" width="auto" isLoading={busy}>
+            Simpan PIN baru
+          </Button>
+        </div>
+      </form>
+    </Panel>
+  )
+}
+
+function PinForm({
+  status,
+  isOwner,
+  askSignIn,
+}: {
+  status: { hasPin: boolean; lockedUntil: string | null }
+  isOwner: boolean
+  askSignIn: (reason: FreshReason) => void
+}) {
   const router = useRouter()
   const [currentPin, setCurrentPin] = useState('')
   const [pin, setPinText] = useState('')
@@ -77,10 +219,16 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
       await router.invalidate()
       return
     }
+    // The owner's first PIN has no old PIN to ask for: pos-api wants a sign-in of the last 5 minutes instead.
+    if (r.fresh) {
+      askSignIn('first')
+      return
+    }
     const f = r.failure
     const field = { currentPin: f.errors.currentPin, pin: f.errors.pin }
     setErrors(field)
-    showError(failureOf(f), 'menyimpan PIN')
+    const oldPinWrong = f.kind === 'invalid' && f.errors.currentPin === 'PIN salah'
+    showError(oldPinWrong ? wrongOldPin(isOwner) : failureOf(f), 'menyimpan PIN')
     if (f.kind === 'locked') await router.invalidate()
   }
 
@@ -118,6 +266,9 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
             error={errors.currentPin}
           />
         )}
+        {status.hasPin && !isOwner && (
+          <p className="text-sm text-default-secondary">Lupa PIN lama? Minta pemilik menghapus PIN Anda, lalu buat PIN baru di sini.</p>
+        )}
         <TextField
           label={status.hasPin ? 'PIN baru (6 angka)' : 'PIN (6 angka)'}
           type="password"
@@ -147,9 +298,14 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
         <Alert variant="info" size="small">
           Jangan pakai tanggal lahir atau angka berurutan. Jangan beritahu kasir. Salah 5 kali mengunci PIN 5 menit.
         </Alert>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {isOwner && (status.hasPin || locked) && (
+            <Button type="text" color="primary" width="auto" disabled={busy} onClick={() => askSignIn('forgot')}>
+              Lupa PIN?
+            </Button>
+          )}
           <Button htmlType="submit" width="auto" isLoading={busy}>
-            Simpan PIN
+            {status.hasPin ? 'Ganti PIN' : 'Simpan PIN'}
           </Button>
         </div>
       </form>
@@ -159,18 +315,37 @@ function PinForm({ status }: { status: { hasPin: boolean; lockedUntil: string | 
 
 type ApproverRow = { id: string; kind: 'owner' | 'cashier'; name: string; hasPin: boolean; lockedUntil: string | null }
 
-function ApproverList({ approvers, selfId, isOwner }: { approvers: ApproverRow[]; selfId?: string; isOwner: boolean }) {
+function ApproverList({
+  approvers,
+  selfId,
+  isOwner,
+  askSignIn,
+}: {
+  approvers: ApproverRow[]
+  selfId?: string
+  isOwner: boolean
+  askSignIn: (reason: FreshReason) => void
+}) {
   const router = useRouter()
   const confirm = useConfirm()
   const [busyId, setBusyId] = useState<string>()
 
-  const act = async (id: string, run: () => Promise<{ ok: boolean; failure?: VoidFailure }>, done: string) => {
+  const act = async (
+    id: string,
+    run: () => Promise<{ ok: boolean; failure?: VoidFailure; fresh?: true }>,
+    done: string,
+  ) => {
     setBusyId(id)
     const r = await run().catch(() => null)
     setBusyId(undefined)
     if (r?.ok) {
       notifySuccess(done)
       await router.invalidate()
+      return undefined
+    }
+    // The owner's own lock is cleared only after a new sign-in (UMK-2054): offer it instead of an error.
+    if (r?.fresh) {
+      askSignIn('unlock')
       return undefined
     }
     return r?.failure ? failureOf(r.failure) : { status: 0 }

@@ -701,7 +701,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       const { store, productId } = await tehStore(100);
       await http()
         .put('/void-pin')
-        .set('Authorization', store.auth)
+        .set('Authorization', store.freshAuth)
         .send({ pin: '482913' })
         .expect(200);
       const sale = await sell(store.auth, {
