@@ -94,4 +94,11 @@ describe('manualEntries', () => {
     ]
     expect(manualEntries(rows).map((r) => r.kind)).toEqual(['manual_out', 'manual_in'])
   })
+  it('also lists a collector deposit the drawer received', () => {
+    const rows = [
+      { kind: 'manual_in', createdAt: '2026-11-25T02:30:00Z' },
+      { kind: 'collector_deposit', createdAt: '2026-11-25T05:00:00Z' },
+    ]
+    expect(manualEntries(rows).map((r) => r.kind)).toEqual(['collector_deposit', 'manual_in'])
+  })
 })
