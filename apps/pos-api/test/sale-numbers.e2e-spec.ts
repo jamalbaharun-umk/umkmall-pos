@@ -968,8 +968,9 @@ describe('hold number and receipt number (UMK-2038)', () => {
       expect(refused.body).toMatchObject({
         code: 'sales_awaiting_payment',
         message: 'Masih ada penjualan yang menunggu pembayaran: #2, #3',
-        saleNumbers: [2, 3],
       });
+      // UMK-2055: the legacy `saleNumbers` is gone (hold numbers restart every day, so it could read [1, 1]).
+      expect(refused.body).not.toHaveProperty('saleNumbers');
       expect(refused.body.sales).toEqual([
         {
           id: qr,

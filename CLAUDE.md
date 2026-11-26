@@ -357,7 +357,7 @@ Plan: [docs/plans/2026-11-24-007-feat-umk-1991-pos-payment-integration-plan.md](
   cancelled sales with `reason` (`sales.cancel_reason`, written by `applyToSale`; its `status` says `expired` for
   a QR or VA that ran out, the sale's own status stays `cancelled`). A new way to cancel a sale gives its reason. Oldest first, 50 a page: with `hasMore` the till sends `asOf` and `afterId`
   back until it is false. A shift that cannot close for waiting sales answers 409 `sales_awaiting_payment` with
-  those sales (UMK-2044). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
+  those sales (UMK-2044; the old `saleNumbers` field is gone, UMK-2055). `GET /sales/:id/receipt` is for receipts only: 409 `not_a_receipt` for a waiting or
   cancelled sale, so a hold number is never printed as a receipt number.
 - **Migrations `sale_hold_number` (0036) and `hold_number_daily` (0037) are not for a rolling deploy:** the
   version before 0036 violates `sales_number_ck` on every sale, and the one before 0037 writes a hold number

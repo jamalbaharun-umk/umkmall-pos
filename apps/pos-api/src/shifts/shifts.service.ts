@@ -269,7 +269,6 @@ export class ShiftsService {
               ),
             }),
           ),
-          saleNumbers: waiting.map((w) => w.holdNumber),
         });
       const t = await this.totals(tx, shift.id);
       const cash = await this.cashOf(tx, s.tenantId, shift.id);
