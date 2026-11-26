@@ -167,3 +167,38 @@ sees the paid order's items still on screen (the stored bill is cleared, the mou
 
 Not exercised: no browser run. A request that never answers at all (no timeout on the server function) keeps "Sudah
 saya cek" disabled until a reload.
+
+### Sixth round: follow-ups UMK-2048 to UMK-2052
+
+- **UMK-2048** A paid answer is kept in the state (`completed`, never stored). The open register clears its cart (unless
+  it was edited since), shows the receipt and renews the key from it, also when the request was sent from a screen that
+  was left. While a request under the key is out the pay button is disabled (`requestOut`, `planSend` answers
+  `request_out`).
+- **UMK-2049** A held cash/EDC sale is `recorded` on reload and reopen: Bayar never replays it. An online held sale is
+  still repeated.
+- **UMK-2050** `rehydrate` takes a fresh key when the stored state is clean (no doubt, held, tracked or recorded sale).
+- **UMK-2051** The server fetch in `api.server.ts` is cut after 15 s (`POS_API_TIMEOUT_MS`), the same "no answer" as an
+  unreachable server; the disabled "Sudah saya cek" says "Menunggu jawaban permintaan sebelumnya".
+- **UMK-2052** The storage-failed warning is also on the register page and the waiting list.
+
+Not exercised: no browser run (the guards are pure tests and source-grep tests).
+
+#### Manual QA checklist (phone and desktop)
+
+Run each on a phone (portrait, Chrome Android or Safari iOS) and on a desktop browser. Use the fake gateway for QRIS/VA.
+
+- [ ] Cash sale paid at once: success dialog, cart empty, next sale works.
+- [ ] Reload mid-request (throttle the network to Slow 3G, press Bayar, reload): after reload the notice asks to check
+  Riwayat; "Sudah saya cek" starts a new order; no second sale appears in Riwayat.
+- [ ] Leave and return mid-request (press Bayar on slow network, open Riwayat, come back): the pay button stays
+  disabled and "Sudah saya cek" shows "Menunggu jawaban permintaan sebelumnya"; when the answer arrives the cart is
+  cleared and the receipt dialog shows.
+- [ ] Request that never answers (server stopped): after about 15 s the error dialog offers a retry; retry sends the
+  same key and records one sale.
+- [ ] Offline: switch the network off, press Bayar: error dialog, nothing recorded twice after going back online.
+- [ ] Held cash sale (stop payment-api so the charge gets 503): reload: Bayar is not replayed, check Riwayat first.
+- [ ] Clean register, reload, ring a sale: it is written once under a new key.
+- [ ] Two tabs: ring up a sale in tab A; tab B has its own cart and its own key and shows nothing of A's request.
+- [ ] Two tabs: pick the same waiting QRIS sale in both; paying it finishes one, the other says it ended.
+- [ ] Private window (storage blocked): the warning shows on the register page, the pay dialog and "Menunggu".
+- [ ] Every screen above has its loading, empty and error state in Indonesian, with "Anda" in addressing the cashier.
