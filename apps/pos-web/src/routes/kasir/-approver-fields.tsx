@@ -66,17 +66,18 @@ type FieldProps = {
 }
 
 /** The 6-digit PIN field. The PIN is never stored beyond the parent's state. */
-export function PinField({ pin, error, onPin, label = 'PIN admin (6 angka)' }: { pin: string; error?: string; onPin: (pin: string) => void; label?: string }) {
+export function PinField({ pin, error, onPin, label = 'PIN admin (6 angka)', disabled }: { pin: string; error?: string; onPin: (pin: string) => void; label?: string; disabled?: boolean }) {
   return (
     <TextField
       label={label}
       type="password"
       inputMode="numeric"
-      autoComplete="off"
+      autoComplete="one-time-code"
       maxLength={6}
       value={pin}
       onChange={(e) => onPin(pinDigits(e.target.value))}
       error={error}
+      disabled={disabled}
     />
   )
 }

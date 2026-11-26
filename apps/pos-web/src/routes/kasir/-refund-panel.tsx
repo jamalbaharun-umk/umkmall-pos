@@ -13,7 +13,7 @@ import { MANUAL_NOTE_MAX, manualNoteError, refundStateText } from './-void-helpe
 /**
  * Where the refund of a paid QRIS or VA sale stands (UMK-1991): pending, succeeded or refused, with the next step.
  * "Coba lagi" and "Dikembalikan manual" are the owner's alone (approved design 27), the second after the money went
- * back outside the system. "Coba lagi" asks an admin's PIN (UMK-2040, `RetryRefundDialog`). Every action ends in a success toast or the error dialog.
+ * back outside the system. "Coba lagi" asks the owner's own PIN (UMK-2040, `RetryRefundDialog`). Every action ends in a success toast or the error dialog.
  */
 export function RefundPanel({ saleVoid, onChanged }: { saleVoid: SaleVoid; onChanged: () => void }) {
   // Design 27: only the owner retries or marks a refund returned by hand; others see the status.

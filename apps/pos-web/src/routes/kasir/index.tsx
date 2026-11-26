@@ -70,7 +70,7 @@ import {
 import { getSalePayment } from './-online-api'
 import { SinceNotices } from './-since-notices'
 import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
-import { holdLabel, keepPolling, parsePayment, receiptLabel, saleFailure, type ResumeDecision, type SalePayment } from './-online'
+import { closedLabel, holdLabel, keepPolling, parsePayment, receiptLabel, saleFailure, type ResumeDecision, type SalePayment } from './-online'
 import {
   canAck,
   finishPlan,
@@ -78,6 +78,7 @@ import {
   gateOf,
   HELD_SAME_TEXT,
   HELD_STOCK_HINT,
+  heldBank,
   holdsStock,
   isOwn,
   NOT_STORED_TEXT,
@@ -227,7 +228,7 @@ function Register({
       .catch(lostOpen)
       .then((r) => {
         if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'membuka penjualan menunggu' })
-        if (!keepPolling(r.data)) return notifySuccess(`Penjualan ${holdLabel(r.data.holdNumber)} sudah selesai atau ditutup`)
+        if (!keepPolling(r.data)) return notifySuccess(`${closedLabel(r.data.holdNumber)} sudah selesai atau ditutup`)
         track(r.data, { type: 'sale_picked', saleId: r.data.saleId })
       })
   }, [openWaiting])
@@ -317,7 +318,7 @@ function Register({
       notifySuccess(
         d.reversed
           ? `${receiptLabel(d.receiptNumber)} sudah dibatalkan dan dananya dikembalikan selagi kasir ini terputus. Lihat di Riwayat.`
-          : `Penjualan ${holdLabel(d.holdNumber)} sudah ditutup tanpa pembayaran. Stok kembali.`,
+          : `${closedLabel(d.holdNumber)} sudah ditutup tanpa pembayaran. Stok kembali.`,
       )
   }
   const checks = useResumeChecks(toCheck(pend.state), onResume)
@@ -991,7 +992,8 @@ function PayDialog({
   const [methodId, setMethodId] = useState(() => methods.find((m) => m.kind === 'cash')?.id ?? methods[0]?.id ?? '')
   const method = methods.find((m) => m.id === methodId)
   // UMK-2037: a virtual account is made for one bank, chosen before it is created; a method without banks needs none.
-  const [bankCode, setBankCode] = useState('')
+  // A held VA sale (written, its charge unanswered) is repeated with the same bank: it is chosen again for the cashier.
+  const [bankCode, setBankCode] = useState(() => heldBank(pend.state, methodId))
   const bankList = useMemo(() => (method?.kind === 'online' ? banksFor(banks, method.gatewayMethod) : []), [banks, method])
   // Kasbon: paid may be 0 and the rest becomes the member's receivable; debit/wallet: exactly the total.
   const isCredit = method?.kind === 'credit'
@@ -1146,7 +1148,7 @@ function PayDialog({
             value={methodId}
             onChange={(v) => {
               setMethodId(v)
-              setBankCode('')
+              setBankCode(heldBank(pend.state, v))
               setError(undefined)
             }}
           />

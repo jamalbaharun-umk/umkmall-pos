@@ -8,7 +8,7 @@ import { PinField } from './-approver-fields'
 import { loadOwnPin, retryRefund, type OwnPin } from './-online-api'
 import { useLost } from './-use-lost'
 import type { SaleVoid } from './-void-api'
-import { lockText, failureOf, isWrongPin, keepsPin, retryBody, retryFormErrors, type VoidFormErrors } from './-void-helpers'
+import { lockText, isWrongPin, keepsPin, retryBody, retryErrorOf, retryFormErrors, type VoidFormErrors } from './-void-helpers'
 
 type Props = {
   open: boolean
@@ -58,7 +58,15 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
   }, [open])
 
   // The PIN is the owner's own: none set, or locked, means nothing can be typed yet. An unreadable state does not block.
-  const ownerBlock = own.s !== 'ready' ? null : !own.pin.hasPin ? 'no_pin' : lockText(own.pin.lockedUntil)
+  const lockedUntil = own.s === 'ready' ? own.pin.lockedUntil : null
+  const [now, setNow] = useState(() => Date.now())
+  // The lock ends by itself: tick while it lasts, so the minutes shrink and the button comes back without a reload.
+  useEffect(() => {
+    if (!lockedUntil) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [lockedUntil])
+  const ownerBlock = own.s !== 'ready' ? null : !own.pin.hasPin ? 'no_pin' : lockText(lockedUntil, now)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -85,8 +93,8 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
     const f = answer.failure
     if (isWrongPin(f)) setErrors({ pin: 'PIN salah. Periksa PIN pemilik lalu coba lagi.' })
     // Every refusal is also explained in the error dialog: a wrong PIN, a lock (with the wait), a 403, a 409.
-    showError(answer.code ? { ...failureOf(f), code: answer.code } : failureOf(f), 'mengajukan refund lagi')
-    // A lock or a PIN count changed: show who can still approve.
+    showError(answer.code ? { ...retryErrorOf(f), code: answer.code } : retryErrorOf(f), 'mengajukan refund lagi')
+    // A lock or a PIN count changed: read the owner's PIN state again.
     if (f.kind === 'locked' || isWrongPin(f)) loadPinState()
     if (f.kind === 'done') onChanged()
   }
@@ -134,6 +142,7 @@ export function RetryRefundDialog({ open, onClose, onChanged, sale }: Props) {
         )}
         <PinField
           label="PIN Anda sebagai pemilik (6 angka)"
+          disabled={ownerBlock !== null}
           pin={pin}
           error={errors.pin}
           onPin={(v) => {

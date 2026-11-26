@@ -106,7 +106,7 @@ export function noticeOf(s: EndedSale, rupiah: (n: number) => string): Notice {
   const amount = rupiah(s.amountDue)
   const method = s.paymentMethod ? ` lewat ${s.paymentMethod}` : ''
   const receipt = s.receiptNumber !== null ? `Struk #${s.receiptNumber}` : 'Struk'
-  const hold = s.holdNumber !== null ? `Menunggu #${s.holdNumber}` : 'Penjualan menunggu'
+  const hold = s.holdNumber !== null ? `Nomor tunggu #${s.holdNumber}` : 'Nomor tunggu'
   switch (s.status) {
     case 'completed':
       return {
@@ -146,19 +146,36 @@ export function cancelReasonText(reason: string | null): string {
 export const SINCE_KEY = 'pos.kasir.since'
 type Store = Pick<Storage, 'getItem' | 'setItem'>
 
-/** The remembered `asOf`, or null when there is none or it is not a time. Never throws. */
-export function readSince(store: Store | null): string | null {
+/**
+ * What the till keeps: the cursor (`since`, `afterId`) and the keys of what it already told, so a remount, a reload or
+ * a tab that was hidden does not announce the same sale again when the last page's overlap (10 s) repeats it.
+ * `seen` is `id:status` keys; `own` are sale ids this till showed or ended itself.
+ */
+export type Saved = { since: string; afterId: string | null; seen: string[]; own: string[] }
+
+/** The most keys kept of each: the overlap is seconds, this is generous and keeps the record small. */
+export const KEEP_KEYS = 200
+
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 80).slice(-KEEP_KEYS) : []
+
+/** The remembered record, or null when there is none or it is not usable. The first format (a bare time) still reads. Never throws. */
+export function readSaved(store: Store | null): Saved | null {
   try {
-    const v = store?.getItem(SINCE_KEY) ?? null
-    return v && !Number.isNaN(Date.parse(v)) ? v : null
+    const raw = store?.getItem(SINCE_KEY) ?? null
+    if (!raw) return null
+    if (!raw.startsWith('{')) return Number.isNaN(Date.parse(raw)) ? null : { since: raw, afterId: null, seen: [], own: [] }
+    const o = JSON.parse(raw) as Record<string, unknown>
+    if (typeof o.since !== 'string' || Number.isNaN(Date.parse(o.since))) return null
+    return { since: o.since, afterId: typeof o.afterId === 'string' && o.afterId.length <= 80 ? o.afterId : null, seen: strings(o.seen), own: strings(o.own) }
   } catch {
     return null
   }
 }
 
-export function writeSince(store: Store | null, asOf: string): void {
+export function writeSaved(store: Store | null, saved: Saved): void {
   try {
-    store?.setItem(SINCE_KEY, asOf)
+    store?.setItem(SINCE_KEY, JSON.stringify({ ...saved, seen: saved.seen.slice(-KEEP_KEYS), own: saved.own.slice(-KEEP_KEYS) }))
   } catch {
     // private window or full storage: the cursor then lives only until the screen closes
   }

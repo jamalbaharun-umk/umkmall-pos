@@ -300,6 +300,8 @@ export function numberBadge(kind: 'waiting' | 'paid' | 'closed', p: Pick<SalePay
 
 /** "Struk #n" or, while the receipt number is not there yet, just "Struk". */
 export const receiptLabel = (n: number | null | undefined) => (typeof n === 'number' ? `Struk #${n}` : 'Struk')
+/** "Nomor tunggu #n": a waiting sale that has ended (closed, expired or cancelled) is no longer "Menunggu". */
+export const closedLabel = (n: number | null | undefined) => (typeof n === 'number' ? `Nomor tunggu #${n}` : 'Nomor tunggu')
 /** "Menunggu #n" for a sale's hold number. */
 export const holdLabel = (n: number | null | undefined) => (typeof n === 'number' ? `Menunggu #${n}` : 'Menunggu')
 

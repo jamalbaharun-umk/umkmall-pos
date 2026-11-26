@@ -14,6 +14,7 @@ import {
   refundStateText,
   manualNoteError,
   retryBody,
+  retryErrorOf,
   retryFailure,
   retryFormErrors,
   voidBody,
@@ -234,5 +235,22 @@ describe('refund retry, UMK-2040', () => {
     expect(retryFailure(404, null).error).toMatch(/Refund untuk struk ini/)
     expect(retryFailure(409, null).kind).toBe('done')
     expect(retryFailure(0, null).kind).toBe('offline')
+  })
+})
+
+describe('retryErrorOf: the owner\'s own PIN', () => {
+  it('a wrong PIN says to check the owner\'s PIN, never to ask another admin', () => {
+    const e = retryErrorOf(retryFailure(422, { message: 'x', errors: { pin: 'PIN salah' } }))
+    expect(e.todo).toBe('Periksa PIN pemilik lalu coba lagi.')
+    expect(e.code).toBeUndefined()
+    expect(JSON.stringify(e)).not.toMatch(/admin lain/)
+  })
+  it('a lock keeps its wait and says it is the owner\'s PIN', () => {
+    const e = retryErrorOf(retryFailure(429, { retryAfter: 240 }))
+    expect(e).toMatchObject({ status: 429, retryAfter: 240 })
+    expect(e.error).toMatch(/PIN pemilik/)
+  })
+  it('other refusals keep the shared mapping', () => {
+    expect(retryErrorOf(retryFailure(403, null))).toEqual({ status: 403 })
   })
 })

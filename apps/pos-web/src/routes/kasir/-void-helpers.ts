@@ -269,3 +269,14 @@ export function retryFailure(status: number, body: unknown): VoidFailure {
     return { ...f, error: 'Refund ini tidak lagi berstatus gagal, jadi tidak bisa diminta lagi. Muat ulang halaman.' }
   return f
 }
+
+/**
+ * The retry's failure as the error dialog reads it. The approver is the owner's own PIN, so a wrong PIN never says
+ * "ask another admin" (the generic PIN text does) and a lock says whose PIN is locked and for how long.
+ */
+export function retryErrorOf(f: VoidFailure): FailureLike {
+  if (isWrongPin(f)) return { status: 422, error: 'PIN yang dimasukkan tidak cocok.', todo: 'Periksa PIN pemilik lalu coba lagi.' }
+  if (f.kind === 'locked')
+    return { status: 429, retryAfter: f.retryAfter, error: 'PIN pemilik dikunci karena terlalu banyak PIN salah.' }
+  return failureOf(f)
+}

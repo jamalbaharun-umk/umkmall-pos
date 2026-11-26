@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { rupiah } from '@/components/pos-page'
 import { notifySuccess } from '@/lib/feedback'
 import { loadPaidSince } from './-online-api'
-import { advance, freshNews, newsKey, noticeOf, readSince, writeSince, type Cursor, type Notice } from './-since'
+import { advance, freshNews, newsKey, noticeOf, readSaved, writeSaved, type Cursor, type Notice } from './-since'
 import { useLost } from './-use-lost'
 
 const POLL_MS = 15_000
@@ -30,12 +30,24 @@ export function SinceNotices({ ownIds }: { ownIds: string[] }) {
   const [notices, setNotices] = useState<Notice[]>([])
   const cursor = useRef<Cursor | null>(null)
   const seen = useRef(new Set<string>())
+  const saveRef = useRef<() => void>(() => undefined)
   for (const id of ownIds) ownEver.add(id)
+  // A sale this till just tracked or finished is remembered at once, so a reload before the next poll keeps it out of the news.
+  const ownKey = ownIds.join(',')
+  useEffect(() => saveRef.current(), [ownKey])
 
   useEffect(() => {
     let gone = false
     let running = false
-    cursor.current = { since: readSince(store()) ?? new Date().toISOString(), afterId: null }
+    // After a remount or a reload the keys told in the overlap window come back with the cursor.
+    const saved = readSaved(store())
+    cursor.current = saved ? { since: saved.since, afterId: saved.afterId } : { since: new Date().toISOString(), afterId: null }
+    for (const k of saved?.seen ?? []) seen.current.add(k)
+    for (const id of saved?.own ?? []) ownEver.add(id)
+    const save = () => {
+      if (cursor.current) writeSaved(store(), { ...cursor.current, seen: [...seen.current], own: [...ownEver] })
+    }
+    saveRef.current = save
     const poll = async () => {
       if (running || gone || document.visibilityState === 'hidden') return
       running = true
@@ -54,7 +66,7 @@ export function SinceNotices({ ownIds }: { ownIds: string[] }) {
           const news = freshNews(r.data.items, seen.current, ownEver)
           for (const s of r.data.items) seen.current.add(newsKey(s))
           cursor.current = next
-          writeSince(store(), next.since)
+          save()
           if (news.length > 0) {
             setNotices((n) => [...n, ...news.map((s) => noticeOf(s, rupiah))])
             const paid = news.filter((s) => s.status === 'completed').length

@@ -188,6 +188,9 @@ export function gateOf(s: PendingState): 'none' | 'checking' | 'unreachable' {
   if (s.aside || !s.sales.some(needsCheck)) return 'none'
   return s.sales.some((t) => t.phase === 'unreachable') ? 'unreachable' : 'checking'
 }
+/** The bank of a held online sale of this method: the repeat of its request must send the same body, so it is offered again. */
+export const heldBank = (s: PendingState, methodId: string): string =>
+  s.held?.online && s.held.methodId === methodId ? (s.held.bank ?? '') : ''
 /** An online sale written but never charged still holds its stock until the job closes it. */
 export const holdsStock = (s: PendingState): boolean => s.sales.some((t) => t.phase === 'held')
 

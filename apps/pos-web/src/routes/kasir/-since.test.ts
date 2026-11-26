@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { advance, freshNews, noticeOf, parsePaidSince, readSince, SINCE_KEY, writeSince, type EndedSale } from './-since'
+import { advance, freshNews, noticeOf, parsePaidSince, KEEP_KEYS, readSaved, SINCE_KEY, writeSaved, type EndedSale } from './-since'
 
 const rp = (n: number) => `Rp${n}`
 const row = (o: Record<string, unknown> = {}) => ({
@@ -85,7 +85,7 @@ describe('noticeOf: every status says what it is', () => {
     expect(n({ status: 'void' }).title).toMatch(/direfund/)
     const e = n({ status: 'expired', receiptNumber: null, reason: 'expired' })
     expect(e.title).toBe('Kedaluwarsa')
-    expect(e.body).toMatch(/Menunggu #2/)
+    expect(e.body).toMatch(/Nomor tunggu #2/)
     expect(e.body).not.toMatch(/Struk/)
     expect(n({ status: 'cancelled', receiptNumber: null, reason: 'failed' }).body).toMatch(/gagal/)
     expect(n({ status: 'cancelled', receiptNumber: null, reason: 'cashier' }).body).toMatch(/dari kasir/)
@@ -94,23 +94,50 @@ describe('noticeOf: every status says what it is', () => {
   })
 })
 
-describe('the remembered cursor', () => {
+describe('the remembered record', () => {
   const mem = () => {
     const m = new Map<string, string>()
     return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) }
   }
-  it('is written and read back; garbage and a missing store read as none', () => {
+  const rec = { since: '2026-11-26T03:00:00.000Z', afterId: 'z', seen: ['a:completed'], own: ['b'] }
+  it('keeps the cursor with its afterId and the keys told in the overlap, and reads them back', () => {
     const s = mem()
-    expect(readSince(s)).toBeNull()
-    writeSince(s, '2026-11-26T03:00:00.000Z')
-    expect(readSince(s)).toBe('2026-11-26T03:00:00.000Z')
+    expect(readSaved(s)).toBeNull()
+    writeSaved(s, rec)
+    expect(readSaved(s)).toEqual(rec)
+  })
+  it('a remount does not announce again what the overlap repeats (seen and own come back)', () => {
+    const s = mem()
+    writeSaved(s, rec)
+    const back = readSaved(s)!
+    const items = [sale(), sale({ id: 'b' })]
+    expect(freshNews(items, new Set(back.seen), new Set(back.own))).toEqual([])
+  })
+  it('reads the first format (a bare time); garbage, a bad time and a missing store read as none', () => {
+    const s = mem()
+    s.setItem(SINCE_KEY, '2026-11-26T03:00:00.000Z')
+    expect(readSaved(s)).toEqual({ since: '2026-11-26T03:00:00.000Z', afterId: null, seen: [], own: [] })
     s.setItem(SINCE_KEY, 'not a time')
-    expect(readSince(s)).toBeNull()
-    expect(readSince(null)).toBeNull()
+    expect(readSaved(s)).toBeNull()
+    s.setItem(SINCE_KEY, '{"since":"nope"}')
+    expect(readSaved(s)).toBeNull()
+    s.setItem(SINCE_KEY, '{broken')
+    expect(readSaved(s)).toBeNull()
+    expect(readSaved(null)).toBeNull()
+  })
+  it('keeps only the latest keys and drops non-strings', () => {
+    const s = mem()
+    const many = Array.from({ length: KEEP_KEYS + 50 }, (_, i) => `k${i}`)
+    writeSaved(s, { ...rec, seen: many })
+    const back = readSaved(s)!
+    expect(back.seen).toHaveLength(KEEP_KEYS)
+    expect(back.seen.at(-1)).toBe(`k${KEEP_KEYS + 49}`)
+    s.setItem(SINCE_KEY, JSON.stringify({ since: rec.since, seen: [1, 'x', null], own: 'no' }))
+    expect(readSaved(s)).toMatchObject({ seen: ['x'], own: [] })
   })
   it('a storage that throws never breaks the till', () => {
     const bad = { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('full') } }
-    expect(readSince(bad)).toBeNull()
-    expect(() => writeSince(bad, '2026-11-26T03:00:00Z')).not.toThrow()
+    expect(readSaved(bad)).toBeNull()
+    expect(() => writeSaved(bad, rec)).not.toThrow()
   })
 })

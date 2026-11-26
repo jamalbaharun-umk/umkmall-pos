@@ -32,6 +32,7 @@ import {
   isQris,
   keepPolling,
   numberBadge,
+  closedLabel,
   holdLabel,
   receiptLabel,
   lateReceiptText,
@@ -830,7 +831,7 @@ export function AwaitingList({
     setOpening(null)
     if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'membuka penjualan menunggu', retry: () => void pick(id) })
     if (!keepPolling(r.data)) {
-      notifySuccess(`Penjualan ${holdLabel(r.data.holdNumber)} sudah selesai atau ditutup`)
+      notifySuccess(`${closedLabel(r.data.holdNumber)} sudah selesai atau ditutup`)
       return load()
     }
     onClose()

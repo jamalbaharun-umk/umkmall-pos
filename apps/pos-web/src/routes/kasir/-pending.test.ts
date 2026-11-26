@@ -17,6 +17,7 @@ import {
   onlineBlocked,
   orderNotice,
   ownSale,
+  heldBank,
   planSend,
   recordedDescription,
   reduce,
@@ -504,6 +505,16 @@ describe('the bank of a virtual account sale (UMK-2037)', () => {
     expect(t.state.key).not.toBe(K1)
     expect(t.state.held).toBeNull()
     expect(t.state.recorded).toBe(false)
+  })
+})
+
+describe('heldBank: the bank of a held VA sale is offered again', () => {
+  it('only for the same online method', () => {
+    const t = till()
+    t.do({ type: 'sale_held', key: K1, saleId: A, methodId: VA, online: true, bank: 'FAKE2' })
+    expect(heldBank(t.state, VA)).toBe('FAKE2')
+    expect(heldBank(t.state, QRIS)).toBe('')
+    expect(heldBank(initialState(K1), VA)).toBe('')
   })
 })
 
