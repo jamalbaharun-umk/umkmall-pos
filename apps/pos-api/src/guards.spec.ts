@@ -332,6 +332,7 @@ describe('repo guards', () => {
   it('counts only receipts: every aggregate over pos.sales filters FINAL_SALE_STATUSES, never its own list', () => {
     for (const f of [
       path.join('reports', 'reports.service.ts'),
+      path.join('reports', 'receivables-report.service.ts'),
       path.join('shifts', 'shifts.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('agent', 'ledger.controller.ts'),
@@ -354,6 +355,8 @@ describe('repo guards', () => {
       path.join('payments-client', 'payment-sync.service.ts'),
       // One sale by id, of any status: the payment screen of a sale that still waits.
       path.join('payments-client', 'sale-payment.service.ts'),
+      // The kasbon report (UMK-1964): each open kasbon's sale number, joined by id, receipts only.
+      path.join('reports', 'receivables-report.service.ts'),
       path.join('reports', 'reports.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('shifts', 'shifts.service.ts'),

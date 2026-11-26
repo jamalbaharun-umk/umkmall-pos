@@ -218,7 +218,14 @@ describe('reports and dashboard (U5)', () => {
     const q = `from=${today()}&to=${today()}`;
 
     const sales = (await get(store, `/reports/sales?${q}`).expect(200)).body;
-    expect(sales.totals).toEqual({ qty: 7, ...KNOWN });
+    // No kasbon here: everything is Lunas (UMK-1964).
+    expect(sales.totals).toEqual({
+      qty: 7,
+      ...KNOWN,
+      settledSales: KNOWN.revenue,
+      creditSales: 0,
+      receivablePaid: 0,
+    });
     expect(sales.truncated).toBe(false);
     expect(sales.rows).toHaveLength(4);
     expect(sales.rows[0]).toMatchObject({

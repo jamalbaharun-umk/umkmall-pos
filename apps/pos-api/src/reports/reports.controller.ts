@@ -4,15 +4,24 @@ import {
   Get,
   Header,
   Module,
+  Param,
   Put,
   Query,
 } from '@nestjs/common';
 import { validate as parse } from '../common/validation';
+import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { toCsv } from './csv';
-import { DashboardQuery, DateRange, SettingsInput } from './reports.schemas';
+import { ReceivablesReportService } from './receivables-report.service';
+import {
+  DashboardQuery,
+  DateRange,
+  ReceivablesCsvQuery,
+  ReceivablesQuery,
+  SettingsInput,
+} from './reports.schemas';
 import { ReportsService } from './reports.service';
 
 const CSV = 'text/csv; charset=utf-8';
@@ -20,7 +29,10 @@ const CSV = 'text/csv; charset=utf-8';
 @Controller('reports')
 @RequirePermission('reports.view')
 export class ReportsController {
-  constructor(private readonly reports: ReportsService) {}
+  constructor(
+    private readonly reports: ReportsService,
+    private readonly receivables: ReceivablesReportService,
+  ) {}
 
   @Get('settings')
   settings(@CurrentSession() s: PosSession) {
@@ -132,8 +144,65 @@ export class ReportsController {
           null,
           null,
         ],
+        // UMK-1964: revenue split into Lunas and Kasbon; kasbon instalments are money in, not revenue.
+        ...(
+          [
+            ['Pendapatan lunas', t.settledSales],
+            ['Pendapatan kasbon', t.creditSales],
+            ['Piutang dibayar (uang masuk)', t.receivablePaid],
+          ] as const
+        ).map(([label, v]) => [
+          label,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          v,
+          null,
+          null,
+        ]),
       ],
     );
+  }
+
+  /** UMK-1964 "Laporan kasbon": summary and the customers who still owe, the most overdue first. */
+  @Get('receivables')
+  receivablesReport(@CurrentSession() s: PosSession, @Query() q: unknown) {
+    return this.receivables.list(s.tenantId, parse(ReceivablesQuery, q).filter);
+  }
+
+  /** The dashboard card "Piutang belum dibayar". */
+  @Get('receivables/summary')
+  receivablesSummary(@CurrentSession() s: PosSession) {
+    return this.receivables.summary(s.tenantId);
+  }
+
+  @Get('receivables/csv')
+  @Header('Content-Type', CSV)
+  @Header('Content-Disposition', 'attachment; filename="laporan-kasbon.csv"')
+  async receivablesCsv(@CurrentSession() s: PosSession, @Query() q: unknown) {
+    const { filter, memberId } = parse(ReceivablesCsvQuery, q);
+    return toCsv(
+      [
+        'Pelanggan',
+        'Kasbon',
+        'Dibayar',
+        'Sisa',
+        'Jatuh tempo',
+        'Terlambat (hari)',
+      ],
+      await this.receivables.csvRows(s.tenantId, filter, memberId),
+    );
+  }
+
+  @Get('receivables/customers/:memberId')
+  receivablesCustomer(
+    @CurrentSession() s: PosSession,
+    @Param('memberId') memberId: string,
+  ) {
+    return this.receivables.customer(s.tenantId, parseId(memberId));
   }
 
   @AgentRoute()
@@ -270,7 +339,7 @@ export class ReportsController {
 
 @Module({
   controllers: [ReportsController],
-  providers: [ReportsService],
+  providers: [ReportsService, ReceivablesReportService],
   exports: [ReportsService],
 })
 export class ReportsModule {}
