@@ -32,6 +32,7 @@ import { Route as PembelianIdRouteImport } from './routes/pembelian/$id'
 import { Route as PembelianBaruRouteImport } from './routes/pembelian/baru'
 import { Route as PengaturanIndexRouteImport } from './routes/pengaturan/index'
 import { Route as PengaturanKeamananRouteImport } from './routes/pengaturan/keamanan'
+import { Route as PengaturanLogAktivitasRouteImport } from './routes/pengaturan/log-aktivitas'
 import { Route as PengaturanLogoRouteImport } from './routes/pengaturan/logo'
 import { Route as PengaturanPembayaranOnlineRouteImport } from './routes/pengaturan/pembayaran-online'
 import { Route as PengaturanQrisRouteImport } from './routes/pengaturan/qris'
@@ -181,6 +182,11 @@ const PengaturanIndexRoute = PengaturanIndexRouteImport.update({
 const PengaturanKeamananRoute = PengaturanKeamananRouteImport.update({
   id: '/pengaturan/keamanan',
   path: '/pengaturan/keamanan',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PengaturanLogAktivitasRoute = PengaturanLogAktivitasRouteImport.update({
+  id: '/pengaturan/log-aktivitas',
+  path: '/pengaturan/log-aktivitas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PengaturanLogoRoute = PengaturanLogoRouteImport.update({
@@ -376,6 +382,7 @@ export interface FileRoutesByFullPath {
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
+  '/pengaturan/log-aktivitas': typeof PengaturanLogAktivitasRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
   '/pengaturan/pembayaran-online': typeof PengaturanPembayaranOnlineRoute
   '/pengaturan/qris': typeof PengaturanQrisRoute
@@ -436,6 +443,7 @@ export interface FileRoutesByTo {
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
+  '/pengaturan/log-aktivitas': typeof PengaturanLogAktivitasRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
   '/pengaturan/pembayaran-online': typeof PengaturanPembayaranOnlineRoute
   '/pengaturan/qris': typeof PengaturanQrisRoute
@@ -497,6 +505,7 @@ export interface FileRoutesById {
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
+  '/pengaturan/log-aktivitas': typeof PengaturanLogAktivitasRoute
   '/pengaturan/logo': typeof PengaturanLogoRoute
   '/pengaturan/pembayaran-online': typeof PengaturanPembayaranOnlineRoute
   '/pengaturan/qris': typeof PengaturanQrisRoute
@@ -559,6 +568,7 @@ export interface FileRouteTypes {
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
+    | '/pengaturan/log-aktivitas'
     | '/pengaturan/logo'
     | '/pengaturan/pembayaran-online'
     | '/pengaturan/qris'
@@ -619,6 +629,7 @@ export interface FileRouteTypes {
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
+    | '/pengaturan/log-aktivitas'
     | '/pengaturan/logo'
     | '/pengaturan/pembayaran-online'
     | '/pengaturan/qris'
@@ -679,6 +690,7 @@ export interface FileRouteTypes {
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
+    | '/pengaturan/log-aktivitas'
     | '/pengaturan/logo'
     | '/pengaturan/pembayaran-online'
     | '/pengaturan/qris'
@@ -740,6 +752,7 @@ export interface RootRouteChildren {
   PembelianIdRoute: typeof PembelianIdRoute
   PembelianBaruRoute: typeof PembelianBaruRoute
   PengaturanKeamananRoute: typeof PengaturanKeamananRoute
+  PengaturanLogAktivitasRoute: typeof PengaturanLogAktivitasRoute
   PengaturanLogoRoute: typeof PengaturanLogoRoute
   PengaturanPembayaranOnlineRoute: typeof PengaturanPembayaranOnlineRoute
   PengaturanQrisRoute: typeof PengaturanQrisRoute
@@ -947,6 +960,13 @@ declare module '@tanstack/react-router' {
       path: '/pengaturan/keamanan'
       fullPath: '/pengaturan/keamanan'
       preLoaderRoute: typeof PengaturanKeamananRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pengaturan/log-aktivitas': {
+      id: '/pengaturan/log-aktivitas'
+      path: '/pengaturan/log-aktivitas'
+      fullPath: '/pengaturan/log-aktivitas'
+      preLoaderRoute: typeof PengaturanLogAktivitasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pengaturan/logo': {
@@ -1212,6 +1232,7 @@ const rootRouteChildren: RootRouteChildren = {
   PembelianIdRoute: PembelianIdRoute,
   PembelianBaruRoute: PembelianBaruRoute,
   PengaturanKeamananRoute: PengaturanKeamananRoute,
+  PengaturanLogAktivitasRoute: PengaturanLogAktivitasRoute,
   PengaturanLogoRoute: PengaturanLogoRoute,
   PengaturanPembayaranOnlineRoute: PengaturanPembayaranOnlineRoute,
   PengaturanQrisRoute: PengaturanQrisRoute,

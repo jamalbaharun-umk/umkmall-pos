@@ -10,6 +10,8 @@ import { pinKeyOf } from './-pin-keys'
 
 // Cashier sign-in on a bound device (U4, POS-only): pick your name, enter your PIN. Full-screen, no shell.
 export const Route = createFileRoute('/kasir/masuk')({
+  // UMK-1969: `berakhir=1` is set when a cashier's session ended (the 401 redirect of api.server.ts).
+  validateSearch: (s: Record<string, unknown>): { berakhir?: 1 } => (s.berakhir ? { berakhir: 1 } : {}),
   loader: () => loadPicker(),
   component: CashierSignIn,
   pendingComponent: () => (
@@ -27,9 +29,15 @@ export const Route = createFileRoute('/kasir/masuk')({
 })
 
 function Screen({ title, children }: { title?: string; children: ReactNode }) {
+  const ended = Route.useSearch().berakhir === 1
   return (
     <main className="flex min-h-svh items-center justify-center bg-default-secondary px-4 py-8">
       <Card variant="outlined" padding="large" className="flex w-full max-w-md flex-col items-center gap-5 bg-default-primary text-center">
+        {ended && (
+          <Alert variant="warning" size="small" className="w-full text-left">
+            Sesi Anda berakhir. Demi keamanan, masuk lagi dengan PIN. Keranjang Anda tetap ada.
+          </Alert>
+        )}
         {title && <h1 className="text-2xl font-bold text-default-primary">{title}</h1>}
         {children}
         <a href="/" className="text-sm text-default-secondary hover:text-default-brand">

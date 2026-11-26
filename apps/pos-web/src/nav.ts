@@ -19,6 +19,7 @@ import {
   PiggyBank,
   Receipt,
   Settings,
+  ScrollText,
   ShieldCheck,
   TicketPercent,
   Users,
@@ -86,6 +87,8 @@ export const NAV: NavGroup[] = [
       { to: '/pengaturan/pembayaran-online', label: 'Pembayaran Online', icon: Globe, permission: 'payments.manage' },
       // UMK-2041: gateway money that paid no sale, and refused refunds; owner only.
       { to: '/perlu-ditinjau', label: 'Perlu ditinjau', icon: AlertTriangle, permission: 'payments.manage' },
+      // UMK-1969: the staff audit log (design 32); owner only (staff.manage is held by no default role but Pemilik).
+      { to: '/pengaturan/log-aktivitas', label: 'Log aktivitas', icon: ScrollText, permission: 'staff.manage' },
       { to: '/pengaturan/keamanan', label: 'Keamanan', icon: ShieldCheck, permission: 'sales.void' },
     ],
   },
