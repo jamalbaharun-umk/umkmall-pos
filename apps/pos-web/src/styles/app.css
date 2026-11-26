@@ -313,3 +313,8 @@ html, body {
   border-radius: 12px;
   white-space: nowrap;
 }
+/* The "medium" and "large" Button steps (px-8 / px-10, py-3 / py-4) are 52 to 60 px tall: one fixed 44 px for both. */
+:is(button, a)[class*="inline-flex"][class*="rounded-full"][class*="duration-150"]:is([class*="px-8"], [class*="px-10"]) {
+  height: 44px;
+  padding-block: 0;
+}

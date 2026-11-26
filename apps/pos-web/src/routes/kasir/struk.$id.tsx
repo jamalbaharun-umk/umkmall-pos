@@ -63,7 +63,7 @@ function ReceiptPage() {
           <hr className="my-2 border-dashed border-black/40" />
           <p className="text-center">Terima kasih</p>
         </article>
-        <ActionRow stacked>
+        <ActionRow className="max-w-[320px] print:hidden">
           <Button width="auto" asChild size="large" type="outline" color="light">
             <Link to="/kasir">Transaksi baru</Link>
           </Button>

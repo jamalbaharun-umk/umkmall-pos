@@ -19,7 +19,7 @@ export type ActionRowAlign = 'end' | 'start'
  * natural width plus 18 px padding on a desktop. `!` beats the Button's own size padding and `rounded-full` (that is
  * the only way to do it without touching `packages/ui`, whose Button has no 44 px / 12 px step).
  */
-const BASE = 'flex gap-2 [&>*]:h-11! [&>*]:py-0! [&>*]:rounded-[12px]! [&>*]:shrink-0 [&>*]:whitespace-nowrap sm:[&>*]:px-[18px]!'
+const BASE = 'flex w-full gap-2 [&>*]:h-11! [&>*]:py-0! [&>*]:rounded-[12px]! [&>*]:shrink-0 [&>*]:whitespace-nowrap sm:[&>*]:px-[18px]!'
 
 export function actionRowClass(opts: { align?: ActionRowAlign; stacked?: boolean; className?: string } = {}): string {
   const { align = 'end', stacked = false, className } = opts
