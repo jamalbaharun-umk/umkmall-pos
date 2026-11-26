@@ -57,8 +57,12 @@ export class LedgerController {
          where s.tenant_id = ${s.tenantId} and s.status in (${statuses}) and not pm.is_credit
            and s.paid_at >= ${start} and s.paid_at < ${end} and s.paid - s.change > 0
         union all
-        select 'kasbon_payment:' || rp.id, rp.created_at, ${day(sql`rp.created_at`)}, 'in',
-               'kasbon_payment', 'pembayaran_kasbon', 'Pembayaran kasbon', rp.amount, pm.name, null, null
+        select 'kasbon_payment:' || rp.id, rp.created_at, ${day(sql`rp.created_at`)},
+               -- UMK-1971: a correction's reversal row (negative) is money given back, on the correction's day.
+               case when rp.amount < 0 then 'out' else 'in' end,
+               'kasbon_payment', 'pembayaran_kasbon',
+               case when rp.amount < 0 then 'Koreksi pembayaran kasbon' else 'Pembayaran kasbon' end,
+               abs(rp.amount), pm.name, null, null
           from pos.receivable_payments rp
           join pos.payment_methods pm on pm.tenant_id = rp.tenant_id and pm.id = rp.payment_method_id
          where rp.tenant_id = ${s.tenantId} and rp.created_at >= ${start} and rp.created_at < ${end}

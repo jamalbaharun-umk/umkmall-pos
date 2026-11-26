@@ -63,6 +63,7 @@ import {
   DISCOUNT_APPROVAL_TTL_SECONDS,
   DISCOUNT_INVALID,
   DISCOUNT_SELF_APPROVAL,
+  isSelfApproval,
   lineDiscountOf,
   leavesSomething,
   needsApproval,
@@ -168,10 +169,6 @@ function assertMayDiscount(s: PosSession, lines: DiscountRequest[]) {
       code: 'DISCOUNT_FORBIDDEN',
     });
 }
-
-/** UMK-1990: the approver named is the asking actor, unless that actor is the owner (who may confirm their own). */
-const isSelf = (s: PosSession, approverId: string) =>
-  s.kind !== 'owner' && approverId.toLowerCase() === s.actorId.toLowerCase();
 
 /**
  * UMK-1990: each line's discount in rupiah, on its total at the price it is charged (the wholesale tier
@@ -780,7 +777,7 @@ export class SalesService {
    * own discount with their PIN.
    */
   async approveDiscount(s: PosSession, input: DiscountApprovalInput) {
-    if (isSelf(s, input.approverId))
+    if (isSelfApproval(s, input.approverId))
       throw codedError(
         DISCOUNT_SELF_APPROVAL,
         'approverId',
@@ -828,7 +825,7 @@ export class SalesService {
    */
   async discountApprovers(s: PosSession) {
     const all = await this.pins.approvers(s.tenantId, 'sales.price_override');
-    return all.filter((a) => !isSelf(s, a.id));
+    return all.filter((a) => !isSelfApproval(s, a.id));
   }
 
   /**

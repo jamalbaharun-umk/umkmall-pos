@@ -70,12 +70,15 @@ export class ReceivablesReportService {
 
   /**
    * Cash collectors took outside every shift and have not deposited yet (the "Setoran penagih" rule: Σ store
-   * ledger `in` of kind `receivable_payment` − Σ deposits). It already lowered the customers' remaining.
+   * ledger `in` of kind `receivable_payment` − Σ store ledger `out` of kind `receivable_reversal`, the corrected
+   * ones (UMK-1971) − Σ deposits). It already lowered the customers' remaining.
    */
   private async collectorHeld(tenantId: string) {
     const [r] = await this.rows(sql`
       select (select coalesce(sum(e.amount), 0) from pos.store_cash_entries e
                where e.tenant_id = ${tenantId} and e.direction = 'in' and e.kind = 'receivable_payment')
+           - (select coalesce(sum(e.amount), 0) from pos.store_cash_entries e
+               where e.tenant_id = ${tenantId} and e.direction = 'out' and e.kind = 'receivable_reversal')
            - (select coalesce(sum(d.amount), 0) from pos.store_cash_deposits d
                where d.tenant_id = ${tenantId}) as held`);
     return n(r.held);

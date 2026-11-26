@@ -255,6 +255,42 @@ describe('repo guards', () => {
     expect(service).not.toMatch(/\.(update|delete)\(\s*storeCashDeposits\b/);
   });
 
+  it('writes the kinds receivable_reversal(_closed_shift) only in receivables/receivable-corrections.service.ts, and the book stays append-only (UMK-1971)', () => {
+    const own = path.join('receivables', 'receivable-corrections.service.ts');
+    const offenders = files
+      .filter(({ f }) => f !== own)
+      .filter(({ text }) => {
+        const code = text.replace(/^\s*\/\/.*$/gm, '');
+        return (
+          /direction:\s*['"`](in|out)['"`],\s*kind:\s*['"`]receivable_reversal['"`]/.test(
+            code,
+          ) || /kind:\s*['"`]receivable_reversal_closed_shift['"`]/.test(code)
+        );
+      })
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    const service = files.find(({ f }) => f === own)!.text;
+    // A person at the till, under the receivable's row lock, through the ledgers' own writers.
+    expect(service).toMatch(/assertPersonAtTill\(s\.kind\)/);
+    expect(service).toMatch(/\.for\('update'\)/);
+    expect(service).toMatch(/recordShiftCashInShift\(/);
+    expect(service).toMatch(/recordStoreCash\(/);
+    // A payment row is never changed or deleted by pos-api's own code: only payment-sync stamps payment-api's
+    // answer on it (`payment_id`, `payment_sync_pending`).
+    const changers = files
+      .filter(
+        ({ f }) =>
+          f !== path.join('payments-client', 'payment-sync.service.ts'),
+      )
+      .filter(({ text }) =>
+        /\.(update|delete)\(\s*(receivablePayments|rp)\b|(update|delete\s+from)\s+pos\.receivable_payments\b/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(changers).toEqual([]);
+  });
+
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {
     const offenders = files
       .filter(

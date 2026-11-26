@@ -23,6 +23,8 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { useCan } from '@/components/shell'
 import { cashRoute, cashRouteNotice, paymentPlace, restAfter } from '../kasir/-shift-helpers'
 import { ActionRow } from '@/components/action-row'
+import { CorrectionDialog } from './-correction-dialog'
+import { correctionReasonLabel, paidFromBook, rowStatus, signedRupiah } from './-correction'
 
 // Lakasir ViewReceivable: details, the sale's items, the payment history and the "add payment" action.
 export const Route = createFileRoute('/piutang/$id')({
@@ -35,6 +37,9 @@ export const Route = createFileRoute('/piutang/$id')({
 function ReceivablePage() {
   const { receivable: r, methods, shift } = Route.useLoaderData()
   const canOpenShift = useCan('sales.create')
+  // UMK-1971: a correction is for the owner and staff who may void (design feature 31).
+  const canCorrect = useCan('sales.void')
+  const [correcting, setCorrecting] = useState<(typeof r.payments)[number] | null>(null)
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
@@ -133,6 +138,8 @@ function ReceivablePage() {
           <dd className="text-right">{formatDay(r.dueDate)}</dd>
           <dt className="font-medium">Total piutang</dt>
           <dd className="text-right">{rupiah(r.total)}</dd>
+          <dt className="font-medium">Dibayar</dt>
+          <dd className="text-right">{rupiah(paidFromBook(r.payments))}</dd>
           <dt className="font-bold">Sisa piutang</dt>
           <dd className="text-right font-bold">{rupiah(r.rest)}</dd>
           <dt className="font-medium">Status</dt>
@@ -169,55 +176,140 @@ function ReceivablePage() {
 
         <section className="space-y-2">
           <Text as="h2" variant="h5" weight="bold">
-            Pembayaran
+            Riwayat pembayaran
           </Text>
           {r.payments.length === 0 ? (
-            <p className="text-sm text-default-secondary">Belum ada pembayaran.</p>
+            <div className="flex flex-col items-start gap-2">
+              <p className="text-sm text-default-secondary">Belum ada pembayaran.</p>
+              {r.rest > 0 && (
+                <ActionRow align="start">
+                  <Button type="outline" color="light" width="auto" onClick={openDialog}>
+                    Terima pembayaran
+                  </Button>
+                </ActionRow>
+              )}
+            </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tanggal</TableHead>
-                  <TableHead>Metode</TableHead>
-                  <TableHead>Dicatat oleh</TableHead>
-                  <TableHead>Uang masuk ke</TableHead>
-                  <TableHead className="text-right">Sisa sebelumnya</TableHead>
-                  <TableHead className="text-right">Jumlah</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Phone: one card per row, the design's "Riwayat pembayaran" list. */}
+              <ul className="divide-y divide-default-primary rounded-xl border border-default-primary md:hidden">
                 {r.payments.map((p) => {
-                  const place = paymentPlace(p)
+                  const st = rowStatus(p.status ?? 'active')
                   return (
-                  <TableRow key={p.id}>
-                    <TableCell>{formatMomentDay(p.createdAt)}</TableCell>
-                    <TableCell>{p.paymentMethod}</TableCell>
-                    <TableCell>{p.actorName}</TableCell>
-                    <TableCell>
-                      {p.shiftId ? (
-                        <Link
-                          to="/kasir/shift/$id"
-                          params={{ id: p.shiftId }}
-                          className="font-medium text-brand-primary hover:underline"
-                        >
-                          {place.label}
-                        </Link>
-                      ) : place.tone === 'neutral' ? (
-                        <span className="text-default-secondary">{place.label}</span>
-                      ) : (
-                        <Badge color="warning">{place.label}</Badge>
+                    <li key={p.id} className="flex flex-col gap-2 px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className={`font-semibold tabular-nums ${p.status === 'reversed' ? 'text-default-secondary line-through' : 'text-default-primary'}`}>
+                            {p.status === 'reversal' ? 'Pembalik ' : ''}
+                            {signedRupiah(p.amount, rupiah)} · {p.paymentMethod.toLowerCase()}
+                          </p>
+                          <p className="text-xs text-default-secondary">
+                            {formatMomentDay(p.createdAt)} · {p.actorName}
+                            {p.status === 'reversal' && ` · ${correctionReasonLabel(p.reasonCode ?? null).toLowerCase()}`}
+                          </p>
+                        </div>
+                        <Badge color={st.color}>{st.label}</Badge>
+                      </div>
+                      {canCorrect && p.correctable && (
+                        <ActionRow align="start">
+                          <Button type="outline" color="light" size="small" width="auto" onClick={() => setCorrecting(p)}>
+                            Koreksi pembayaran {rupiah(p.amount)}
+                          </Button>
+                        </ActionRow>
                       )}
-                    </TableCell>
-                    <TableCell className="text-right">{rupiah(p.restBefore)}</TableCell>
-                    <TableCell className="text-right">{rupiah(p.amount)}</TableCell>
-                  </TableRow>
+                    </li>
                   )
                 })}
-              </TableBody>
-            </Table>
+              </ul>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Tanggal</TableHead>
+                      <TableHead>Jenis</TableHead>
+                      <TableHead className="text-right">Jumlah</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Oleh</TableHead>
+                      {canCorrect && <TableHead className="text-right">Aksi</TableHead>}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {r.payments.map((p) => {
+                      const place = paymentPlace(p)
+                      const st = rowStatus(p.status ?? 'active')
+                      const placeLabel =
+                        p.status === 'reversal'
+                          ? p.shiftId
+                            ? 'Keluar dari laci shift'
+                            : p.collectedOutsideShift
+                              ? 'Keluar dari kas penagih'
+                              : p.viaStoreCash
+                                ? 'Keluar dari kas toko'
+                                : place.label
+                          : place.label
+                      return (
+                        <TableRow key={p.id}>
+                          <TableCell className="whitespace-nowrap">{formatMomentDay(p.createdAt)}</TableCell>
+                          <TableCell>
+                            <span className="block">
+                              {p.status === 'reversal'
+                                ? `Pembalik · ${correctionReasonLabel(p.reasonCode ?? null).toLowerCase()}`
+                                : p.paymentMethod}
+                            </span>
+                            {p.shiftId ? (
+                              <Link
+                                to="/kasir/shift/$id"
+                                params={{ id: p.shiftId }}
+                                className="text-xs font-medium text-brand-primary hover:underline"
+                              >
+                                {placeLabel}
+                              </Link>
+                            ) : (
+                              <span className={`text-xs ${place.tone === 'warning' ? 'text-default-warning' : 'text-default-secondary'}`}>
+                                {placeLabel}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right whitespace-nowrap tabular-nums ${p.status === 'reversed' ? 'text-default-secondary line-through' : ''}`}
+                          >
+                            {signedRupiah(p.amount, rupiah)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge color={st.color}>{st.label}</Badge>
+                          </TableCell>
+                          <TableCell>{p.actorName}</TableCell>
+                          {canCorrect && (
+                            <TableCell className="text-right">
+                              {p.correctable && (
+                                <ActionRow>
+                                  <Button type="outline" color="light" size="small" width="auto" onClick={() => setCorrecting(p)}>
+                                    Koreksi
+                                  </Button>
+                                </ActionRow>
+                              )}
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </section>
       </Card>
+
+      <CorrectionDialog
+        receivable={r}
+        payment={correcting}
+        methods={methods}
+        shift={shift}
+        canOpenShift={canOpenShift}
+        onClose={() => setCorrecting(null)}
+        onChanged={() => router.invalidate()}
+      />
 
       <Dialog open={open} onOpenChange={setOpen} centered title="Tambah pembayaran">
         <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">

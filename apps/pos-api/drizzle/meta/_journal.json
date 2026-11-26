@@ -337,6 +337,13 @@
       "when": 1795708670923,
       "tag": "0047_purchase_stock_in_key",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1795709310427,
+      "tag": "0048_receivable_corrections",
+      "breakpoints": true
     }
   ]
 }
