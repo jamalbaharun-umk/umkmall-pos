@@ -531,6 +531,7 @@ describe('void a full sale (UMK-1962)', () => {
         openRest: 0,
         openCount: 0,
         outsideShiftCollected: 0,
+        overdueMemberIds: [],
       });
     });
 

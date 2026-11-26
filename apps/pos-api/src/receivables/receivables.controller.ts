@@ -124,7 +124,10 @@ const columns = (tenantId: string) => ({
   // UMK-1973: when the customer was last reminded (a date, never the message) and how late an open balance is, in
   // whole days of the store's day; 0 when it is not yet due or nothing is owed.
   memberLastRemindedAt: members.lastRemindedAt,
-  overdueDays: sql<number>`case when ${receivables.rest} > 0 then greatest(0, ${storeToday(tenantId)} - ${receivables.dueDate}) else 0 end`.mapWith(Number),
+  overdueDays:
+    sql<number>`case when ${receivables.rest} > 0 then greatest(0, ${storeToday(tenantId)} - ${receivables.dueDate}) else 0 end`.mapWith(
+      Number,
+    ),
   total: receivables.total,
   rest: receivables.rest,
   dueDate: receivables.dueDate,
@@ -314,7 +317,10 @@ export class ReceivablesService {
           ),
         )
         .groupBy(receivables.memberId)
-        .orderBy(asc(sql`min(${receivables.dueDate})`), asc(receivables.memberId))
+        .orderBy(
+          asc(sql`min(${receivables.dueDate})`),
+          asc(receivables.memberId),
+        )
         .limit(50),
     ]);
     return {
@@ -351,7 +357,9 @@ export class ReceivablesService {
     const [owed] = await this.db
       .select({
         rest: sql<string>`coalesce(sum(${receivables.rest}), 0)`,
-        dueDate: sql<string | null>`to_char(min(${receivables.dueDate}), 'YYYY-MM-DD')`,
+        dueDate: sql<
+          string | null
+        >`to_char(min(${receivables.dueDate}), 'YYYY-MM-DD')`,
         overdueDays: sql<
           number | null
         >`(${storeToday(tenantId)} - min(${receivables.dueDate}))::int`,
@@ -735,10 +743,7 @@ export class ReceivablesController {
   @Post('reminders/:memberId')
   @HttpCode(200)
   @RequirePermission('receivables.manage')
-  markReminded(
-    @CurrentSession() s: PosSession,
-    @Param('memberId') id: string,
-  ) {
+  markReminded(@CurrentSession() s: PosSession, @Param('memberId') id: string) {
     return this.receivables.markReminded(s.tenantId, parseId(id));
   }
 

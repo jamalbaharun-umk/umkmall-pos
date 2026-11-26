@@ -94,9 +94,10 @@ describe('WhatsApp receipt and kasbon reminder (UMK-1987, UMK-1973)', () => {
         lines: [{ productId: s.productId, qty: 1 }],
         paid: 500,
       }).expect(201);
-      const r = await get(s.auth, `/sales/${withMember.body.id}/receipt`).expect(
-        200,
-      );
+      const r = await get(
+        s.auth,
+        `/sales/${withMember.body.id}/receipt`,
+      ).expect(200);
       expect(r.body).toMatchObject({
         memberName: 'Bu Rina',
         memberPhone: '0812 3456 7890',
@@ -174,9 +175,10 @@ describe('WhatsApp receipt and kasbon reminder (UMK-1987, UMK-1973)', () => {
         `/receivables/reminders/${m.body.id}`,
       ).expect(200);
       expect(marked.body.lastRemindedAt).toEqual(expect.any(String));
-      const now = await get(s.auth, `/receivables/reminders/${m.body.id}`).expect(
-        200,
-      );
+      const now = await get(
+        s.auth,
+        `/receivables/reminders/${m.body.id}`,
+      ).expect(200);
       expect(now.body.remindedDaysAgo).toBe(0);
       await admin`
         update pos.members set last_reminded_at = now() - interval '2 days' where id = ${m.body.id}`;
@@ -189,7 +191,9 @@ describe('WhatsApp receipt and kasbon reminder (UMK-1987, UMK-1973)', () => {
       const cols = await admin`
         select column_name from information_schema.columns
         where table_schema = 'pos' and table_name = 'members' and column_name ilike '%remind%'`;
-      expect(cols.map((c) => c.column_name)).toEqual(['last_reminded_at']);
+      expect(cols.map((c) => c.column_name as string)).toEqual([
+        'last_reminded_at',
+      ]);
       // The list shows when and how late.
       const list = await get(s.auth, '/receivables?status=open').expect(200);
       expect(list.body.data[0]).toMatchObject({
@@ -210,9 +214,10 @@ describe('WhatsApp receipt and kasbon reminder (UMK-1987, UMK-1973)', () => {
         200,
       );
       expect(r.body.phone).toBeNull();
-      const res = await post(s.auth, `/receivables/reminders/${m.body.id}`).expect(
-        409,
-      );
+      const res = await post(
+        s.auth,
+        `/receivables/reminders/${m.body.id}`,
+      ).expect(409);
       expect(res.body).toMatchObject({ code: 'phone_missing' });
     });
 
