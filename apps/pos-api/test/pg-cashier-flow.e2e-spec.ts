@@ -69,6 +69,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
   let mangle: ((payment: Record<string, unknown>) => void) | null = null;
   /** The answer of the first matching call is lost: payment-api did it, pos-api never hears. */
   let loseAnswerOf: ((c: Call) => boolean) | null = null;
+  /** payment-api's answer to a matching call, made up by the test; the call never reaches payment-api. */
+  let answerInstead: ((c: Call) => Response | null) | null = null;
   function hold(match: Hold['match'], when: Hold['when'] = 'before') {
     let release!: () => void;
     let reached!: () => void;
@@ -108,6 +110,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
             h.reached();
             await h.gate;
           }
+          const made = answerInstead?.(call);
+          if (made) return made;
           let res = await fetch(url, init);
           if (mangle && res.ok) {
             const body = (await res.json()) as Record<string, unknown>;
@@ -201,6 +205,7 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
     link = 'ok';
     holds = [];
     loseAnswerOf = null;
+    answerInstead = null;
     mangle = null;
     await gatewaySettings('pending');
   });
@@ -1079,6 +1084,68 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       expect(await shift(s.auth)).toMatchObject({
         cashSales: 5200,
         salesCount: 2,
+      });
+    });
+
+    it('payment-api answers the close with a 4xx that is no refusal of the bill (400, 401, 429): 409 payment_refused, not "no answer"; a 500 stays 503', async () => {
+      const s = await shop();
+      const saleId = (await sell(s).expect(201)).body.id as string;
+      const answer = (status: number, code: string) => {
+        answerInstead = (c) =>
+          isCancel(c)
+            ? new Response(JSON.stringify({ message: 'x', code }), {
+                status,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            : null;
+      };
+      const unchanged = async () => {
+        // The switch is taken back, and nothing was closed: the bill is still open at the gateway.
+        expect(await saleRow(saleId)).toMatchObject({
+          status: 'awaiting_payment',
+          payment_attempt: 1,
+          payment_method_code: 'fake_qris',
+          switch_cash_paid: null,
+        });
+        expect((await billOf(s, saleId)).status).toBe('pending');
+      };
+      for (const [status, code] of [
+        [400, 'invalid'],
+        [401, 'invalid_service_key'],
+        [429, 'too_many_requests'],
+      ] as const) {
+        answer(status, code);
+        const res = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+          paid: 6000,
+        }).expect(409);
+        // payment-api answered: this is its refusal, and the message does not say it gave no answer.
+        expect(res.body.code).toBe('payment_refused');
+        expect(res.body.message).not.toMatch(/tidak menjawab/);
+        await unchanged();
+      }
+      // A clear refusal of the bill keeps its own code.
+      answer(409, 'cancel_not_supported');
+      const refusedBill = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(409);
+      expect(refusedBill.body.code).toBe('cancel_refused');
+      await unchanged();
+      // No usable answer (5xx): the close may have happened, so the cashier is told to check first.
+      answer(500, 'internal');
+      const none = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(503);
+      expect(none.body.code).toBe('payment_unavailable');
+      expect(none.body.message).toMatch(/tidak menjawab/);
+      await unchanged();
+
+      answerInstead = null;
+      const done = await post(s.auth, `/sales/${saleId}/payment/cash`, {
+        paid: 6000,
+      }).expect(200);
+      expect(done.body).toMatchObject({
+        saleStatus: 'completed',
+        method: 'cash',
       });
     });
 
