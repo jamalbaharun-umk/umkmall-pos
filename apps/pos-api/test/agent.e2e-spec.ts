@@ -1032,9 +1032,17 @@ describe('UMKMall agent: session and MCP tools', () => {
       const kopi = await seedProduct(store.auth, 'Kopi', 10000);
       await openShift(store.auth);
       const auth = `Bearer ${await agentToken(store.userId)}`;
+      // Each body would sell at the till's price if the agent schema let it through (paid = the full 10000), so each
+      // case fails on the schema alone (revert-red: swap AgentSaleInput for SaleInput and they pass with 201).
       for (const body of [
         { lines: [{ productId: kopi.id, qty: 1, price: 1 }], paid: 10000 },
-        { lines: [{ productId: kopi.id, qty: 1 }], discount: 5000, paid: 5000 },
+        {
+          lines: [{ productId: kopi.id, qty: 1 }],
+          discount: 5000,
+          paid: 10000,
+        },
+        { lines: [{ productId: kopi.id, qty: 1 }], bank: 'BCA', paid: 10000 },
+        { lines: [{ productId: kopi.id, qty: 1 }], extra: true, paid: 10000 },
       ])
         await http()
           .post('/sales')
@@ -1042,6 +1050,74 @@ describe('UMKMall agent: session and MCP tools', () => {
           .set('Idempotency-Key', `agent-${randomUUID()}`)
           .send(body)
           .expect(422);
+    });
+
+    it('refuses an online method for an agent sale in the service, not only in the tool', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await openShift(store.auth);
+      const [qris] = await appDb<{ id: string }[]>`
+        insert into pos.payment_methods (tenant_id, name, is_online, gateway_method)
+        values (${store.tenantId}, 'QRIS Online', true, 'fake_qris') returning id`;
+      const r = await http()
+        .post('/sales')
+        .set('Authorization', `Bearer ${await agentToken(store.userId)}`)
+        .set('Idempotency-Key', `agent-${randomUUID()}`)
+        .send({
+          lines: [{ productId: kopi.id, qty: 1 }],
+          paymentMethodId: qris.id,
+          paid: 10000,
+        })
+        .expect(422);
+      expect(r.body.errors.paymentMethodId).toMatch(/lewat agent/);
+      const [n] = await appDb<{ n: number }[]>`
+        select count(*)::int as n from pos.sales where tenant_id = ${store.tenantId}`;
+      expect(n.n).toBe(0);
+    });
+
+    it('after a lost answer, a retry with the SAME key replays the route and sells once', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi', 10000);
+      await openShift(store.auth);
+      const client = await mcp(await agentToken(store.userId));
+      const realFetch = global.fetch;
+      let failed = false;
+      jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+        const res = await realFetch(input, init);
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        // The sale commits, then its answer is lost (as when payment-api times out after the insert).
+        if (!failed && url.endsWith('/sales') && init?.method === 'POST') {
+          failed = true;
+          return new Response('{}', { status: 503 });
+        }
+        return res;
+      });
+      const args = {
+        lines: [{ productId: kopi.id, qty: 1 }],
+        idempotencyKey: 'sale-lost-0001',
+        confirm: true,
+      };
+      const lost = await call(client, 'record_sale', args);
+      expect(lost.error).toMatch(/kunci yang SAMA/);
+      jest.restoreAllMocks();
+      // Prices change in between: the replay still sends the lost call's exact body.
+      await http()
+        .patch(`/catalog/products/${kopi.id}`)
+        .set('Authorization', store.auth)
+        .send({ sellingPrice: 12000 })
+        .expect(200);
+      const replayed = await call(client, 'record_sale', args);
+      expect(replayed.data).toMatchObject({ total: 10000 });
+      const again = await call(client, 'record_sale', args);
+      expect(again.data).toEqual(replayed.data);
+      const [n] = await appDb<{ n: number }[]>`
+        select count(*)::int as n from pos.sales where tenant_id = ${store.tenantId}`;
+      expect(n.n).toBe(1);
     });
 
     it('opens a shift only through its own tool, and not twice', async () => {

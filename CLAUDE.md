@@ -129,7 +129,8 @@ usage record and provenance on every tool.
   4xx frees the key, a lost answer (0 or 5xx) keeps it.
 - **Agent sales (UMK-1981) go into the owner's open shift** (same actor id) with `actor_kind = 'agent'` (shown as
   `AGENT_LABEL`). An agent's `POST /sales` parses `AgentSaleInput` (no line price, no discount, no bank); the tool pays
-  the server's amount due from `POST /sales/quote`. The agent opens a shift only through `open_shift`, on the owner's
+  the server's amount due from `POST /sales/quote`. The sale refuses an online method for an agent session. After a lost
+  answer, `record_sale` and `record_receivable_payment` replay the exact call under the route's derived key (never a new key). The agent opens a shift only through `open_shift`, on the owner's
   word.
 - **HPP import sends `cogs`, never UMKMall's `hpp`** (which adds allocated fixed costs, booked as expenses here).
 

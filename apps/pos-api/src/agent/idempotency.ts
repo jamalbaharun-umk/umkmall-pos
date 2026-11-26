@@ -105,8 +105,18 @@ export class AgentIdempotency {
   }
 
   /** A write whose outcome is unknown (timeout, 5xx): the key stays taken, so a retry can never write twice. */
-  unknown(tenantId: string, key: string, message: string): Promise<void> {
-    return this.finish(tenantId, key, { unknownOutcome: true, message });
+  unknown(
+    tenantId: string,
+    key: string,
+    message: string,
+    replay?: unknown,
+  ): Promise<void> {
+    return this.finish(tenantId, key, {
+      unknownOutcome: true,
+      message,
+      // What was sent, so a replay sends exactly it again (the route's key matches only the same request).
+      ...(replay !== undefined && { replay }),
+    });
   }
 
   /** Frees the key after a write that was refused (4xx) and so wrote nothing. */

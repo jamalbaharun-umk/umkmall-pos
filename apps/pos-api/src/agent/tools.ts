@@ -27,6 +27,8 @@ const NO_WRITE_CONSENT =
   'Pemilik belum mengizinkan agent mengubah data POS (izin pos.write). Minta izinnya di Koneksi UMKMall.';
 const UNKNOWN_OUTCOME =
   'Hasilnya belum pasti karena POS tidak menjawab. Cek katalog dulu; bila memang belum tercatat, kirim lagi dengan kunci baru.';
+const UNKNOWN_REPLAYABLE =
+  'Hasilnya belum pasti karena POS tidak menjawab. Kirim lagi dengan kunci yang SAMA: POS menjawab hasil pertama dan tidak mencatat dua kali. Jangan pakai kunci baru.';
 const KEY_RE = /^[A-Za-z0-9:._-]{8,100}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -173,7 +175,8 @@ type Product = {
   sellingPrice: number;
 };
 type RunResult =
-  { data: object; resultRefs?: string[] } | { error: string; status: number };
+  | { data: object; resultRefs?: string[] }
+  | { error: string; status: number; replay?: unknown };
 /** What the tracking wrapper hands each tool, so the call record knows how it ended. */
 type Track = { outcome?: 'preview'; resultRefs?: string[] };
 type Run = (
@@ -251,7 +254,10 @@ export function buildAgentServer(
     args: Record<string, unknown>,
     track: Track,
     preview: () => Promise<CallToolResult>,
-    run: () => Promise<RunResult>,
+    run: (replay?: unknown) => Promise<RunResult>,
+    // The route dedupes by its own Idempotency-Key (derived from the agent key): after a lost answer the same call is
+    // REPLAYED, never retried under a new key, which could sell twice.
+    routeIdempotent = false,
   ): Promise<CallToolResult> => {
     if (!session.agentScopes?.includes('pos.write'))
       return refused(NO_WRITE_CONSENT);
@@ -267,6 +273,7 @@ export function buildAgentServer(
     const { confirm: _c, idempotencyKey: _k, ...rest } = args;
     void _c;
     void _k;
+    let replayOf: unknown;
     const claim = await deps.idempotency.claim(
       session.tenantId,
       key,
@@ -279,21 +286,28 @@ export function buildAgentServer(
         unknownOutcome?: boolean;
         message?: string;
       };
-      return stored.unknownOutcome
-        ? refused(stored.message ?? UNKNOWN_OUTCOME)
-        : ok(claim.answer);
+      if (!stored.unknownOutcome) return ok(claim.answer);
+      if (!routeIdempotent) return refused(stored.message ?? UNKNOWN_OUTCOME);
+      // Fall through: the route answers the first result, or writes it now.
+      replayOf = (stored as { replay?: unknown }).replay;
     }
+    const unknownText = routeIdempotent ? UNKNOWN_REPLAYABLE : UNKNOWN_OUTCOME;
     let result: RunResult;
     try {
-      result = await run();
+      result = await run(replayOf);
     } catch {
-      result = { error: UNKNOWN_OUTCOME, status: 0 };
+      result = { error: unknownText, status: 0 };
     }
     if ('error' in result) {
       if (outcomeUnknown(result.status)) {
         // The route may have committed before its answer was lost: the key stays taken.
-        await deps.idempotency.unknown(session.tenantId, key, UNKNOWN_OUTCOME);
-        return refused(UNKNOWN_OUTCOME);
+        await deps.idempotency.unknown(
+          session.tenantId,
+          key,
+          unknownText,
+          'replay' in result ? result.replay : undefined,
+        );
+        return refused(unknownText);
       }
       // Refused (4xx): nothing was written, so the key is free for a corrected retry.
       await deps.idempotency.release(session.tenantId, key);
@@ -1007,20 +1021,19 @@ export function buildAgentServer(
           if ('error' in c) return refused(c.error);
           return ok({ preview: true, quote: c.quote });
         },
-        async () => {
-          const c = await check();
-          if ('error' in c) return c;
-          const m = c.quote.paymentMethod;
-          const paid = m.isCredit
-            ? ((a.downPayment as number | undefined) ?? 0)
-            : m.isCash
-              ? c.quote.amountDue
-              : c.quote.total;
-          const r = await callRoute(ctx, 'POST', '/sales', {
-            headers: {
-              'idempotency-key': routeKey(a.idempotencyKey as string),
-            },
-            body: {
+        async (replay) => {
+          // A replay sends exactly the body of the lost call; prices or the shift may have changed since.
+          let body = replay;
+          if (body === undefined) {
+            const c = await check();
+            if ('error' in c) return c;
+            const m = c.quote.paymentMethod;
+            const paid = m.isCredit
+              ? ((a.downPayment as number | undefined) ?? 0)
+              : m.isCash
+                ? c.quote.amountDue
+                : c.quote.total;
+            body = {
               lines: a.lines,
               ...(a.memberId !== undefined && { memberId: a.memberId }),
               ...(a.voucherCode !== undefined && {
@@ -1031,12 +1044,20 @@ export function buildAgentServer(
               }),
               ...(a.note !== undefined && { note: a.note }),
               paid,
+            };
+          }
+          const r = await callRoute(ctx, 'POST', '/sales', {
+            headers: {
+              'idempotency-key': routeKey(a.idempotencyKey as string),
             },
+            body,
           });
-          if (!r.ok) return { error: r.message, status: r.status };
+          if (!r.ok)
+            return { error: r.message, status: r.status, replay: body };
           const sale = r.data as { id: string };
           return { data: sale, resultRefs: [sale.id] };
         },
+        true,
       );
     },
   );
@@ -1135,6 +1156,7 @@ export function buildAgentServer(
           const p = r.data as { id?: string };
           return { data: r.data as object, resultRefs: p.id ? [p.id] : [] };
         },
+        true,
       );
     },
   );

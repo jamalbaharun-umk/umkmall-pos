@@ -423,6 +423,14 @@ export class SalesService {
           { total, rounding, amountDue },
           'paid',
         );
+    } else if (method.isOnline && s.kind === 'agent') {
+      // UMK-1981: UMKMall's agent records no online sale yet (nothing relays the QR to the customer, and a sale
+      // left awaiting payment would block closing the owner's shift).
+      throw fail(
+        'Metode pembayaran online belum bisa dipakai lewat agent',
+        {},
+        'paymentMethodId',
+      );
     } else if (
       method.isOnline &&
       // Asked again here: a method that exists must not sell where online payments are off (payment-api

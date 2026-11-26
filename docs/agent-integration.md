@@ -104,8 +104,11 @@ Every write tool takes `idempotencyKey` (8 to 100 of `A-Z a-z 0-9 : . _ -`, requ
 - With `confirm: true` it runs once per key: a retry with the same key and input answers the first result; the same
   key with another input is refused ("sudah dipakai").
 - A write the POS refused (a 4xx: bad input, a missing category) frees the key for a corrected retry. A write whose
-  answer was lost (no answer or a 5xx) keeps the key and answers "belum pasti": check the catalog, and send it again
-  with a new key only if it is really not there. Keys expire after 7 days.
+  answer was lost (no answer or a 5xx) keeps the key and answers "belum pasti". For `record_sale` and
+  `record_receivable_payment` send it again with the **same** key: the tool replays the lost call (the exact body it
+  sent) under the route's own idempotency key, which answers the first result and never records twice; never use a
+  new key there. For the other writes check the catalog first, and use a new key only if it is really not there.
+  Keys expire after 7 days.
 - **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, no void, no drawer cash):
   it creates categories and products with one base price, and HPP imports create new SKUs only. Price changes are the
   owner's, in the POS.
@@ -221,7 +224,7 @@ In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `payment
   voucher discount, tax after discounts, total, cash rounding, amount due).
 - On confirm the tool pays the exact amount: cash pays the amount due (rounded up to Rp100), debit and QRIS the total,
   kasbon `downPayment` (the rest becomes the member's receivable).
-- Online methods are refused for now. One payment method per sale. The route's own `Idempotency-Key` is derived from
+- Online methods are refused for an agent session by the sale itself (422 on `paymentMethodId`), not only by the tool. One payment method per sale. The route's own `Idempotency-Key` is derived from
   the agent key, so a retry is one sale twice over. The receipt names the seller "Agent UMKMall".
 
 ### `create_member`
