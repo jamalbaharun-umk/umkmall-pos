@@ -641,9 +641,9 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       const close = await post(s.auth, '/shifts/current/close', {
         countedCash: 100_000,
       }).expect(409);
-      expect(close.body.sales.map((w: { id: string }) => w.id)).toEqual([
-        saleId,
-      ]);
+      expect(
+        (close.body as { sales: { id: string }[] }).sales.map((w) => w.id),
+      ).toEqual([saleId]);
 
       // The cashier cancels: stock and voucher come back, and the shift can close.
       await post(s.auth, `/sales/${saleId}/payment/cancel`).expect(200);
