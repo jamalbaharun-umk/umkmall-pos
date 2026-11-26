@@ -105,6 +105,27 @@ const writes = (suits: string, manualPath: string): Registry => ({
   coinCost: 0,
 });
 
+/** A create's preview: the name a confirm would refuse is refused here too. */
+const previewCreate = (body: Record<string, unknown>): CallToolResult =>
+  typeof body.name !== 'string' || !body.name.trim()
+    ? refused('Nama wajib diisi.')
+    : ok({ preview: true, wouldCreate: body });
+
+/** Keys never kept in pos.agent_requests: contact details and customer names (a replay answers without them). */
+const PII_KEYS = new Set(['phone', 'address', 'memberName', 'customerName']);
+export function redact(tool: string, value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((v) => redact(tool, v));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(
+        ([k]) =>
+          !PII_KEYS.has(k) && !(tool === 'create_member' && k === 'name'),
+      )
+      .map(([k, v]) => [k, redact(tool, v)]),
+  );
+}
+
 /** The tool names, in the order the server lists them (the docs test compares against this). */
 export const AGENT_TOOL_NAMES = [
   'business_context',
@@ -314,7 +335,12 @@ export function buildAgentServer(
       return refused(result.error);
     }
     const data = { ...result.data, provenance: provenance(toolName) };
-    await deps.idempotency.finish(session.tenantId, key, data);
+    // The stored answer (kept 7 days for replays) carries no contact or customer data; this answer has it all.
+    await deps.idempotency.finish(
+      session.tenantId,
+      key,
+      redact(toolName, data),
+    );
     track.resultRefs = result.resultRefs;
     return ok(data);
   };
@@ -691,7 +717,7 @@ export function buildAgentServer(
         'create_product',
         a,
         track,
-        () => Promise.resolve(ok({ preview: true, wouldCreate: body })),
+        () => Promise.resolve(previewCreate(body)),
         () => create('/catalog/products', body),
       );
     },
@@ -860,9 +886,10 @@ export function buildAgentServer(
   tool(
     'list_suppliers',
     {
-      description: "The store's suppliers.",
+      description:
+        "The store's suppliers, with phone and address. Contact data: needs the pos.write consent.",
       inputSchema: {},
-      registry: reads('Purchases and ingredient sources', '/pemasok'),
+      registry: readsWithWrite('Purchases and ingredient sources', '/pemasok'),
     },
     async () => answer(await get('/suppliers')),
   );
@@ -882,7 +909,7 @@ export function buildAgentServer(
     'search_members',
     {
       description:
-        'Find a customer (member) by name, code or phone, for a kasbon sale or a kasbon payment. Personal data: needs the pos.write consent.',
+        'Find a customer (member) by name or code, for a kasbon sale or a kasbon payment. Personal data: needs the pos.write consent.',
       inputSchema: { q: text(60).optional() },
       registry: readsWithWrite('Chat Jadi Order: who is buying', '/pelanggan'),
     },
@@ -1019,7 +1046,26 @@ export function buildAgentServer(
         async () => {
           const c = await check();
           if ('error' in c) return refused(c.error);
-          return ok({ preview: true, quote: c.quote });
+          const m = c.quote.paymentMethod;
+          const down = (a.downPayment as number | undefined) ?? 0;
+          if (m.isCredit && !a.memberId)
+            return refused(
+              'Pilih member untuk kasbon (memberId dari search_members).',
+            );
+          if (m.isCredit && down >= c.quote.total)
+            return refused(
+              'Kasbon harus menyisakan sisa tagihan: downPayment kurang dari total.',
+            );
+          return ok({
+            preview: true,
+            quote: c.quote,
+            wouldPay: m.isCredit
+              ? down
+              : m.isCash
+                ? c.quote.amountDue
+                : c.quote.total,
+            ...(m.isCredit && { kasbonRest: c.quote.total - down }),
+          });
         },
         async (replay) => {
           // A replay sends exactly the body of the lost call; prices or the shift may have changed since.
@@ -1066,7 +1112,7 @@ export function buildAgentServer(
     'create_member',
     {
       description:
-        'Add a customer (member): name, and optionally code (no spaces; made up when left out), phone, address. Preview without confirm.',
+        "Add a customer (member): name, and optionally code (no spaces; send the store's own code when known, else one is made up from the key), phone, address. Preview without confirm.",
       inputSchema: {
         name: text(120),
         code: text(40).optional(),
@@ -1085,13 +1131,13 @@ export function buildAgentServer(
         ...given,
         code:
           given.code ??
-          `AG${createHash('sha256').update(String(a.idempotencyKey)).digest('hex').slice(0, 6).toUpperCase()}`,
+          `AG${createHash('sha256').update(String(a.idempotencyKey)).digest('hex').slice(0, 10).toUpperCase()}`,
       };
       return runWrite(
         'create_member',
         a,
         track,
-        () => Promise.resolve(ok({ preview: true, wouldCreate: body })),
+        () => Promise.resolve(previewCreate(body)),
         () => create('/members', body),
       );
     },
@@ -1124,6 +1170,14 @@ export function buildAgentServer(
           const r = await get(`/receivables/${id}`);
           if (!r.ok) return refused(r.message);
           const left = (r.data as { rest?: number }).rest ?? null;
+          if (
+            typeof a.amount !== 'number' ||
+            !Number.isInteger(a.amount) ||
+            a.amount <= 0
+          )
+            return refused('amount harus bilangan bulat rupiah lebih dari 0.');
+          if (typeof left === 'number' && a.amount > left)
+            return refused(`Pembayaran melebihi sisa piutang (Rp${left}).`);
           return ok({
             preview: true,
             receivableId: id,
@@ -1182,7 +1236,7 @@ export function buildAgentServer(
         'create_supplier',
         a,
         track,
-        () => Promise.resolve(ok({ preview: true, wouldCreate: body })),
+        () => Promise.resolve(previewCreate(body)),
         () => create('/suppliers', body),
       );
     },

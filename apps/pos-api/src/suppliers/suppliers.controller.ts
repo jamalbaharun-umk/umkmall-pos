@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Body,
   Controller,
   Delete,
@@ -17,7 +18,7 @@ import { Phone, validate } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
 import { suppliers } from '../db/schema';
 import { parseId } from '../staff/http';
-import { RequirePermission } from '../staff/require-permission';
+import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
@@ -112,6 +113,9 @@ export class SuppliersController {
   @AgentRoute()
   @Get()
   async list(@CurrentSession() s: PosSession) {
+    // Supplier phones and addresses: UMKMall's agent reads them only with the write consent (pos.write).
+    if (s.kind === 'agent' && !hasPermission(s, 'purchasing.manage'))
+      throw new ForbiddenException();
     return { data: await this.suppliers.list(s.tenantId) };
   }
 

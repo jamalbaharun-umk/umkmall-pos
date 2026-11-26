@@ -274,6 +274,27 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       expect(await shift(s)).toMatchObject({ cashSales: 5200, salesCount: 1 });
     });
 
+    it("UMK-1981: an agent's sale goes through payment-api like the till's, with actor agent:<owner id>", async () => {
+      const s = await shop();
+      const session = await http()
+        .post('/auth/dev/agent-session')
+        .send({ userId: s.userId, scopes: ['pos.read', 'pos.write'] })
+        .expect(200);
+      const res = await sell(
+        { ...s, auth: `Bearer ${session.body.sessionToken}` },
+        { paid: 5200 },
+      ).expect(201);
+      expect(res.body).toMatchObject({ status: 'completed', amountDue: 5200 });
+      const [payment] = await paymentsOf(s.tenantId);
+      expect(payment).toMatchObject({
+        method: 'cash',
+        amount: '5200',
+        status: 'paid',
+      });
+      const [charged] = await eventsOf(payment.id);
+      expect(charged.actor_ref).toBe(`agent:${s.userId}`);
+    });
+
     it('two requests with the same key at once make one sale and one payment (D1)', async () => {
       const s = await shop();
       const key = randomUUID();
