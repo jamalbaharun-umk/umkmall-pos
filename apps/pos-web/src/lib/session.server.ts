@@ -1,4 +1,4 @@
-import { deleteCookie, getCookie, setCookie } from '@tanstack/react-start/server'
+import { deleteCookie, getCookie, getRequestHeader, setCookie } from '@tanstack/react-start/server'
 import { landingPath, parseNativeSession, sessionKind, type NativeSession, type ReturnKey } from './sign-in'
 
 // The POS session lives only in this httpOnly cookie; the browser never sees the token in JS or a URL.
@@ -143,3 +143,36 @@ export function takeLandingPath(): string {
   if (key !== undefined) deleteCookie(RETURN_TO, { path: '/' })
   return landingPath(key)
 }
+
+/**
+ * A state-changing form POST made by a page of the POS itself, not by another site (UMK-2054: `/masuk/ulang` ends the
+ * owner's sessions and sets the landing cookie). `Sec-Fetch-Site` decides when the browser sends it (every current one
+ * does): only `same-origin` passes, also `same-site` (another umkmall.id host) fails. Without it, the `Origin` must be
+ * the POS's own: POS_WEB_URL's origin, or, where that is not set (local work), this request's host. No header fails.
+ */
+export function isSameOriginPost(h: {
+  secFetchSite?: string
+  origin?: string
+  host?: string
+  posWebUrl?: string
+}): boolean {
+  if (h.secFetchSite !== undefined) return h.secFetchSite === 'same-origin'
+  if (!h.origin || h.origin === 'null') return false
+  let origin: string
+  try {
+    origin = new URL(h.origin).origin
+  } catch {
+    return false
+  }
+  if (h.posWebUrl) return origin === new URL(h.posWebUrl).origin
+  return h.host !== undefined && (origin === `https://${h.host}` || origin === `http://${h.host}`)
+}
+
+/** `isSameOriginPost` for the request being served. */
+export const sameOriginRequest = () =>
+  isSameOriginPost({
+    secFetchSite: getRequestHeader('sec-fetch-site'),
+    origin: getRequestHeader('origin'),
+    host: getRequestHeader('host'),
+    posWebUrl: process.env.POS_WEB_URL,
+  })
