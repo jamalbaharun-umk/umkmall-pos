@@ -53,26 +53,64 @@ Builds on [2026-11-25-006 PG cashier flow](2026-11-25-006-feat-umk-1991-pg-cashi
 `code: 'sales_awaiting_payment'` and `sales: [{ id, holdNumber, amountDue, paymentMethod, onlinePayment,
 createdAt }]`, ordered by hold number. The sales are the closing actor's own shift's, in the session's store. The
 message keeps its first words ("Masih ada penjualan yang menunggu pembayaran": pos-web matches them) and names
-the hold numbers; `saleNumbers` stays, now the hold numbers.
+the hold numbers.
+
+**`saleNumbers` changed meaning:** it was the receipt numbers the waiting sales had been given at creation; it is
+now their hold numbers (they have no receipt number). pos-web does not read it. A client that does must read
+`sales[].holdNumber` instead.
 
 ### UMK-2046 paid while the till was away
 
-`GET /sales/paid-since?since=<ISO time with offset>`: the sales that waited for a payment gateway and were
-completed after `since`.
+`GET /sales/paid-since?since=<ISO time with offset>[&afterId=<sale id>]`: the sales that waited for a payment
+gateway and were completed after `since`, **oldest first**.
 
 - "Since" is the caller's: the till remembers `asOf` of its last answer (or the time it last showed its waiting
   sales) and sends it. The server keeps nothing per device.
-- **Compared with `sales.completed_at`,** the moment pos-api wrote the completion, never `paid_at`: a payment
-  the job learns of late is dated at the customer's paid time, which can be before the till last looked.
-- Whose: the actor's own sales, or all of the store's with `sales.void` (the same people who may open a sale's
-  payment). Tenant from the session.
-- Which: paid through a PG (`payment_method_code` is an online method). A sale switched to
-  cash is not listed (the cashier did that at the till). A sale refunded since is listed with `status: 'void'`.
+- **Compared with `sales.completed_at`,** the moment pos-api wrote the completion (`clock_timestamp()`), never
+  `paid_at`: a payment the job learns of late is dated at the customer's paid time, which can be before the till
+  last looked.
+- **Whose: exactly as `GET /sales`** (`SalesService.scope`): the actor's own sales, or all of the store's with
+  `reports.view`. Not `sales.void` (PR 29 review, owner ruling 2026-11-26): the answer carries totals, and a
+  cashier who may approve a void is not thereby shown what everyone else sold. Tenant from the session.
+- Which: paid through a PG (`payment_method_code` is an online method). A sale switched to cash is not listed
+  (the cashier did that at the till). A sale refunded since is listed with `status: 'void'`.
 - Answer: `{ data: [{ id, number, receiptNumber, holdNumber, status, total, amountDue, paymentMethod, paidAt,
-  completedAt, createdAt }], asOf }`, newest first, at most 50. `asOf` is the server's time less 10 seconds: a
-  completion is stamped when its transaction starts and is visible when it ends, so the next request overlaps
-  and the till drops the ids it already showed.
-- 422 without `since` or with one that is not a time.
+  completedAt, createdAt }], hasMore, asOf, afterId }`, at most 50 a page (`PAID_SINCE_LIMIT`).
+  - **More than a page** (`hasMore: true`): `asOf` is the last listed sale's completion time, to the microsecond,
+    and `afterId` its id. The till sends both back and gets the sales right after that one, ordered by
+    `(completed_at, id)`, so sales completed at the same instant are neither skipped nor repeated. It pages until
+    `hasMore` is false. (The first version answered only the newest 50, so older ones were never reported.)
+  - **The last page** (`hasMore: false`, `afterId: null`): `asOf` is the server's time less 10 seconds. A
+    completion is stamped when it is written and visible when its transaction ends, so the next request
+    overlaps and the till drops the ids it already showed.
+- 422 without `since`, with one that is not a time with an offset, with one before 2020 or more than a day ahead
+  (the database would refuse year 0000 with an error), or with an `afterId` that is not a uuid.
+
+### The receipt of a sale that is not a receipt (PR 29 review)
+
+`GET /sales/:id/receipt` answers 409 `not_a_receipt` (with `status`) for a sale that awaits its payment or was
+cancelled. Its `number` on the other answers is a hold number, and pos-web prints the receipt's as "No. n"
+(`kasir/struk.$id.tsx`, `kasir/riwayat.$id.tsx`), where it could be taken for receipt n. So the receipt answer's
+`number` is always a receipt number. pos-web needs no change: both screens are reached only from a completed
+sale (the history lists receipts; the pay dialogs open the receipt after completion), and a refusal shows the
+screen's load error. `number` on `GET /sales`, `GET /sales/:id` and `saleNumber` stay as above until pos-web
+reads the explicit fields (owner, 2026-11-26).
+
+## Deploy order (migration `sale_hold_number`)
+
+**Not a rolling deploy.** `sales_number_ck` is added by the migration, and the version before this one does not
+satisfy it: it inserts every sale without `completed_at` (so also a plain cash sale with payment-api off) and an
+awaiting sale without `hold_number`. An old instance that is still serving after the migration ran answers 500
+on every sale. Per environment:
+
+1. Stop every pos-api instance of the old version (the POS is down for the length of the migration; with
+   payment-api on, first let the job settle or cancel the awaiting sales, or accept that they wait).
+2. Run the migration (`npm run db:migrate -w pos-api`).
+3. Start the new version only.
+
+A rollback after step 2 needs the constraint dropped first (`alter table pos.sales drop constraint
+sales_number_ck`); the new columns can stay. If a zero-downtime deploy is ever needed, this is the expand/contract
+split: ship the columns and the code first, add the check in a later migration once no old instance runs.
 
 ## Definition of Done
 
@@ -90,8 +128,11 @@ completed after `since`.
 - `[test]` the database refuses a completed sale without a number and an awaiting sale without a hold number
 - `[test]` revert-red: taking the receipt number at creation again fails the gap tests
 - `[test]` the close refusal: code, the sales with hold number and amount, only this shift's and this store's
-- `[test]` paid-since: a sale paid while away is listed once after `since`; not before; own cashier only, all
-  with `sales.void`; store B sees nothing of A; 422 on a bad `since`; a late-learned payment is still listed
+- `[test]` paid-since: a sale paid while away is listed after `since`; not before; own cashier only (also with
+  `sales.void`), all with `reports.view`; store B sees nothing of A; 422 on a bad `since` (also year 0000) or
+  `afterId`; a late-learned payment is still listed; 120 sales are paged through, each seen exactly once
+- `[test]` the receipt of a waiting or cancelled sale is refused (409 `not_a_receipt`)
+- `[test]` a close and a new sale at once never leave a closed shift with a waiting sale
 - `[cmd]` `npm run lint && npm run typecheck && npm run build`, pos-api `jest --runInBand` on its own databases
 
 ## Files
@@ -113,5 +154,7 @@ completed after `since`.
 ## Open (owner)
 
 1. Should the hold number start again every day (or every shift)? Today it only grows.
+   (Answered 2026-11-26: every store day; a follow-up change.)
 2. After the web reads `receiptNumber`/`holdNumber`, should `number` of a waiting sale become null?
 3. Should `paid-since` also list cash/EDC sales that the job completed after a payment-api outage?
+   (Answered 2026-11-26: yes, and cancelled and expired sales too; a follow-up change.)
