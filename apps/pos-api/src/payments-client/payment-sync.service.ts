@@ -343,7 +343,7 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         await this.dropCashSwitch(tenantId, saleId);
         await this.dropRenew(tenantId, saleId);
       }
-      let sale = await this.saleForSettle(tenantId, saleId);
+      const sale = await this.saleForSettle(tenantId, saleId);
       if (!sale) return { outcome: 'not_found', payment: null };
       // Completed, voided or cancelled already: nothing is asked and nothing moves (M16).
       if (sale.status !== 'awaiting_payment' || !this.enabled)
@@ -361,24 +361,10 @@ export class PaymentSync implements OnModuleInit, OnModuleDestroy {
         sale.switchCashPaid === null
       )
         return { outcome: 'awaiting_payment', payment: null };
-      // So does the request for a new bill, while the sale is still at the attempt its screen shows, but
-      // only while it has written none: an intent it wrote and lost was taken back by a cancel (or a switch
-      // to cash, or a take-over), and claiming a new one each round would keep a cancel from ever winning.
-      if (
-        mode === 'renew' &&
-        ticket !== undefined &&
-        ticket.at === null &&
-        sale.attempt === renewFrom &&
-        sale.renewAt === null &&
-        sale.switchCashPaid === null
-      ) {
-        const asked = await this.requestRenew(tenantId, saleId, renewFrom);
-        if (asked.result === 'requested') ticket.at = asked.at;
-        sale = (await this.saleForSettle(tenantId, saleId)) ?? sale;
-        if (sale.status !== 'awaiting_payment' || !sale.method) continue;
-      }
-      // The request's own intent is gone and the sale is still at its attempt: it stops, acting on nothing
-      // (the caller answers what the sale is now: cancelled, or another request's new bill under way).
+      // So does the request for a new bill (it wrote its intent before calling, `requestRenew`): its own intent
+      // is gone and the sale is still at its attempt, so it was taken back (by a cancel, a switch to cash or a
+      // take-over), and claiming a new one each round would keep a cancel from ever winning. It stops, acting
+      // on nothing (the caller answers what the sale is now: cancelled, or another request's new bill under way).
       if (
         mode === 'renew' &&
         ticket?.at != null &&
