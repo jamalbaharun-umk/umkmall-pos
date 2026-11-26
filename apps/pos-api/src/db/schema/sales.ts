@@ -196,7 +196,10 @@ export const sales = pos
       // sha256 of the normalized request: the same key with a different body is refused, not replayed.
       requestHash: text('request_hash'),
       subtotal: rupiah('subtotal').notNull(),
+      // Every manual discount: the lines' (UMK-1990) plus the order's. Revenue = subtotal − discount − voucher + tax.
       discount: rupiah('discount').notNull().default(0),
+      // UMK-1990: the part of `discount` given on lines (Σ sale_lines.discount); the rest is the order discount.
+      lineDiscount: rupiah('line_discount').notNull().default(0),
       // U7: member (required for a credit sale) and the voucher applied, with its discount.
       memberId: uuid('member_id'),
       voucherId: uuid('voucher_id'),
@@ -334,6 +337,10 @@ export const sales = pos
           and ${t.change} = greatest(${t.paid} - ${t.total} - ${t.rounding}, 0) and ${t.costTotal} >= 0
           and (${t.paid} >= ${t.total} + ${t.rounding} or ${t.memberId} is not null)`,
       ),
+      check(
+        'sales_line_discount_ck',
+        sql`${t.lineDiscount} >= 0 and ${t.lineDiscount} <= ${t.discount}`,
+      ),
     ],
   )
   .enableRLS();
@@ -366,6 +373,12 @@ export const saleLines = pos
       lineTotal: rupiah('line_total').notNull(),
       costTotal: rupiah('cost_total').notNull(),
       priceOverriddenBy: uuid('price_overridden_by'),
+      // UMK-1990: the line discount in rupiah, off `line_total` (which stays qty × unit_price); the line was
+      // charged `line_total - discount`. `discount_percent` when it was given as a percent (1-99), for the label.
+      discount: rupiah('discount').notNull().default(0),
+      discountPercent: integer('discount_percent'),
+      // Who approved a discount above DISCOUNT_APPROVAL_BPS by PIN (owner or staff id); null below it.
+      discountApprovedBy: uuid('discount_approved_by'),
     },
     (t) => [
       index('sale_lines_sale_idx').on(t.saleId),
@@ -378,6 +391,54 @@ export const saleLines = pos
         sql`${t.qty} > 0 and ${t.unitPrice} >= 0 and ${t.lineTotal} = ${t.unitPrice} * ${t.qty} and ${t.costTotal} >= 0`,
       ),
       check('sale_lines_unit_ck', sql`${t.unitQty} >= 1`),
+      // Never 100%: a discounted line keeps at least Rp1.
+      check(
+        'sale_lines_discount_ck',
+        sql`${t.discount} >= 0 and (${t.discount} = 0 or ${t.discount} < ${t.lineTotal})
+          and (${t.discountPercent} is null or ${t.discountPercent} between 1 and 99)`,
+      ),
+    ],
+  )
+  .enableRLS();
+
+/**
+ * UMK-1990: a PIN approval of a line discount above 30% (`DISCOUNT_APPROVAL_BPS`). The approver (the owner or staff
+ * holding `sales.price_override`) types their own PIN at the till; the row lets the actor who asked put a discount
+ * of at most `max_bps` of the line on one line of `product_id`, once, until `expires_at`. Taken (`used_at`,
+ * `sale_id`) inside the sale's transaction. No PIN is kept here: only the approver's own hashed PIN is checked.
+ */
+export const discountApprovals = pos
+  .table(
+    'discount_approvals',
+    {
+      id: id(),
+      tenantId: tenantId(),
+      // The session actor who asked and may use it.
+      actorId: uuid('actor_id').notNull(),
+      approverId: uuid('approver_id').notNull(),
+      approverKind: text('approver_kind', {
+        enum: ['owner', 'cashier'],
+      }).notNull(),
+      productId: uuid('product_id')
+        .notNull()
+        .references(() => products.id, { onDelete: 'restrict' }),
+      // The largest discount approved, in basis points of the line's total.
+      maxBps: integer('max_bps').notNull(),
+      expiresAt: ts('expires_at').notNull(),
+      usedAt: ts('used_at'),
+      saleId: uuid('sale_id'),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      index('discount_approvals_tenant_actor_idx').on(t.tenantId, t.actorId),
+      foreignKey({
+        columns: [t.tenantId, t.saleId],
+        foreignColumns: [sales.tenantId, sales.id],
+      }).onDelete('restrict'),
+      check(
+        'discount_approvals_ck',
+        sql`${t.maxBps} between 1 and 9999 and (${t.usedAt} is null) = (${t.saleId} is null)`,
+      ),
     ],
   )
   .enableRLS();

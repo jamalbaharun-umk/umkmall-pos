@@ -316,6 +316,13 @@
       "when": 1795701035381,
       "tag": "0044_purchase_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1795702903396,
+      "tag": "0045_line_discounts",
+      "breakpoints": true
     }
   ]
 }

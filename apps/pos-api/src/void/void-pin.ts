@@ -16,6 +16,7 @@ import {
   tenants,
   voidPins,
 } from '../db/schema';
+import type { Permission } from '../staff/permissions';
 import { hashPin, verifyPin } from '../staff/secrets';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
@@ -133,8 +134,15 @@ export class VoidPins {
     return row;
   }
 
-  /** Staff of this store who hold `sales.void` (active, not deleted), by id. */
-  private async staffApprovers(tenantId: string, id?: string) {
+  /**
+   * Staff of this store who hold `permission` (active, not deleted), by id: `sales.void` for a void,
+   * `sales.price_override` for a line discount above 30% (UMK-1990).
+   */
+  private async staffApprovers(
+    tenantId: string,
+    id?: string,
+    permission: Permission = 'sales.void',
+  ) {
     return this.db
       .selectDistinct({ id: staff.id, name: staff.name })
       .from(staff)
@@ -157,7 +165,7 @@ export class VoidPins {
           eq(staff.tenantId, tenantId),
           eq(staff.active, true),
           isNull(staff.deletedAt),
-          eq(rolePermissions.permission, 'sales.void'),
+          eq(rolePermissions.permission, permission),
           id ? eq(staff.id, id) : undefined,
         ),
       )
@@ -172,28 +180,31 @@ export class VoidPins {
     return t?.userId ?? null;
   }
 
-  /** The store's owner or a live staff member holding `sales.void`; null for anyone else. */
+  /** The store's owner or a live staff member holding `permission`; null for anyone else. */
   private async approver(
     tenantId: string,
     actorId: string,
+    permission: Permission,
   ): Promise<Approver | null> {
     if ((await this.ownerId(tenantId)) === actorId)
       return { id: actorId, kind: 'owner', name: 'Pemilik' };
-    const [member] = await this.staffApprovers(tenantId, actorId);
+    const [member] = await this.staffApprovers(tenantId, actorId, permission);
     return member ? { ...member, kind: 'cashier' } : null;
   }
 
-  /** Who can approve a void in this store, and whether each can right now. Never the PIN or its hash. */
-  async approvers(tenantId: string) {
+  /**
+   * Who can approve a void (or, with `sales.price_override`, a large line discount) in this store, and whether
+   * each can right now. Never the PIN or its hash.
+   */
+  async approvers(tenantId: string, permission: Permission = 'sales.void') {
     const ownerId = await this.ownerId(tenantId);
     const all: Approver[] = [
       ...(ownerId
         ? [{ id: ownerId, kind: 'owner' as const, name: 'Pemilik' }]
         : []),
-      ...(await this.staffApprovers(tenantId)).map((m) => ({
-        ...m,
-        kind: 'cashier' as const,
-      })),
+      ...(await this.staffApprovers(tenantId, undefined, permission)).map(
+        (m) => ({ ...m, kind: 'cashier' as const }),
+      ),
     ];
     const pins = all.length
       ? await this.db
@@ -240,14 +251,16 @@ export class VoidPins {
 
   /**
    * Checks `pin` for `approverId` and returns the approver. An unknown id, another store's id, a
-   * deactivated staff member and one without `sales.void` all get the wrong-PIN answer and count nowhere.
+   * deactivated staff member and one without `permission` (`sales.void` unless said) all get the wrong-PIN
+   * answer and count nowhere.
    */
   async verify(
     tenantId: string,
     approverId: string,
     pin: string,
+    permission: Permission = 'sales.void',
   ): Promise<Approver> {
-    const approver = await this.approver(tenantId, approverId);
+    const approver = await this.approver(tenantId, approverId, permission);
     if (!approver) throw wrongPin('pin');
     const outcome = await this.guess(tenantId, approverId, pin);
     if (!outcome)

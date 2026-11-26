@@ -2048,6 +2048,34 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       await refund(s, pg).expect(201);
     });
 
+    it('UMK-1990 a PG sale with a line discount is charged and refunded the discounted amount; stock comes back', async () => {
+      const s = await shop();
+      // 3 × 5.123 = 15.369; 10% = 1.536,9 → 1.537; the customer pays 13.832.
+      const saleId = (
+        await sell(s, {
+          lines: [{ productId: s.productId, qty: 3, discountPercent: 10 }],
+          paid: 13_832,
+        }).expect(201)
+      ).body.id as string;
+      const [charge] = await paymentsOf(saleId);
+      expect(Number(charge.amount)).toBe(13_832);
+      await onBill(s, saleId, 'pay');
+      await get(s.auth, `/sales/${saleId}/payment`).expect(200);
+      expect(await onHand(s)).toBe(17);
+      const res = await refund(s, saleId).expect(201);
+      expect(res.body).toMatchObject({
+        status: 'void',
+        refundStatus: 'pending',
+        subtotal: 15_369,
+        discount: 1537,
+        total: 13_832,
+        cashReturned: 0,
+        transferReturned: 13_832,
+      });
+      expect(await onHand(s)).toBe(20);
+      expect((await paymentsOf(saleId))[0].status).toBe('refund_pending');
+    });
+
     it('V3 D9 refund: the sale is reversed at once, the gateway is asked once with the reason and the PIN approver, and the job follows it to refunded', async () => {
       const s = await shop();
       const saleId = await paidSale(s);

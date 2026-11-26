@@ -272,6 +272,27 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       { reasonCode: 'customer_cancelled', approverId: s.userId, pin: '482913' },
       randomUUID(),
     ).expect(201);
+    // UMK-1990: a PIN approval of a line discount above 30%, taken by a sale: discount_approvals.
+    const approval = await post(
+      '/sales/discount-approvals',
+      { approverId: s.userId, pin: '482913', productId, maxBps: 5000 },
+      randomUUID(),
+    ).expect(201);
+    await post(
+      '/sales',
+      {
+        lines: [
+          {
+            productId,
+            qty: 1,
+            discountPercent: 40,
+            discountApprovalId: approval.body.id,
+          },
+        ],
+        paid: 10_000,
+      },
+      randomUUID(),
+    ).expect(201);
     // UMK-1991: a refusal payment-api gave for that sale (written by the job only with payment-api on).
     await admin`insert into pos.payment_sync_issues (tenant_id, kind, ref_id, attempts, last_error)
       values (${s.tenantId}, 'sale', ${voided.body.id}, 1, 'payment_mismatch')`;

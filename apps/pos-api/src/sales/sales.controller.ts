@@ -16,7 +16,9 @@ import { RequirePermission } from '../staff/require-permission';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
+  AgentQuoteInput,
   AgentSaleInput,
+  DiscountApprovalInput,
   IdempotencyKey,
   PaidSinceQuery,
   QuoteInput,
@@ -56,7 +58,26 @@ export class SalesController {
   @HttpCode(200)
   @RequirePermission('sales.create')
   quote(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.sales.quote(s, validate(QuoteInput, body));
+    return this.sales.quote(
+      s,
+      s.kind === 'agent'
+        ? validate(AgentQuoteInput, body)
+        : validate(QuoteInput, body),
+    );
+  }
+
+  /** UMK-1990: who may approve a line discount above 30% by their PIN. */
+  @Get('discount-approvers')
+  @RequirePermission('sales.price_override')
+  discountApprovers(@CurrentSession() s: PosSession) {
+    return this.sales.discountApprovers(s);
+  }
+
+  /** UMK-1990: a PIN approval of a line discount above 30%, named by the sale's line. */
+  @Post('discount-approvals')
+  @RequirePermission('sales.price_override')
+  approveDiscount(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    return this.sales.approveDiscount(s, validate(DiscountApprovalInput, body));
   }
 
   @Get()
