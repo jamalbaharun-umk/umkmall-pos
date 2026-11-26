@@ -69,9 +69,31 @@ export const SaleInput = z
   })
   .strict();
 
-/** `POST /sales/quote`: the cart's lines only; nothing is written. */
+/**
+ * What UMKMall's agent may send for a sale (UMK-1981, owner ruling 24 Nov 2026: the agent never sets a price): the
+ * cart, a member, a voucher, one payment method and the amount paid. No line price, no manual discount, no bank.
+ */
+export const AgentSaleInput = z
+  .object({
+    lines: linesOf(z.object(lineFields).strict()),
+    memberId: Uuid.optional(),
+    voucherCode: z.string().trim().min(1).max(40).optional(),
+    paymentMethodId: Uuid.optional(),
+    paid: rupiah,
+    note: z.string().trim().max(200).optional(),
+  })
+  .strict();
+
+/**
+ * `POST /sales/quote`: the cart's lines and, when a voucher or a payment method is given (UMK-1981), the whole
+ * amount the sale would ask: voucher discount, tax, total, cash rounding, amount due. Nothing is written.
+ */
 export const QuoteInput = z
-  .object({ lines: linesOf(z.object(lineFields).strict()) })
+  .object({
+    lines: linesOf(z.object(lineFields).strict()),
+    voucherCode: z.string().trim().min(1).max(40).optional(),
+    paymentMethodId: Uuid.optional(),
+  })
   .strict();
 
 export const SalesQuery = z.object({

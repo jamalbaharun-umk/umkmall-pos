@@ -60,6 +60,19 @@ describe('repo guards', () => {
         'POST /catalog/categories',
         'POST /catalog/products',
         'POST /mcp',
+        // UMK-1981
+        'GET /members/picker',
+        'GET /payment-methods',
+        'GET /receivables',
+        'GET /receivables/:id',
+        'GET /shifts/current',
+        'GET /suppliers',
+        'POST /members',
+        'POST /receivables/:id/payments',
+        'POST /sales',
+        'POST /sales/quote',
+        'POST /shifts/open',
+        'POST /suppliers',
       ].sort(),
     );
   });

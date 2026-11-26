@@ -20,7 +20,7 @@ import { PaymentSync } from '../payments-client/payment-sync.service';
 import { ONLINE_METHODS } from '../payments-client/payments.client';
 import { isUniqueViolation, parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
 // `online` (UMK-1991): paid through a payment gateway (dynamic QRIS, VA), as payment-api's `gatewayMethod`.
@@ -196,6 +196,7 @@ export class PaymentMethodsService {
 export class PaymentMethodsController {
   constructor(private readonly methods: PaymentMethodsService) {}
 
+  @AgentRoute()
   @Get()
   async list(@CurrentSession() s: PosSession) {
     return { data: await this.methods.list(s.tenantId) };

@@ -19,7 +19,7 @@ import { type Db, InjectDb } from '../db/db.module';
 import { members } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
 /** Optional text: blank is stored as null. */
@@ -185,6 +185,7 @@ export class MembersController {
     return this.members.list(s.tenantId, validate(MemberListQuery, query));
   }
 
+  @AgentRoute()
   @Get('picker')
   @RequirePermission('sales.create')
   async picker(@CurrentSession() s: PosSession, @Query() query: unknown) {
@@ -192,6 +193,7 @@ export class MembersController {
     return { data: await this.members.pick(s.tenantId, q) };
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('members.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {

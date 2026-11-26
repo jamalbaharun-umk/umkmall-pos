@@ -24,6 +24,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
+  AGENT_LABEL,
   FINAL_SALE_STATUSES,
   members,
   paymentMethods,
@@ -422,6 +423,14 @@ export class SalesService {
           { total, rounding, amountDue },
           'paid',
         );
+    } else if (method.isOnline && s.kind === 'agent') {
+      // UMK-1981: UMKMall's agent records no online sale yet (nothing relays the QR to the customer, and a sale
+      // left awaiting payment would block closing the owner's shift).
+      throw fail(
+        'Metode pembayaran online belum bisa dipakai lewat agent',
+        {},
+        'paymentMethodId',
+      );
     } else if (
       method.isOnline &&
       // Asked again here: a method that exists must not sell where online payments are off (payment-api
@@ -657,7 +666,38 @@ export class SalesService {
     });
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
-    return { lines, subtotal };
+    if (!input.voucherCode && !input.paymentMethodId)
+      return { lines, subtotal };
+    // UMK-1981: the rest of the sale's arithmetic, as `insert` does it, without taking the voucher or a number.
+    const voucher = input.voucherCode
+      ? await evaluateVoucher(this.db, s.tenantId, input.voucherCode, subtotal)
+      : null;
+    const voucherDiscount = voucher?.discount ?? 0;
+    const method = await this.methodOf(
+      this.db,
+      s.tenantId,
+      input.paymentMethodId,
+    );
+    const { taxBps } = await this.settings(s.tenantId);
+    const tax = taxOf(subtotal - voucherDiscount, taxBps);
+    const total = subtotal - voucherDiscount + tax;
+    const rounding = method.isCash ? cashRounding(total) : 0;
+    return {
+      lines,
+      subtotal,
+      voucherDiscount,
+      tax,
+      total,
+      rounding,
+      amountDue: total + rounding,
+      paymentMethod: {
+        id: method.id,
+        name: method.name,
+        isCash: method.isCash,
+        isCredit: method.isCredit,
+        isOnline: method.isOnline,
+      },
+    };
   }
 
   /** A live member of this store, else 422. */
@@ -677,11 +717,12 @@ export class SalesService {
   }
 
   /** The chosen live method of this store (default Tunai), else 422. */
-  private async methodOf(tx: Tx, tenantId: string, id?: string) {
+  private async methodOf(tx: Db | Tx, tenantId: string, id?: string) {
     const methodId = id ?? (await cashMethodId(tx, tenantId));
     const [m] = await tx
       .select({
         id: paymentMethods.id,
+        name: paymentMethods.name,
         isCash: paymentMethods.isCash,
         isDebit: paymentMethods.isDebit,
         isWallet: paymentMethods.isWallet,
@@ -1073,7 +1114,7 @@ export class SalesService {
         saleId: id,
         status: sale.status,
       });
-    let cashier = 'Pemilik';
+    let cashier = sale.actorKind === 'agent' ? AGENT_LABEL : 'Pemilik';
     if (sale.actorKind === 'cashier') {
       const [row] = await this.db
         .select({ name: staff.name })
