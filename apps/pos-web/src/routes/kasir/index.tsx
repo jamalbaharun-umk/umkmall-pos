@@ -67,8 +67,9 @@ import {
   QRIS_NO_BANK_CHECK,
   type Bank,
 } from './-pay-step'
+import { getSalePayment } from './-online-api'
 import { AwaitingList, OnlineWait, ResumeGate, useResumeChecks, type OnlineFinish } from './-online-pay'
-import { holdLabel, parsePayment, receiptLabel, saleFailure, type ResumeDecision, type SalePayment } from './-online'
+import { holdLabel, keepPolling, parsePayment, receiptLabel, saleFailure, type ResumeDecision, type SalePayment } from './-online'
 import {
   canAck,
   finishPlan,
@@ -101,6 +102,10 @@ import { cashRounding, discountError, numpadEdit, parseRupiah, qtyError, quickAm
 // the left, "Orders details" on the right, then the payment modal (method, quick amounts, numpad, "Pay it") and the
 // success modal (change, Print).
 export const Route = createFileRoute('/kasir/')({
+  // `?menunggu=daftar` opens the waiting list, `?menunggu=<sale id>` that sale's waiting screen (the shift close links here).
+  validateSearch: (s: Record<string, unknown>): { menunggu?: string } => ({
+    menunggu: typeof s.menunggu === 'string' && /^(daftar|[0-9a-f-]{36})$/i.test(s.menunggu) ? s.menunggu : undefined,
+  }),
   loader: () => loadCashier(),
   component: CashierPage,
   pendingComponent: Pending,
@@ -109,8 +114,9 @@ export const Route = createFileRoute('/kasir/')({
 
 function CashierPage() {
   const { shift, products, taxBps, methods, qris, chargeable, banks } = Route.useLoaderData()
+  const { menunggu } = Route.useSearch()
   return shift ? (
-    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} banks={banks} />
+    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} banks={banks} open={menunggu} />
   ) : (
     <OpenShift />
   )
@@ -180,6 +186,7 @@ function Register({
   qris,
   chargeable,
   banks,
+  open: openWaiting,
 }: {
   products: Product[]
   taxBps: number
@@ -189,6 +196,8 @@ function Register({
   chargeable: string[]
   /** UMK-2037: by gateway method, the banks to choose from before a virtual account is made. */
   banks: Record<string, Bank[]>
+  /** `?menunggu=` of the URL: `daftar` opens the waiting list, a sale id opens that sale (the shift close links here). */
+  open?: string
 }) {
   const router = useRouter()
   const [q, setQ] = useState('')
@@ -206,6 +215,21 @@ function Register({
   const pend = usePending()
   const [payments, setPayments] = useState<Record<string, SalePayment>>({})
   const [listing, setListing] = useState(false)
+  const navigate = useNavigate()
+  const lostOpen = useLost()
+  // A link from the shift close (UMK-2044): open what it names once, then drop the parameter so a reload does not repeat it.
+  useEffect(() => {
+    if (!openWaiting) return
+    void navigate({ to: '/kasir', search: {}, replace: true })
+    if (openWaiting === 'daftar') return setListing(true)
+    void getSalePayment({ data: openWaiting })
+      .catch(lostOpen)
+      .then((r) => {
+        if (!r || !r.ok) return showError(r?.failure ?? { status: 0 }, { action: 'membuka penjualan menunggu' })
+        if (!keepPolling(r.data)) return notifySuccess(`Penjualan ${holdLabel(r.data.holdNumber)} sudah selesai atau ditutup`)
+        track(r.data, { type: 'sale_picked', saleId: r.data.saleId })
+      })
+  }, [openWaiting])
   const onScreen = pend.state.showing ? payments[pend.state.showing] : undefined
   const online = onScreen ? { payment: onScreen, own: isOwn(pend.state, onScreen.saleId) } : null
   /** One sale becomes known together with its payment: the screen can never show a sale it has no payment of. */

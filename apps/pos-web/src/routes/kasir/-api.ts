@@ -3,6 +3,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import type { Quote, SaleUnit } from './-helpers'
 import type { SalePayment } from './-online'
+import { parseWaitingSales, type WaitingSale } from './-shift-helpers'
 import { parseOnlineMethods, type Bank, type OnlineMethods } from './-pay-step'
 import type { CashTotals } from './-shift-helpers'
 
@@ -106,6 +107,8 @@ export type Result<T = undefined> =
       code?: string
       /** UMK-1991: the sale a refused PG sale left behind (cancelled, or still waiting for its payment). */
       saleId?: string
+      /** UMK-2044: the sales that hold a shift open (a 409 `sales_awaiting_payment`). */
+      waiting?: WaitingSale[]
     }
 
 const ERRORS: Record<number, string> = {
@@ -120,6 +123,7 @@ type Refusal = {
   status?: number
   code?: string
   saleId?: string
+  waiting?: WaitingSale[]
 }
 
 /** pos-api's 409/422 bodies are Indonesian and internals-free (`{ message, errors, total? }`): pass them on. */
@@ -144,6 +148,7 @@ async function refusalOf(res: Response): Promise<Refusal> {
       total: typeof body?.total === 'number' ? body.total : undefined,
       code: typeof body?.code === 'string' && /^[a-z][a-z_]{1,39}$/.test(body.code) ? body.code : undefined,
       saleId: typeof body?.saleId === 'string' ? body.saleId : undefined,
+      waiting: res.status === 409 ? parseWaitingSales(body) : undefined,
     }
   }
   return { status: res.status, error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }

@@ -11,7 +11,7 @@ export { useConfirm } from './confirm'
 export { check, compact, type FieldErrors } from '../lib/form-checks'
 import type { FieldErrors } from '../lib/form-checks'
 
-export type Outcome = { ok: true } | { ok: false; error: string; errors?: FieldErrors; status?: number }
+export type Outcome = { ok: true } | { ok: false; error: string; errors?: FieldErrors; status?: number; code?: string }
 
 export const formatDate = (iso: string) =>
   new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
@@ -43,14 +43,14 @@ export async function act<R extends Outcome>(
   run: () => Promise<R>,
   success: string,
   action: ErrorContext,
-): Promise<{ ok: true; res: R } | { ok: false; error: string; errors: FieldErrors }> {
+): Promise<{ ok: true; res: R } | { ok: false; error: string; errors: FieldErrors; res: Extract<R, { ok: false }> | Outcome }> {
   const res: Outcome = await run().catch(() => ({ ok: false as const, status: 0, error: OFFLINE }))
   if (res.ok) {
     notifySuccess(success)
     return { ok: true, res: res as R }
   }
   showError(res, action)
-  return { ok: false, error: res.error, errors: res.errors ?? {} }
+  return { ok: false, error: res.error, errors: res.errors ?? {}, res }
 }
 
 /** A required marker for controls without a `required` prop (Select): the same red asterisk TextField draws. */

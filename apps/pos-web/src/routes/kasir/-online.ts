@@ -305,11 +305,17 @@ export const holdLabel = (n: number | null | undefined) => (typeof n === 'number
 
 /** The day and time of a sale in the store's zone ("Kam, 26 Nov 10.15"), for telling two waiting sales of one number apart. */
 export function dayTimeText(iso: string): string {
+  const day = dayText(iso)
+  const time = clockText(iso)
+  return day && time ? `${day} ${time}` : ''
+}
+
+/** "Kam, 26 Nov" in the store's zone; '' for a time that is not one. */
+export function dayText(iso: string): string {
   const t = new Date(iso)
-  if (Number.isNaN(t.getTime())) return ''
-  const day = t.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' })
-  const time = t.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })
-  return `${day} ${time}`
+  return Number.isNaN(t.getTime())
+    ? ''
+    : t.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' })
 }
 
 /**

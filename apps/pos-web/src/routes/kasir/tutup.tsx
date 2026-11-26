@@ -4,7 +4,8 @@ import { useRef, useState } from 'react'
 import { act, Empty, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { closeShift, loadCurrentShift, type Shift } from './-api'
 import { cashDifference, parseRupiah } from './-money'
-import { CLOSE_BLOCKED_HINT, drawerRows, isPendingPaymentRefusal } from './-shift-helpers'
+import { clockText, dayText, holdLabel } from './-online'
+import { CLOSE_BLOCKED_HINT, drawerRows, isPendingPaymentRefusal, waitingSearch, type WaitingSale } from './-shift-helpers'
 
 // Closing the cash drawer (Lakasir: cashier header action): expected cash, counted cash, the difference.
 export const Route = createFileRoute('/kasir/tutup')({
@@ -20,6 +21,7 @@ function CloseShiftPage() {
   const [error, setError] = useState<string>()
   // pos-api refuses the close while a sale of the shift awaits payment: say which, and what to do.
   const [blocked, setBlocked] = useState<string>()
+  const [waiting, setWaiting] = useState<WaitingSale[]>([])
   const [busy, setBusy] = useState(false)
   const lock = useRef(false) // state lags a burst of clicks; the ref does not
   const [closed, setClosed] = useState<Shift>()
@@ -35,6 +37,7 @@ function CloseShiftPage() {
     if (Number.isNaN(amount)) return setError('Harus bilangan bulat rupiah, misalnya 150.000')
     setError(undefined)
     setBlocked(undefined)
+    setWaiting([])
     ask(
       'Tutup shift?',
       async () => {
@@ -45,7 +48,9 @@ function CloseShiftPage() {
         setBusy(false)
         if (!r.ok) {
           setError(r.errors.countedCash)
-          if (isPendingPaymentRefusal(r.error)) setBlocked(r.error)
+          const sales = (r.res as { waiting?: WaitingSale[] }).waiting ?? []
+          if (sales.length > 0 || isPendingPaymentRefusal(r.error)) setBlocked(r.error)
+          setWaiting(sales)
           return // `act` already opened the error dialog
         }
         if (r.res.ok) setClosed(r.res.data)
@@ -98,6 +103,7 @@ function CloseShiftPage() {
                 {blocked} {CLOSE_BLOCKED_HINT}
               </Alert>
             )}
+            {waiting.length > 0 && <WaitingList sales={waiting} />}
             <form onSubmit={submit} noValidate className="mt-5 space-y-4">
               <TextField
                 label="Uang yang dihitung"
@@ -123,6 +129,45 @@ function CloseShiftPage() {
       </Card>
       {dialog}
     </Page>
+  )
+}
+
+/** The sales that hold the shift open, each with a link to its waiting screen in the register (UMK-2044). */
+function WaitingList({ sales }: { sales: WaitingSale[] }) {
+  const today = dayText(new Date().toISOString())
+  return (
+    <section aria-label="Penjualan yang menunggu pembayaran" className="mt-3 space-y-2">
+      <ul className="space-y-2">
+        {sales.map((w) => {
+          const day = dayText(w.createdAt)
+          const time = clockText(w.createdAt)
+          // a sale held over midnight shares its number with today's: say which day it is of
+          const other = w.holdToday === false || (w.holdToday === undefined && !!day && day !== today)
+          return (
+            <li key={w.id} className="flex items-center justify-between gap-3 rounded-lg border border-default-primary p-3 text-sm">
+              <span>
+                <b>{holdLabel(w.holdNumber)}</b>
+                <span className="block text-xs text-default-secondary">
+                  {rupiah(w.amountDue)}
+                  {w.paymentMethod ? ` · ${w.paymentMethod}` : ''}
+                  {other ? ` · ${w.holdDayLabel ?? day}${time ? ` ${time}` : ''}` : time ? ` · ${time}` : ''}
+                </span>
+              </span>
+              <Button asChild type="outline" color="light" size="small" width="auto">
+                <Link to="/kasir" search={waitingSearch(w.onlinePayment ? w.id : undefined)}>
+                  {w.onlinePayment ? 'Buka' : 'Ke kasir'}
+                </Link>
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+      <Button asChild type="text" size="small" width="auto">
+        <Link to="/kasir" search={waitingSearch()}>
+          Buka daftar Menunggu di kasir
+        </Link>
+      </Button>
+    </section>
   )
 }
 
