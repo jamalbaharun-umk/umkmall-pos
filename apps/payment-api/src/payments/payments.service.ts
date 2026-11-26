@@ -149,7 +149,7 @@ export class PaymentsService {
           requestHash,
           expiresAt:
             adapter.kind === 'online'
-              ? new Date(now.getTime() + this.settings.qrTtlMs)
+              ? new Date(now.getTime() + this.settings.ttlMs(adapter))
               : null,
           createdAt: now,
           updatedAt: now,

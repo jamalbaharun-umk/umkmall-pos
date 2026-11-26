@@ -49,8 +49,11 @@ const EnvSchema = z
     PAYMENT_LATE_AUTO_REFUND: flag(true),
     // The owner may mark a refund the PG refused as "returned by hand" (owner decision).
     PAYMENT_MANUAL_REFUND_MARK: flag(true),
-    // How long a QR or VA accepts payment (owner decision: 15 minutes).
+    // How long a QR accepts payment (owner decision: 15 minutes). Also every method that declares no validity.
     PAYMENT_QR_TTL_SECONDS: count(900),
+    // How long a virtual account accepts payment (UMK-2039). 60 minutes is the sample value of the approved
+    // design, NOT an owner decision yet: set it per deploy once the owner has decided.
+    PAYMENT_VA_TTL_SECONDS: count(3600),
     // After the bill's expiry, how long a payment on its way is still waited for before the AUTOMATIC `expired`
     // (a proposal, not yet an owner decision). A cashier's own cancel never waits for it.
     PAYMENT_EXPIRY_GRACE_SECONDS: count(600),
@@ -135,6 +138,7 @@ export class PaymentSettings {
   lateAutoRefund: boolean;
   manualRefundMark: boolean;
   qrTtlMs: number;
+  vaTtlMs: number;
   expiryGraceMs: number;
   lateSweepMs: number;
   cancelWithoutGatewayClose: boolean;
@@ -152,6 +156,7 @@ export class PaymentSettings {
     this.lateAutoRefund = env.PAYMENT_LATE_AUTO_REFUND;
     this.manualRefundMark = env.PAYMENT_MANUAL_REFUND_MARK;
     this.qrTtlMs = env.PAYMENT_QR_TTL_SECONDS * 1000;
+    this.vaTtlMs = env.PAYMENT_VA_TTL_SECONDS * 1000;
     this.expiryGraceMs = env.PAYMENT_EXPIRY_GRACE_SECONDS * 1000;
     this.lateSweepMs = env.PAYMENT_LATE_SWEEP_SECONDS * 1000;
     this.cancelWithoutGatewayClose = env.PAYMENT_CANCEL_WITHOUT_GATEWAY_CLOSE;
@@ -164,6 +169,11 @@ export class PaymentSettings {
       env.PAYMENT_PURGE_FAILED_REFUND_BLOCK_DAYS * 86_400_000;
     this.gatewayMode = env.PAYMENT_GATEWAY_MODE;
     this.liveEnabled = env.PAYMENT_LIVE_ENABLED;
+  }
+
+  /** How long a bill of this adapter accepts payment: the validity it declares, a QR's when it declares none. */
+  ttlMs(adapter: { validity?: 'qr' | 'va' }): number {
+    return adapter.validity === 'va' ? this.vaTtlMs : this.qrTtlMs;
   }
 }
 

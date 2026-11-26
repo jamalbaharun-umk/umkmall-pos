@@ -418,7 +418,9 @@ export class SettlementService {
         const expiresAt =
           row.expiresAt ??
           answer.expiresAt ??
-          new Date(row.createdAt.getTime() + this.settings.qrTtlMs);
+          new Date(
+            row.createdAt.getTime() + this.settings.ttlMs(this.adapterOf(row)),
+          );
         return this.clock.now().getTime() <
           expiresAt.getTime() + this.settings.expiryGraceMs
           ? row

@@ -137,6 +137,52 @@ describe('local fake gateway', () => {
       });
     });
 
+    it('UMK-2039 a VA is valid for PAYMENT_VA_TTL_SECONDS (60 minutes by default), a QR for PAYMENT_QR_TTL_SECONDS: when the QR has expired the VA is still payable', async () => {
+      const s = createStore(app);
+      expect(settings.vaTtlMs).toBe(60 * MINUTE);
+      const before = clock.now().getTime();
+      const qr = await bill(s);
+      const va = await bill(s, { method: 'fake_va' });
+      const ttl = new Date(va.expiresAt).getTime() - before;
+      expect(ttl).toBeGreaterThanOrEqual(60 * MINUTE);
+      expect(ttl).toBeLessThan(60 * MINUTE + 5000);
+      // The gateway was given the same validity: its bill ends when ours does.
+      expect((await billOf(s, va)).expiresAt).toBe(va.expiresAt);
+
+      clock.advance(settings.qrTtlMs + settings.expiryGraceMs + 1000);
+      expect((await billOf(s, qr)).status).toBe('expired');
+      expect((await billOf(s, va)).status).toBe('pending');
+      await reconcile.tick();
+      expect((await s.read(qr.id)).status).toBe('expired');
+      expect((await s.read(va.id)).status).toBe('pending');
+      await act(s, va, 'pay').expect(200);
+      expect((await s.read(va.id)).status).toBe('paid');
+    });
+
+    it('UMK-2039 the validity is configuration per method: a VA made after a change gets the new one, and expires by itself after it plus the grace', async () => {
+      const s = createStore(app);
+      settings.vaTtlMs = 30 * MINUTE;
+      const before = clock.now().getTime();
+      const va = await bill(s, { method: 'fake_va' });
+      const ttl = new Date(va.expiresAt).getTime() - before;
+      expect(ttl).toBeGreaterThanOrEqual(30 * MINUTE);
+      expect(ttl).toBeLessThan(30 * MINUTE + 5000);
+      // A QR is not touched by the VA's setting.
+      const qr = await bill(s);
+      expect(
+        new Date(qr.expiresAt).getTime() - clock.now().getTime(),
+      ).toBeLessThanOrEqual(settings.qrTtlMs);
+
+      // Expired at the gateway, but a transfer on its way is still waited for.
+      clock.advance(30 * MINUTE + 1000);
+      expect((await billOf(s, va)).status).toBe('expired');
+      await reconcile.tick();
+      expect((await s.read(va.id)).status).toBe('pending');
+      clock.advance(settings.expiryGraceMs);
+      await reconcile.tick();
+      expect((await s.read(va.id)).status).toBe('expired');
+    });
+
     it('the same charge again answers the same bill', async () => {
       const s = createStore(app);
       const orderRef = `order-${randomUUID()}`;
@@ -351,6 +397,34 @@ describe('local fake gateway', () => {
       expect(await unmatchedOf(sql, p.id)).toMatchObject([
         { kind: 'late_payment', refund_status: 'pending' },
       ]);
+    });
+    it('UMK-2039 the late-money sweep follows the method: a closed VA is asked about until ITS expiry plus the margin, after a QR made at the same time is left alone', async () => {
+      const s = createStore(app);
+      const close = async (p: Payment) =>
+        s
+          .post(`/payments/${p.id}/cancel`, { actorRef: 'cashier-1' })
+          .expect(200);
+      const qr = await bill(s);
+      const va = await bill(s, { method: 'fake_va' });
+      const quiet = await bill(s, { method: 'fake_va' });
+      for (const p of [qr, va, quiet]) await close(p);
+      // Past the QR's window (15 + 60 minutes), inside the VA's (60 + 60).
+      clock.advance(settings.qrTtlMs + settings.lateSweepMs + 5 * MINUTE);
+      expect(clock.now().getTime()).toBeLessThan(
+        new Date(va.expiresAt).getTime() + settings.lateSweepMs,
+      );
+      await act(s, qr, 'late-pay', { webhook: 'drop' }).expect(200);
+      await act(s, va, 'late-pay', { webhook: 'drop' }).expect(200);
+      await reconcile.tick();
+      expect(await unmatchedOf(sql, qr.id)).toEqual([]);
+      expect(await unmatchedOf(sql, va.id)).toMatchObject([
+        { kind: 'late_payment', refund_status: 'pending' },
+      ]);
+      // Past a VA's own window nothing asks any more.
+      clock.advance(settings.vaTtlMs);
+      await act(s, quiet, 'late-pay', { webhook: 'drop' }).expect(200);
+      await reconcile.tick();
+      expect(await unmatchedOf(sql, quiet.id)).toEqual([]);
     });
   });
 

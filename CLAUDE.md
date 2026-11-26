@@ -165,6 +165,10 @@ test per resource, idempotent money changes), with these differences:
   (`credentials_encrypted` is written and answered by nothing). The PG's account reference and every secret stay
   in payment-api: no route answers them. `POST /webhooks/:provider/accounts` follows the webhook rule below (the
   status is read again from the PG; the body is not stored).
+- **A bill's validity is per method** (UMK-2039): an adapter declares `validity` (`qr`, the default, or `va`) and
+  `PaymentSettings.ttlMs(adapter)` reads `PAYMENT_QR_TTL_SECONDS` (900) or `PAYMENT_VA_TTL_SECONDS` (3600: the
+  design's sample, **not yet an owner decision**). It sets `expires_at` at the charge; every window after it (the
+  automatic `expired`, the late-money sweep) counts from the bill's own `expires_at`, never from a setting.
 - **Modes:** `PAYMENT_GATEWAY_MODE` (`fake` default, `sandbox`, `live`), one per environment. `live` needs
   `PAYMENT_LIVE_ENABLED` (default off; a boot error without it) and stays off until the legal gate (UMK-1977).
 - **Void and refund need `reasonCode`, `actorRef` and `approvedBy`** (the supervisor the caller verified by PIN;

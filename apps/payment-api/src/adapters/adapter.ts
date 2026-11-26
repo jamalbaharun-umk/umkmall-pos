@@ -11,6 +11,8 @@
  * that must never create a second bill or a second refund.
  */
 export type AdapterKind = 'cashac' | 'online';
+/** How long a bill is payable: a QR at the till is short-lived, a virtual account is paid from a bank app. */
+export type BillValidity = 'qr' | 'va';
 
 /** What an adapter is told about a payment. Amount is integer rupiah, always the full amount. */
 export interface PaymentRef {
@@ -20,7 +22,7 @@ export interface PaymentRef {
   method: string;
   amount: number;
   providerRef: string | null;
-  /** When the bill should stop accepting payment (the configured QR lifetime). */
+  /** When the bill should stop accepting payment (the configured validity of the method). */
   expiresAt: Date | null;
 }
 
@@ -121,6 +123,12 @@ export interface PaymentAdapter {
   readonly canCancel: boolean;
   /** The PG rejects a second payment on the same QR. When false, a duplicate receipt is possible. */
   readonly singleUseQr: boolean;
+  /**
+   * Which configured validity a bill of this method gets (UMK-2039): `va` is PAYMENT_VA_TTL_SECONDS, `qr`
+   * (the default) PAYMENT_QR_TTL_SECONDS. Only the bill's lifetime: every window after it counts from the
+   * bill's own expiry.
+   */
+  readonly validity?: BillValidity;
 
   /**
    * Throws GatewayUnreachableError when the request certainly never reached the PG; any other error means

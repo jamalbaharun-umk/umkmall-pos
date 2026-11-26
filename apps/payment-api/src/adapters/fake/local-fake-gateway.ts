@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Clock } from '../../config';
 import {
+  BillValidity,
   ChargeResult,
   GatewayUnreachableError,
   PaymentAdapter,
@@ -469,12 +470,16 @@ class FakeAdapter implements PaymentAdapter {
   readonly supportsVoid = false;
   readonly supportsRefund = true;
   readonly canCancel = true;
+  readonly validity: BillValidity;
 
   constructor(
     private readonly gateway: LocalFakeGateway,
     readonly method: FakeMethod,
     readonly singleUseQr: boolean,
-  ) {}
+  ) {
+    // A virtual account is paid from a bank app, not at the till: it lives longer than a QR (UMK-2039).
+    this.validity = method === 'fake_va' ? 'va' : 'qr';
+  }
 
   charge(payment: PaymentRef): Promise<ChargeResult> {
     return this.gateway.charge(payment, this.method);
