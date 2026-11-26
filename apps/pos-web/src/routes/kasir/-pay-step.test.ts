@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { confirmButtonLabel, isStaticQris, offeredMethods, payStepOf, qrisScanHint, qrisSrc } from './-pay-step'
+import { confirmButtonLabel, isStaticQris, offeredMethods, payStepOf, qrisScanHint, qrisSrc, saleToast } from './-pay-step'
 
 describe('payStepOf', () => {
   it('maps each kind to its step', () => {
@@ -53,5 +53,15 @@ describe('online (payment gateway) methods, UMK-1991', () => {
     expect(r.offered.map((m) => m.id)).toEqual(['a', 'b'])
     expect(r.hidden).toBe(2)
     expect(offeredMethods(methods, []).offered.map((m) => m.id)).toEqual(['a'])
+  })
+})
+
+describe('saleToast', () => {
+  const rp = (n: number) => `Rp${n}`
+  it('says payment only when money was paid', () => {
+    expect(saleToast(50, 0, rp)).toBe('Pembayaran berhasil')
+    expect(saleToast(50, null, rp)).toBe('Pembayaran berhasil')
+    expect(saleToast(0, 80, rp)).toBe('Kasbon Rp80 dicatat')
+    expect(saleToast(30, 50, rp)).toBe('Pembayaran Rp30 diterima. Sisa kasbon Rp50')
   })
 })

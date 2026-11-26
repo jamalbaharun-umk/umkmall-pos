@@ -57,6 +57,7 @@ import {
   payStepOf,
   qrisScanHint,
   qrisSrc,
+  saleToast,
   QRIS_LOAD_ERROR,
   QRIS_NO_BANK_CHECK,
 } from './-pay-step'
@@ -1065,7 +1066,7 @@ function PayDialog({
       sale: { id: res.data.id, change: Math.max(res.data.change, 0), receivableRest: res.data.receivableRest ?? null },
     })
     if (pend.current().completed?.clearCart) writeCart({ lines: [], note: '' })
-    notifySuccess('Pembayaran berhasil')
+    notifySuccess(saleToast(amount, res.data.receivableRest, rupiah))
   }
   const notice = orderNotice(pend.state)
 
