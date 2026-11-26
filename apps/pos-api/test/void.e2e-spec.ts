@@ -1362,6 +1362,42 @@ describe('void a full sale (UMK-1962)', () => {
       expect((await pinRow(s.userId)).pin_hash).toBe(hashOfA);
     });
 
+    it('PUT /void-pin/forgotten over a PIN with no count and no lock replaces it and records no unlock', async () => {
+      const s = await shop();
+      const audit = async () =>
+        (
+          await admin<
+            { unlocked_at: Date | null; unlocked_by: string | null }[]
+          >`select unlocked_at, unlocked_by from pos.void_pins where actor_id = ${s.userId}`
+        )[0];
+      // The owner's PIN exists (the conflict path, not the first insert) with nothing counted or locked.
+      const before = await pinRow(s.userId);
+      expect(before).toMatchObject({ failures: 0, locked_until: null });
+      expect(await audit()).toEqual({ unlocked_at: null, unlocked_by: null });
+      // Same answer as when it clears a lock: the PIN is replaced, nothing counted, nothing locked.
+      expect(
+        (
+          await put(s.freshAuth, '/void-pin/forgotten', {
+            pin: '581302',
+          }).expect(200)
+        ).body,
+      ).toEqual({ hasPin: true, lockedUntil: null });
+      const after = await pinRow(s.userId);
+      expect(after).toMatchObject({ failures: 0, locked_until: null });
+      expect(after.pin_hash).not.toBe(before.pin_hash);
+      // Nothing was locked: the unlock audit stays unset.
+      expect(await audit()).toEqual({ unlocked_at: null, unlocked_by: null });
+      // An unlock recorded earlier is kept as it was, not restamped by a replace that cleared nothing.
+      await admin`update pos.void_pins set failures = 2 where actor_id = ${s.userId}`;
+      await unlock(s.freshAuth, s.userId).expect(200);
+      const unlocked = await audit();
+      expect(unlocked.unlocked_by).toBe(s.userId);
+      await put(s.freshAuth, '/void-pin/forgotten', { pin: '864209' }).expect(
+        200,
+      );
+      expect(await audit()).toEqual(unlocked);
+    });
+
     it("another store's owner, freshly signed in, gets 404 on this owner's PIN", async () => {
       const a = await shop();
       const b = await shop();
