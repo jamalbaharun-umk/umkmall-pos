@@ -73,3 +73,26 @@ migration, `app.module.ts` (one line), `docs/agent-integration.md`, `test/agent.
 
 Sales, members, receivable payments and suppliers over MCP (UMK-1981); purchase order and opname drafts (rest of
 UMK-1980); the full scripted harness (rest of UMK-1982); UMKMall's side (persistent HPP products, "Pakai di POS").
+
+## Revision 2 (2026-11-26): PR #36 review and New Teman AI alignment
+
+Owner request: align with the New Teman AI scope (three doors, one core; wiring, context, consent as an object, mode
+per step; shared backbone of consent records, usage recording and results with provenance). Review of PR #36 at
+530daac: four majors and five minors.
+
+- **No price change by the agent** (owner ruling 24 Nov): `update_product` removed; `PATCH /catalog/products/:id` is no
+  longer an agent route; an agent's `POST /catalog/products` parses `AgentProductCreate` (no units, tiers or
+  `isActive`); `import_hpp_products` creates new `UMK-<ref>` SKUs only and answers `exists` (current next to proposed)
+  for any SKU already there, hand-made or imported. Exact lookup by `?sku=`.
+- **Set-Cookie relayed** on the agent session (UMKMall's `/auth/me` mints the refresh secret once via
+  `adoptWebRefreshSecret`), success and 503 alike; the agent backend passes it to the browser.
+- **Token custody documented**: only UMKMall's agent backend holds the owner's token. Kill switch built:
+  `POST /agent/access/revoke` (owner only, `pos.agent_access`). Owner opt-in in UMKMall proposed as a follow-up.
+- **Idempotency**: a 4xx frees the key; no answer or a 5xx keeps it with an "unknown outcome" answer; 7-day TTL.
+- **Consent scopes**: `pos.read` (reports.view) and `pos.write` (catalog.manage) in the token, plus `consentRef`.
+- **Usage and provenance**: `pos.agent_tool_calls` per call with the `X-Umkmall-Goal/Assistant/Run/Mode` headers,
+  consent and created ids; `GET /agent/activity`; every write answers `provenance`.
+- **Registry**: `_meta["umkmall/registry"]` per tool (scope, modes, suits, manualPath, connection, coinCost 0).
+- New tools `business_context` (business layer of context) and `agent_activity`.
+- Minors: dev agent route only with `NODE_ENV` development or test; key charset; generic-error catch per tool;
+  `productId` must be a uuid; the `@AgentRoute` set pinned in `src/guards.spec.ts`; 403 tests for every refused route.

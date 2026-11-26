@@ -13,13 +13,15 @@ import { AGENT_TOOL_NAMES } from '../src/agent/tools';
 import { ADMIN_DATABASE_URL, APP_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 
-// UMK-1978 (agent session), UMK-1979 (MCP read tools), UMK-1980 (write tools, HPP import), UMK-1982 (doc drift).
+// UMK-1978 (agent session), UMK-1979 (MCP read tools), UMK-1980 (write tools, HPP import), UMK-1982 (doc drift),
+// and the New Teman AI alignment: consent scopes, revocation, usage and provenance, registry entries.
 
 type Answer = (res: ServerResponse) => void;
 const stub = {
   answer: (() => undefined) as Answer,
   cookies: [] as (string | undefined)[],
 };
+const READ_WRITE = ['pos.read', 'pos.write'];
 
 describe('UMKMall agent: session and MCP tools', () => {
   let app: INestApplication;
@@ -55,21 +57,32 @@ describe('UMKMall agent: session and MCP tools', () => {
     await new Promise((r) => umkmall.close(r));
   });
 
+  afterEach(() => jest.restoreAllMocks());
+
   const http = () => request(app.getHttpServer());
 
-  async function agentToken(userId: string): Promise<string> {
+  async function agentToken(
+    userId: string,
+    scopes: string[] = READ_WRITE,
+    consentRef?: string,
+  ): Promise<string> {
     const r = await http()
       .post('/auth/dev/agent-session')
-      .send({ userId })
+      .send({ userId, scopes, ...(consentRef && { consentRef }) })
       .expect(200);
     return r.body.sessionToken as string;
   }
 
-  async function mcp(token: string): Promise<Client> {
+  async function mcp(
+    token: string,
+    headers: Record<string, string> = {},
+  ): Promise<Client> {
     const client = new Client({ name: 'test-agent', version: '1.0.0' });
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+        requestInit: {
+          headers: { Authorization: `Bearer ${token}`, ...headers },
+        },
       }),
     );
     clients.push(client);
@@ -90,7 +103,12 @@ describe('UMKMall agent: session and MCP tools', () => {
     return { data: JSON.parse(text) as Record<string, unknown> };
   }
 
-  async function seedProduct(auth: string, name: string, price: number) {
+  async function seedProduct(
+    auth: string,
+    name: string,
+    price: number,
+    sku?: string,
+  ) {
     const cat = await http()
       .post('/catalog/categories')
       .set('Authorization', auth)
@@ -105,29 +123,44 @@ describe('UMKMall agent: session and MCP tools', () => {
         sellingPrice: price,
         costPrice: 4000,
         type: 'non_stock',
+        ...(sku && { sku }),
       })
       .expect(201);
-    return p.body as { id: string; sku: string };
+    return p.body as { id: string; sku: string; categoryId: string };
   }
+
+  const productCount = async (auth: string) =>
+    (
+      await http()
+        .get('/catalog/products')
+        .set('Authorization', auth)
+        .expect(200)
+    ).body.total as number;
 
   describe('agent session (UMK-1978)', () => {
     const TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig-part_1';
 
-    it('exchanges a UMKMall token for an agent session, sending only the auth_token cookie', async () => {
+    it('exchanges a UMKMall token for an agent session, sending only auth_token and relaying every Set-Cookie', async () => {
       const store = await createStore();
       stub.cookies = [];
       stub.answer = (res) => {
-        res.setHeader('set-cookie', ['auth_token=renewed; Path=/']);
+        res.setHeader('set-cookie', [
+          'auth_token=renewed; Path=/',
+          'auth_refresh=sid.secret; Path=/',
+        ]);
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ success: true, user: { id: store.userId } }));
       };
       const r = await http()
         .post('/auth/agent/session')
-        .send({ token: TOKEN })
+        .send({ token: TOKEN, scopes: ['pos.write'], consentRef: 'consent:1' })
         .expect(200);
       expect(stub.cookies).toEqual([`auth_token=${TOKEN}`]);
-      // An agent holds no browser: nothing is relayed.
-      expect(r.headers['set-cookie']).toBeUndefined();
+      // /auth/me can mint the session's refresh secret once: dropping it would sign the owner's browser out.
+      expect(r.headers['set-cookie']).toEqual([
+        'auth_token=renewed; Path=/',
+        'auth_refresh=sid.secret; Path=/',
+      ]);
       expect(r.body).toMatchObject({
         expiresIn: 900,
         tenant: { id: store.tenantId },
@@ -139,7 +172,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(me.body).toEqual({ data: [] });
     });
 
-    it('maps 401 to 401, 5xx to 503, and refuses a token that could break the cookie', async () => {
+    it('maps 401 to 401, 5xx to 503 (cookies still relayed), and refuses a token that could break the cookie', async () => {
       stub.answer = (res) => {
         res.statusCode = 401;
         res.end('{}');
@@ -149,13 +182,15 @@ describe('UMKMall agent: session and MCP tools', () => {
         .send({ token: TOKEN })
         .expect(401);
       stub.answer = (res) => {
+        res.setHeader('set-cookie', ['auth_token=x; Path=/']);
         res.statusCode = 502;
         res.end('{}');
       };
-      await http()
+      const down = await http()
         .post('/auth/agent/session')
         .send({ token: TOKEN })
         .expect(503);
+      expect(down.headers['set-cookie']).toEqual(['auth_token=x; Path=/']);
       stub.cookies = [];
       await http()
         .post('/auth/agent/session')
@@ -164,22 +199,26 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(stub.cookies).toEqual([]);
     });
 
-    it('refuses the dev agent session in production', async () => {
+    it('opens the dev agent session only in an explicit development or test environment', async () => {
       const store = await createStore();
       const was = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'production';
       try {
-        await http()
-          .post('/auth/dev/agent-session')
-          .send({ userId: store.userId })
-          .expect(404);
+        for (const env of ['production', undefined, 'staging']) {
+          if (env === undefined) delete process.env.NODE_ENV;
+          else process.env.NODE_ENV = env;
+          await http()
+            .post('/auth/dev/agent-session')
+            .send({ userId: store.userId })
+            .expect(404);
+        }
       } finally {
         process.env.NODE_ENV = was;
       }
     });
 
-    it('reaches only the routes marked for the agent: settings, staff and the rest answer 403', async () => {
+    it('reaches only the routes marked for the agent', async () => {
       const store = await createStore();
+      const product = await seedProduct(store.auth, 'Kopi', 10000);
       const auth = `Bearer ${await agentToken(store.userId)}`;
       await http()
         .get('/catalog/categories')
@@ -190,20 +229,99 @@ describe('UMKMall agent: session and MCP tools', () => {
         .set('Authorization', auth)
         .expect(200);
       for (const [method, path] of [
-        ['get', '/store/profile'],
+        ['patch', `/catalog/products/${product.id}`],
+        ['delete', `/catalog/products/${product.id}`],
+        ['put', '/store/profile'],
         ['put', '/reports/settings'],
         ['put', '/sales/settings'],
         ['get', '/staff'],
+        ['get', '/members'],
         ['post', '/payment-methods'],
         ['get', '/expenses'],
         ['post', '/sales'],
-        ['delete', `/catalog/products/${randomUUID()}`],
+        ['post', '/agent/access/revoke'],
       ] as const)
         await http()
           [method](path)
           .set('Authorization', auth)
-          .send({})
+          .send({ sellingPrice: 1 })
           .expect(403);
+      const still = await http()
+        .get(`/catalog/products/${product.id}`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(still.body.sellingPrice).toBe(10000);
+    });
+
+    it('creates a product through REST with one base price only: no units, tiers or deactivation', async () => {
+      const store = await createStore();
+      const product = await seedProduct(store.auth, 'Teh', 5000);
+      const auth = `Bearer ${await agentToken(store.userId)}`;
+      const body = {
+        name: 'Es Jeruk',
+        categoryId: product.categoryId,
+        sellingPrice: 6000,
+      };
+      for (const extra of [
+        { priceTiers: [{ minQty: 10, price: 5000 }] },
+        { units: [{ name: 'Dus', unitQty: 12, price: 60000 }] },
+        { isActive: false },
+      ])
+        await http()
+          .post('/catalog/products')
+          .set('Authorization', auth)
+          .send({ ...body, ...extra })
+          .expect(422);
+      await http()
+        .post('/catalog/products')
+        .set('Authorization', auth)
+        .send(body)
+        .expect(201);
+    });
+
+    it('a read-only consent reads but cannot write, over MCP or REST', async () => {
+      const store = await createStore();
+      const product = await seedProduct(store.auth, 'Roti', 8000);
+      const token = await agentToken(store.userId, ['pos.read']);
+      await http()
+        .post('/catalog/categories')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'X' })
+        .expect(403);
+      const client = await mcp(token);
+      expect(
+        (await call(client, 'get_product', { productId: product.id })).data,
+      ).toMatchObject({ costPrice: 4000 });
+      const w = await call(client, 'create_category', {
+        name: 'X',
+        idempotencyKey: 'read-only-1',
+        confirm: true,
+      });
+      expect(w.error).toMatch(/izin pos\.write/);
+    });
+
+    it('the owner revokes every agent session at once; an agent cannot revoke', async () => {
+      const store = await createStore();
+      const token = await agentToken(store.userId);
+      await http()
+        .get('/catalog/categories')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      await http()
+        .post('/agent/access/revoke')
+        .set('Authorization', store.auth)
+        .expect(200);
+      await http()
+        .get('/catalog/categories')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(401);
+      // A consent given after the cut works again (a new session, issued a second later).
+      await new Promise((r) => setTimeout(r, 1100));
+      const fresh = await agentToken(store.userId);
+      await http()
+        .get('/catalog/categories')
+        .set('Authorization', `Bearer ${fresh}`)
+        .expect(200);
     });
   });
 
@@ -218,11 +336,17 @@ describe('UMKMall agent: session and MCP tools', () => {
         .expect(403);
     });
 
-    it('lists exactly the documented tools', async () => {
+    it('lists exactly the documented tools, each with its registry entry', async () => {
       const store = await createStore();
       const client = await mcp(await agentToken(store.userId));
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name)).toEqual([...AGENT_TOOL_NAMES]);
+      for (const t of tools)
+        expect(t._meta?.['umkmall/registry']).toMatchObject({
+          scope: expect.stringMatching(/^pos\.(read|write)$/) as string,
+          connection: 'UMKMall POS',
+          coinCost: 0,
+        });
       const doc = readFileSync(
         join(__dirname, '../../../docs/agent-integration.md'),
         'utf8',
@@ -246,6 +370,12 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(
         (await call(client, 'search_products', { q: 'Kopi' })).data,
       ).toEqual(rest.body);
+      const exact = await call(client, 'search_products', {
+        sku: product.sku,
+      });
+      expect(
+        (exact.data as { data: { id: string }[] }).data.map((p) => p.id),
+      ).toEqual([product.id]);
 
       const one = await call(client, 'get_product', { productId: product.id });
       expect(one.data).toMatchObject({
@@ -285,6 +415,11 @@ describe('UMKMall agent: session and MCP tools', () => {
       ).toEqual(dash.body);
       const cats = await call(client, 'list_categories');
       expect((cats.data as { data: unknown[] }).data).toHaveLength(1);
+      const ctx = await call(client, 'business_context');
+      expect(ctx.data).toMatchObject({
+        productCount: 1,
+        categories: [expect.any(String)],
+      });
     });
 
     it('product_margins adds average price, unit cost and margin to the products report', async () => {
@@ -341,10 +476,12 @@ describe('UMKMall agent: session and MCP tools', () => {
       });
       expect(r.error).toBe('Tanggal mulai harus berformat TTTT-BB-HH');
       expect(r.error).not.toMatch(/\n\s+at |Error:|stack/);
-      const missing = await call(client, 'get_product', {
-        productId: randomUUID(),
-      });
-      expect(missing.error).toMatch(/tidak ditemukan/);
+      expect(
+        (await call(client, 'get_product', { productId: randomUUID() })).error,
+      ).toMatch(/tidak ditemukan/);
+      expect(
+        (await call(client, 'get_product', { productId: '../staff' })).error,
+      ).toMatch(/productId tidak valid/);
     });
 
     it("cross-tenant: store B's agent sees and changes nothing of store A", async () => {
@@ -355,24 +492,24 @@ describe('UMKMall agent: session and MCP tools', () => {
       const found = await call(client, 'search_products', { q: 'Rahasia' });
       expect((found.data as { data: unknown[] }).data).toEqual([]);
       expect(
+        (await call(client, 'search_products', { sku: product.sku })).data,
+      ).toMatchObject({ data: [] });
+      expect(
         (await call(client, 'get_product', { productId: product.id })).error,
       ).toBeDefined();
       expect(
         (await call(client, 'get_product_stock', { productId: product.id }))
           .error,
       ).toBeDefined();
-      const upd = await call(client, 'update_product', {
-        productId: product.id,
-        sellingPrice: 1,
-        confirm: true,
+      const made = await call(client, 'create_product', {
+        name: 'Milik B',
+        categoryId: product.categoryId,
+        sellingPrice: 1000,
         idempotencyKey: `k-${randomUUID()}`,
+        confirm: true,
       });
-      expect(upd.error).toBeDefined();
-      const still = await http()
-        .get(`/catalog/products/${product.id}`)
-        .set('Authorization', a.auth)
-        .expect(200);
-      expect(still.body.sellingPrice).toBe(9000);
+      expect(made.error).toMatch(/Kategori tidak ditemukan/);
+      expect(await productCount(a.auth)).toBe(1);
     });
   });
 
@@ -388,8 +525,15 @@ describe('UMKMall agent: session and MCP tools', () => {
       { ref: 'hpp-teh', name: 'Es Teh', cogs: 1200, price: 5000 },
     ];
 
-    it('previews without writing, imports once per key, then updates by ref', async () => {
+    it('previews without writing, creates new SKUs once per key, and never touches an existing product', async () => {
       const store = await createStore();
+      // A product the owner made by hand under an HPP SKU: the import must leave it exactly as it is.
+      const handMade = await seedProduct(
+        store.auth,
+        'Teh Manis',
+        7000,
+        'UMK-hpp-teh',
+      );
       const client = await mcp(await agentToken(store.userId));
       const key = `hpp-${randomUUID()}`;
 
@@ -408,17 +552,14 @@ describe('UMKMall agent: session and MCP tools', () => {
           },
           {
             ref: 'hpp-teh',
-            action: 'create',
-            costPrice: 1200,
+            action: 'exists',
+            productId: handMade.id,
+            current: { costPrice: 4000, sellingPrice: 7000 },
             sellingPrice: 5000,
           },
         ],
       });
-      const none = await http()
-        .get('/catalog/products')
-        .set('Authorization', store.auth)
-        .expect(200);
-      expect(none.body.total).toBe(0);
+      expect(await productCount(store.auth)).toBe(1);
 
       const first = await call(client, 'import_hpp_products', {
         products,
@@ -428,25 +569,34 @@ describe('UMKMall agent: session and MCP tools', () => {
       expect(first.data).toMatchObject({
         rows: [
           { ref: 'hpp-kopi', result: 'created', sku: 'UMK-hpp-kopi' },
-          { ref: 'hpp-teh', result: 'created', sku: 'UMK-hpp-teh' },
+          { ref: 'hpp-teh', result: 'exists' },
         ],
+        provenance: {
+          source: 'umkmall-pos',
+          tool: 'import_hpp_products',
+          by: 'agent',
+        },
       });
       const list = await http()
         .get('/catalog/products')
+        .query({ sku: 'UMK-hpp-kopi' })
         .set('Authorization', store.auth)
         .expect(200);
-      expect(list.body.total).toBe(2);
-      const kopi = (
-        list.body as { data: { id: string; sku: string }[] }
-      ).data.find((p) => p.sku === 'UMK-hpp-kopi')!;
-      expect(kopi).toMatchObject({
+      expect(list.body.data[0]).toMatchObject({
         name: 'Kopi Susu',
         unit: 'Gelas',
         type: 'non_stock',
         costPrice: 4251,
         sellingPrice: 15000,
-        category: expect.objectContaining({ name: 'Dari HPP UMKMall' }),
+        category: expect.objectContaining({
+          name: 'Dari HPP UMKMall',
+        }) as object,
       });
+      const teh = await http()
+        .get(`/catalog/products/${handMade.id}`)
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(teh.body).toMatchObject({ costPrice: 4000, sellingPrice: 7000 });
 
       // a retry with the same key and input answers the first result and writes nothing
       const retry = await call(client, 'import_hpp_products', {
@@ -455,11 +605,7 @@ describe('UMKMall agent: session and MCP tools', () => {
         confirm: true,
       });
       expect(retry.data).toEqual(first.data);
-      const after = await http()
-        .get('/catalog/products')
-        .set('Authorization', store.auth)
-        .expect(200);
-      expect(after.body.total).toBe(2);
+      expect(await productCount(store.auth)).toBe(2);
 
       // the same key with another input is refused
       const reuse = await call(client, 'import_hpp_products', {
@@ -469,9 +615,9 @@ describe('UMKMall agent: session and MCP tools', () => {
       });
       expect(reuse.error).toMatch(/sudah dipakai/);
 
-      // a new HPP run: the changed product is updated, the other is unchanged, nothing is duplicated
+      // a new HPP run with a new price: the imported product stays as it is (the owner changes prices)
       const second = await call(client, 'import_hpp_products', {
-        products: [{ ...products[0], cogs: 4500, price: 16000 }, products[1]],
+        products: [{ ...products[0], cogs: 4500, price: 16000 }],
         idempotencyKey: `hpp-${randomUUID()}`,
         confirm: true,
       });
@@ -479,100 +625,151 @@ describe('UMKMall agent: session and MCP tools', () => {
         rows: [
           {
             ref: 'hpp-kopi',
-            result: 'updated',
-            before: { costPrice: 4251, sellingPrice: 15000 },
+            result: 'exists',
+            current: { costPrice: 4251, sellingPrice: 15000 },
             costPrice: 4500,
+            sellingPrice: 16000,
           },
-          { ref: 'hpp-teh', result: 'unchanged' },
         ],
       });
       const [cats] = await appDb<{ n: number }[]>`
-        select count(*)::int as n from pos.categories where tenant_id = ${store.tenantId}`;
+        select count(*)::int as n from pos.categories
+         where tenant_id = ${store.tenantId} and name = 'Dari HPP UMKMall'`;
       expect(cats.n).toBe(1);
-      const final = await http()
-        .get(`/catalog/products/${kopi.id}`)
-        .set('Authorization', store.auth)
-        .expect(200);
-      expect(final.body).toMatchObject({
-        costPrice: 4500,
-        sellingPrice: 16000,
-      });
     });
 
-    it('refuses bad rows in Indonesian and leaves the key free', async () => {
+    it('refuses bad rows and bad keys in Indonesian and leaves the key free', async () => {
       const store = await createStore();
       const client = await mcp(await agentToken(store.userId));
-      const key = `hpp-${randomUUID()}`;
       const bad = await call(client, 'import_hpp_products', {
         products: [{ ref: 'a b', name: 'X', cogs: -1, price: 1.5 }],
-        idempotencyKey: key,
+        idempotencyKey: `hpp-${randomUUID()}`,
         confirm: true,
       });
       expect(bad.error).toMatch(/cogs tidak boleh negatif/);
       expect(bad.error).toMatch(/bilangan bulat rupiah/);
+      const badKey = await call(client, 'create_category', {
+        name: 'X',
+        idempotencyKey: 'kunci dengan spasi',
+        confirm: true,
+      });
+      expect(badKey.error).toMatch(/idempotencyKey wajib/);
+      const refusedByRoute = await call(client, 'create_category', {
+        name: '',
+        idempotencyKey: 'cat-empty-1',
+        confirm: true,
+      });
+      expect(refusedByRoute.error).toMatch(/wajib diisi/);
       const [row] = await appDb<{ n: number }[]>`
         select count(*)::int as n from pos.agent_requests where tenant_id = ${store.tenantId}`;
       expect(row.n).toBe(0);
+      // the freed key works for the corrected call
+      const fixed = await call(client, 'create_category', {
+        name: 'Minuman',
+        idempotencyKey: 'cat-empty-1',
+        confirm: true,
+      });
+      expect(fixed.data).toMatchObject({ name: 'Minuman' });
     });
 
-    it('create and update previews change nothing; confirm applies once', async () => {
+    it('keeps the key after a lost answer (5xx), so a retry can never write twice', async () => {
       const store = await createStore();
       const client = await mcp(await agentToken(store.userId));
-      const cat = await call(client, 'create_category', {
-        name: 'Minuman',
-        idempotencyKey: 'cat-key-1',
+      const realFetch = global.fetch;
+      let failed = false;
+      jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+        const res = await realFetch(input, init);
+        // The route commits, then its answer is lost on the way back.
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (
+          !failed &&
+          url.endsWith('/catalog/categories') &&
+          init?.method === 'POST'
+        ) {
+          failed = true;
+          return new Response('{}', { status: 502 });
+        }
+        return res;
+      });
+      const lost = await call(client, 'create_category', {
+        name: 'Makanan',
+        idempotencyKey: 'cat-lost-1',
         confirm: true,
       });
-      const categoryId = (cat.data as { id: string }).id;
-      const input = {
-        name: 'Air Mineral',
-        categoryId,
-        sellingPrice: 4000,
-        idempotencyKey: 'prod-key-1',
-      };
-      expect((await call(client, 'create_product', input)).data).toMatchObject({
-        preview: true,
-      });
-      const made = await call(client, 'create_product', {
-        ...input,
+      expect(lost.error).toMatch(/belum pasti/);
+      const again = await call(client, 'create_category', {
+        name: 'Makanan',
+        idempotencyKey: 'cat-lost-1',
         confirm: true,
       });
-      const again = await call(client, 'create_product', {
-        ...input,
+      expect(again.error).toMatch(/belum pasti/);
+      const [cats] = await appDb<{ n: number }[]>`
+        select count(*)::int as n from pos.categories where tenant_id = ${store.tenantId}`;
+      expect(cats.n).toBe(1);
+    });
+
+    it('records every call with its goal, assistant, run, mode and consent, and the ids a write made', async () => {
+      const store = await createStore();
+      const client = await mcp(
+        await agentToken(store.userId, READ_WRITE, 'consent:ig-7'),
+        {
+          'X-Umkmall-Goal': 'goal:brand-1',
+          'X-Umkmall-Assistant': 'asisten:harga',
+          'X-Umkmall-Run': 'run:42',
+          'X-Umkmall-Mode': 'agentic',
+        },
+      );
+      await call(client, 'list_categories');
+      await call(client, 'create_category', {
+        name: 'Kue',
+        idempotencyKey: 'cat-prov-1',
+      });
+      const made = await call(client, 'create_category', {
+        name: 'Kue',
+        idempotencyKey: 'cat-prov-1',
         confirm: true,
       });
-      expect(again.data).toEqual(made.data);
       const id = (made.data as { id: string }).id;
-      const prev = await call(client, 'update_product', {
-        productId: id,
-        sellingPrice: 4500,
-        idempotencyKey: 'upd-key-1',
+      expect(made.data).toMatchObject({
+        provenance: {
+          goalRef: 'goal:brand-1',
+          runRef: 'run:42',
+          consentRef: 'consent:ig-7',
+        },
       });
-      expect(prev.data).toMatchObject({
-        before: { sellingPrice: 4000 },
-        after: { sellingPrice: 4500 },
+      const activity = await call(client, 'agent_activity', {});
+      const rows = (activity.data as { data: Record<string, unknown>[] }).data;
+      expect(rows.map((r) => [r.tool, r.outcome])).toEqual([
+        ['create_category', 'ok'],
+        ['create_category', 'preview'],
+        ['list_categories', 'ok'],
+      ]);
+      expect(rows[0]).toMatchObject({
+        goalRef: 'goal:brand-1',
+        assistantRef: 'asisten:harga',
+        runRef: 'run:42',
+        mode: 'agentic',
+        consentRef: 'consent:ig-7',
+        resultRefs: [id],
       });
-      const unchanged = await http()
-        .get(`/catalog/products/${id}`)
+      // the owner sees the same activity (the activity call itself is the fourth row)
+      const owner = await http()
+        .get('/agent/activity')
         .set('Authorization', store.auth)
         .expect(200);
-      expect(unchanged.body.sellingPrice).toBe(4000);
-      await call(client, 'update_product', {
-        productId: id,
-        sellingPrice: 4500,
-        idempotencyKey: 'upd-key-1',
-        confirm: true,
-      });
-      const changed = await http()
-        .get(`/catalog/products/${id}`)
-        .set('Authorization', store.auth)
-        .expect(200);
-      expect(changed.body.sellingPrice).toBe(4500);
-      const list = await http()
-        .get('/catalog/products')
-        .set('Authorization', store.auth)
-        .expect(200);
-      expect(list.body.total).toBe(1);
+      expect(owner.body.data).toHaveLength(4);
+      // a malformed context header is refused before any tool runs
+      await http()
+        .post('/mcp')
+        .set('Authorization', `Bearer ${await agentToken(store.userId)}`)
+        .set('X-Umkmall-Goal', 'goal with spaces')
+        .send({})
+        .expect(422);
     });
   });
 });

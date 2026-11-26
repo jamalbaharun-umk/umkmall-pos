@@ -19,7 +19,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
 import { Public } from '../tenancy/decorators';
-import type { PosSession } from '../tenancy/session';
+import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
 
 const SESSION_TTL = 15 * 60;
@@ -33,8 +33,22 @@ const MeAnswer = z.object({
 });
 const DevBody = z.object({ userId: z.string().uuid() });
 // A JWT or any opaque token: no character that could end the cookie or add another one.
+// New Teman AI consent: the scopes the owner granted and UMKMall's consent record. Read is always included.
+const agentGrant = {
+  scopes: z
+    .array(z.enum(['pos.read', 'pos.write']))
+    .max(2)
+    .optional()
+    .transform((s) => [...new Set<AgentScope>(['pos.read', ...(s ?? [])])]),
+  consentRef: z
+    .string()
+    .regex(/^[A-Za-z0-9:._-]{1,100}$/)
+    .optional(),
+};
+const DevAgentBody = z.object({ userId: z.string().uuid(), ...agentGrant });
 const AgentBody = z
   .object({
+    ...agentGrant,
     token: z
       .string()
       .min(16)
@@ -106,22 +120,35 @@ export class AuthController {
 
   /**
    * UMKMall's agent acting for a signed-in owner (UMK-1978) → 15-minute agent session for that owner's store. The
-   * owner's UMKMall access token goes to `/api/auth/me` as the `auth_token` cookie, the only thing that route reads.
-   * A Set-Cookie it answers is not relayed: the agent holds no browser, and without `auth_refresh` no refresh cookie
-   * is minted. The token is never logged.
+   * owner's UMKMall access token goes to `/api/auth/me` as the `auth_token` cookie, the cookie that route reads. Only
+   * UMKMall's agent backend may hold that token: it is the owner's full UMKMall credential. Never logged.
    */
   @Public()
   @Post('agent/session')
   @HttpCode(200)
-  async agentSession(@Body() body: unknown) {
-    const { token } = parse(AgentBody, body);
-    const { userId, unavailable } = await this.askUmkmall(
+  async agentSession(
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { token, scopes, consentRef } = parse(AgentBody, body);
+    const { userId, setCookies, unavailable } = await this.askUmkmall(
       `auth_token=${token}`,
     );
+    // /auth/me can re-sign the access token and mint the session's refresh secret ONCE (UMKMall
+    // session.controller adoptWebRefreshSecret); dropping that cookie would sign the owner's browser out later.
+    // So it goes back to the caller unchanged, like the owner sign-in, and UMKMall's agent backend must pass it
+    // on to the owner's browser (docs/agent-integration.md).
+    if (setCookies.length > 0) res.setHeader('set-cookie', setCookies);
     if (unavailable) throw new ServiceUnavailableException();
     if (!userId) throw new UnauthorizedException();
     const tenantId = await this.tenantOfUmkmallUser(userId);
-    return this.issue({ tenantId, actorId: userId, kind: 'agent' });
+    return this.issue({
+      tenantId,
+      actorId: userId,
+      kind: 'agent',
+      agentScopes: scopes,
+      ...(consentRef && { consentRef }),
+    });
   }
 
   /** The agent session for local work and tests (no UMKMall). Refused in production. */
@@ -129,11 +156,19 @@ export class AuthController {
   @Post('dev/agent-session')
   @HttpCode(200)
   async devAgentSession(@Body() body: unknown) {
-    if (process.env.NODE_ENV === 'production') throw new NotFoundException();
-    const { userId } = parse(DevBody, body);
+    // Fails closed: only an explicit development or test environment has it (an unset NODE_ENV does not).
+    if (!['development', 'test'].includes(process.env.NODE_ENV ?? ''))
+      throw new NotFoundException();
+    const { userId, scopes, consentRef } = parse(DevAgentBody, body);
     try {
       const tenantId = await this.findOrCreateTenant(this.db, userId);
-      return this.issue({ tenantId, actorId: userId, kind: 'agent' });
+      return this.issue({
+        tenantId,
+        actorId: userId,
+        kind: 'agent',
+        agentScopes: scopes,
+        ...(consentRef && { consentRef }),
+      });
     } catch (error) {
       if (isMissingUser(error))
         throw fieldError('userId', 'Pengguna tidak ditemukan');

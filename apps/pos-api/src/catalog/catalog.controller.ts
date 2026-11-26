@@ -18,6 +18,7 @@ import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
+  AgentProductCreate,
   CategoryInput,
   parse,
   ProductCreate,
@@ -104,7 +105,13 @@ export class ProductsController {
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {
-    return this.catalog.createProduct(s.tenantId, parse(ProductCreate, body));
+    // UMKMall's agent creates with one base price only (AgentProductCreate); it never edits a product afterwards.
+    return this.catalog.createProduct(
+      s.tenantId,
+      s.kind === 'agent'
+        ? parse(AgentProductCreate, body)
+        : parse(ProductCreate, body),
+    );
   }
 
   @AgentRoute()
@@ -113,7 +120,6 @@ export class ProductsController {
     return withoutCost(s, await this.catalog.getProduct(s.tenantId, idOf(id)));
   }
 
-  @AgentRoute()
   @Patch(':id')
   @RequirePermission('catalog.manage')
   update(

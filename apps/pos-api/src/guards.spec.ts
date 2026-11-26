@@ -30,6 +30,40 @@ describe('repo guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it("pins the routes UMKMall's agent session can reach (@AgentRoute): a new one is a reviewed change", () => {
+    const reached: string[] = [];
+    for (const { text } of files) {
+      const re =
+        /@Controller\('([^']*)'\)|@AgentRoute\(\)\s*(?:@\w+\([^)]*\)\s*)*?@(Get|Post|Put|Patch|Delete)\((?:'([^']*)')?\)/g;
+      let prefix = '';
+      for (const m of text.matchAll(re)) {
+        if (m[1] !== undefined) prefix = m[1];
+        else
+          reached.push(
+            `${m[2].toUpperCase()} /${[prefix, m[3]].filter(Boolean).join('/')}`,
+          );
+      }
+    }
+    expect(reached.sort()).toEqual(
+      [
+        'GET /agent/activity',
+        'GET /catalog/categories',
+        'GET /catalog/products',
+        'GET /catalog/products/:id',
+        'GET /reports/dashboard',
+        'GET /reports/products',
+        'GET /reports/profit-loss',
+        'GET /reports/purchasing',
+        'GET /reports/sales',
+        'GET /stock/products/:id',
+        'GET /store/profile',
+        'POST /catalog/categories',
+        'POST /catalog/products',
+        'POST /mcp',
+      ].sort(),
+    );
+  });
+
   it('never uses console (log through Nest Logger without tokens or PII)', () => {
     const offenders = files
       .filter(({ text }) => /\bconsole\.\w+\(/.test(text))

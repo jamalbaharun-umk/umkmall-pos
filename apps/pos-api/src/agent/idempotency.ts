@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, lt } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -20,6 +20,9 @@ export function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Keys live this long; older rows are dropped when the store's agent next writes. */
+export const IDEMPOTENCY_TTL_DAYS = 7;
+
 export type Claim =
   | { kind: 'run' }
   | { kind: 'replay'; answer: unknown }
@@ -39,6 +42,17 @@ export class AgentIdempotency {
     tool: string,
     input: unknown,
   ): Promise<Claim> {
+    await this.db
+      .delete(agentRequests)
+      .where(
+        and(
+          eq(agentRequests.tenantId, tenantId),
+          lt(
+            agentRequests.createdAt,
+            new Date(Date.now() - IDEMPOTENCY_TTL_DAYS * 24 * 60 * 60 * 1000),
+          ),
+        ),
+      );
     const requestHash = createHash('sha256')
       .update(`${tool}\n${canonical(input)}`)
       .digest('hex');
@@ -90,6 +104,12 @@ export class AgentIdempotency {
       );
   }
 
+  /** A write whose outcome is unknown (timeout, 5xx): the key stays taken, so a retry can never write twice. */
+  unknown(tenantId: string, key: string, message: string): Promise<void> {
+    return this.finish(tenantId, key, { unknownOutcome: true, message });
+  }
+
+  /** Frees the key after a write that was refused (4xx) and so wrote nothing. */
   async release(tenantId: string, key: string): Promise<void> {
     await this.db
       .delete(agentRequests)

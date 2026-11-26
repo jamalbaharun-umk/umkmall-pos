@@ -281,6 +281,13 @@
       "when": 1795665378469,
       "tag": "0039_agent_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795665906615,
+      "tag": "0040_agent_usage_consent",
+      "breakpoints": true
     }
   ]
 }

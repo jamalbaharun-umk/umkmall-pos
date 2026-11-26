@@ -1,4 +1,12 @@
-import { jsonb, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  index,
+  integer,
+  jsonb,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { createdAt, id, pos } from './_base';
 import { tenants } from './tenants';
 
@@ -26,4 +34,48 @@ export const agentRequests = pos
       ),
     ],
   )
+  .enableRLS();
+
+export const AGENT_CALL_OUTCOMES = ['ok', 'preview', 'refused'] as const;
+export const AGENT_MODES = ['agentic', 'guided'] as const;
+
+// New Teman AI usage and provenance: one row per MCP tool call, with the goal, assistant and run it served (sent by
+// UMKMall as headers), the consent behind it, and the ids a write produced. Never the input or the answer itself.
+export const agentToolCalls = pos
+  .table(
+    'agent_tool_calls',
+    {
+      id: id(),
+      tenantId: uuid('tenant_id')
+        .notNull()
+        .references(() => tenants.id, { onDelete: 'restrict' }),
+      tool: text('tool').notNull(),
+      outcome: text('outcome', { enum: AGENT_CALL_OUTCOMES }).notNull(),
+      mode: text('mode', { enum: AGENT_MODES }),
+      goalRef: text('goal_ref'),
+      assistantRef: text('assistant_ref'),
+      runRef: text('run_ref'),
+      consentRef: text('consent_ref'),
+      // UMKMall user the agent acted for.
+      actorId: text('actor_id').notNull(),
+      resultRefs: jsonb('result_refs'),
+      durationMs: integer('duration_ms').notNull(),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      index('agent_tool_calls_tenant_at_idx').on(t.tenantId, t.createdAt),
+    ],
+  )
+  .enableRLS();
+
+// Revocation the owner can do from the POS at once: agent sessions issued before `revoked_before` are refused.
+export const agentAccess = pos
+  .table('agent_access', {
+    tenantId: uuid('tenant_id')
+      .primaryKey()
+      .references(() => tenants.id, { onDelete: 'restrict' }),
+    revokedBefore: timestamp('revoked_before', {
+      withTimezone: true,
+    }).notNull(),
+  })
   .enableRLS();

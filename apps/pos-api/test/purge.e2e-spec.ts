@@ -261,6 +261,10 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     // UMK-1980: a write UMKMall's agent confirmed (its idempotency record).
     await admin`insert into pos.agent_requests (tenant_id, idempotency_key, tool, request_hash, answer)
       values (${s.tenantId}, ${randomUUID()}, 'create_category', 'h', '{}'::jsonb)`;
+    // New Teman AI usage record and the owner's agent revocation.
+    await admin`insert into pos.agent_tool_calls (tenant_id, tool, outcome, actor_id, duration_ms)
+      values (${s.tenantId}, 'list_categories', 'ok', ${s.userId}, 3)`;
+    await admin`insert into pos.agent_access (tenant_id, revoked_before) values (${s.tenantId}, now())`;
     return s;
   }
 
