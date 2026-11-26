@@ -127,6 +127,11 @@ usage record and provenance on every tool.
   section in `docs/agent-integration.md` (the e2e test compares all three).
 - **Every write tool previews without `confirm: true` and runs once per `idempotencyKey`** (`pos.agent_requests`): a
   4xx frees the key, a lost answer (0 or 5xx) keeps it.
+- **Agent sales (UMK-1981) go into the owner's open shift** (same actor id) with `actor_kind = 'agent'` (shown as
+  `AGENT_LABEL`). An agent's `POST /sales` parses `AgentSaleInput` (no line price, no discount, no bank); the tool pays
+  the server's amount due from `POST /sales/quote`. The sale refuses an online method for an agent session. After a lost
+  answer, `record_sale` and `record_receivable_payment` replay the exact call under the route's derived key (never a new key). The agent opens a shift only through `open_shift`, on the owner's
+  word.
 - **HPP import sends `cogs`, never UMKMall's `hpp`** (which adds allocated fixed costs, booked as expenses here).
 
 ## payment-api (UMK-1991)
@@ -372,7 +377,7 @@ web origin, for `/api/auth/me`) and `POS_SERVICE_KEY` (same value as UMKMall's, 
 to UMKMall's login. Names in `.env.example`. The POS must sit under UMKMall's cookie domain: `pos.umkmall.id`, and
 `pos.preview.umkmall.id` on preview.
 
-**Signing in locally without UMKMall** (localhost gets no UMKMall cookie; refused when `NODE_ENV=production`): create a stub UMKMall user in your
+**Signing in locally without UMKMall** (localhost gets no UMKMall cookie; only with `NODE_ENV` set to `development` or `test`, on pos-api and pos-web alike; unset refuses): create a stub UMKMall user in your
 database, then start `pos-web` with `POS_DEV_USER_ID` set to it and press "Masuk (pengembangan)" on `/`
 (`POST /masuk/dev` → pos-api `POST /auth/dev/sign-in`). The dev session has no UMKMall `sid`, so it cannot refresh:
 sign in again after 15 minutes. Screens call pos-api through `api()` in `apps/pos-web/src/lib/api.server.ts`.

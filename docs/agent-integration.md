@@ -24,11 +24,12 @@ Content-Type: application/json
 
 - **Server to server only.** Without the agent key (or with a wrong one, the purge key included) the route answers
   401 before UMKMall is asked: the scopes and consent are the caller's word, so only UMKMall's agent backend may ask.
-  `POS_AGENT_SERVICE_KEY` unset → 404 (no agent sessions in that environment). At most 30 requests per minute per
-  network address, counted before the key check (429).
+  `POS_AGENT_SERVICE_KEY` unset → 404 (no agent sessions in that environment). At most 30 FAILED key checks per minute per
+  network address (429 after that); requests with the right key are never limited here.
 - `scopes`: what the owner consented to on UMKMall's Koneksi page. Reading and acting are separate permissions:
   `pos.read` (always granted) reads the catalog with cost and every report; `pos.write` also creates categories and
-  products. Without `pos.write` every write tool answers "izin pos.write" and changes nothing.
+  products, records sales into the owner's open shift, members, kasbon payments and suppliers (UMK-1981), and reads
+  member and kasbon data and the open shift (personal or till data). Without `pos.write` every write tool answers "izin pos.write" and changes nothing.
 - `consentRef` (optional, `A-Z a-z 0-9 : . _ -`, up to 100): stored on every call record and in every write's
   provenance, so a result can be traced to the consent that allowed it.
 
@@ -103,8 +104,11 @@ Every write tool takes `idempotencyKey` (8 to 100 of `A-Z a-z 0-9 : . _ -`, requ
 - With `confirm: true` it runs once per key: a retry with the same key and input answers the first result; the same
   key with another input is refused ("sudah dipakai").
 - A write the POS refused (a 4xx: bad input, a missing category) frees the key for a corrected retry. A write whose
-  answer was lost (no answer or a 5xx) keeps the key and answers "belum pasti": check the catalog, and send it again
-  with a new key only if it is really not there. Keys expire after 7 days.
+  answer was lost (no answer or a 5xx) keeps the key and answers "belum pasti". For `record_sale` and
+  `record_receivable_payment` send it again with the **same** key: the tool replays the lost call (the exact body it
+  sent) under the route's own idempotency key, which answers the first result and never records twice; never use a
+  new key there. For the other writes check the catalog first, and use a new key only if it is really not there.
+  Keys expire after 7 days.
 - **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, no void, no drawer cash):
   it creates categories and products with one base price, and HPP imports create new SKUs only. Price changes are the
   owner's, in the POS.
@@ -189,7 +193,51 @@ UMKMall HPP (Strategi Harga dan Profit, Kalkulator HPP) → new POS products: th
   owner can decide and change it in the POS (`manualPath`).
 - A row the POS refused answers `result: "error"` with its message; a row whose answer was lost answers `"unknown"`.
 
+### `list_payment_methods`
+Out: `GET /payment-methods` (id, name, `kind`: cash, debit, credit = kasbon, wallet = QRIS toko, online).
+
+### `list_suppliers`
+Out: `GET /suppliers`.
+
+### `current_shift`
+Needs `pos.write`. Out: `GET /shifts/current`: the owner's open shift (sales, expected cash) or `shift: null`.
+
+### `search_members`
+Needs `pos.write`. In: `q?`. Out: `GET /members/picker`.
+
+### `list_receivables`
+Needs `pos.write`. In: `memberId?`, `status?` (`open` | `settled` | `cancelled`), `q?`, `page?`, `perPage?`. Out:
+`GET /receivables` (each kasbon with `rest`, the balance left).
+
+### `open_shift`
+In: `openingCash` + write controls. Opens the owner's shift. **Only when the owner asks**: the agent never opens a
+shift on its own to record a sale (owner ruling 24 Nov 2026). Refused when a shift is already open.
+
+### `record_sale`
+In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `paymentMethodId?` (default Tunai),
+`downPayment?` (kasbon only, default 0), `note?` + write controls.
+
+- The sale goes into the owner's open shift; with none open the tool answers "Belum ada shift yang dibuka" and records
+  nothing.
+- **The agent never sends a price or a discount** (an agent's `POST /sales` refuses `price` and `discount`, 422). The
+  preview is the server's full quote (`POST /sales/quote` with the method: line prices with units and wholesale tiers,
+  voucher discount, tax after discounts, total, cash rounding, amount due).
+- On confirm the tool pays the exact amount: cash pays the amount due (rounded up to Rp100), debit and QRIS the total,
+  kasbon `downPayment` (the rest becomes the member's receivable).
+- Online methods are refused for an agent session by the sale itself (422 on `paymentMethodId`), not only by the tool. One payment method per sale. The route's own `Idempotency-Key` is derived from
+  the agent key, so a retry is one sale twice over. The receipt names the seller "Agent UMKMall".
+
+### `create_member`
+In: `name`, `code?` (made up from the key when left out), `phone?`, `address?` + write controls.
+
+### `record_receivable_payment`
+In: `receivableId`, `amount`, `paymentMethodId?` (default Tunai: cash goes into the owner's open shift) + write
+controls. The preview shows `balanceBefore` and `balanceAfter`; an amount above the balance is refused.
+
+### `create_supplier`
+In: `name`, `phone?`, `address?` + write controls.
+
 ## 6. Not yet
 
-Recording a sale, members, kasbon payments and suppliers (UMK-1981); purchase order and stock count drafts (rest of
-UMK-1980); the full scripted end-to-end run (rest of UMK-1982); product photos from UMKMall into the catalog.
+Online payment methods through the agent; supplier payments and expenses "outside the drawer"; purchase order and
+stock count drafts (rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982); product photos from UMKMall into the catalog.

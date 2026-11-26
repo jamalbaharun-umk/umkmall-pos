@@ -29,7 +29,7 @@ import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
 
 const SESSION_TTL = 15 * 60;
-/** Agent session requests per network address per minute (UMK-1978 review). */
+/** Failed agent-key checks allowed per network address per minute (UMK-1978 review). */
 export const AGENT_SESSIONS_PER_MINUTE = 30;
 const UMKMALL_TIMEOUT_MS = 5_000;
 /** UMKMall's login cookies (`@umkmall/auth` AUTH_COOKIE_NAME, REFRESH_COOKIE_NAME); no other cookie leaves the POS. */
@@ -176,16 +176,19 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!this.agentKey) throw new NotFoundException();
-    // Counted before the key check, per network address, so the key cannot be guessed at speed.
-    if (!this.agentLimit.hit(req.ip ?? 'unknown'))
-      throw new HttpException(
-        { message: 'Terlalu banyak permintaan sesi agent, coba lagi sebentar' },
-        429,
-      );
     // Server to server only: the scopes and consent below are the caller's word, so only UMKMall's agent backend,
-    // holding the shared service key, may ask (the owner's token alone does not open an agent session).
-    if (!key || !timingSafeEqual(digest(key), this.agentKey))
+    // holding its own key, may ask (the owner's token alone does not open an agent session). Only FAILED key checks
+    // are counted, per network address: UMKMall's backend (one address, a valid key) is never limited here.
+    if (!key || !timingSafeEqual(digest(key), this.agentKey)) {
+      if (!this.agentLimit.hit(req.ip ?? 'unknown'))
+        throw new HttpException(
+          {
+            message: 'Terlalu banyak permintaan sesi agent, coba lagi sebentar',
+          },
+          429,
+        );
       throw new UnauthorizedException({ message: 'Kunci layanan tidak valid' });
+    }
     const { token, scopes, consentRef } = parse(AgentBody, body);
     const { userId, setCookies, unavailable } = await this.askUmkmall(
       `auth_token=${token}`,

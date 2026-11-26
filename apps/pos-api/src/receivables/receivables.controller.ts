@@ -37,6 +37,7 @@ import { storeToday } from '../common/store-day';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { type Db, InjectDb } from '../db/db.module';
 import {
+  AGENT_LABEL,
   members,
   paymentMethods,
   receivablePayments,
@@ -53,7 +54,7 @@ import { paymentMethodCode } from '../payments-client/payments.client';
 import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
 import { recordStoreCash } from '../store-cash/store-cash-ledger';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 
 const PaymentInput = z
@@ -323,6 +324,7 @@ export class ReceivablesService {
           actorId: receivablePayments.actorId,
           actorKind: receivablePayments.actorKind,
           actorName: sql<string>`case when ${receivablePayments.actorKind} = 'owner' then 'Pemilik'
+            when ${receivablePayments.actorKind} = 'agent' then ${AGENT_LABEL}
             else coalesce(${staff.name}, 'Staf') end`,
           collectedOutsideShift: receivablePayments.collectedOutsideShift,
           shiftId: shiftCashEntries.shiftId,
@@ -536,18 +538,21 @@ export class ReceivablesService {
 export class ReceivablesController {
   constructor(private readonly receivables: ReceivablesService) {}
 
+  @AgentRoute()
   @Get()
   @RequirePermission('receivables.manage')
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
     return this.receivables.list(s.tenantId, validate(ReceivableQuery, query));
   }
 
+  @AgentRoute()
   @Get(':id')
   @RequirePermission('receivables.manage')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return this.receivables.get(s.tenantId, parseId(id));
   }
 
+  @AgentRoute()
   @Post(':id/payments')
   @RequirePermission('receivables.manage')
   pay(

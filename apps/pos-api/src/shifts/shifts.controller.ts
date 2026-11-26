@@ -13,7 +13,7 @@ import { validate } from '../common/validation';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { CashEntriesService, CashEntryInput } from './cash-entries.service';
 import { ShiftsService } from './shifts.service';
@@ -33,12 +33,14 @@ export class ShiftsController {
     private readonly cashEntries: CashEntriesService,
   ) {}
 
+  @AgentRoute()
   @Get('current')
   @RequirePermission('sales.create')
   async current(@CurrentSession() s: PosSession) {
     return { shift: await this.shifts.current(s) };
   }
 
+  @AgentRoute()
   @Post('open')
   @RequirePermission('sales.create')
   open(@CurrentSession() s: PosSession, @Body() body: unknown) {

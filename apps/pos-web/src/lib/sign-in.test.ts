@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { failureText, landingPath, loginUrl, sessionKind } from './sign-in'
+import { devSignInUser, failureText, landingPath, loginUrl, sessionKind } from './sign-in'
 
 const token = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`
 
 describe('sign-in helpers', () => {
+  it('offers the dev sign-in only where pos-api accepts it: explicit development or test, with a user', () => {
+    const id = '00000000-0000-4000-8000-00000000000a'
+    expect(devSignInUser({ NODE_ENV: 'development', POS_DEV_USER_ID: id })).toBe(id)
+    expect(devSignInUser({ NODE_ENV: 'test', POS_DEV_USER_ID: id })).toBe(id)
+    expect(devSignInUser({ POS_DEV_USER_ID: id })).toBeUndefined()
+    expect(devSignInUser({ NODE_ENV: 'production', POS_DEV_USER_ID: id })).toBeUndefined()
+    expect(devSignInUser({ NODE_ENV: 'development' })).toBeUndefined()
+  })
+
   it('reads the actor kind from a session token, or nothing from garbage', () => {
     expect(sessionKind(token({ kind: 'cashier' }))).toBe('cashier')
     expect(sessionKind(token({ kind: 'owner' }))).toBe('owner')

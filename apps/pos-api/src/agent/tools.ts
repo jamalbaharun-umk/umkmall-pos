@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { PosSession } from '../tenancy/session';
 import {
@@ -26,6 +27,8 @@ const NO_WRITE_CONSENT =
   'Pemilik belum mengizinkan agent mengubah data POS (izin pos.write). Minta izinnya di Koneksi UMKMall.';
 const UNKNOWN_OUTCOME =
   'Hasilnya belum pasti karena POS tidak menjawab. Cek katalog dulu; bila memang belum tercatat, kirim lagi dengan kunci baru.';
+const UNKNOWN_REPLAYABLE =
+  'Hasilnya belum pasti karena POS tidak menjawab. Kirim lagi dengan kunci yang SAMA: POS menjawab hasil pertama dan tidak mencatat dua kali. Jangan pakai kunci baru.';
 const KEY_RE = /^[A-Za-z0-9:._-]{8,100}$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -80,6 +83,19 @@ const reads = (suits: string, manualPath: string | null): Registry => ({
   connection: 'UMKMall POS',
   coinCost: 0,
 });
+/** A read of personal data (members, kasbon) or of the till: it needs the write consent. */
+const readsWithWrite = (suits: string, manualPath: string): Registry => ({
+  ...reads(suits, manualPath),
+  scope: 'pos.write',
+});
+/** The route's own Idempotency-Key for an agent key: same agent key, same route key, so the route dedupes too. */
+const routeKey = (key: string) =>
+  `agent-${createHash('sha256').update(key).digest('hex').slice(0, 40)}`;
+const NO_SHIFT =
+  'Belum ada shift yang dibuka. Tanyakan ke pemilik apakah shift perlu dibuka (open_shift) dan berapa modal awalnya.';
+const NO_ONLINE =
+  'Metode pembayaran online belum bisa dipakai lewat agent. Pilih tunai, debit, QRIS toko atau kasbon.';
+
 const writes = (suits: string, manualPath: string): Registry => ({
   scope: 'pos.write',
   modes: ['agentic', 'guided'],
@@ -107,6 +123,17 @@ export const AGENT_TOOL_NAMES = [
   'create_category',
   'create_product',
   'import_hpp_products',
+  // UMK-1981
+  'list_payment_methods',
+  'list_suppliers',
+  'current_shift',
+  'search_members',
+  'list_receivables',
+  'open_shift',
+  'record_sale',
+  'create_member',
+  'record_receivable_payment',
+  'create_supplier',
 ] as const;
 
 const HppRow = z
@@ -148,7 +175,8 @@ type Product = {
   sellingPrice: number;
 };
 type RunResult =
-  { data: object; resultRefs?: string[] } | { error: string; status: number };
+  | { data: object; resultRefs?: string[] }
+  | { error: string; status: number; replay?: unknown };
 /** What the tracking wrapper hands each tool, so the call record knows how it ended. */
 type Track = { outcome?: 'preview'; resultRefs?: string[] };
 type Run = (
@@ -226,7 +254,10 @@ export function buildAgentServer(
     args: Record<string, unknown>,
     track: Track,
     preview: () => Promise<CallToolResult>,
-    run: () => Promise<RunResult>,
+    run: (replay?: unknown) => Promise<RunResult>,
+    // The route dedupes by its own Idempotency-Key (derived from the agent key): after a lost answer the same call is
+    // REPLAYED, never retried under a new key, which could sell twice.
+    routeIdempotent = false,
   ): Promise<CallToolResult> => {
     if (!session.agentScopes?.includes('pos.write'))
       return refused(NO_WRITE_CONSENT);
@@ -242,6 +273,7 @@ export function buildAgentServer(
     const { confirm: _c, idempotencyKey: _k, ...rest } = args;
     void _c;
     void _k;
+    let replayOf: unknown;
     const claim = await deps.idempotency.claim(
       session.tenantId,
       key,
@@ -254,21 +286,28 @@ export function buildAgentServer(
         unknownOutcome?: boolean;
         message?: string;
       };
-      return stored.unknownOutcome
-        ? refused(stored.message ?? UNKNOWN_OUTCOME)
-        : ok(claim.answer);
+      if (!stored.unknownOutcome) return ok(claim.answer);
+      if (!routeIdempotent) return refused(stored.message ?? UNKNOWN_OUTCOME);
+      // Fall through: the route answers the first result, or writes it now.
+      replayOf = (stored as { replay?: unknown }).replay;
     }
+    const unknownText = routeIdempotent ? UNKNOWN_REPLAYABLE : UNKNOWN_OUTCOME;
     let result: RunResult;
     try {
-      result = await run();
+      result = await run(replayOf);
     } catch {
-      result = { error: UNKNOWN_OUTCOME, status: 0 };
+      result = { error: unknownText, status: 0 };
     }
     if ('error' in result) {
       if (outcomeUnknown(result.status)) {
         // The route may have committed before its answer was lost: the key stays taken.
-        await deps.idempotency.unknown(session.tenantId, key, UNKNOWN_OUTCOME);
-        return refused(UNKNOWN_OUTCOME);
+        await deps.idempotency.unknown(
+          session.tenantId,
+          key,
+          unknownText,
+          'replay' in result ? result.replay : undefined,
+        );
+        return refused(unknownText);
       }
       // Refused (4xx): nothing was written, so the key is free for a corrected retry.
       await deps.idempotency.release(session.tenantId, key);
@@ -800,6 +839,351 @@ export function buildAgentServer(
           }
           return { data: { rows: results }, resultRefs: created };
         },
+      );
+    },
+  );
+
+  tool(
+    'list_payment_methods',
+    {
+      description:
+        "The store's payment methods (Tunai, debit, QRIS toko, kasbon, ...) with their kind. Pick paymentMethodId for record_sale from here.",
+      inputSchema: {},
+      registry: reads(
+        'Recording a sale or a kasbon payment',
+        '/metode-pembayaran',
+      ),
+    },
+    async () => answer(await get('/payment-methods')),
+  );
+
+  tool(
+    'list_suppliers',
+    {
+      description: "The store's suppliers.",
+      inputSchema: {},
+      registry: reads('Purchases and ingredient sources', '/pemasok'),
+    },
+    async () => answer(await get('/suppliers')),
+  );
+
+  tool(
+    'current_shift',
+    {
+      description:
+        "The owner's open shift (the till sales go into), with its sales and expected cash, or null when none is open. Needs the pos.write consent.",
+      inputSchema: {},
+      registry: readsWithWrite('Before recording a sale', '/kasir/shift'),
+    },
+    async () => answer(await get('/shifts/current')),
+  );
+
+  tool(
+    'search_members',
+    {
+      description:
+        'Find a customer (member) by name, code or phone, for a kasbon sale or a kasbon payment. Personal data: needs the pos.write consent.',
+      inputSchema: { q: text(60).optional() },
+      registry: readsWithWrite('Chat Jadi Order: who is buying', '/pelanggan'),
+    },
+    async (a) => answer(await get('/members/picker', a as Query)),
+  );
+
+  tool(
+    'list_receivables',
+    {
+      description:
+        'Kasbon (receivables): who owes what, with the balance left. Filter by memberId or status. Personal data: needs the pos.write consent.',
+      inputSchema: {
+        memberId: text(64).optional(),
+        status: z.enum(['open', 'settled', 'cancelled']).optional(),
+        q: text(60).optional(),
+        page: z.number().int().optional(),
+        perPage: z.number().int().optional(),
+      },
+      registry: readsWithWrite('Kasbon follow-up and reminders', '/piutang'),
+    },
+    async (a) => answer(await get('/receivables', a as Query)),
+  );
+
+  tool(
+    'open_shift',
+    {
+      description:
+        "Open the owner's shift with the opening cash in the drawer. ONLY when the owner asks for it: never open a shift on your own to record a sale. Preview without confirm.",
+      inputSchema: {
+        openingCash: z
+          .number()
+          .describe('Integer rupiah counted in the drawer'),
+        ...writeControls,
+      },
+      registry: writes('Starting the day when the owner asks', '/kasir/shift'),
+    },
+    async (a, track) =>
+      runWrite(
+        'open_shift',
+        a,
+        track,
+        async () => {
+          const cur = await get('/shifts/current');
+          if (!cur.ok) return refused(cur.message);
+          const open = (cur.data as { shift: unknown }).shift;
+          return open
+            ? refused('Shift sudah terbuka; tidak perlu dibuka lagi.')
+            : ok({ preview: true, wouldOpen: { openingCash: a.openingCash } });
+        },
+        () => create('/shifts/open', { openingCash: a.openingCash }),
+      ),
+  );
+
+  tool(
+    'record_sale',
+    {
+      description:
+        "Record a sale into the owner's open shift. The agent never sends a price or a discount: the server prices every line (units, wholesale tiers), applies the voucher and tax, and the tool pays the exact amount due (cash is rounded up to Rp100). For kasbon give memberId and downPayment (default 0). Online payment methods are refused. With no open shift the tool says so and records nothing. Preview without confirm shows the server's total.",
+      inputSchema: {
+        lines: z
+          .array(
+            z.object({
+              productId: text(64),
+              qty: z.number(),
+              unit: text(20)
+                .optional()
+                .describe('Another unit of the product, e.g. Dus'),
+            }),
+          )
+          .describe('1 or more cart lines'),
+        memberId: text(64).optional(),
+        voucherCode: text(40).optional(),
+        paymentMethodId: text(64)
+          .optional()
+          .describe('From list_payment_methods; default Tunai'),
+        downPayment: z
+          .number()
+          .optional()
+          .describe('Kasbon only: what the customer pays now, integer rupiah'),
+        note: text(200).optional(),
+        ...writeControls,
+      },
+      registry: writes(
+        'Chat Jadi Order: an order from chat becomes a sale',
+        '/kasir',
+      ),
+    },
+    async (a, track) => {
+      const quoteBody = {
+        lines: a.lines,
+        ...(a.voucherCode !== undefined && { voucherCode: a.voucherCode }),
+      };
+      type Quote = {
+        total: number;
+        amountDue: number;
+        paymentMethod: {
+          isCash: boolean;
+          isCredit: boolean;
+          isOnline: boolean;
+        };
+      };
+      const check = async (): Promise<
+        { error: string; status: number } | { quote: Quote }
+      > => {
+        const cur = await get('/shifts/current');
+        if (!cur.ok) return { error: cur.message, status: cur.status };
+        if (!(cur.data as { shift: unknown }).shift)
+          return { error: NO_SHIFT, status: 422 };
+        // Quoted with a method so the quote carries tax, rounding and the method's kind: the one given, else the
+        // store's cash method (the default of a sale).
+        let methodId = a.paymentMethodId as string | undefined;
+        if (!methodId) {
+          const methods = await get('/payment-methods');
+          if (!methods.ok)
+            return { error: methods.message, status: methods.status };
+          methodId = (
+            methods.data as { data: { id: string; kind: string }[] }
+          ).data.find((m) => m.kind === 'cash')?.id;
+        }
+        const q = await callRoute(ctx, 'POST', '/sales/quote', {
+          body: { ...quoteBody, paymentMethodId: methodId },
+        });
+        if (!q.ok) return { error: q.message, status: q.status };
+        const quote = q.data as Quote;
+        if (!quote.paymentMethod) return { error: SERVER_TROUBLE, status: 500 };
+        if (quote.paymentMethod.isOnline)
+          return { error: NO_ONLINE, status: 422 };
+        return { quote };
+      };
+      return runWrite(
+        'record_sale',
+        a,
+        track,
+        async () => {
+          const c = await check();
+          if ('error' in c) return refused(c.error);
+          return ok({ preview: true, quote: c.quote });
+        },
+        async (replay) => {
+          // A replay sends exactly the body of the lost call; prices or the shift may have changed since.
+          let body = replay;
+          if (body === undefined) {
+            const c = await check();
+            if ('error' in c) return c;
+            const m = c.quote.paymentMethod;
+            const paid = m.isCredit
+              ? ((a.downPayment as number | undefined) ?? 0)
+              : m.isCash
+                ? c.quote.amountDue
+                : c.quote.total;
+            body = {
+              lines: a.lines,
+              ...(a.memberId !== undefined && { memberId: a.memberId }),
+              ...(a.voucherCode !== undefined && {
+                voucherCode: a.voucherCode,
+              }),
+              ...(a.paymentMethodId !== undefined && {
+                paymentMethodId: a.paymentMethodId,
+              }),
+              ...(a.note !== undefined && { note: a.note }),
+              paid,
+            };
+          }
+          const r = await callRoute(ctx, 'POST', '/sales', {
+            headers: {
+              'idempotency-key': routeKey(a.idempotencyKey as string),
+            },
+            body,
+          });
+          if (!r.ok)
+            return { error: r.message, status: r.status, replay: body };
+          const sale = r.data as { id: string };
+          return { data: sale, resultRefs: [sale.id] };
+        },
+        true,
+      );
+    },
+  );
+
+  tool(
+    'create_member',
+    {
+      description:
+        'Add a customer (member): name, and optionally code (no spaces; made up when left out), phone, address. Preview without confirm.',
+      inputSchema: {
+        name: text(120),
+        code: text(40).optional(),
+        phone: text(20).optional(),
+        address: text(500).optional(),
+        ...writeControls,
+      },
+      registry: writes('A new customer from chat', '/pelanggan'),
+    },
+    async (a, track) => {
+      const { confirm: _c, idempotencyKey: _k, ...given } = a;
+      void _c;
+      void _k;
+      // A code the agent did not give is derived from its key, so a retry sends the same one.
+      const body = {
+        ...given,
+        code:
+          given.code ??
+          `AG${createHash('sha256').update(String(a.idempotencyKey)).digest('hex').slice(0, 6).toUpperCase()}`,
+      };
+      return runWrite(
+        'create_member',
+        a,
+        track,
+        () => Promise.resolve(ok({ preview: true, wouldCreate: body })),
+        () => create('/members', body),
+      );
+    },
+  );
+
+  tool(
+    'record_receivable_payment',
+    {
+      description:
+        "Record a kasbon instalment: receivableId (from list_receivables), amount (integer rupiah, at most the balance left), paymentMethodId (default Tunai; cash goes into the owner's open shift). Preview without confirm shows the balance before and after.",
+      inputSchema: {
+        receivableId: text(64),
+        amount: z.number(),
+        paymentMethodId: text(64).optional(),
+        ...writeControls,
+      },
+      registry: writes('Kasbon follow-up: a customer paid', '/piutang'),
+    },
+    async (a, track) => {
+      const id = idParam(a.receivableId);
+      if (!id)
+        return refused(
+          'receivableId tidak valid: kirim id dari list_receivables.',
+        );
+      return runWrite(
+        'record_receivable_payment',
+        a,
+        track,
+        async () => {
+          const r = await get(`/receivables/${id}`);
+          if (!r.ok) return refused(r.message);
+          const left = (r.data as { rest?: number }).rest ?? null;
+          return ok({
+            preview: true,
+            receivableId: id,
+            amount: a.amount,
+            balanceBefore: left,
+            balanceAfter:
+              typeof left === 'number' && typeof a.amount === 'number'
+                ? left - a.amount
+                : null,
+          });
+        },
+        async () => {
+          const r = await callRoute(
+            ctx,
+            'POST',
+            `/receivables/${id}/payments`,
+            {
+              headers: {
+                'idempotency-key': routeKey(a.idempotencyKey as string),
+              },
+              body: {
+                amount: a.amount,
+                ...(a.paymentMethodId !== undefined && {
+                  paymentMethodId: a.paymentMethodId,
+                }),
+              },
+            },
+          );
+          if (!r.ok) return { error: r.message, status: r.status };
+          const p = r.data as { id?: string };
+          return { data: r.data as object, resultRefs: p.id ? [p.id] : [] };
+        },
+        true,
+      );
+    },
+  );
+
+  tool(
+    'create_supplier',
+    {
+      description:
+        'Add a supplier: name, and optionally phone and address. Preview without confirm.',
+      inputSchema: {
+        name: text(120),
+        phone: text(20).optional(),
+        address: text(500).optional(),
+        ...writeControls,
+      },
+      registry: writes('A new ingredient source', '/pemasok'),
+    },
+    async (a, track) => {
+      const { confirm: _c, idempotencyKey: _k, ...body } = a;
+      void _c;
+      void _k;
+      return runWrite(
+        'create_supplier',
+        a,
+        track,
+        () => Promise.resolve(ok({ preview: true, wouldCreate: body })),
+        () => create('/suppliers', body),
       );
     },
   );
