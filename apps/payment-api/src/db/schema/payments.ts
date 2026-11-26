@@ -45,6 +45,9 @@ export const payments = payment
       // An adapter's method name. Text, not an enum: a new adapter needs no migration.
       method: text('method').notNull(),
       amount: rupiah('amount').notNull(),
+      // UMK-2037: the bank the payer chose, for a method whose adapter declares banks (a virtual account).
+      // One of that adapter's codes; null for every other method. Not a bank account.
+      bank: text('bank'),
       status: paymentStatus('status').notNull(),
       // Needs the owner's attention (refund refused, bill missing at the PG). A flag, not a status.
       needsReview: boolean('needs_review').notNull().default(false),
