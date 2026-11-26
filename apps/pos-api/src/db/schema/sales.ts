@@ -111,7 +111,8 @@ export const paymentMethods = pos
   )
   .enableRLS();
 
-// Per-store sale settings and the receipt-number counter (one row, upserted by every sale).
+// Per-store sale settings and the two counters (one row, upserted by every sale): the receipt number, taken
+// when a sale is COMPLETED, and the hold number, taken when a sale is created to wait for its payment.
 export const salesSettings = pos
   .table(
     'sales_settings',
@@ -122,6 +123,8 @@ export const salesSettings = pos
       // Tax in basis points (1000 = 10%), applied after discounts.
       taxBps: integer('tax_bps').notNull().default(0),
       lastSaleNumber: integer('last_sale_number').notNull().default(0),
+      // UMK-2038: "Menunggu #n". Its own counter, so a sale that is cancelled leaves no gap in the receipts.
+      lastHoldNumber: integer('last_hold_number').notNull().default(0),
     },
     (t) => [
       check('sales_settings_tax_ck', sql`${t.taxBps} between 0 and 10000`),
@@ -150,7 +153,13 @@ export const sales = pos
     {
       id: id(),
       tenantId: tenantId(),
-      number: integer('number').notNull(),
+      // The receipt number: gap-free per store over completed sales. Given in the write that completes the
+      // sale (UMK-2038), so it is null while the sale awaits its payment and stays null when it is cancelled.
+      // (A sale cancelled before UMK-2038 kept the number it was created with.)
+      number: integer('number'),
+      // What a sale is called while it waits for its payment ("Menunggu #n"): null for a sale that was
+      // completed in the transaction that created it (payment-api off, kasbon).
+      holdNumber: integer('hold_number'),
       shiftId: uuid('shift_id').notNull(),
       actorId: uuid('actor_id').notNull(),
       actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
@@ -200,10 +209,20 @@ export const sales = pos
       // PAID. That is when it was rung up, except for a sale that waited for a payment gateway: the
       // gateway's paid time, or the moment the cashier took cash instead.
       paidAt: ts('paid_at').notNull().defaultNow(),
+      // When pos-api WROTE the completion (its own clock), which is also when the receipt number was given.
+      // Not a reporting date (that is `paid_at`): it answers "what was completed since I last looked"
+      // (UMK-2046), because a payment learned late is dated in the past by `paid_at`.
+      completedAt: ts('completed_at'),
       createdAt: createdAt(),
     },
     (t) => [
       unique().on(t.tenantId, t.id),
+      // A receipt has its number and the time it was completed; a waiting sale has its hold number.
+      check(
+        'sales_number_ck',
+        sql`(${t.status} not in ('completed', 'void') or (${t.number} is not null and ${t.completedAt} is not null))
+          and (${t.status} <> 'awaiting_payment' or ${t.holdNumber} is not null)`,
+      ),
       check(
         'sales_status_ck',
         sql`${t.status} in ('completed', 'void', 'awaiting_payment', 'cancelled')
@@ -223,6 +242,8 @@ export const sales = pos
         t.idempotencyKey,
       ),
       uniqueIndex('sales_tenant_number_uq').on(t.tenantId, t.number),
+      uniqueIndex('sales_tenant_hold_number_uq').on(t.tenantId, t.holdNumber),
+      index('sales_tenant_completed_idx').on(t.tenantId, t.completedAt),
       index('sales_tenant_created_idx').on(t.tenantId, t.createdAt),
       index('sales_tenant_paid_idx').on(t.tenantId, t.paidAt),
       index('sales_shift_idx').on(t.shiftId),
