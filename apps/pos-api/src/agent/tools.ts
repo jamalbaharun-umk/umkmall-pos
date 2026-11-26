@@ -425,7 +425,19 @@ export function buildAgentServer(
         '/laporan',
       ),
     },
-    async (a) => answer(await get('/reports/sales', a as Query)),
+    async (a) => {
+      const r = await get('/reports/sales', a as Query);
+      if (!r.ok) return refused(r.message);
+      // Staff names stay in the POS: the agent gets the figures, not who rang each line up.
+      const report = r.data as { rows: Record<string, unknown>[] };
+      return ok({
+        ...report,
+        rows: report.rows.map(({ cashier: _c, ...row }) => {
+          void _c;
+          return row;
+        }),
+      });
+    },
   );
 
   tool(

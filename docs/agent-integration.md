@@ -12,7 +12,7 @@ are wired to, with the same registry description, consent, usage record and prov
 
 ```http
 POST /auth/agent/session
-X-Pos-Service-Key: <POS_SERVICE_KEY, the same value UMKMall uses for the purge>
+X-Pos-Agent-Key: <POS_AGENT_SERVICE_KEY: the agent's own key, never the purge key>
 Content-Type: application/json
 
 {
@@ -22,8 +22,10 @@ Content-Type: application/json
 }
 ```
 
-- **Server to server only.** Without the service key (or with a wrong one) the route answers 401 before UMKMall is
-  asked: the scopes and consent are the caller's word, so only UMKMall's agent backend may ask.
+- **Server to server only.** Without the agent key (or with a wrong one, the purge key included) the route answers
+  401 before UMKMall is asked: the scopes and consent are the caller's word, so only UMKMall's agent backend may ask.
+  `POS_AGENT_SERVICE_KEY` unset → 404 (no agent sessions in that environment). At most 30 requests per minute per
+  network address, counted before the key check (429).
 - `scopes`: what the owner consented to on UMKMall's Koneksi page. Reading and acting are separate permissions:
   `pos.read` (always granted) reads the catalog with cost and every report; `pos.write` also creates categories and
   products. Without `pos.write` every write tool answers "izin pos.write" and changes nothing.
@@ -83,7 +85,8 @@ owner (the route's own message and field errors); a fault is always the same gen
   `modes` (`agentic`, and `guided` for writes), `suits` (which UMKMall goal or tool it serves), `manualPath` (where
   the owner does it by hand in pos-web: the hand-over path when they say no or prefer to do it themselves),
   `connection: "UMKMall POS"` and `coinCost: 0` (coins are off).
-- **Usage:** every call is recorded in `pos.agent_tool_calls`: tool, outcome (`ok`, `preview`, `refused`), the four
+- **Limits:** at most 300 `/mcp` requests per store per minute (429 with an Indonesian sentence).
+- **Usage:** every call is recorded in `pos.agent_tool_calls` (kept 180 days): tool, outcome (`ok`, `preview`, `refused`), the four
   context headers, the consent, the user acted for, the ids a write created and the duration. Never the input or the
   answer. Read it with `agent_activity` (or `GET /agent/activity` as the owner).
 - **Provenance:** every confirmed write answers `provenance`: `source: "umkmall-pos"`, `tool`, `by: "agent"`,
@@ -132,8 +135,8 @@ Out: `GET /catalog/categories`.
 In: `period?` (`today` | `week` | `month` | `year`). Out: `GET /reports/dashboard`.
 
 ### `sales_report`
-In: `from`, `to` (YYYY-MM-DD, store timezone). Out: `GET /reports/sales`. For Catatan Keuangan and the cashflow and
-capital templates.
+In: `from`, `to` (YYYY-MM-DD, store timezone). Out: `GET /reports/sales` without the `cashier` of each line (staff
+names stay in the POS). For Catatan Keuangan and the cashflow and capital templates.
 
 ### `product_report`
 In: `from`, `to`. Out: `GET /reports/products` (qty in base units, sales, cost, gross profit per product).

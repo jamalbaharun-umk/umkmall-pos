@@ -119,7 +119,7 @@ usage record and provenance on every tool.
 - **The agent never changes an existing product** (owner ruling 24 Nov 2026: no price change, void or drawer cash-out):
   `PATCH /catalog/products/:id` is not an agent route, an agent creates with `AgentProductCreate` only, and the HPP
   import creates new `UMK-<ref>` SKUs and leaves existing ones untouched.
-- **The agent session is server to server** (`X-Pos-Service-Key`, then the owner's token checked at `/auth/me`) and
+- **The agent session is server to server** (`X-Pos-Agent-Key` = `POS_AGENT_SERVICE_KEY`, its own key, never the purge key; then the owner's token checked at `/auth/me`) and
   relays `/auth/me`'s Set-Cookie like owner sign-in; UMKMall's agent backend passes it to the browser. The owner's
   switch is persistent (`pos.agent_access.enabled`): revoke refuses old sessions and every new one until enable.
 - **Tools call the REST routes over loopback** with the caller's token (`src/agent/loopback.ts`): never a service

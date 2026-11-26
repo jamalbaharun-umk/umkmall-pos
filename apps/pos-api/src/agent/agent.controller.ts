@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  HttpException,
   Post,
   Req,
   Res,
@@ -13,7 +14,11 @@ import type { Request, Response } from 'express';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { AgentIdempotency } from './idempotency';
+import { WindowLimiter } from './rate-limit';
 import { buildAgentServer } from './tools';
+
+/** MCP requests per store per minute: room for a busy agent, a stop for a runaway loop (UMK-1979 review). */
+export const MCP_REQUESTS_PER_MINUTE = 300;
 import { AgentUsage, type CallContext } from './usage';
 
 const ref = z
@@ -33,6 +38,8 @@ const ContextHeaders = z.object({
  */
 @Controller('mcp')
 export class AgentController {
+  private readonly limit = new WindowLimiter(MCP_REQUESTS_PER_MINUTE, 60_000);
+
   constructor(
     private readonly idempotency: AgentIdempotency,
     private readonly usage: AgentUsage,
@@ -47,6 +54,11 @@ export class AgentController {
     @Body() body: unknown,
   ): Promise<void> {
     if (s.kind !== 'agent') throw new ForbiddenException();
+    if (!this.limit.hit(s.tenantId))
+      throw new HttpException(
+        { message: 'Terlalu banyak permintaan agent, coba lagi sebentar' },
+        429,
+      );
     const h = validate(ContextHeaders, {
       'x-umkmall-goal': req.headers['x-umkmall-goal'],
       'x-umkmall-assistant': req.headers['x-umkmall-assistant'],

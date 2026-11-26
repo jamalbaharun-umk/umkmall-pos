@@ -22,7 +22,7 @@ const stub = {
   cookies: [] as (string | undefined)[],
 };
 const READ_WRITE = ['pos.read', 'pos.write'];
-const KEY = process.env.POS_SERVICE_KEY!;
+const KEY = process.env.POS_AGENT_SERVICE_KEY!;
 
 describe('UMKMall agent: session and MCP tools', () => {
   let app: INestApplication;
@@ -154,7 +154,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       const r = await http()
         .post('/auth/agent/session')
-        .set('X-Pos-Service-Key', KEY)
+        .set('X-Pos-Agent-Key', KEY)
         .send({ token: TOKEN, scopes: ['pos.write'], consentRef: 'consent:1' })
         .expect(200);
       expect(stub.cookies).toEqual([`auth_token=${TOKEN}`]);
@@ -176,10 +176,14 @@ describe('UMKMall agent: session and MCP tools', () => {
 
     it('refuses an agent session without the service key, before asking UMKMall', async () => {
       stub.cookies = [];
-      for (const key of [undefined, 'wrong-key-wrong-key'])
+      for (const key of [
+        undefined,
+        'wrong-key-wrong-key',
+        process.env.POS_SERVICE_KEY!, // the purge key is not the agent's
+      ])
         await (
           key
-            ? http().post('/auth/agent/session').set('X-Pos-Service-Key', key)
+            ? http().post('/auth/agent/session').set('X-Pos-Agent-Key', key)
             : http().post('/auth/agent/session')
         )
           .send({ token: TOKEN, scopes: ['pos.write'] })
@@ -194,7 +198,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       await http()
         .post('/auth/agent/session')
-        .set('X-Pos-Service-Key', KEY)
+        .set('X-Pos-Agent-Key', KEY)
         .send({ token: TOKEN })
         .expect(401);
       stub.answer = (res) => {
@@ -204,14 +208,14 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       const down = await http()
         .post('/auth/agent/session')
-        .set('X-Pos-Service-Key', KEY)
+        .set('X-Pos-Agent-Key', KEY)
         .send({ token: TOKEN })
         .expect(503);
       expect(down.headers['set-cookie']).toEqual(['auth_token=x; Path=/']);
       stub.cookies = [];
       await http()
         .post('/auth/agent/session')
-        .set('X-Pos-Service-Key', KEY)
+        .set('X-Pos-Agent-Key', KEY)
         .send({ token: `${TOKEN}; auth_refresh=x` })
         .expect(422);
       expect(stub.cookies).toEqual([]);
@@ -346,7 +350,7 @@ describe('UMKMall agent: session and MCP tools', () => {
       };
       await http()
         .post('/auth/agent/session')
-        .set('X-Pos-Service-Key', KEY)
+        .set('X-Pos-Agent-Key', KEY)
         .send({ token: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig-part_1' })
         .expect(403);
       const state = await http()
@@ -436,8 +440,23 @@ describe('UMKMall agent: session and MCP tools', () => {
       });
 
       const range = { from: '2026-11-01', to: '2026-11-26' };
+      const sales = await http()
+        .get('/reports/sales')
+        .query(range)
+        .set('Authorization', store.auth)
+        .expect(200);
+      const viaTool = (await call(client, 'sales_report', range)).data as {
+        rows: Record<string, unknown>[];
+      };
+      expect(viaTool).toEqual({
+        ...sales.body,
+        rows: (sales.body.rows as Record<string, unknown>[]).map(
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          ({ cashier: _c, ...row }) => row,
+        ),
+      });
+      expect(JSON.stringify(viaTool)).not.toMatch(/cashier/);
       for (const [tool, path] of [
-        ['sales_report', '/reports/sales'],
         ['product_report', '/reports/products'],
         ['purchasing_report', '/reports/purchasing'],
       ] as const) {
@@ -821,6 +840,65 @@ describe('UMKMall agent: session and MCP tools', () => {
         .set('X-Umkmall-Goal', 'goal with spaces')
         .send({})
         .expect(422);
+    });
+  });
+
+  describe('review follow-ups', () => {
+    it('an off switch refuses a live session even without a revocation time', async () => {
+      const store = await createStore();
+      const token = await agentToken(store.userId);
+      await appDb`insert into pos.agent_access (tenant_id, enabled) values (${store.tenantId}, false)`;
+      await http()
+        .get('/catalog/categories')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(401);
+    });
+
+    it('drops call records past the retention window of the same store only', async () => {
+      const a = await createStore();
+      const b = await createStore();
+      for (const s of [a, b])
+        await appDb`insert into pos.agent_tool_calls (tenant_id, tool, outcome, actor_id, duration_ms, created_at)
+          values (${s.tenantId}, 'old', 'ok', ${s.userId}, 1, now() - interval '200 days')`;
+      const client = await mcp(await agentToken(a.userId));
+      await call(client, 'list_categories');
+      const rows = await appDb<{ tenant_id: string; tool: string }[]>`
+        select tenant_id, tool from pos.agent_tool_calls
+         where tenant_id in (${a.tenantId}, ${b.tenantId}) order by tool`;
+      expect(rows).toEqual([
+        { tenant_id: a.tenantId, tool: 'list_categories' },
+        { tenant_id: b.tenantId, tool: 'old' },
+      ]);
+    });
+
+    it('the owner dev sign-in also needs an explicit development or test environment', async () => {
+      const store = await createStore();
+      const was = process.env.NODE_ENV;
+      try {
+        delete process.env.NODE_ENV;
+        await http()
+          .post('/auth/dev/sign-in')
+          .send({ userId: store.userId })
+          .expect(404);
+      } finally {
+        process.env.NODE_ENV = was;
+      }
+    });
+
+    // Last in the file: it spends this address's agent-session budget.
+    it('limits agent session requests per address, counted before the key check', async () => {
+      const codes: number[] = [];
+      for (let i = 0; i < 40 && !codes.includes(429); i += 1)
+        codes.push(
+          (
+            await http()
+              .post('/auth/agent/session')
+              .set('X-Pos-Agent-Key', 'wrong-key-wrong-key')
+              .send({ token: 'x'.repeat(20) })
+          ).status,
+        );
+      expect(codes.at(-1)).toBe(429);
+      expect(codes.length).toBeLessThanOrEqual(31);
     });
   });
 });

@@ -32,9 +32,14 @@ export class StaffAccess {
     if (session.kind === 'agent') {
       // The owner can cut every agent session at once from the POS (consent is revocable at any time).
       const [cut] = await this.db
-        .select({ before: agentAccess.revokedBefore })
+        .select({
+          enabled: agentAccess.enabled,
+          before: agentAccess.revokedBefore,
+        })
         .from(agentAccess)
         .where(eq(agentAccess.tenantId, session.tenantId));
+      // Off means off for every session, whenever it was issued.
+      if (cut && !cut.enabled) return null;
       if (cut?.before && (session.issuedAt ?? 0) * 1000 <= cut.before.getTime())
         return null;
       return {

@@ -22,6 +22,10 @@ export type CallRecord = CallContext & {
   durationMs: number;
 };
 
+/** How long an agent call record is kept: long enough for a goal's report, not forever (it names goals and runs). */
+export const AGENT_CALL_RETENTION_DAYS = 180;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /** False only after the owner turned UMKMall's agent off (no row = on until UMK-2059's opt-in). */
 export async function agentEnabled(
   db: Pick<Db, 'select'>,
@@ -41,9 +45,23 @@ export class AgentUsage {
 
   constructor(@InjectDb() private readonly db: Db) {}
 
-  /** Never fails the tool call it records: a lost row is logged (ids and codes only) and the answer still goes out. */
+  /**
+   * Never fails the tool call it records: a lost row is logged (ids and codes only) and the answer still goes out.
+   * Rows older than AGENT_CALL_RETENTION_DAYS of the same store are dropped on the way (retention).
+   */
   async record(r: CallRecord): Promise<void> {
     try {
+      await this.db
+        .delete(agentToolCalls)
+        .where(
+          and(
+            eq(agentToolCalls.tenantId, r.tenantId),
+            lt(
+              agentToolCalls.createdAt,
+              new Date(Date.now() - AGENT_CALL_RETENTION_DAYS * DAY_MS),
+            ),
+          ),
+        );
       await this.db.insert(agentToolCalls).values({
         tenantId: r.tenantId,
         actorId: r.actorId,
