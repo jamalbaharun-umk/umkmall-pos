@@ -359,6 +359,7 @@ export class ReportsService {
              sh.opening_cash, sh.expected_cash, sh.counted_cash,
              c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds,
              c.expenses, c.expense_reversals, c.manual_in, c.manual_out, c.collector_deposits,
+             c.receivable_reversals,
              s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
@@ -383,7 +384,9 @@ export class ReportsService {
                  coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'manual_out'), 0)
                    as manual_out,
                  coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'collector_deposit'), 0)
-                   as collector_deposits
+                   as collector_deposits,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'receivable_reversal'), 0)
+                   as receivable_reversals
             from pos.shift_cash_entries e
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
@@ -398,6 +401,8 @@ export class ReportsService {
         closedAt: (r.closed_at as string | null) ?? null,
         openingCash: n(r.opening_cash),
         receivablePayments: n(r.receivable_payments),
+        // Cash of corrected kasbon instalments taken back out of the drawer (part of cashOut, UMK-1971).
+        receivableReversals: n(r.receivable_reversals),
         voidRefunds: n(r.void_refunds),
         // Paid from the drawer (expenses and supplier payments, UMK-1984) and voided ones put back.
         expenses: n(r.expenses),

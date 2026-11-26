@@ -4,9 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { recordAudit } from '../audit/record';
 import {
   codedError,
   formatRupiah,
@@ -19,6 +20,7 @@ import {
   paymentMethods,
   receivablePayments,
   receivables,
+  sales,
   shiftCashEntries,
   shifts,
   staff,
@@ -135,7 +137,8 @@ type CashBack =
  * This file is the only writer of the ledger kind `receivable_reversal` (guard in src/guards.spec.ts); the ledger rows
  * themselves go through `recordShiftCashInShift` / `recordShiftCash` / `recordStoreCash`.
  *
- * Lock order (the one a payment and a deposit use): receivable row, the collector's staff row, then shifts.
+ * Lock order (the one a payment and a deposit use): receivable row, the collector's staff row, then shifts; when two
+ * shifts are touched (the instalment's and the actor's), both at once in id order.
  * Checks run cheapest and safest first: validation, replay, state (no lock), then the approver's PIN, then all again
  * under the locks. A request that cannot succeed never costs a PIN attempt.
  *
@@ -482,6 +485,22 @@ export class ReceivableCorrectionsService {
       await this.assertHeld(tx, s, back, p.amount);
       await recordStoreCash(tx, s, cashOut);
     } else if (back.kind === 'shift') {
+      // The instalment's shift and the actor's open one, locked together in id order: two cashiers correcting each
+      // other's instalments would otherwise each hold one drawer and wait for the other (40P01).
+      await tx
+        .select({ id: shifts.id })
+        .from(shifts)
+        .where(
+          and(
+            eq(shifts.tenantId, s.tenantId),
+            or(
+              eq(shifts.id, back.shiftId),
+              and(eq(shifts.actorId, s.actorId), isNull(shifts.closedAt)),
+            ),
+          ),
+        )
+        .orderBy(shifts.id)
+        .for('update');
       // Out of the instalment's own drawer while that shift is open; a closed shift never changes, so the cash
       // goes out of the drawer open now (the actor's), as a void's does.
       const inOwnShift = await recordShiftCashInShift(
@@ -494,8 +513,10 @@ export class ReceivableCorrectionsService {
     }
 
     let recordedId: string | null = null;
+    let newPaymentId: string | null = null;
     if (next && method) {
       const newId = randomUUID();
+      newPaymentId = newId;
       const [{ seq }] = await tx
         .select({
           seq: sql<number>`coalesce(max(${rp.seq}), 0) + 1`.mapWith(Number),
@@ -553,6 +574,40 @@ export class ReceivableCorrectionsService {
           eq(receivables.id, receivableId),
         ),
       );
+    // Log aktivitas (UMK-1969): ids, amounts, the reason code and the approver; never the note or the customer.
+    const [sale] = await tx
+      .select({ number: sales.number })
+      .from(receivables)
+      .innerJoin(
+        sales,
+        and(
+          eq(sales.tenantId, receivables.tenantId),
+          eq(sales.id, receivables.saleId),
+        ),
+      )
+      .where(
+        and(
+          eq(receivables.tenantId, s.tenantId),
+          eq(receivables.id, receivableId),
+        ),
+      );
+    await recordAudit(tx, s, 'kasbon_correction', {
+      target: {
+        type: 'receivable',
+        id: receivableId,
+        label: sale?.number ? `Kasbon struk #${sale.number}` : 'Kasbon',
+      },
+      details: {
+        receivableId,
+        paymentId: p.id,
+        reversalId,
+        newPaymentId,
+        oldAmount: p.amount,
+        newAmount: next?.amount ?? null,
+        reasonCode: input.reasonCode,
+        approvedBy: approver.id,
+      },
+    });
     return { reversalId, recordedId };
   }
 

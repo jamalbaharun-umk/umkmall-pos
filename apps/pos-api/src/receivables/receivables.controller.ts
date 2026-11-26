@@ -338,6 +338,8 @@ export class ReceivablesService {
           amount: receivablePayments.amount,
           restBefore: receivablePayments.restBefore,
           paymentMethod: paymentMethods.name,
+          // UMK-1971: the method itself, so a correction starts from it (two methods may share a name).
+          paymentMethodId: receivablePayments.paymentMethodId,
           // Who collected it and when; a payment is in one shift's ledger (`shiftId`), or was taken
           // without a shift (`collectedOutsideShift`), or never reached a drawer ledger (down payment,
           // debit, wallet: both empty).

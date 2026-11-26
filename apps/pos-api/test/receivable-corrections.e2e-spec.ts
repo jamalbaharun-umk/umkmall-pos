@@ -106,6 +106,9 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
       saleId: sale.body.id as string,
       transferId: transfer.body.id as string,
       ownerShiftId: shift.body.id as string,
+      productId: product.body.id as string,
+      kasbonId: kasbon.body.id as string,
+      memberId: member.body.id as string,
     };
   }
   type KasbonStore = Awaited<ReturnType<typeof kasbonStore>>;
@@ -181,6 +184,23 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
         select failures from pos.void_pins
         where tenant_id = ${s.tenantId} and actor_id = ${s.userId}`
     )[0]?.failures;
+
+  /** The store's Log aktivitas rows of a kasbon correction (UMK-1969). */
+  const auditRows = (tenantId: string) =>
+    admin<
+      {
+        actor_id: string;
+        target_type: string;
+        target_id: string;
+        target_label: string;
+        details: Record<string, unknown>;
+      }[]
+    >`select actor_id, target_type, target_id, target_label, details from pos.audit_log
+      where tenant_id = ${tenantId} and event = 'kasbon_correction' order by occurred_at`;
+  const today = () =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(
+      new Date(),
+    );
 
   async function untilWaiting(n: number) {
     for (let i = 0; i < 400; i++) {
@@ -299,6 +319,20 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
       ]),
     );
     expect(entries).toHaveLength(3);
+    // Laporan kasir shows the reversal as its own figure, not only inside cash out.
+    const report = await get(
+      k.auth,
+      `/reports/shifts?from=${today()}&to=${today()}`,
+    ).expect(200);
+    expect(
+      (report.body.rows as { shiftId: string }[]).find(
+        (x) => x.shiftId === k.ownerShiftId,
+      ),
+    ).toMatchObject({
+      receivablePayments: 5500,
+      receivableReversals: 2500,
+      cashOut: 2500,
+    });
     expect(
       entries.find((e) => e.kind === 'receivable_reversal')?.reversalOf,
     ).toMatchObject({
@@ -448,6 +482,8 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('SHIFT_REQUIRED');
     expect(await bookRows(k.tenantId)).toHaveLength(1);
+    // The Log aktivitas row rolls back with the correction.
+    expect(await auditRows(k.tenantId)).toEqual([]);
     const r = await receivable(k.auth, k);
     expect(r.rest).toBe(5000);
     expect(r.payments[0]).toMatchObject({
@@ -613,6 +649,283 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
       outstanding: 2000,
     });
     expect((await receivable(k.auth, k)).rest).toBe(30_000 - 10_000);
+  });
+
+  it('writes one Log aktivitas row per correction (ids, amounts, reason, approver; no note, no customer); a refused one writes none', async () => {
+    const k = await kasbonStore();
+    const p = await pay(k.auth, k, 2500);
+    const note = 'Siti 081234567890 bayar dobel';
+    const res = await correct(
+      k.auth,
+      k,
+      p.id,
+      body(k, { amount: 3000 }, { reasonCode: 'other', note }),
+    ).expect(201);
+    const c = res.body.correction;
+    const rows = await auditRows(k.tenantId);
+    expect(rows).toEqual([
+      {
+        actor_id: k.userId,
+        target_type: 'receivable',
+        target_id: k.rid,
+        target_label: expect.stringMatching(/^Kasbon struk #\d+$/),
+        details: {
+          receivableId: k.rid,
+          paymentId: p.id,
+          reversalId: c.id,
+          newPaymentId: c.newPaymentId,
+          oldAmount: 2500,
+          newAmount: 3000,
+          reasonCode: 'other',
+          approvedBy: k.userId,
+        },
+      },
+    ]);
+    expect(JSON.stringify(rows)).not.toMatch(/Siti|0812|dobel|482913/);
+    // Shown in the money group of the screen's API.
+    const log = await get(k.auth, '/audit-log?group=money').expect(200);
+    expect(log.body.data[0]).toMatchObject({
+      event: 'kasbon_correction',
+      group: 'money',
+    });
+
+    // Refused before the PIN (twice), at the PIN, and "Batalkan saja" of the new payment with a wrong PIN: no row.
+    await correct(k.auth, k, p.id, body(k, null)).expect(422);
+    await correct(
+      k.auth,
+      k,
+      c.newPaymentId,
+      body(k, null, { pin: '000000' }),
+    ).expect(422);
+    expect(await auditRows(k.tenantId)).toHaveLength(1);
+    // A replay of the first request answers it again and writes nothing more.
+    expect(await bookRows(k.tenantId)).toHaveLength(3);
+  });
+
+  it('a collector instalment whose cash was already deposited in full is not correctable (REVERSAL_EXCEEDS_HELD, Rp0 held), whatever the fix', async () => {
+    // The rule as built (review of PR 65 asks the owner): a deposit moved the cash into a drawer, so a correction
+    // that would take it back out of the collector's hands has no cash to take. Pinned here so a change is deliberate.
+    const k = await kasbonStore();
+    const c = await createCashier(app, k, ['receivables.manage']);
+    const p = await pay(c.auth, k, 5000);
+    await post(
+      k.auth,
+      '/store-cash/deposits',
+      { collectorId: c.staffId, amount: 5000 },
+      randomUUID(),
+    ).expect(201);
+    for (const fix of [
+      body(k, null, { reasonCode: 'wrong_customer' }),
+      body(
+        k,
+        { amount: 5000, paymentMethodId: k.transferId },
+        { reasonCode: 'wrong_method' },
+      ),
+      body(k, { amount: 4000 }),
+    ]) {
+      const refused = await correct(k.auth, k, p.id, fix).expect(422);
+      expect(refused.body).toMatchObject({
+        code: 'REVERSAL_EXCEEDS_HELD',
+        outstanding: 0,
+      });
+    }
+    expect(await pinFailures(k)).toBe(0);
+    expect(await bookRows(k.tenantId)).toHaveLength(1);
+    expect(await auditRows(k.tenantId)).toEqual([]);
+    expect((await receivable(k.auth, k)).rest).toBe(1000);
+  });
+
+  describe('at the same time', () => {
+    it('two corrections of one payment with different keys: one is written, the other is ALREADY_REVERSED', async () => {
+      const k = await kasbonStore();
+      const p = await pay(k.auth, k, 2500);
+      const [a, b] = await holdingReceivable(k.rid, async () => {
+        const both = [
+          send(correct(k.auth, k, p.id, body(k, { amount: 3000 }))),
+          send(
+            correct(
+              k.auth,
+              k,
+              p.id,
+              body(k, null, { reasonCode: 'duplicate' }),
+            ),
+          ),
+        ];
+        await untilWaiting(2);
+        return both;
+      }).then((x) => Promise.all(x));
+      const ok = [a, b].filter((r) => r.status === 201);
+      const refused = [a, b].filter((r) => r.status !== 201);
+      expect(ok).toHaveLength(1);
+      expect(refused).toHaveLength(1);
+      expect(refused[0].status).toBe(422);
+      expect(refused[0].body.code).toBe('ALREADY_REVERSED');
+      const r = await receivable(k.auth, k);
+      expect(r.payments.filter((x) => x.status === 'reversal')).toHaveLength(1);
+      expect(r.rest).toBe(6000 - (ok[0].body.correction.newAmount ?? 0));
+      expect(r.rest).toBe(6000 - r.payments.reduce((n, x) => n + x.amount, 0));
+      expect(await auditRows(k.tenantId)).toHaveLength(1);
+    });
+
+    it('two cashiers correcting each other’s cash instalments: both drawers are locked in one order, no deadlock', async () => {
+      const k = await kasbonStore();
+      const sale2 = await post(
+        k.auth,
+        '/sales',
+        {
+          lines: [{ productId: k.productId, qty: 1 }],
+          memberId: k.memberId,
+          paymentMethodId: k.kasbonId,
+          paid: 0,
+        },
+        randomUUID(),
+      ).expect(201);
+      const k2 = { ...k, rid: sale2.body.receivableId as string };
+      const perms = [
+        'sales.create',
+        'receivables.manage',
+        'sales.void',
+      ] as const;
+      const x = await createCashier(app, k, [...perms]);
+      const y = await createCashier(app, k, [...perms]);
+      const sx = (
+        await post(x.auth, '/shifts/open', { openingCash: 0 }).expect(201)
+      ).body.id as string;
+      const sy = (
+        await post(y.auth, '/shifts/open', { openingCash: 0 }).expect(201)
+      ).body.id as string;
+      const byX = await pay(x.auth, k, 2500);
+      const byY = await pay(y.auth, k2, 2500);
+      // Both drawers held: each request passes its checks and PIN, then waits on its first drawer. Released at once,
+      // a correction that locked "its instalment's drawer, then its own" would hold one each and wait for the other.
+      const done = await locker
+        .begin(async (sql) => {
+          await sql`select id from pos.shifts where id in (${sx}, ${sy}) for update`;
+          const both = [
+            send(correct(y.auth, k, byX.id, body(k, { amount: 3000 }))),
+            send(correct(x.auth, k2, byY.id, body(k, { amount: 3000 }))),
+          ];
+          await untilWaiting(2);
+          // An array, not the promises: the locks are released before the answers are awaited.
+          return [both];
+        })
+        .then(([both]) => Promise.all(both as Promise<request.Response>[]));
+      expect(done.map((r) => r.status)).toEqual([201, 201]);
+      // Each drawer: its own instalment in, taken back out by the colleague's correction, the new payment in.
+      for (const who of [x, y])
+        expect(await currentShift(who.auth)).toMatchObject({
+          cashIn: 5500,
+          cashOut: 2500,
+          expectedCash: 3000,
+        });
+    });
+
+    it('a correction and the collector’s deposit at once: one of them is refused, the collector never holds less than Rp0', async () => {
+      const k = await kasbonStore(2);
+      const c = await createCashier(app, k, ['receivables.manage']);
+      const p = await pay(c.auth, k, 10_000);
+      const [corr, dep] = await locker
+        .begin(async (sql) => {
+          await sql`select id from pos.staff where id = ${c.staffId} for update`;
+          const both = [
+            send(
+              correct(
+                k.auth,
+                k,
+                p.id,
+                body(k, null, { reasonCode: 'duplicate' }),
+              ),
+            ),
+            send(
+              post(
+                k.auth,
+                '/store-cash/deposits',
+                { collectorId: c.staffId, amount: 10_000 },
+                randomUUID(),
+              ),
+            ),
+          ];
+          await untilWaiting(2);
+          return [both];
+        })
+        .then(([both]) => Promise.all(both as Promise<request.Response>[]));
+      expect([corr.status, dep.status].sort()).toEqual([201, 422]);
+      if (corr.status === 201)
+        expect(dep.body.code).toMatch(
+          /^(NOTHING_OUTSTANDING|DEPOSIT_EXCEEDS_OUTSTANDING)$/,
+        );
+      else expect(corr.body).toMatchObject({ code: 'REVERSAL_EXCEEDS_HELD' });
+      const store = (await get(k.auth, '/store-cash').expect(200)).body;
+      expect(store.summary).toMatchObject({ outstanding: 0 });
+      expect((await receivable(k.auth, k)).rest).toBe(
+        corr.status === 201 ? 12_000 : 2000,
+      );
+    });
+
+    it('a correction and a new payment on the same kasbon at once: applied one after the other, never paid beyond the total', async () => {
+      const k = await kasbonStore();
+      const p = await pay(k.auth, k, 2500);
+      // Alone, each fits: Rp3.500 pays the rest off; Rp2.500 -> Rp4.000 leaves Rp2.000. Together they do not.
+      const [corr, paid] = await holdingReceivable(k.rid, async () => {
+        const both = [
+          send(correct(k.auth, k, p.id, body(k, { amount: 4000 }))),
+          send(
+            post(
+              k.auth,
+              `/receivables/${k.rid}/payments`,
+              { amount: 3500 },
+              randomUUID(),
+            ),
+          ),
+        ];
+        await untilWaiting(2);
+        return both;
+      }).then((x) => Promise.all(x));
+      expect([corr.status, paid.status].sort()).toEqual([201, 422]);
+      if (paid.status === 201)
+        expect(corr.body.code).toBe('AMOUNT_EXCEEDS_REST');
+      const r = await receivable(k.auth, k);
+      expect(r.rest).toBe(corr.status === 201 ? 2000 : 0);
+      expect(r.rest).toBe(6000 - r.payments.reduce((n, x) => n + x.amount, 0));
+      expect(await currentShift(k.auth)).toMatchObject({
+        expectedCash: 6000 - r.rest,
+      });
+    });
+
+    it('a correction and a void of the receipt at once: the void gives back exactly the payments standing when it runs', async () => {
+      const k = await kasbonStore();
+      const p = await pay(k.auth, k, 2500);
+      const [corr, voided] = await holdingReceivable(k.rid, async () => {
+        const both = [
+          send(correct(k.auth, k, p.id, body(k, { amount: 3000 }))),
+          send(
+            post(
+              k.auth,
+              `/sales/${k.saleId}/void`,
+              {
+                reasonCode: 'customer_cancelled',
+                approverId: k.userId,
+                pin: OWNER_PIN,
+              },
+              randomUUID(),
+            ),
+          ),
+        ];
+        await untilWaiting(2);
+        return both;
+      }).then((x) => Promise.all(x));
+      expect(voided.status).toBe(201);
+      if (corr.status === 201) expect(voided.body.cashReturned).toBe(3000);
+      else {
+        expect([corr.status, corr.body.code]).toEqual([
+          422,
+          'RECEIVABLE_CANCELLED',
+        ]);
+        expect(voided.body.cashReturned).toBe(2500);
+      }
+      // Whatever the order, the drawer ends where it began.
+      expect(await currentShift(k.auth)).toMatchObject({ expectedCash: 0 });
+    });
   });
 
   it('a voided kasbon gives back only the payments that still stand, and its payments are no longer correctable', async () => {
