@@ -21,6 +21,7 @@ import {
   shifts,
   staff,
 } from '../db/schema';
+import { recordAudit } from '../audit/record';
 import { cancelReceivable } from '../receivables/receivables.controller';
 import { actorRef, PaymentSync } from '../payments-client/payment-sync.service';
 import { isOnlineMethod } from '../payments-client/payments.client';
@@ -386,6 +387,19 @@ export class VoidService {
       // The gateway has the money: the refund is asked after this commit and can still be refused (V4).
       refundStatus: online ? 'pending' : null,
     });
+    await recordAudit(tx, s, mode === 'refund' ? 'refund' : 'void', {
+      target: {
+        type: 'sale',
+        id: saleId,
+        label: sale.number ? `#${sale.number}` : undefined,
+      },
+      details: {
+        saleId,
+        reasonCode: input.reasonCode,
+        total: sale.total,
+        approvedBy: approver.id,
+      },
+    });
     if (returns.length)
       await tx
         .insert(saleVoidReturns)
@@ -460,6 +474,20 @@ export class VoidService {
       .catch((error: unknown) => {
         throw paymentHttpError(error);
       });
+    // The correction is payment-api's, called outside any transaction (a rule of this module), so its log row
+    // follows the call instead of sharing a transaction with it. The note is free text and never stored here.
+    const [sale] = await this.db
+      .select({ number: sales.number })
+      .from(sales)
+      .where(and(eq(sales.tenantId, s.tenantId), eq(sales.id, saleId)));
+    await recordAudit(this.db, s, 'refund_manual', {
+      target: {
+        type: 'sale',
+        id: saleId,
+        label: sale?.number ? `#${sale.number}` : undefined,
+      },
+      details: { saleId },
+    });
     return this.refundView(s, saleId);
   }
 

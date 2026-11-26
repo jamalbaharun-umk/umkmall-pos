@@ -35,6 +35,7 @@ import {
   storeCashDeposits,
 } from '../db/schema';
 import { isUniqueViolation } from '../staff/http';
+import { recordAudit } from '../audit/record';
 import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
@@ -190,16 +191,27 @@ export class ShiftsService {
 
   async open(s: PosSession, openingCash: number) {
     try {
-      const [{ id }] = await this.db
-        .insert(shifts)
-        .values({
-          tenantId: s.tenantId,
-          actorId: s.actorId,
-          actorKind: s.kind,
-          openingCash,
-        })
-        .returning({ id: shifts.id });
-      const row = await this.read(this.db, s.tenantId, id);
+      const row = await this.db.transaction(async (tx) => {
+        const [shift] = await tx
+          .insert(shifts)
+          .values({
+            tenantId: s.tenantId,
+            actorId: s.actorId,
+            actorKind: s.kind,
+            openingCash,
+          })
+          .returning({ id: shifts.id });
+        const opened = await this.read(tx, s.tenantId, shift.id);
+        await recordAudit(tx, s, 'shift_open', {
+          target: {
+            type: 'shift',
+            id: shift.id,
+            label: `Shift #${opened.number}`,
+          },
+          details: { shiftId: shift.id, openingCash },
+        });
+        return opened;
+      });
       return { ...withDifference(row), ...NO_CASH };
     } catch (e) {
       if (isUniqueViolation(e))
@@ -283,6 +295,17 @@ export class ShiftsService {
         })
         .where(eq(shifts.id, shift.id));
       const row = await this.read(tx, s.tenantId, shift.id);
+      await recordAudit(tx, s, 'shift_close', {
+        target: { type: 'shift', id: shift.id, label: `Shift #${row.number}` },
+        details: {
+          shiftId: shift.id,
+          openedAt: row.openedAt.toISOString(),
+          openingCash: row.openingCash,
+          countedCash,
+          expectedCash: row.expectedCash,
+          difference: withDifference(row).difference,
+        },
+      });
       return { ...withDifference(row), ...cash };
     });
   }

@@ -13,6 +13,7 @@ import {
 import type { Response } from 'express';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { recordAudit } from '../audit/record';
 import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -150,6 +151,12 @@ export class PinAuthController {
           expiresAt: sql`now() + make_interval(secs => ${CASHIER_SESSION_SECONDS})`,
         })
         .returning({ id: staffSessions.id });
+      await recordAudit(
+        tx,
+        { tenantId, actorId: staffId, kind: 'cashier' },
+        'sign_in',
+        { details: { deviceId: device.id } },
+      );
       return { ok: true, sessionId: session.id };
     });
 

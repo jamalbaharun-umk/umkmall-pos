@@ -15,6 +15,7 @@ import type { Db } from '../db/db.module';
 import { fieldError } from '../common/validation';
 import { InjectDb } from '../db/db.module';
 import { rolePermissions, roles } from '../db/schema';
+import { recordAudit } from '../audit/record';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import { isUniqueViolation, parseBody, parseId } from './http';
@@ -66,7 +67,16 @@ export class RolesController {
           .insert(roles)
           .values({ tenantId: s.tenantId, name: input.name })
           .returning({ id: roles.id });
-        await this.setPermissions(tx, s.tenantId, row.id, input.permissions);
+        const { added } = await this.setPermissions(
+          tx,
+          s.tenantId,
+          row.id,
+          input.permissions,
+        );
+        await recordAudit(tx, s, 'role_create', {
+          target: { type: 'role', id: row.id, label: input.name },
+          details: { roleId: row.id, added },
+        });
         return row.id;
       }),
     );
@@ -94,11 +104,23 @@ export class RolesController {
               .update(roles)
               .set({ name: input.name })
               .where(where)
-              .returning({ id: roles.id })
-          : await tx.select({ id: roles.id }).from(roles).where(where);
+              .returning({ id: roles.id, name: roles.name })
+          : await tx
+              .select({ id: roles.id, name: roles.name })
+              .from(roles)
+              .where(where);
         if (!row) throw new NotFoundException();
-        if (input.permissions)
-          await this.setPermissions(tx, s.tenantId, id, input.permissions);
+        const changed = input.permissions
+          ? await this.setPermissions(tx, s.tenantId, id, input.permissions)
+          : { added: [], removed: [] };
+        await recordAudit(tx, s, 'role_update', {
+          target: { type: 'role', id, label: row.name },
+          details: {
+            roleId: id,
+            renamed: input.name !== undefined,
+            ...changed,
+          },
+        });
       }),
     );
     return this.one(s.tenantId, id);
@@ -109,11 +131,17 @@ export class RolesController {
   async remove(@CurrentSession() s: PosSession, @Param('id') rawId: string) {
     const id = parseId(rawId);
     // role_permissions and staff_roles cascade.
-    const [row] = await this.db
-      .delete(roles)
-      .where(and(eq(roles.tenantId, s.tenantId), eq(roles.id, id)))
-      .returning({ id: roles.id });
-    if (!row) throw new NotFoundException();
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .delete(roles)
+        .where(and(eq(roles.tenantId, s.tenantId), eq(roles.id, id)))
+        .returning({ id: roles.id, name: roles.name });
+      if (!row) throw new NotFoundException();
+      await recordAudit(tx, s, 'role_delete', {
+        target: { type: 'role', id, label: row.name },
+        details: { roleId: id },
+      });
+    });
   }
 
   private async unique<T>(fn: () => Promise<T>): Promise<T> {
@@ -170,7 +198,18 @@ export class RolesController {
     tenantId: string,
     roleId: string,
     permissions: string[],
-  ) {
+  ): Promise<{ added: string[]; removed: string[] }> {
+    const before = (
+      await tx
+        .select({ p: rolePermissions.permission })
+        .from(rolePermissions)
+        .where(
+          and(
+            eq(rolePermissions.tenantId, tenantId),
+            eq(rolePermissions.roleId, roleId),
+          ),
+        )
+    ).map((r) => r.p);
     await tx
       .delete(rolePermissions)
       .where(
@@ -184,5 +223,9 @@ export class RolesController {
       await tx
         .insert(rolePermissions)
         .values(unique.map((permission) => ({ tenantId, roleId, permission })));
+    return {
+      added: unique.filter((p) => !before.includes(p)).sort(),
+      removed: before.filter((p) => !unique.includes(p)).sort(),
+    };
   }
 }

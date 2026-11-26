@@ -15,7 +15,9 @@ import { z } from 'zod';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { devicePairingAttempts, devicePairings, devices } from '../db/schema';
+import { recordAudit } from '../audit/record';
 import { Public } from '../tenancy/decorators';
+import type { PosSession } from '../tenancy/session';
 import { addressKey, AddressRateLimiter } from './address-limits';
 import { parseBody } from './http';
 import { lockSeconds } from './pin-auth.controller';
@@ -150,7 +152,12 @@ export class DevicePairing {
    * lock and lock the store's pairing exactly as wrong PINs lock a cashier (5, then 30 s doubling to 15 min).
    * A code is used up by the claim: the second use of it is a wrong code.
    */
-  async claim(tenantId: string, code: string, name: string): Promise<Claim> {
+  async claim(
+    tenantId: string,
+    code: string,
+    name: string,
+    by: PosSession,
+  ): Promise<Claim> {
     return this.db.transaction(async (tx): Promise<Claim> => {
       await tx
         .insert(devicePairingAttempts)
@@ -220,6 +227,10 @@ export class DevicePairing {
         .update(devicePairingAttempts)
         .set({ failures: 0, lockedUntil: null })
         .where(mine);
+      await recordAudit(tx, by, 'device_pair', {
+        target: { type: 'device', id: device.id, label: device.name },
+        details: { deviceId: device.id },
+      });
       return { ok: true, device };
     });
   }

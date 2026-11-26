@@ -71,6 +71,7 @@ import {
 import { saleNumbers, takeNumber } from './numbers';
 import { createReceivable } from '../receivables/receivables.controller';
 import { isUniqueViolation } from '../staff/http';
+import { recordAudit } from '../audit/record';
 import { hasPermission } from '../staff/require-permission';
 import { StockService, type Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
@@ -678,6 +679,17 @@ export class SalesService {
         discountApprovedBy: approvals.get(l.index)?.approverId ?? null,
         costTotal: cost,
       });
+      if (l.priceOverriddenBy)
+        await recordAudit(tx, s, 'price_override', {
+          target: { type: 'product', id: l.productId, label: l.name },
+          details: {
+            saleId: sale.id,
+            productId: l.productId,
+            qty: l.qty,
+            listPrice: l.listPrice,
+            unitPrice: l.unitPrice,
+          },
+        });
     }
     await tx.update(sales).set({ costTotal }).where(eq(sales.id, sale.id));
     const downPaymentId = method.isCredit

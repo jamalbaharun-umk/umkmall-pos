@@ -19,6 +19,7 @@ import {
   manualCashEntries,
   staff,
 } from '../db/schema';
+import { recordAudit } from '../audit/record';
 import { isUniqueViolation } from '../staff/http';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
@@ -224,6 +225,21 @@ export class CashEntriesService {
           idempotencyKey: key,
           requestHash: hash,
         });
+        // The note is free text: not copied into the log.
+        await recordAudit(
+          tx,
+          s,
+          input.direction === 'in' ? 'drawer_cash_in' : 'drawer_cash_out',
+          {
+            target: { type: 'shift', id: shiftId },
+            details: {
+              shiftId,
+              amount: input.amount,
+              reason: input.reason,
+              drawerCashBefore,
+            },
+          },
+        );
         return newId;
       });
     } catch (e) {
