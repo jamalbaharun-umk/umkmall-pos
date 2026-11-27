@@ -67,6 +67,7 @@ function Formula({ r }: { r: ProfitLoss }) {
       {line(l.cost, c.cost, { minus: true })}
       <hr className="border-default-primary" />
       {line(l.grossProfit, c.grossProfit, { bold: true })}
+      {line(l.shrinkage, c.shrinkage, { minus: true })}
       {line(l.expenses, c.expenses, { minus: true })}
       <hr className="border-default-primary" />
       {line(l.netProfit, c.netProfit, { bold: true })}
@@ -74,6 +75,9 @@ function Formula({ r }: { r: ProfitLoss }) {
         Pajak ({money(c.tax)}) adalah uang titipan untuk disetor, jadi tidak dihitung sebagai hasil jualan maupun untung.
         Pembulatan tunai ({money(c.rounding)}) dan bayar pemasok ({money(c.supplierPayments)}) tidak dihitung di atas: modal barang
         sudah mencakup barang dari pemasok.
+      </p>
+      <p className="text-xs text-default-secondary">
+        Susut stok adalah modal barang yang hilang menurut stok opname yang disetujui, dikurangi modal barang yang ternyata lebih pada periode yang sama (paling kecil Rp0). Karena dihitung untuk seluruh periode yang dipilih, susut stok dua periode yang dijumlahkan bisa berbeda dari susut stok gabungan keduanya.
       </p>
     </Card>
   )

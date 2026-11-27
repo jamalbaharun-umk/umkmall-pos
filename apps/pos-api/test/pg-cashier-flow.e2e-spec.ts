@@ -678,6 +678,53 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       }).expect(200);
     });
 
+    it('UMK-1990 a PG sale is gated by the 30% PIN like a cash sale; the approval stays used when the sale is cancelled', async () => {
+      const s = await shop(5000);
+      // 4 × Rp5.000 = 20.000 with 8.000 off (40%): refused without an order approval, no bill made.
+      const body = {
+        lines: [{ productId: s.productId, qty: 4 }],
+        discount: 8000,
+        paid: 12_000,
+      };
+      const refused = await sell(s, body).expect(422);
+      expect(refused.body.code).toBe('DISCOUNT_APPROVAL_REQUIRED');
+      expect(await bills(s.tenantId)).toHaveLength(0);
+      expect(await onHand(s)).toBe(20);
+      // The owner confirms their own with their PIN.
+      const approval = await post(s.auth, '/sales/discount-approvals', {
+        approverId: s.userId,
+        pin: OWNER_PIN,
+        scope: 'order',
+        maxBps: 4000,
+        maxAmount: 8000,
+      }).expect(201);
+      const res = await sell(s, {
+        ...body,
+        discountApprovalId: approval.body.id,
+      }).expect(201);
+      expect(res.body).toMatchObject({
+        status: 'awaiting_payment',
+        total: 12_000,
+        discountApprovedBy: s.userId,
+        payment: { amount: 12_000 },
+      });
+      const usedAt = async () =>
+        (
+          await admin<
+            { used_at: Date | null }[]
+          >`select used_at from pos.discount_approvals where id = ${approval.body.id}`
+        )[0].used_at;
+      expect(await usedAt()).not.toBeNull();
+      // Cancelled for want of a payment: stock back, the approval stays used (single use; a new sale asks again).
+      await post(s.auth, `/sales/${res.body.id}/payment/cancel`).expect(200);
+      expect(await onHand(s)).toBe(20);
+      expect(await usedAt()).not.toBeNull();
+      await sell(s, {
+        ...body,
+        discountApprovalId: approval.body.id,
+      }).expect(422);
+    });
+
     it('UMK-2037 a VA sale is made at the bank the customer chose, and answers that bank and its VA number', async () => {
       const s = await shop();
       const va = await method(s, 'VA', 'fake_va');
