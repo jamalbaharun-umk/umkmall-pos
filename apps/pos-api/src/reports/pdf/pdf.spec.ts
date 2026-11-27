@@ -7,6 +7,7 @@ import { PdfBuilder, PdfTooLargeError, MAX_PAGES } from './pdf-document';
 import { renderChart } from './chart-render';
 import { resolveColor, resolveTokens } from './svg-inline';
 import type { Visual } from '../visuals/types';
+import { pdfText } from '../../../test/support/pdf-text';
 
 const meta = {
   storeName: 'Warung Bu Sari',
@@ -133,6 +134,27 @@ describe('PdfBuilder', () => {
       .length;
     expect(pages).toBeGreaterThan(1);
     expect(pages).toBeLessThan(MAX_PAGES);
+  });
+
+  it('keeps a chart’s heading on the page of its chart, wherever the page break falls', async () => {
+    const visual: Visual = {
+      kind: 'bars',
+      title: 'Judul diagram uji',
+      unit: 'count',
+      orientation: 'vertical',
+      categories: ['Kolomsatu', 'Koloma dua', 'Kolomc tiga'],
+      series: [{ label: 'Jumlah', values: [3, 5, 4] }],
+    } as Visual;
+    for (let filler = 14; filler <= 46; filler++) {
+      const b = new PdfBuilder(meta);
+      for (let i = 0; i < filler; i++) b.note(`Baris pengisi ${i}`);
+      b.chart(visual);
+      const { text } = pdfText(await b.finish());
+      const pages = text.split(/-- \d+ of \d+ --/);
+      const withTitle = pages.filter((p) => p.includes('Judul diagram uji'));
+      expect(withTitle).toHaveLength(1);
+      expect(withTitle[0]).toContain('Kolomsatu');
+    }
   });
 
   it('refuses a document of more than MAX_PAGES pages instead of cutting it off', () => {

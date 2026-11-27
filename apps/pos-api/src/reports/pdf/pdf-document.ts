@@ -179,8 +179,8 @@ export class PdfBuilder {
   /** A visual, drawn from the screen's chart component; an empty one says so in one line. */
   chart(visual: Visual): void {
     const d = this.doc;
-    this.heading(visual.title);
     if (visualIsEmpty(visual)) {
+      this.heading(visual.title);
       this.note('Belum ada data untuk diagram ini.');
       return;
     }
@@ -194,6 +194,16 @@ export class PdfBuilder {
           ? Math.min(380, visual.categories.length * 32 + 8)
           : 190;
     const r = renderChart(visual, px, height);
+    // The heading stays with its chart: room for both, or a new page for both.
+    const need = r
+      ? r.height * 0.75 +
+        12 +
+        (r.legend.length > 3 && visual.kind === 'segments'
+          ? r.legend.length * 12
+          : 18)
+      : 24;
+    this.ensure(need + 40);
+    this.heading(visual.title);
     if (!r) {
       // The component shows one value as a figure, not a bar: the PDF says the same in words.
       const one =
@@ -203,12 +213,6 @@ export class PdfBuilder {
       this.note(one);
       return;
     }
-    const need =
-      r.height * 0.75 +
-      12 +
-      (r.legend.length > 3 && visual.kind === 'segments'
-        ? r.legend.length * 12
-        : 18);
     this.ensure(need);
     const top = this.y;
     SVGtoPDF(d, r.svg, this.left, top, {
