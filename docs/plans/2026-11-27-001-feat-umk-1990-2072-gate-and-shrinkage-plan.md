@@ -93,14 +93,18 @@ gross profit and net profit like expenses. Surpluses add nothing. Gross profit s
 
 ## PR 72 review and owner rulings (2026-11-27)
 
-- **One combined 30% test (major 1, owner ruling).** Every manual reduction of a sale (manual-price cuts, line
-  discounts, the order discount) is added up and measured against the list subtotal (Σ list price × qty, the
-  wholesale tier applied). Lines above 30% of their own line still need their line approval, which covers that
-  line's reduction. When the rest (the reduction not covered by line approvals) is above 30% of the list subtotal,
-  the sale names an `order` approval, and that approval covers the WHOLE reduction (`max_bps` of the list subtotal
-  and `max_amount` in rupiah). So 30% + 30% (51%) needs a PIN; one line above 30% with its own approval (PR 63) needs
-  nothing more. The order discount's own gate is gone: an order discount above 30% of what it comes off is always
-  above 30% of the list subtotal. The quote answers `listSubtotal`, `totalReduction` and
+- **One combined 30% test (major 1, owner ruling; base corrected on re-review of 6d5a185).** Every manual reduction
+  of a sale (manual-price cuts, line discounts, the order discount) is added up. Lines above 30% of their own line
+  still need their line approval, which covers that line's reduction. The rest (the uncovered lines' cuts and the
+  order discount) is measured against the list subtotal of the UNCOVERED lines only (Σ list price × qty of the lines
+  without a line approval, the wholesale tier applied); with every line covered that base is 0 and any order
+  discount needs the approval. Measured against the whole list subtotal, a covered line's list total let the order
+  discount escape the gate (line A list 100.000 sold at 1.000 under its approval, line B 10.000, an order discount
+  of 10.900 passed and the sale was Rp100; now a test). Above 30% the sale names an `order` approval, and that
+  approval covers the WHOLE reduction (`max_bps` of the whole list subtotal and `max_amount` in rupiah). So 30% +
+  30% (51%) needs a PIN; one line above 30% with its own approval and no order discount (PR 63) needs nothing more.
+  The order discount's own gate is gone: an order discount above 30% of what it comes off is always above 30% of
+  the base. The quote answers `listSubtotal`, `uncoveredListSubtotal`, `totalReduction` and
   `orderDiscountNeedsApproval` (the combined test). The cashier screen has no order discount, and lines each within
   30% (or approved) can never pass 30% together, so the screen never needs an order approval.
 - **A Rp0 sale by order discount stays refused** (owner ruling).
@@ -108,10 +112,14 @@ gross profit and net profit like expenses. Surpluses add nothing. Gross profit s
   (`DISCOUNT_APPROVAL_REQUIRED`, "Satu persetujuan hanya untuk satu diskon"), before it is read. The earlier
   `taken` check already refused it, with the generic "tidak berlaku lagi" message; the test pins the behaviour.
 - **An approval binds its rupiah (major 3).** `discount_approvals.max_amount` (migration 0051): required for an order
-  approval, optional for a line approval (older clients: share alone, as before); the cashier screen sends it. A
-  reduction above it is refused like one above `max_bps`.
+  approval and, since the re-review, for every new line approval at the route (422 "Wajib diisi"; the cashier
+  screen sends it). The column stays nullable (its check requires it for `order` only) so a line approval issued
+  before, whose row has none, stays valid until it expires, bound to its share alone. A reduction above it is
+  refused like one above `max_bps`.
 - **Shrinkage nets the surplus (major 4, owner ruling).** "Susut stok" = max(0, cost of missing units − cost of
-  surplus units) over the approved opnames of the period.
+  surplus units) over the approved opnames of the period. The floor applies per queried range, not per day or
+  month: a month of net surplus shows 0 alone but lowers the shrinkage of a wider range holding it, so two ranges'
+  figures need not add up to their union's (comment in `ReportsService.shrinkage`, note on Untung rugi).
 - **Minors:** the agent's `profit_loss` description names shrinkage; the sale's receipt answer names the approver
   (`approvedBy` per line, `discountApprovedBy` for the order approval) and the sale detail (Riwayat) shows
   "Disetujui PIN: <nama>"; tests for order-approval expiry, a failed sale leaving the approval unused, a kasbon
