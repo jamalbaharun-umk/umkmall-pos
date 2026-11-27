@@ -28,6 +28,17 @@ const TopQuery = z.object({
   ),
 });
 const LimitQuery = TopQuery.pick({ limit: true });
+/** `limit` as above and `days` (default 30, 1 to 365): how far ahead a date still counts as expiring soon. */
+const ExpiringQuery = LimitQuery.extend({
+  days: z.preprocess(
+    (v) => (asText(v) === undefined ? 30 : Number(asText(v))),
+    z
+      .number({ invalid_type_error: 'Jumlah hari harus berupa angka' })
+      .int('Jumlah hari harus bilangan bulat')
+      .min(1, 'Jumlah hari paling sedikit 1')
+      .max(365, 'Jumlah hari paling banyak 365'),
+  ),
+});
 
 /**
  * The dashboard's widgets (design feature 35), every one behind `reports.view`: they carry margin and cost-derived
@@ -62,5 +73,11 @@ export class DashboardWidgetsController {
   @Get('low-stock')
   lowStock(@CurrentSession() s: PosSession, @Query() q: unknown) {
     return this.widgets.lowStock(s.tenantId, parse(LimitQuery, q).limit);
+  }
+
+  @Get('expiring')
+  expiring(@CurrentSession() s: PosSession, @Query() q: unknown) {
+    const { days, limit } = parse(ExpiringQuery, q);
+    return this.widgets.expiring(s.tenantId, days, limit);
   }
 }

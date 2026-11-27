@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
+import { storeToday } from '../common/store-day';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { FINAL_SALE_STATUSES } from '../db/schema';
@@ -312,6 +313,43 @@ export class DashboardWidgetsService {
           status: onHand === 0 ? ('out' as const) : ('low' as const),
         };
       }),
+    };
+  }
+
+  /**
+   * UMK-2087: stock expiring within `days` (store calendar days, today counting as day 0) or already past its
+   * date: batches that still hold stock (`qty_remaining > 0`) and carry an `expires_at`, grouped by product, soonest
+   * first. `expiresAt` is the product's earliest such date; `qty` sums every matching batch; `expired` is true when
+   * that earliest date is before today. `total` and `expired` count all products, `rows` are cut to `limit`.
+   */
+  async expiring(tenantId: string, days: number, limit: number) {
+    const today = storeToday(tenantId);
+    const rows = await this.rows(sql`
+      select p.id, p.name, p.sku, p.unit, sum(b.qty_remaining) as qty,
+             to_char(min(b.expires_at), 'YYYY-MM-DD') as expires_at,
+             (min(b.expires_at) - ${today})::int as days_left
+        from pos.stock_batches b
+        join pos.products p on p.tenant_id = b.tenant_id and p.id = b.product_id
+       where b.tenant_id = ${tenantId} and p.deleted_at is null
+         and b.qty_remaining > 0 and b.expires_at is not null
+         and b.expires_at <= ${today} + ${days}::int
+       group by p.id
+       order by min(b.expires_at), p.name, p.id`);
+    const expired = rows.filter((r) => n(r.days_left) < 0).length;
+    return {
+      days,
+      total: rows.length,
+      expired,
+      rows: rows.slice(0, limit).map((r) => ({
+        productId: r.id as string,
+        name: r.name as string,
+        sku: r.sku as string,
+        unit: r.unit as string,
+        qty: n(r.qty),
+        expiresAt: r.expires_at as string,
+        daysLeft: n(r.days_left),
+        expired: n(r.days_left) < 0,
+      })),
     };
   }
 }
