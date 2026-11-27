@@ -136,16 +136,6 @@ export class ShiftsService {
     return expectedCash(shift.openingCash, t.cashSales, cash);
   }
 
-  /** What an OPEN shift's drawer should hold now: opening cash + cash sales + cash in − cash out. */
-  private async liveExpected(
-    db: Db | Tx,
-    shift: { id: string; openingCash: number },
-    cash: typeof NO_CASH,
-  ) {
-    const t = await this.totals(db, shift.id);
-    return expectedCash(shift.openingCash, t.cashSales, cash);
-  }
-
   /** Adds `number` (the store's n-th shift) to a page of shifts, with one query for the page. */
   private async numbered<T extends { id: string }>(
     db: Db | Tx,
@@ -349,7 +339,7 @@ export class ShiftsService {
     const live = await Promise.all(
       rows.map(async (r) =>
         r.closedAt === null
-          ? await this.liveExpected(this.db, r, cash.get(r.id) ?? NO_CASH)
+          ? await this.expectedCashOf(this.db, s.tenantId, r.id)
           : r.expectedCash,
       ),
     );
@@ -492,7 +482,7 @@ export class ShiftsService {
       // Open shift: the stored column is still null, so compute it from the same ledger the close uses.
       expectedCash:
         row.closedAt === null
-          ? await this.liveExpected(this.db, row, cash)
+          ? await this.expectedCashOf(this.db, s.tenantId, id)
           : row.expectedCash,
       cashEntries: cashEntries.map(
         ({

@@ -954,7 +954,7 @@ describe('purchase payments and returns (UMK-1970)', () => {
         purchasePaymentReversals: 200_000,
         cashOut: 270_000,
         cashIn: 200_000,
-        expectedCash: null,
+        expectedCash: 430_000, // the open shift: 500.000 opening + 200.000 in - 270.000 out (UMK-2088)
       });
       const ledger = await get(
         s.auth,

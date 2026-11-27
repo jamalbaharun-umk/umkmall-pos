@@ -200,6 +200,58 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
     ]);
   });
 
+  it('an open shift answers the same live expected cash in /shifts/current, the detail, the list and the shift report; the close stores it (UMK-2088)', async () => {
+    const s = await storeWithKasbon();
+    const entry = (body: object) =>
+      http()
+        .post('/shifts/current/cash-entries')
+        .set('Authorization', s.auth)
+        .set('Idempotency-Key', randomUUID())
+        .send(body)
+        .expect(201);
+    await pay(s.auth, s.rid, { amount: 2500 }).expect(201); // in
+    await entry({ direction: 'in', amount: 20_000, reason: 'tambah_modal' });
+    await entry({ direction: 'out', amount: 7000, reason: 'setor_bank' });
+    // 100.000 opening + 2.500 + 20.000 - 7.000
+    const expected = 115_500;
+    expect(await current(s.auth)).toMatchObject({
+      expectedCash: expected,
+      cashIn: 22_500,
+      cashOut: 7000,
+    });
+    const day = today();
+    const range = `from=${day}&to=${day}`;
+    const detail = await get(s.auth, `/shifts/${s.shiftId}`).expect(200);
+    const list = await get(s.auth, '/shifts').expect(200);
+    const report = await get(s.auth, `/reports/shifts?${range}`).expect(200);
+    expect(detail.body.expectedCash).toBe(expected);
+    expect(list.body.data[0].expectedCash).toBe(expected);
+    expect(report.body.rows[0]).toMatchObject({
+      shiftId: s.shiftId,
+      expectedCash: expected,
+      countedCash: null,
+      difference: null,
+    });
+
+    const closed = await close(s.auth, expected - 500).expect(200);
+    expect(closed.body.expectedCash).toBe(expected);
+    const after = await get(s.auth, '/shifts').expect(200);
+    expect(after.body.data[0]).toMatchObject({
+      expectedCash: expected,
+      difference: -500,
+    });
+    expect(
+      (await get(s.auth, `/shifts/${s.shiftId}`).expect(200)).body.expectedCash,
+    ).toBe(expected);
+    const reportAfter = await get(s.auth, `/reports/shifts?${range}`).expect(
+      200,
+    );
+    expect(reportAfter.body.rows[0]).toMatchObject({
+      expectedCash: expected,
+      difference: -500,
+    });
+  });
+
   it('a non-cash payment does not change expected cash and needs no shift', async () => {
     const s = await storeWithKasbon();
     const r = await pay(s.auth, s.rid, {

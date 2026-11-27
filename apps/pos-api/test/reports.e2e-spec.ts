@@ -257,7 +257,12 @@ describe('reports and dashboard (U5)', () => {
         grossProfit: 8000,
       }),
     ]);
-    expect(products.totals).toEqual({ qty: 7, ...KNOWN });
+    expect(products.totals).toEqual({
+      qty: 7,
+      ...KNOWN,
+      netSales: 44_000,
+      orderDiscount: 1000,
+    });
 
     const shifts = (await get(store, `/reports/shifts?${q}`).expect(200)).body;
     expect(shifts.rows).toHaveLength(1);
@@ -354,15 +359,22 @@ describe('reports and dashboard (U5)', () => {
       0,
     );
     expect(net).toBe(18_000 + 8000);
-    expect(r.totals.grossSales).toBe(net);
-    expect(r.totals.discount).toBe(500);
+    // grossSales and discount keep the meaning the sales report gives them (the agent tools read them).
+    expect(r.totals.grossSales).toBe(28_000);
+    expect(r.totals.discount).toBe(2500);
+    expect(r.totals.netSales).toBe(net);
+    expect(r.totals.orderDiscount).toBe(500);
     expect(
-      r.totals.grossSales - r.totals.discount - r.totals.voucher + r.totals.tax,
+      r.totals.netSales -
+        r.totals.orderDiscount -
+        r.totals.voucher +
+        r.totals.tax,
     ).toBe(r.totals.revenue);
     const csv = (
       await get(store, `/reports/products/csv?${q}`).expect(200)
     ).text.split('\r\n');
     expect(csv).toContain(`Total,,5,${net},16000,`);
+    expect(csv).toContain('Diskon pesanan,,,500,,');
     // The sales report keeps the gross figure and the whole discount.
     const sales = (await get(store, `/reports/sales?${q}`).expect(200)).body;
     expect(sales.totals.grossSales).toBe(28_000);
