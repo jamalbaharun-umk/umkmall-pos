@@ -46,3 +46,19 @@ describe('rounding in reports (UMK-1993)', () => {
     expect(REPORTS.shift.columns.find((c) => c.key === 'rounding')).toMatchObject({ label: 'Pembulatan', money: true })
   })
 })
+
+describe('Laporan kasir columns (UMK-2088)', () => {
+  it('shows the drawer in and out columns the checklist and the CSV have', () => {
+    const keys = REPORTS.shift.columns.map((c) => c.key)
+    expect(keys).toEqual(expect.arrayContaining(['receivablePayments', 'cashIn', 'cashOut']))
+    expect(keys.indexOf('cashOut')).toBeLessThan(keys.indexOf('expectedCash'))
+  })
+
+  it('product report: Total penjualan is the sum of net rows, the discount is the order one', () => {
+    const labels = Object.fromEntries(REPORTS.produk.totals.map((t) => [t.key, t.label]))
+    expect(labels.netSales).toBe('Total penjualan')
+    expect(labels.orderDiscount).toBe('Diskon pesanan')
+    expect(labels.grossSales).toBeUndefined()
+    expect(REPORTS.penjualan.totals.find((t) => t.key === 'grossSales')?.label).toBe('Penjualan kotor')
+  })
+})

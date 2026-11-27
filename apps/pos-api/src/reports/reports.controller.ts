@@ -22,6 +22,7 @@ import {
   ReceivablesQuery,
   SettingsInput,
 } from './reports.schemas';
+import { ShiftsModule } from '../shifts/shifts.module';
 import { ReportsService } from './reports.service';
 
 const CSV = 'text/csv; charset=utf-8';
@@ -259,8 +260,8 @@ export class ReportsController {
           x.cost,
           x.grossProfit,
         ]),
-        ['Total', null, t.qty, t.grossSales, t.cost, null],
-        ['Diskon', null, null, t.discount, null, null],
+        ['Total', null, t.qty, t.netSales, t.cost, null],
+        ['Diskon pesanan', null, null, t.orderDiscount, null, null],
         ['Voucher', null, null, t.voucher, null, null],
         ['Pajak', null, null, t.tax, null, null],
         ['Pendapatan', null, null, t.revenue, null, null],
@@ -370,6 +371,7 @@ export class ReportsController {
 
 @Module({
   controllers: [ReportsController],
+  imports: [ShiftsModule],
   providers: [ReportsService, ReceivablesReportService],
   exports: [ReportsService],
 })

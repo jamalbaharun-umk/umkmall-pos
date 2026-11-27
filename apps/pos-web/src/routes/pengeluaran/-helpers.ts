@@ -1,4 +1,7 @@
 // Pure helpers for the expense screens (UMK-1984). pos-api computes every total; these only label and group.
+import { rupiah } from '../../lib/rupiah'
+
+export { rupiah }
 
 export type ExpensePeriod = 'today' | 'week' | 'month'
 export type ExpenseSource = 'drawer' | 'outside'
@@ -22,8 +25,6 @@ export const SOURCES: { value: ExpenseSource; label: string }[] = [
 
 /** The list's wording for where the money came from. */
 export const sourceLabel = (s: ExpenseSource) => (s === 'drawer' ? 'Dari laci' : 'Di luar laci')
-
-export const rupiah = (n: number) => `Rp${n.toLocaleString('id-ID')}`
 
 /** Digits only, grouped by thousands as the owner types: "45000" -> "45.000". Empty stays empty. */
 export function formatAmountInput(text: string): string {

@@ -4,6 +4,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { AGENT_LABEL, FINAL_SALE_STATUSES, reportSettings } from '../db/schema';
 import { fieldError } from '../common/validation';
+import { ShiftsService } from '../shifts/shifts.service';
 import {
   TIMEZONE_UNKNOWN,
   type DateRange,
@@ -66,7 +67,10 @@ const FINAL = sql`and status in (${FINAL_LIST})`;
 
 @Injectable()
 export class ReportsService {
-  constructor(@InjectDb() private readonly db: Db) {}
+  constructor(
+    @InjectDb() private readonly db: Db,
+    private readonly shiftsService: ShiftsService,
+  ) {}
 
   private async rows(q: SQL): Promise<Row[]> {
     return [...(await this.db.execute(q))] as Row[];
@@ -329,11 +333,20 @@ export class ReportsService {
       cost: n(r.cost),
       grossProfit: n(r.sales) - n(r.cost),
     }));
+    // The rows are net of line discounts. `grossSales` and `discount` keep their meaning of every other report (the
+    // agent tools read them); `netSales` (the sum of the rows) and `orderDiscount` (the discount without the line
+    // discounts) are the Total row, and netSales - orderDiscount - voucher + tax = revenue.
+    const netSales = items.reduce((a, r) => a + r.sales, 0);
     return {
       ...range,
       timezone: tz,
       rows: items,
-      totals: { qty: items.reduce((a, r) => a + r.qty, 0), ...totals },
+      totals: {
+        qty: items.reduce((a, r) => a + r.qty, 0),
+        ...totals,
+        netSales,
+        orderDiscount: totals.discount - (totals.grossSales - netSales),
+      },
     };
   }
 
@@ -400,9 +413,29 @@ export class ReportsService {
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
        order by sh.opened_at`);
+    // An open shift stores no expected cash yet: the same figure the shift screens and the close use.
+    const expectedOf = new Map(
+      await Promise.all(
+        rows
+          .filter((r) => r.closed_at == null)
+          .map(
+            async (r) =>
+              [
+                r.id as string,
+                await this.shiftsService.expectedCashOf(
+                  this.db,
+                  tenantId,
+                  r.id as string,
+                ),
+              ] as const,
+          ),
+      ),
+    );
     const items = rows.map((r) => {
       const counted = r.counted_cash == null ? null : n(r.counted_cash);
-      const expected = r.expected_cash == null ? null : n(r.expected_cash);
+      const expected =
+        expectedOf.get(r.id as string) ??
+        (r.expected_cash == null ? null : n(r.expected_cash));
       return {
         shiftId: r.id as string,
         cashier: cashierName(r),

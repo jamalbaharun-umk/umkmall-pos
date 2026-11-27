@@ -252,3 +252,8 @@ export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas 
 
 /** A text as one sentence: a single full stop at its end, whether or not the server's own text ended with one. */
 export const sentence = (text: string) => text.trim().replace(/[.!?]+$/, '') + '.'
+
+/** Whose shift a history row is: the name pos-api sends ("Pemilik" or the staff name), "Staf" only when none came. */
+export function shiftCashier(s: { actorKind: 'owner' | 'cashier'; actorName?: string }): string {
+  return s.actorName?.trim() || (s.actorKind === 'owner' ? 'Pemilik' : 'Staf')
+}

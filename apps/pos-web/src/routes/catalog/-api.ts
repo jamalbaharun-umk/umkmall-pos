@@ -157,4 +157,4 @@ export const deleteProduct = createServerFn({ method: 'POST' })
   .validator((id: string) => id)
   .handler(({ data }) => write(`/catalog/products/${encodeURIComponent(data)}`, 'DELETE'))
 
-export const rupiah = (n: number) => `Rp${n.toLocaleString('id-ID')}`
+export { rupiah } from '../../lib/rupiah'

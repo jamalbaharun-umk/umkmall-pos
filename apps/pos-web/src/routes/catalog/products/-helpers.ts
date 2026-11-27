@@ -2,6 +2,7 @@
 // pos-api's catalog/pricing.ts so an obviously wrong list never reaches the server; the server stays the authority.
 import { check, compact, type FieldErrors } from '../../../lib/form-checks'
 import { plainNumber } from '../../../lib/validate'
+import { rupiah } from '../../../lib/rupiah'
 
 /** What the form holds: raw text, so "1,5" gets a message instead of silently becoming 15. */
 export type UnitRow = { name: string; unitQty: string; price: string }
@@ -24,7 +25,7 @@ export const tierRowsOf = (tiers: readonly TierInput[] | undefined): TierRow[] =
 const num = (text: string) => Number(plainNumber(text))
 
 /** Rupiah with Indonesian thousand dots, independent of the runtime's locale data. */
-export const formatRp = (n: number) => `Rp${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
+export const formatRp = (n: number) => rupiah(Math.round(n))
 
 /**
  * Errors keyed like pos-api's: `units.<i>.name|unitQty|price`. `baseUnit` is the base unit's name (a unit may not
