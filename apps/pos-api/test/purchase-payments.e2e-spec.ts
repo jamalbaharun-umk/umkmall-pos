@@ -1469,9 +1469,14 @@ describe('purchase payments and returns (UMK-1970)', () => {
         shiftId: null,
         drawerReversed: null,
       });
-      // Ids and amounts only: no note, no reason text, no phone number.
-      const text = JSON.stringify(rows);
-      for (const word of ['diantar', '0812', 'Salah', 'note', 'reason'])
+      // Ids and amounts only: no note, no reason text, no phone number. The ids are masked first: a random uuid
+      // can hold the digits of a phone number ("…-272a895c0812" failed CI once).
+      const text = JSON.stringify(rows).replace(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+        '<id>',
+      );
+      expect(text).toContain('<id>');
+      for (const word of ['diantar', '0812', 'Budi', 'Salah', 'note', 'reason'])
         expect(text).not.toContain(word);
     });
 

@@ -20,16 +20,18 @@ import type { PosSession } from '../tenancy/session';
  * refuses a second entry for the same source.
  *
  * Store cash never goes negative through a correction (owner rulings 2026-11-27): an outflow written with
- * `mustCover` (a supplier refund voided out of the store cash, a kasbon reversal of a closed shift or of the owner's
- * own collection) takes the store's cash lock (`lockStoreCash`, a transaction-scoped advisory lock per tenant), reads
+ * `mustCover` (a supplier refund voided out of the store cash, a kasbon reversal of a closed shift's instalment)
+ * takes the store's cash lock (`lockStoreCash`, a transaction-scoped advisory lock per tenant), reads
  * `available` under it and is refused with `STORE_CASH_INSUFFICIENT` (with `available`) when the store does not
  * hold the amount. `available` is the cash actually in the store: the balance minus what cashier collectors still
  * hold undeposited (their outstanding); what the owner collected counts as in the store.
  *
  * Only `mustCover` outflows take the lock. A collector's deposit or the reversal of a cashier collector's instalment
  * lowers the balance and that collector's outstanding by the same amount, so `available` stays as it was; an inflow
- * only raises it. Every caller of `mustCover` takes all its row locks (purchase, staff, every shift it will write
- * to) BEFORE writing here and takes none after, so this lock is the last one each such transaction takes.
+ * only raises it. Every caller of `mustCover` locks the rows another writer could hold while waiting for this lock
+ * (the purchase, the receivable, every shift it will write to) BEFORE writing here; after it, a caller writes only
+ * rows it already holds or new rows (its audit line, the new payment). Keep it so: a shift locked after this lock
+ * can deadlock with a deposit into that shift.
  */
 
 export type StoreCashEntry = {
