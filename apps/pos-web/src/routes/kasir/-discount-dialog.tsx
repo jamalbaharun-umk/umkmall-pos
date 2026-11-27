@@ -7,6 +7,7 @@ import { ApproverPinFields } from './-approver-fields'
 import { approveDiscount, loadDiscountApprovers } from './-discount-api'
 import {
   approvalBps,
+  approvalCovers,
   discountOf,
   discountRefusal,
   discountTextError,
@@ -104,7 +105,7 @@ export function DiscountDialog({
     if (error) return showError({ status: 422 }, { action: 'menerapkan diskon' }, () => discountRefusal(error))
     // The same share already approved for this line needs no second PIN.
     const kept = target.current?.approval
-    if (big && !(kept && off * 10000 <= kept.maxBps * lineTotal)) return setStep('pin')
+    if (big && !(kept && approvalCovers(kept, off, lineTotal))) return setStep('pin')
     apply({ kind, value, ...(big && kept ? { approval: kept } : {}) })
   }
   const submitPin = async () => {
@@ -115,7 +116,8 @@ export function DiscountDialog({
     if (Object.keys(errs).length || busy) return
     setBusy(true)
     const maxBps = approvalBps(off, lineTotal)
-    const r = await approveDiscount({ data: { approverId, pin, productId: target.productId, maxBps } }).catch(() => ({
+    // The approval covers this share and this many rupiah, no more (PR 72 review).
+    const r = await approveDiscount({ data: { approverId, pin, productId: target.productId, maxBps, maxAmount: off } }).catch(() => ({
       ok: false as const,
       status: 0,
       error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.',
@@ -124,7 +126,16 @@ export function DiscountDialog({
     setBusy(false)
     setPin('')
     if (r.ok)
-      return apply({ kind, value, approval: { id: r.approval.id, maxBps: r.approval.maxBps, approverName: r.approval.approver.name } })
+      return apply({
+        kind,
+        value,
+        approval: {
+          id: r.approval.id,
+          maxBps: r.approval.maxBps,
+          maxAmount: r.approval.maxAmount ?? null,
+          approverName: r.approval.approver.name,
+        },
+      })
     // A wrong PIN or a locked approver stays on its field; anything else is the error dialog, the form kept.
     if (r.errors?.pin || r.errors?.approverId) return setPinErrors({ pin: r.errors.pin, approverId: r.errors.approverId })
     showError(r, { action: 'menyetujui diskon' })

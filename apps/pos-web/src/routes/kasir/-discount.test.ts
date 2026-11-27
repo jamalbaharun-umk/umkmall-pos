@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { cashRounding } from './-money'
 import {
   approvalBps,
+  approvalCovers,
+  approvedByLabel,
   breakdown,
   discountFields,
   discountLabel,
@@ -137,6 +139,31 @@ describe('line discount (UMK-1990)', () => {
       expect(discountFields(approved, false)).toEqual({})
       expect(discountLabel(price(3500))).toBe('harga Rp3.500')
       expect(discountToast('Teh Botol', price(3500))).toBe('Harga Rp3.500 diterapkan pada Teh Botol')
+    })
+  })
+
+  describe('an approval binds its share and its rupiah (PR 72 review)', () => {
+    it('covers a reduction within both; one without an amount (older) binds the share alone', () => {
+      expect(approvalCovers({ maxBps: 5000, maxAmount: 10_000 }, 10_000, 20_000)).toBe(true)
+      // 8 at Rp2.500 is still 50% but Rp20.000.
+      expect(approvalCovers({ maxBps: 5000, maxAmount: 10_000 }, 20_000, 40_000)).toBe(false)
+      expect(approvalCovers({ maxBps: 5000 }, 20_000, 40_000)).toBe(true)
+      expect(approvalCovers({ maxBps: 5000, maxAmount: null }, 20_001, 40_000)).toBe(false)
+      const approval = { id: 'x', maxBps: 5000, maxAmount: 10_000, approverName: 'Rina' }
+      // More items at the same price: the approval no longer covers it, the cashier asks again.
+      expect(lineDiscountState(40_000, { kind: 'price', value: 2500, approval }, 8).problem).toBe(
+        'Harga manual lebih dari 30% di bawah harga normal perlu PIN admin lagi. Ubah harganya.',
+      )
+      expect(lineDiscountState(20_000, { kind: 'price', value: 2500, approval }, 4)).toEqual({
+        discount: 10_000,
+        netTotal: 10_000,
+      })
+    })
+
+    it('the sale detail names the approver', () => {
+      expect(approvedByLabel('Sari')).toBe('Disetujui PIN: Sari')
+      expect(approvedByLabel(null)).toBeNull()
+      expect(approvedByLabel(undefined)).toBeNull()
     })
   })
 })

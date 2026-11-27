@@ -15,7 +15,8 @@ export type DiscountKind = 'percent' | 'amount' | 'price'
 export type LineDiscount = {
   kind: DiscountKind
   value: number
-  approval?: { id: string; maxBps: number; approverName: string }
+  /** `maxAmount`: the most rupiah it covers (PR 72 review); absent on an approval from before it. */
+  approval?: { id: string; maxBps: number; maxAmount?: number | null; approverName: string }
 }
 
 /** Above this share of the line (30%) pos-api asks for a PIN approval. */
@@ -36,6 +37,13 @@ export const discountOf = (lineTotal: number, d: Pick<LineDiscount, 'kind' | 'va
 
 /** More than 30% of the line. */
 export const needsApproval = (discount: number, lineTotal: number) => discount * 10000 > lineTotal * APPROVAL_BPS
+
+/** Whether an approval covers a reduction of `discount` off a line of `lineTotal`: its share and its rupiah. */
+export const approvalCovers = (
+  a: { maxBps: number; maxAmount?: number | null },
+  discount: number,
+  lineTotal: number,
+) => discount * 10000 <= a.maxBps * lineTotal && (a.maxAmount == null || discount <= a.maxAmount)
 
 /** The share of the line a discount takes, in basis points rounded up: what the approval must cover. */
 export const approvalBps = (discount: number, lineTotal: number) =>
@@ -94,7 +102,7 @@ export function lineDiscountState(lineTotal: number, d: LineDiscount | undefined
   if (d.kind === 'price' && discount <= 0)
     return { discount: 0, netTotal: lineTotal, problem: 'Harga manual tidak lagi di bawah harga sekarang. Ubah harganya.' }
   if (discount >= lineTotal) return { discount: 0, netTotal: lineTotal, problem: 'Diskon melebihi harga baris. Ubah diskonnya.' }
-  if (needsApproval(discount, lineTotal) && (!d.approval || discount * 10000 > d.approval.maxBps * lineTotal))
+  if (needsApproval(discount, lineTotal) && (!d.approval || !approvalCovers(d.approval, discount, lineTotal)))
     return {
       discount: 0,
       netTotal: lineTotal,
@@ -153,6 +161,9 @@ export const discountRefusal = (what: string, code = 'DISCOUNT_INVALID'): ErrorD
   code,
   primary: 'none',
 })
+
+/** "Disetujui PIN: Sari" under a sold line or the order discount; null when no approval was needed (older answers too). */
+export const approvedByLabel = (name: string | null | undefined) => (name ? `Disetujui PIN: ${name}` : null)
 
 /** A sold line's discount as the receipt prints it ("Diskon 10%", "Diskon"); null without one (older answers too). */
 export const soldDiscountLabel = (l: { discount?: number; discountPercent?: number | null }) =>

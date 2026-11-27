@@ -74,6 +74,8 @@ export type ReceiptLine = {
   discount?: number
   discountPercent?: number | null
   netTotal?: number
+  /** PR 72 review: who approved this line's discount or manual price above 30% by PIN, by name. */
+  approvedBy?: string | null
 }
 export type Receipt = {
   number: number
@@ -85,6 +87,8 @@ export type Receipt = {
   /** Every manual discount; `lineDiscount` (UMK-1990) is the lines' part, the rest an order discount. */
   discount: number
   lineDiscount?: number
+  /** Who approved a total reduction above 30% by PIN (the order approval), by name. */
+  discountApprovedBy?: string | null
   taxBps: number
   tax: number
   total: number
