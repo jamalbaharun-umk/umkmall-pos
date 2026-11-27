@@ -124,9 +124,13 @@ export const entryKindLabel = (kind: string) => KIND_LABELS[kind] ?? 'Kas lain'
 /** "Kas masuk" / "Kas keluar" for the badge next to an entry. */
 export const directionLabel = (d: 'in' | 'out') => (d === 'in' ? 'Kas masuk' : 'Kas keluar')
 
-/** An entry's amount with its sign: "+Rp2.500" or "-Rp120.000" (the caller formats the rupiah). */
+/** An entry's amount with its sign: "+Rp2.500" or "−Rp120.000" (the caller formats the rupiah). */
 export const signedAmount = (e: { direction: 'in' | 'out'; amount: number }, fmt: (n: number) => string) =>
-  `${e.direction === 'in' ? '+' : '-'}${fmt(e.amount)}`
+  e.direction === 'in' ? `+${fmt(e.amount)}` : fmt(-e.amount)
+
+/** A drawer row as the close screen and the shift detail print it: "+Rp2.500", "−Rp8.000", "Rp1.000". */
+export const drawerRowText = (r: { amount: number; sign: '+' | '-' | '' }, fmt: (n: number) => string) =>
+  r.sign === '-' ? fmt(-r.amount) : `${r.sign}${fmt(r.amount)}`
 
 /** What to do about a close refused for pending payments: they are opened from the register's waiting list. */
 export const CLOSE_BLOCKED_HINT =

@@ -120,6 +120,6 @@ export function cashToast(e: { direction: CashDirection; amount: number; reasonL
     : `Uang ${rupiah(e.amount)} diambil dari laci (${e.reasonLabel}). Sisa ${rupiah(e.drawerCashAfter)}`
 }
 
-/** "+Rp200.000" / "-Rp500.000" for the list. */
+/** "+Rp200.000" / "−Rp500.000" (a real minus sign, as `rupiah()` writes it) for the list. */
 export const signedRupiah = (direction: CashDirection, amount: number) =>
-  `${direction === 'in' ? '+' : '-'}${rupiah(amount)}`
+  direction === 'in' ? `+${rupiah(amount)}` : rupiah(-amount)

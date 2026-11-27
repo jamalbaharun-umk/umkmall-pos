@@ -6,7 +6,7 @@ import { closeShift, loadCurrentShift, type Shift } from './-api'
 import { cashDifference, parseRupiah } from './-money'
 import { clockText, dayText, holdLabel } from './-online'
 import { awaitingCloseText } from '@/lib/describe-error'
-import { CLOSE_BLOCKED_HINT, drawerRows, isPendingPaymentRefusal, sentence, waitingSearch, type WaitingSale } from './-shift-helpers'
+import { CLOSE_BLOCKED_HINT, drawerRows, drawerRowText, isPendingPaymentRefusal, sentence, waitingSearch, type WaitingSale } from './-shift-helpers'
 
 // Closing the cash drawer (Lakasir: cashier header action): expected cash, counted cash, the difference.
 export const Route = createFileRoute('/kasir/tutup')({
@@ -93,7 +93,7 @@ function CloseShiftPage() {
             <dl className="mt-3 space-y-1 text-sm">
               <Row label="Dibuka" value={formatDate(shift.openedAt)} />
               {drawerRows(shift).map((r) => (
-                <Row key={r.key} label={r.label} value={`${r.sign}${rupiah(r.amount)}`} strong={r.strong} />
+                <Row key={r.key} label={r.label} value={drawerRowText(r, rupiah)} strong={r.strong} />
               ))}
             </dl>
             <p className="mt-2 text-xs text-default-secondary">
@@ -198,7 +198,7 @@ function Summary({ shift }: { shift: Shift }) {
   return (
     <dl className="mt-3 space-y-1 text-sm">
       {drawerRows(shift).map((r) => (
-        <Row key={r.key} label={r.label} value={`${r.sign}${rupiah(r.amount)}`} />
+        <Row key={r.key} label={r.label} value={drawerRowText(r, rupiah)} />
       ))}
       <Row label="Dihitung" value={rupiah(shift.countedCash ?? 0)} />
       <div

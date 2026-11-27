@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { rupiah as realRupiah } from '../../lib/rupiah'
 import {
   cashRoute,
   shiftCashier,
+  drawerRowText,
   parseWaitingSales,
   sentence,
   waitingSearch,
@@ -146,7 +148,8 @@ describe('ledger entry wording', () => {
 
   it('signs the amount by direction', () => {
     expect(signedAmount({ direction: 'in', amount: 2500 }, rupiah)).toBe('+Rp2500')
-    expect(signedAmount({ direction: 'out', amount: 30000 }, rupiah)).toBe('-Rp30000')
+    expect(signedAmount({ direction: 'out', amount: 30000 }, realRupiah)).toBe('−Rp30.000')
+    expect(signedAmount({ direction: 'in', amount: 30000 }, realRupiah)).toBe('+Rp30.000')
     expect(directionLabel('in')).toBe('Kas masuk')
     expect(directionLabel('out')).toBe('Kas keluar')
   })
@@ -257,5 +260,17 @@ describe('shiftCashier (UMK-2088)', () => {
   it('falls back to the kind when no name came', () => {
     expect(shiftCashier({ actorKind: 'cashier' })).toBe('Staf')
     expect(shiftCashier({ actorKind: 'owner', actorName: ' ' })).toBe('Pemilik')
+  })
+})
+
+describe('drawerRowText (UMK-2089)', () => {
+  it('prints a taken-out row with the real minus, never a hyphen before Rp', () => {
+    expect(drawerRowText({ amount: 8000, sign: '-' }, realRupiah)).toBe('−Rp8.000')
+    expect(drawerRowText({ amount: 20000, sign: '-' }, realRupiah)).toBe('−Rp20.000')
+  })
+
+  it('keeps + and unsigned rows', () => {
+    expect(drawerRowText({ amount: 2500, sign: '+' }, realRupiah)).toBe('+Rp2.500')
+    expect(drawerRowText({ amount: 1000, sign: '' }, realRupiah)).toBe('Rp1.000')
   })
 })

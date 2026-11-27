@@ -10,6 +10,7 @@ import {
   reminderMessage,
   remindedAgainNote,
   whatsappLink,
+  customerSearch,
   type ReminderSource,
 } from '@/lib/whatsapp'
 import { loadReceipt } from '../routes/kasir/-api'
@@ -267,7 +268,7 @@ export function WhatsappReminderDialog({
           leave()
           showError(
             { code: 'PHONE_MISSING' },
-            { action: 'mengirim pengingat', retry: () => void navigate({ to: '/pelanggan' }), retryLabel: 'Buka pelanggan' },
+            { action: 'mengirim pengingat', retry: () => void navigate({ to: '/pelanggan', search: customerSearch(res.data.memberName) }), retryLabel: 'Buka pelanggan' },
             describe,
           )
           return
@@ -301,7 +302,7 @@ export function WhatsappReminderDialog({
     if (!parsed.ok) {
       showError(
         { code: 'PHONE_INVALID' },
-        { action: 'mengirim pengingat', retry: () => void navigate({ to: '/pelanggan' }), retryLabel: 'Buka pelanggan' },
+        { action: 'mengirim pengingat', retry: () => void navigate({ to: '/pelanggan', search: customerSearch(r.memberName) }), retryLabel: 'Buka pelanggan' },
         (e, f) => {
           const d = describe(e, f)
           return { ...d, what: 'Nomor pelanggan ini belum lengkap.', todo: 'Perbaiki nomor di data pelanggan.' }

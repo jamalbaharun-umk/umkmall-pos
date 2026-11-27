@@ -389,6 +389,7 @@ export function historyRows(
       kind: 'Uang retur diterima',
       detail: [place, f.note].filter(Boolean).join(' · '),
       amount: f.amount,
+      plus: true, // money came in: +Rp, so it reads apart from its cancellation
       undo: { type: 'refund', id: f.id },
       voided: !!f.voidedAt,
     })
@@ -400,7 +401,7 @@ export function historyRows(
         detail: [f.voidReason, f.drawerReversed === true ? 'uang keluar dari laci' : 'uang keluar dari kas toko']
           .filter(Boolean)
           .join(' · '),
-        amount: f.amount,
+        amount: -f.amount, // the money went out again: −Rp
       })
   }
   return rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
@@ -417,4 +418,26 @@ export const parseAmount = (text: string): number => Number(text.replace(/\D/g, 
 export function formatAmountInput(text: string): string {
   const n = parseAmount(text)
   return n ? n.toLocaleString('id-ID') : ''
+}
+
+/**
+ * The line under the debt figures after returns (UMK-2089). A return lowers the debt only by what the debt still was:
+ * `returned - credit`. On a purchase already paid in full the whole return is money the supplier owes back, so it must
+ * not say it "mengurangi hutang". Empty when nothing was returned.
+ */
+export function returnDebtText(
+  o: { returned?: number; credit?: number; refunded?: number; refundDue?: number },
+  fmt: (n: number) => string,
+): string {
+  const returned = o.returned ?? 0
+  if (returned <= 0) return ''
+  const lowered = Math.max(0, returned - (o.credit ?? 0))
+  const parts = [
+    lowered > 0
+      ? `Retur mengurangi hutang ${fmt(lowered)}.`
+      : `Retur ${fmt(returned)}: hutang sudah lunas, jadi tidak ada hutang yang berkurang.`,
+  ]
+  if ((o.refundDue ?? 0) > 0) parts.push(`Pemasok masih harus mengembalikan ${fmt(o.refundDue ?? 0)}.`)
+  if ((o.refunded ?? 0) > 0) parts.push(`Sudah diterima kembali ${fmt(o.refunded ?? 0)}.`)
+  return parts.join(' ')
 }

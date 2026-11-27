@@ -12,6 +12,7 @@ import {
   type Payment,
   type Refund,
   type Return,
+  returnDebtText,
   signedRupiah,
   statusBadge,
 } from './-debt'
@@ -193,9 +194,9 @@ function OrderPage() {
           </dl>
           {((order.returned ?? 0) > 0 || (order.credit ?? 0) > 0) && (
             <p className="mt-3 text-sm text-default-secondary">
-              {(order.returned ?? 0) > 0 && `Retur mengurangi hutang ${rupiah(order.returned ?? 0)}.`}
-              {refundDue > 0 && ` Pemasok masih harus mengembalikan ${rupiah(refundDue)}.`}
-              {(order.refunded ?? 0) > 0 && ` Sudah diterima kembali ${rupiah(order.refunded ?? 0)}.`}
+              {returnDebtText(order, rupiah)}
+              {(order.returned ?? 0) <= 0 && refundDue > 0 && `Pemasok masih harus mengembalikan ${rupiah(refundDue)}.`}
+              {(order.returned ?? 0) <= 0 && (order.refunded ?? 0) > 0 && ` Sudah diterima kembali ${rupiah(order.refunded ?? 0)}.`}
             </p>
           )}
           {remaining === 0 && (

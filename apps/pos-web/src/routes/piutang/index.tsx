@@ -124,13 +124,10 @@ function ReceivablesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Pelanggan</TableHead>
-                <TableHead>Penjualan</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Sisa</TableHead>
                 <TableHead>Jatuh tempo</TableHead>
-                <TableHead>Bayar terakhir</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Diingatkan</TableHead>
                 <TableHead className="text-right">
                   <span className="sr-only">Aksi</span>
                 </TableHead>
@@ -147,13 +144,15 @@ function ReceivablesPage() {
                     >
                       {r.memberName}
                     </Link>
+                    <div className="text-xs text-default-secondary">Penjualan #{r.saleNumber}</div>
                   </TableCell>
-                  <TableCell>#{r.saleNumber}</TableCell>
                   <TableCell className="text-right">{rupiah(r.total)}</TableCell>
                   <TableCell className="text-right">{rupiah(r.rest)}</TableCell>
-                  <TableCell>{formatDay(r.dueDate)}</TableCell>
                   <TableCell>
-                    {r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}
+                    {formatDay(r.dueDate)}
+                    <div className="text-xs text-default-secondary">
+                      Bayar terakhir {r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}
+                    </div>
                     {r.outsideShiftCollected > 0 && (
                       <div className="text-xs text-default-secondary">
                         {rupiah(r.outsideShiftCollected)} dikumpulkan di luar shift
@@ -165,32 +164,29 @@ function ReceivablesPage() {
                       {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
                       {r.overdueDays > 0 && <Badge color="danger">Terlambat {r.overdueDays} hari</Badge>}
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col items-start gap-1">
-                      <span>{r.memberLastRemindedAt ? formatMomentDay(r.memberLastRemindedAt) : '–'}</span>
-                      {r.rest > 0 && !r.memberDeleted && (
-                        <ActionRow align="start" className="w-auto">
-                          <Button
-                            type="outline"
-                            color="light"
-                            width="auto"
-                            onClick={() => setReminder({ ids: [r.memberId], index: 0 })}
-                          >
-                            Kirim pengingat
-                          </Button>
-                        </ActionRow>
-                      )}
+                    <div className="mt-1 text-xs text-default-secondary">
+                      Diingatkan {r.memberLastRemindedAt ? formatMomentDay(r.memberLastRemindedAt) : '–'}
                     </div>
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-right">
-                    <Link
-                      to="/piutang/$id"
-                      params={{ id: r.id }}
-                      className="font-medium text-brand-primary hover:underline"
-                    >
-                      {r.rest > 0 ? 'Bayar' : 'Lihat'}
-                    </Link>
+                  <TableCell>
+                    {/* One column, two real buttons of the same size, stacked with the main one on top: the page's main action stays in view */}
+                    <ActionRow align="start" stacked className="w-40">
+                      {r.rest > 0 && !r.memberDeleted && (
+                        <Button
+                          type="outline"
+                          color="light"
+                          width="auto"
+                          onClick={() => setReminder({ ids: [r.memberId], index: 0 })}
+                        >
+                          Kirim pengingat
+                        </Button>
+                      )}
+                      <Button asChild type={r.rest > 0 ? 'primary' : 'outline'} color={r.rest > 0 ? 'primary' : 'light'} width="auto">
+                        <Link to="/piutang/$id" params={{ id: r.id }}>
+                          {r.rest > 0 ? 'Bayar' : 'Lihat'}
+                        </Link>
+                      </Button>
+                    </ActionRow>
                   </TableCell>
                 </TableRow>
               ))}
