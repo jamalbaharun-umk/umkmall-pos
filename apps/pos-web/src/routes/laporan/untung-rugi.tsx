@@ -2,6 +2,9 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Alert, ProgressBar, SegmentedControl } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { Empty, Panel } from '@/components/page'
+import { ReportVisuals } from '@/components/report-visual'
+import { PdfButton } from './-pdf-button'
+import { rangeLabel } from './-pdf'
 import { asPeriod, barPercent, PERIODS, periodNoun, profitChangeText } from '../pengeluaran/-helpers'
 import { loadProfitLoss, rupiah, type ProfitLoss } from './-api'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
@@ -22,7 +25,10 @@ function ProfitLossPage() {
   if (!result.ok) return <ReportError message={result.error} />
   const r = result.data
   return (
-    <ReportLayout title="Untung rugi">
+    <ReportLayout
+      title="Untung rugi"
+      actions={<PdfButton jenis="untung-rugi" query={{ period }} label={rangeLabel(r.current.from, r.current.to)} />}
+    >
       <SegmentedControl
         aria-label="Periode"
         className="max-w-md"
@@ -31,6 +37,7 @@ function ProfitLossPage() {
         onChange={(value) => void navigate({ to: '/laporan/untung-rugi', search: { period: value } })}
       />
       <NetProfit r={r} period={period} />
+      <ReportVisuals kind="profit-loss" query={{ period }} />
       <Formula r={r} />
       <TopExpenses r={r} period={period} />
     </ReportLayout>
