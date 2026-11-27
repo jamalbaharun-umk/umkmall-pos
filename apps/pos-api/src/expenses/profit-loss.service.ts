@@ -10,7 +10,8 @@ import { ExpensesService, resolvePeriod } from './expenses.service';
  *   grossProfit − shrinkage ("Susut stok") − expenses ("Pengeluaran") = netProfit ("Untung bersih").
  * `shrinkage` (UMK-2072, owner ruling 2026-11-26) is the batch cost of the units approved stock opnames took out
  * less the cost of units they found in surplus in the same period, never below 0 (`ReportsService.shrinkage`,
- * owner ruling on PR 72): a loss of the store, not of its sales, so it is not in grossProfit.
+ * owner ruling on PR 72): a loss of the store, not of its sales, so it is not in grossProfit. The floor is per
+ * queried range (`from`–`to`), so the net profits of two ranges need not add up to that of both together.
  * The figures come from the reports' own (`ReportsService.salesTotals`): kasbon sales included, voids
  * as reversals on the day of the void, cost as stored on the sale lines. `expenses` are the live expense
  * rows dated in the span, WITHOUT supplier payments (their goods are in `cost` when sold).
