@@ -4,6 +4,7 @@ import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { SCROLL_TABS } from '@/lib/scroll-row'
 import { notifySuccess, showError } from '@/lib/feedback'
+import { ActionRow } from '@/components/action-row'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
 import { useCan, useIsOwner } from '@/components/shell'
@@ -237,11 +238,11 @@ function ProfileForm({ profile, onSaved }: { profile: Profile; onSaved: () => vo
         </div>
       </Panel>
       {error && <Alert variant="danger">{error}</Alert>}
-      <div>
+      <ActionRow align="start">
         <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
           Simpan
         </Button>
-      </div>
+      </ActionRow>
       {confirm.dialog}
     </form>
   )
@@ -360,7 +361,7 @@ function QrisForm({ profile }: { profile: Profile }) {
         )}
       </Panel>
       {hasProfile && (
-        <div>
+        <ActionRow align="start">
           <Button
             htmlType="submit"
             type="primary"
@@ -372,7 +373,7 @@ function QrisForm({ profile }: { profile: Profile }) {
           >
             {saved ? 'Ganti QRIS' : 'Simpan QRIS'}
           </Button>
-        </div>
+        </ActionRow>
       )}
       {confirm.dialog}
     </form>
@@ -457,11 +458,11 @@ function AppForm({
         </p>
       </Panel>
       {error && <Alert variant="danger">{error}</Alert>}
-      <div>
+      <ActionRow align="start">
         <Button htmlType="submit" type="primary" color="primary" size="small" width="auto" isLoading={busy}>
           Simpan
         </Button>
-      </div>
+      </ActionRow>
     </form>
   )
 }
