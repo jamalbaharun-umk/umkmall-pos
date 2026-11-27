@@ -76,6 +76,8 @@ export const NAV: NavGroup[] = [
       { to: '/laporan', label: 'Laporan', icon: FileText, permission: 'reports.view' },
       // UMK-1964: who still owes, how much, who is overdue.
       { to: '/laporan/kasbon', label: 'Laporan kasbon', icon: HandCoins, permission: 'reports.view' },
+      // Feature 37: sales against expenses per day, month or year.
+      { to: '/laporan/penjualan-pengeluaran', label: 'Penjualan dan pengeluaran', icon: FileText, permission: 'reports.view' },
     ],
   },
   { items: [{ to: '/voucher', label: 'Voucher', icon: TicketPercent, permission: 'vouchers.manage' }] },

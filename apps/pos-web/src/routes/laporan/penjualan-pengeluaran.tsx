@@ -135,7 +135,7 @@ function TrendPage() {
       </Panel>
       {empty ? (
         <Panel>
-          <Empty title="Belum ada penjualan di periode ini">Pilih periode lain.</Empty>
+          <Empty title="Belum ada penjualan atau pengeluaran di periode ini">Pilih periode lain.</Empty>
         </Panel>
       ) : (
         <>
@@ -146,7 +146,7 @@ function TrendPage() {
       )}
       <ActionRow align="start">
         <Button type="outline" color="primary" width="auto" disabled={empty} onClick={() => setExportOpen(true)}>
-          Ekspor PDF
+          Unduh PDF
         </Button>
       </ActionRow>
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} r={r} />
@@ -171,8 +171,8 @@ function Summary({ r, metric }: { r: TrendReport; metric: Metric }) {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {metric !== 'expenses' && <Tile label="Penjualan (tanpa pajak)" value={t.sales} />}
         {metric !== 'sales' && <Tile label="Pengeluaran" value={t.expenses} />}
-        <Tile label="Laba kotor" value={t.grossProfit} />
-        <Tile label="Laba bersih" value={t.netProfit} tone={t.netProfit < 0 ? 'error' : undefined} />
+        <Tile label="Untung kotor" value={t.grossProfit} />
+        <Tile label="Untung bersih" value={t.netProfit} tone={t.netProfit < 0 ? 'error' : undefined} />
       </div>
       <p className="text-sm text-default-secondary">{comparison(r)}</p>
       <p className="text-xs text-default-secondary">
@@ -215,7 +215,7 @@ function Detail({ r }: { r: TrendReport }) {
   )
 }
 
-/** "Ekspor PDF": pick what goes in (summary, chart, detail table), then "Buat PDF". The form keeps its ticks on failure. */
+/** "Unduh PDF": pick what goes in (summary, chart, detail table), then "Buat PDF". The form keeps its ticks on failure. */
 function ExportDialog({ open, onOpenChange, r }: { open: boolean; onOpenChange: (o: boolean) => void; r: TrendReport }) {
   const [parts, setParts] = useState({ summary: true, chart: true, table: true })
   const [busy, setBusy] = useState(false)
@@ -241,7 +241,7 @@ function ExportDialog({ open, onOpenChange, r }: { open: boolean; onOpenChange: 
     <CheckBox key={k} label={label} checked={parts[k]} onChange={(e) => setParts((p) => ({ ...p, [k]: e.target.checked }))} />
   )
   return (
-    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)} title="Ekspor PDF" size="medium">
+    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)} title="Unduh PDF" size="medium">
       <div className="flex flex-col gap-4 px-6 pt-2 pb-6">
         <p className="text-sm text-default-secondary">
           Laporan {SCALES.find((s) => s.value === r.scale)?.label.toLowerCase()} {r.periodLabel}. Kertas A4 tegak. Penjualan tanpa pajak; pajak tampil terpisah.

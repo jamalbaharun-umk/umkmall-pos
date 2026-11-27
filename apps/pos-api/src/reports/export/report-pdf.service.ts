@@ -115,7 +115,7 @@ export class ReportPdfService {
     s: PosSession,
     range: DateRange,
   ): Promise<PdfFile> {
-    return withExportSlot(async () => {
+    return withExportSlot(s.tenantId, async () => {
       const def = REPORT_DEFS[kind];
       const [r, visuals, tz] = await Promise.all([
         kind === 'sales'
@@ -199,7 +199,7 @@ export class ReportPdfService {
   }
 
   async profit(s: PosSession, q: PeriodQuery): Promise<PdfFile> {
-    return withExportSlot(async () => {
+    return withExportSlot(s.tenantId, async () => {
       const [r, visuals] = await Promise.all([
         this.profitLoss.report(s.tenantId, q),
         this.visuals.profit(s.tenantId, q),
@@ -275,7 +275,7 @@ export class ReportPdfService {
   }
 
   async kasbon(s: PosSession, filter: ReceivableFilter): Promise<PdfFile> {
-    return withExportSlot(async () => {
+    return withExportSlot(s.tenantId, async () => {
       const [list, visuals, tz] = await Promise.all([
         this.receivables.list(s.tenantId, filter),
         this.visuals.receivablesVisuals(s.tenantId, filter),
@@ -341,7 +341,7 @@ export class ReportPdfService {
     q: TrendQuery,
     parts: TrendParts,
   ): Promise<PdfFile> {
-    return withExportSlot(async () => {
+    return withExportSlot(s.tenantId, async () => {
       const r = await this.trend.report(s.tenantId, q);
       const who = await this.identity(s, r.timezone);
       const scale = r.scale;

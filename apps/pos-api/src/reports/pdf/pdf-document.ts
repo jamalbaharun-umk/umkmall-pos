@@ -222,6 +222,8 @@ export class PdfBuilder {
       fontCallback: (_family: string, bold: boolean) =>
         bold ? 'Semi' : 'Body',
       assumePt: false,
+      // A chart never reads a file or the network: an <image> in it resolves to nothing.
+      imageCallback: () => '',
     });
     d.y = top + r.height * 0.75 + 6;
     this.legend(r.legend, visual.kind === 'segments');

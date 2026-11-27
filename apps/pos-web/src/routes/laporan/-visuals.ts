@@ -29,6 +29,7 @@ export function visualIsEmpty(v: Visual): boolean {
 
 /** Which reports have visuals, and the pos-api path of each (the query goes after it). */
 export type VisualKind = 'sales' | 'products' | 'shifts' | 'purchasing' | 'profit-loss' | 'receivables'
+export const VISUAL_KINDS = ['sales', 'products', 'shifts', 'purchasing', 'profit-loss', 'receivables'] as const
 export const VISUAL_PATHS: Record<VisualKind, string> = {
   sales: '/reports/visuals/sales',
   products: '/reports/visuals/products',
