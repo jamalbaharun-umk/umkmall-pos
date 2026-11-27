@@ -573,7 +573,7 @@ export function buildAgentServer(
     'profit_loss',
     {
       description:
-        'Profit and loss: revenue (without tax), cost of goods, gross profit, operating expenses by category and net profit, next to the previous period of the same length. Give either period or from and to.',
+        'Profit and loss: revenue (without tax), cost of goods, gross profit, stock shrinkage (shrinkage: the batch cost of units approved stock counts found missing, less the cost of units they found in surplus in the same period, never below 0), operating expenses by category and net profit (gross profit minus shrinkage minus expenses), next to the previous period of the same length. Give either period or from and to.',
       inputSchema: {
         period: z.enum(['today', 'week', 'month']).optional(),
         from: text(10).optional(),

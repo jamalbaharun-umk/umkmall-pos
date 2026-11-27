@@ -10,7 +10,7 @@ import { VoidDialog } from './-void-dialog'
 import { reasonLabel } from './-void-helpers'
 import { paidLater } from './-online'
 import { soldPriceNote } from './-helpers'
-import { receiptDiscounts, soldDiscountLabel } from './-discount'
+import { approvedByLabel, receiptDiscounts, soldDiscountLabel } from './-discount'
 import { hasRounding } from './-money'
 
 // Lakasir's "View selling": selling details, product table, totals, and the print-receipt action.
@@ -188,6 +188,9 @@ function SalePage() {
                       {soldDiscountLabel(l)} −{rupiah(l.discount ?? 0)}
                     </span>
                   )}
+                  {approvedByLabel(l.approvedBy) && (
+                    <span className="block text-xs text-default-secondary">{approvedByLabel(l.approvedBy)}</span>
+                  )}
                 </TableCell>
                 <TableCell className="text-right">{rupiah(l.unitPrice)}</TableCell>
                 <TableCell className="text-right">
@@ -221,6 +224,11 @@ function SalePage() {
               <dt className="font-medium">Diskon</dt>
               <dd className="text-right">{rupiah(receiptDiscounts(r).order)}</dd>
             </>
+          )}
+          {approvedByLabel(r.discountApprovedBy) && (
+            <dd className="col-span-2 text-right text-xs text-default-secondary">
+              {approvedByLabel(r.discountApprovedBy)}
+            </dd>
           )}
           {r.voucherDiscount > 0 && (
             <>

@@ -163,6 +163,7 @@ export class ProfitLossController {
         [l.revenue, c.revenue, p.revenue],
         [l.cost, c.cost, p.cost],
         [l.grossProfit, c.grossProfit, p.grossProfit],
+        [l.shrinkage, c.shrinkage, p.shrinkage],
         [l.expenses, c.expenses, p.expenses],
         [l.netProfit, c.netProfit, p.netProfit],
         [l.tax, c.tax, p.tax],

@@ -195,6 +195,36 @@ export class ReportsService {
   }
 
   /**
+   * UMK-2072 (owner ruling 2026-11-26) "Susut stok": the cost of the units approved stock opnames took out, for
+   * whole store days `[from, to]` (with `cutoff` as `salesTotals`), dated by the opname's approval. Each unit at
+   * the cost of the batch it was drawn from (FIFO, `stock_movements.batch_id`). Owner ruling on PR 72 (major 4): a
+   * surplus (a positive opname line: a new batch at the latest batch cost, which becomes cost of goods when sold) is
+   * netted against the shrinkage of the same period, never below 0, so a miscount found again later is not lost
+   * twice: max(0, missing − surplus). The floor applies to the QUERIED range as a whole, not per day or month: a
+   * month of net surplus counts 0 on its own but lowers the shrinkage of a wider range that holds it, so the
+   * figures of two ranges do not add up to the figure of their union. A draft opname has no movements. Integer rupiah. Reason `opname` is written
+   * only by an approved stock opname (`StockOpnameService.approve`, both signs; `StockService.receive` names it for
+   * a positive adjustment), and every such movement carries the opname's id in `ref_id`: the join keeps it so.
+   */
+  async shrinkage(
+    tenantId: string,
+    tz: string,
+    range: DateRange,
+    cutoff?: SQL,
+  ) {
+    const { start, end } = this.bounds(range, tz);
+    const until = cutoff ? sql`least(${end}, ${cutoff})` : end;
+    const [r] = await this.rows(sql`
+      select greatest(coalesce(sum(-m.delta * b.unit_cost), 0), 0) as shrinkage
+        from pos.stock_movements m
+        join pos.stock_opnames o on o.tenant_id = m.tenant_id and o.id = m.ref_id
+        join pos.stock_batches b on b.tenant_id = m.tenant_id and b.id = m.batch_id
+       where m.tenant_id = ${tenantId} and m.reason = 'opname'
+         and o.status = 'approved' and o.approved_at >= ${start} and o.approved_at < ${until}`);
+    return n(r.shrinkage);
+  }
+
+  /**
    * Current period so far vs the same span one period earlier ("this week so far" vs "last week up to the same
    * moment"). Lakasir compared overlapping windows.
    */
