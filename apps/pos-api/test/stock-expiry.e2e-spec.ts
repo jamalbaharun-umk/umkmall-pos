@@ -165,6 +165,51 @@ describe('stock expiry dates (UMK-2087)', () => {
     });
   });
 
+  describe('approving a saved draft', () => {
+    const patch = (auth: string, path: string, body: object) =>
+      http().patch(path).set('Authorization', auth).send(body);
+
+    it('refuses a past date when a draft is created or edited, but approves one whose date elapsed since', async () => {
+      const s = await createStore();
+      const sup = await supplier(s);
+      const a = await product(s, 'Roti');
+      const line = (expiresAt: string) => ({
+        productId: a,
+        qty: 3,
+        unitCost: 1200,
+        expiresAt,
+      });
+      // Create and edit keep the "not before today" check.
+      const bad = await post(s.auth, '/purchasing/orders', {
+        supplierId: sup,
+        lines: [line(await day(-1))],
+      }).expect(422);
+      expect(JSON.stringify(bad.body)).toContain('lines.0.expiresAt');
+      const draft = await post(s.auth, '/purchasing/orders', {
+        supplierId: sup,
+        lines: [line(await day(2))],
+      }).expect(201);
+      const edit = await patch(s.auth, `/purchasing/orders/${draft.body.id}`, {
+        lines: [line(await day(-1))],
+      }).expect(422);
+      expect(JSON.stringify(edit.body)).toContain('lines.0.expiresAt');
+
+      // The date elapses between saving the draft and approving it (aged directly: the API cannot write it).
+      await admin`update pos.purchase_order_lines set expires_at = ${await day(-1)}::date where tenant_id = ${s.tenantId} and order_id = ${draft.body.id}`;
+      await post(
+        s.auth,
+        `/purchasing/orders/${draft.body.id}/approve`,
+        {},
+      ).expect(200);
+      const batches = (await get(s.auth, `/stock/products/${a}`).expect(200))
+        .body.batches as { expiresAt: string | null; qtyRemaining: number }[];
+      expect(batches.map((x) => [x.qtyRemaining, x.expiresAt])).toEqual([
+        [3, await day(-1)],
+      ]);
+      expect(await expiring(s)).toMatchObject({ expired: 1 });
+    });
+  });
+
   describe('GET /reports/widgets/expiring', () => {
     it('lists products by earliest date, flags past dates, leaves out empty and undated batches', async () => {
       const s = await createStore();
