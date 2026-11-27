@@ -736,12 +736,12 @@ function Register({
             value={<span className="text-default-brand">{rupiah(subtotal)}</span>}
           />
           {lineDiscount > 0 && (
-            <Row label="Diskon baris" value={<span className="text-default-brand">−{rupiah(lineDiscount)}</span>} />
+            <Row label="Diskon baris" value={<span className="text-default-brand">{rupiah(-lineDiscount)}</span>} />
           )}
           {voucher && (
             <Row
               label={`Diskon voucher ${voucher.code}`}
-              value={<span className="text-default-brand">−{rupiah(voucherDiscount)}</span>}
+              value={<span className="text-default-brand">{rupiah(-voucherDiscount)}</span>}
             />
           )}
           {(lineDiscount > 0 || voucher) && (
@@ -1314,12 +1314,12 @@ function PayDialog({
           <dl className="space-y-1 text-sm">
             <Row label="Subtotal" value={<span className="text-default-brand">{rupiah(subtotal)}</span>} />
             {lineDiscount > 0 && (
-              <Row label="Diskon baris" value={<span className="text-default-brand">−{rupiah(lineDiscount)}</span>} />
+              <Row label="Diskon baris" value={<span className="text-default-brand">{rupiah(-lineDiscount)}</span>} />
             )}
             {voucher && (
               <Row
                 label={`Diskon voucher ${voucher.code}`}
-                value={<span className="text-default-brand">−{rupiah(voucher.discount)}</span>}
+                value={<span className="text-default-brand">{rupiah(-voucher.discount)}</span>}
               />
             )}
             {(lineDiscount > 0 || voucher) && (

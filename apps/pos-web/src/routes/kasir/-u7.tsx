@@ -160,7 +160,7 @@ export function VoucherRow({
           }}
           className="max-w-48 truncate text-default-brand hover:underline disabled:text-default-secondary disabled:no-underline"
         >
-          {voucher ? `${voucher.code} (−${rupiah(voucher.discount)})` : 'Pakai voucher'}
+          {voucher ? `${voucher.code} (${rupiah(-voucher.discount)})` : 'Pakai voucher'}
         </button>
         {voucher && (
           <button

@@ -53,7 +53,7 @@ describe('storeLine', () => {
       kind: 'Setoran penagih ke kas toko',
     })
     expect(storeLine({ direction: 'in', kind: 'receivable_payment', amount: 2_500 }).amount).toBe('+Rp2.500')
-    expect(storeLine({ direction: 'out', kind: 'x', amount: 2_500 })).toMatchObject({ amount: '-Rp2.500', label: 'Kas keluar' })
+    expect(storeLine({ direction: 'out', kind: 'x', amount: 2_500 })).toMatchObject({ amount: '−Rp2.500', label: 'Kas keluar' })
   })
 })
 
