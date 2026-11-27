@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 import { validate } from '../common/validation';
-import { ReceivablesReportService } from '../reports/receivables-report.service';
 import { ReportsModule } from '../reports/reports.controller';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
@@ -123,6 +122,6 @@ export class SummariesController {
 @Module({
   imports: [ReportsModule],
   controllers: [SummariesController],
-  providers: [SummariesService, ReceivablesReportService],
+  providers: [SummariesService],
 })
 export class SummariesModule {}
