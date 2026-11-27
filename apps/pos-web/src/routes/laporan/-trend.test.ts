@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asMetric, asScale, changeWord, comparison, hasNext, isEmptyReport, shiftAnchor, visibleVisual, type TrendReport } from './-trend'
+import { pageAnchor, asMetric, asScale, changeWord, comparison, hasNext, isEmptyReport, shiftAnchor, visibleVisual, type TrendReport } from './-trend'
 import type { BarsVisual } from './-visuals'
 
 describe('shiftAnchor', () => {
@@ -12,6 +12,15 @@ describe('shiftAnchor', () => {
     expect(shiftAnchor('month', '2026-02-14', 6, -1)).toBe('2025-08-01')
     expect(shiftAnchor('month', '2025-08-01', 6, 1)).toBe('2026-02-01')
     expect(shiftAnchor('year', '2026-11-26', 3, -1)).toBe('2023-01-01')
+  })
+})
+
+describe('pageAnchor', () => {
+  it('goes back exactly one window from the window that is shown', () => {
+    // Shown: 20 to 26 Nov (7 days). The previous window is 13 to 19 Nov, anchored in its last day.
+    expect(pageAnchor({ scale: 'day', to: '2026-11-26', count: 7 }, -1)).toBe('2026-11-19')
+    // Shown: Jul to Dec (6 months). The previous window ends in Jun.
+    expect(pageAnchor({ scale: 'month', to: '2026-12-31', count: 6 }, -1)).toBe('2026-06-01')
   })
 })
 

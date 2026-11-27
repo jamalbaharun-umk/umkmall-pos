@@ -222,6 +222,7 @@ export class ReportPdfService {
         { label: l.revenue, value: rp(c.revenue) },
         { label: l.cost, value: rp(c.cost) },
         { label: l.grossProfit, value: rp(c.grossProfit) },
+        { label: l.shrinkage, value: rp(c.shrinkage) },
         { label: l.expenses, value: rp(c.expenses) },
       ]);
       for (const v of visuals) b.chart(v);
@@ -249,6 +250,7 @@ export class ReportPdfService {
           line(l.revenue, c.revenue, p.revenue),
           line(l.cost, c.cost, p.cost),
           line(l.grossProfit, c.grossProfit, p.grossProfit),
+          line(l.shrinkage, c.shrinkage, p.shrinkage),
           line(l.expenses, c.expenses, p.expenses),
           line(l.netProfit, c.netProfit, p.netProfit),
           line(l.tax, c.tax, p.tax),
@@ -358,6 +360,7 @@ export class ReportPdfService {
           },
           { label: 'Harga pokok penjualan', value: rp(t.cost) },
           { label: 'Laba kotor', value: rp(t.grossProfit) },
+          { label: 'Susut stok', value: rp(t.shrinkage) },
           { label: 'Pengeluaran', value: rp(t.expenses) },
           { label: 'Laba bersih', value: rp(t.netProfit), strong: true },
           { label: 'Pajak dikumpulkan (bukan pendapatan)', value: rp(t.tax) },

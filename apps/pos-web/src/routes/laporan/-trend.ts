@@ -32,7 +32,7 @@ export type TrendReport = {
   periodLabel: string
   partialLast: boolean
   buckets: { key: string; label: string; sales: number; expenses: number }[]
-  totals: { sales: number; cost: number; grossProfit: number; expenses: number; netProfit: number; tax: number }
+  totals: { sales: number; cost: number; grossProfit: number; shrinkage: number; expenses: number; netProfit: number; tax: number }
   previous: { from: string; to: string; periodLabel: string; sales: number; expenses: number }
   change: { sales: number | null; expenses: number | null }
   visual: BarsVisual
@@ -57,6 +57,12 @@ export function shiftAnchor(scale: Scale, anchor: string, count: number, dir: 1 
   for (let i = 0; i < count; i++) d = stepBucket(scale, d, dir)
   return d
 }
+
+/**
+ * The anchor the previous (-1) or next (1) window is asked for. A window ends in the bucket holding `to`, so that is
+ * what moves; moving from `from` would skip a whole window.
+ */
+export const pageAnchor = (r: Pick<TrendReport, 'scale' | 'to' | 'count'>, dir: 1 | -1): string => shiftAnchor(r.scale, r.to, r.count, dir)
 
 /** The next window is shown only when this one does not already reach today. */
 export const hasNext = (r: Pick<TrendReport, 'to' | 'today'>): boolean => r.to < r.today

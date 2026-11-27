@@ -30,7 +30,7 @@ import {
   isEmptyReport,
   METRICS,
   SCALES,
-  shiftAnchor,
+  pageAnchor,
   TABLE_HEADINGS,
   visibleVisual,
   type Metric,
@@ -104,7 +104,7 @@ function TrendPage() {
               iconOnly
               aria-label="Periode sebelumnya"
               className="h-11! w-11! shrink-0"
-              onClick={() => go({ to: shiftAnchor(r.scale, r.from, r.count, -1) })}
+              onClick={() => go({ to: pageAnchor(r, -1) })}
             >
               <ChevronLeft className="size-5" aria-hidden />
             </Button>
@@ -119,7 +119,7 @@ function TrendPage() {
               aria-label="Periode berikutnya"
               disabled={!hasNext(r)}
               className="h-11! w-11! shrink-0"
-              onClick={() => go({ to: shiftAnchor(r.scale, r.to, r.count, 1) })}
+              onClick={() => go({ to: pageAnchor(r, 1) })}
             >
               <ChevronRight className="size-5" aria-hidden />
             </Button>

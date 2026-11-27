@@ -246,13 +246,21 @@ export class ReportVisualsService {
         'Hasil jualan',
         'Modal barang',
         'Untung kotor',
+        'Susut stok',
         'Pengeluaran',
         'Untung bersih',
       ],
       series: [
         {
           label: 'Rupiah',
-          values: [c.revenue, -c.cost, c.grossProfit, -c.expenses, c.netProfit],
+          values: [
+            c.revenue,
+            -c.cost,
+            c.grossProfit,
+            -c.shrinkage,
+            -c.expenses,
+            c.netProfit,
+          ],
           color: 1,
         },
       ],
@@ -287,10 +295,7 @@ export class ReportVisualsService {
       palette: 'sequential',
       categoryLabel: 'Umur',
       parts: [
-        { label: 'Belum jatuh tempo', value: aging.notDue },
-        { label: 'Jatuh tempo sampai 7 hari', value: aging.upTo7 },
-        { label: '8 sampai 30 hari', value: aging.upTo30 },
-        { label: 'Lebih dari 30 hari', value: aging.over30 },
+        ...aging.buckets.map((x) => ({ label: x.label, value: x.amount })),
       ],
     };
     const top = hbars(

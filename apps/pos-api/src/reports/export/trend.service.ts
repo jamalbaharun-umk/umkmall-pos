@@ -111,16 +111,19 @@ export class SalesExpensesService {
     from: string,
     to: string,
   ) {
-    const [s, spent] = await Promise.all([
+    const [s, spent, shrinkage] = await Promise.all([
       this.reports.salesTotals(tenantId, tz, { from, to }),
       this.expenses.totals(tenantId, from, to),
+      // "Susut stok" (UMK-2072): netted over the whole range like the profit and loss report, never per bucket.
+      this.reports.shrinkage(tenantId, tz, { from, to }),
     ]);
     return {
       sales: s.revenue - s.tax,
       cost: s.cost,
       grossProfit: s.grossProfit,
+      shrinkage,
       expenses: spent.expenses,
-      netProfit: s.grossProfit - spent.expenses,
+      netProfit: s.grossProfit - shrinkage - spent.expenses,
       tax: s.tax,
     };
   }

@@ -177,6 +177,7 @@ describe('report PDFs and visuals', () => {
         sales: 43_000,
         cost: 24_000,
         grossProfit: 19_000,
+        shrinkage: 0,
         expenses: 100_000,
         netProfit: -81_000,
         tax: 1300,
@@ -465,11 +466,12 @@ describe('report PDFs and visuals', () => {
         'Hasil jualan',
         'Modal barang',
         'Untung kotor',
+        'Susut stok',
         'Pengeluaran',
         'Untung bersih',
       ]);
       expect(bridge.series[0].values).toEqual([
-        43_000, -24_000, 19_000, -100_000, -81_000,
+        43_000, -24_000, 19_000, 0, -100_000, -81_000,
       ]);
       expect(spent.categories).toEqual(['Sewa']);
       expect(spent.series[0].values).toEqual([100_000]);
