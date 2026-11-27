@@ -170,7 +170,7 @@ export function SalesHistorySummary() {
             />
             <SegmentedBar
               boxed
-              title="Cara bayar hari ini"
+              title="Cara bayar"
               description="Jumlah dibayar pelanggan, termasuk pajak"
               unit="rupiah"
               parts={d.methods.map((m) => ({ label: m.name, value: m.amount }))}
