@@ -13,6 +13,7 @@ import { PurchasingModule } from './purchasing/purchasing.controller';
 import { StockOpnameModule } from './stock-opname/stock-opname.controller';
 import { SalesModule } from './sales/sales.module';
 import { ReportsModule } from './reports/reports.controller';
+import { ReportExportModule } from './reports/export/export.controller';
 import { ShiftsModule } from './shifts/shifts.module';
 import { MembersModule } from './members/members.controller';
 import { VouchersModule } from './vouchers/vouchers.controller';
@@ -41,6 +42,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     ShiftsModule,
     SalesModule,
     ReportsModule,
+    ReportExportModule,
     MembersModule,
     VouchersModule,
     PaymentMethodsModule,

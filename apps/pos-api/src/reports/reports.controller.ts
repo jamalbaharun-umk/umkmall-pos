@@ -373,6 +373,6 @@ export class ReportsController {
   controllers: [ReportsController],
   imports: [ShiftsModule],
   providers: [ReportsService, ReceivablesReportService],
-  exports: [ReportsService],
+  exports: [ReportsService, ReceivablesReportService],
 })
 export class ReportsModule {}

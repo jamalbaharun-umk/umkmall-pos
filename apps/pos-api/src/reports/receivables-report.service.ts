@@ -116,6 +116,26 @@ export class ReceivablesReportService {
     };
   }
 
+  /**
+   * What is owed, by how late it is (design feature 38): not yet due, due today up to 7 days late, 8 to 30 days late,
+   * over 30. Sums of each kasbon's remaining by the store-day status, so they add up to the summary's total.
+   */
+  async aging(tenantId: string) {
+    const tz = await this.reports.timezone(tenantId);
+    const [r] = await this.rows(sql`
+      select coalesce(sum(o.rest) filter (where o.overdue_days is null), 0) as not_due,
+             coalesce(sum(o.rest) filter (where o.overdue_days between 0 and 7), 0) as d7,
+             coalesce(sum(o.rest) filter (where o.overdue_days between 8 and 30), 0) as d30,
+             coalesce(sum(o.rest) filter (where o.overdue_days > 30), 0) as d31
+        from ${this.open(tenantId, tz)} o`);
+    return {
+      notDue: n(r.not_due),
+      upTo7: n(r.d7),
+      upTo30: n(r.d30),
+      over30: n(r.d31),
+    };
+  }
+
   /** Summary plus the customers who still owe, the most overdue first. */
   async list(tenantId: string, filter: ReceivableFilter) {
     const tz = await this.reports.timezone(tenantId);

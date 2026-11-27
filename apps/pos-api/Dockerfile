@@ -6,6 +6,9 @@ COPY package.json package-lock.json turbo.json ./
 COPY apps/pos-api/package.json apps/pos-api/package.json
 COPY apps/pos-web/package.json apps/pos-web/package.json
 RUN npm ci --workspace pos-api --include-workspace-root
+# The report PDF draws the UI package's chart components: scripts/bundle-charts.mjs bundles them (and tokens.css).
+COPY packages/ui/src/primitives/Charts packages/ui/src/primitives/Charts
+COPY packages/ui/tokens.css packages/ui/tokens.css
 COPY apps/pos-api apps/pos-api
 RUN npm run build -w pos-api && npm prune --omit=dev --workspace pos-api --include-workspace-root
 
@@ -14,6 +17,9 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/apps/pos-api/dist ./dist
+# npm nests pdfkit's own fontkit under the workspace: it must sit where dist/ resolves it from.
+COPY --from=build /repo/apps/pos-api/node_modules ./dist/node_modules
+COPY --from=build /repo/apps/pos-api/generated ./generated
 COPY --from=build /repo/apps/pos-api/drizzle ./drizzle
 COPY --from=build /repo/apps/pos-api/package.json ./package.json
 USER node

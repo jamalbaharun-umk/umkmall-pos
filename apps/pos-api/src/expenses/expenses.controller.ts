@@ -179,5 +179,6 @@ export class ProfitLossController {
   imports: [ShiftsModule, ReportsModule],
   controllers: [ExpensesController, ProfitLossController],
   providers: [ExpensesService, ProfitLossService],
+  exports: [ExpensesService, ProfitLossService],
 })
 export class ExpensesModule {}
