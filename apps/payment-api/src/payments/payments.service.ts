@@ -429,6 +429,11 @@ export class PaymentsService {
     if (row.status === 'created' || row.status === 'pending')
       return this.cancelPending(tenantId, id, input.actorRef);
     if (row.status === 'cancelled') return this.detail(row);
+    // A close only (no reason, no approver): the caller saw the bill open, and it was paid or ended since
+    // (UMK-2082). It is answered as a close of a bill no longer open (`already_paid` for a paid one), never
+    // read as a void or refund that lacks its reason.
+    if (input.reasonCode === undefined && input.approvedBy === undefined)
+      return this.cancelPending(tenantId, id, input.actorRef);
     const strict = validate(CancelBody, input);
     if (adapter.supportsVoid) return this.void(tenantId, id, strict);
     if (adapter.supportsRefund) return this.refund(tenantId, id, strict);
@@ -440,7 +445,8 @@ export class PaymentsService {
 
   /**
    * Closes an unpaid bill. Only the PG's own answer counts: when it says the payer already paid, the cancel is
-   * refused and the payment becomes `paid`. When the PG cannot close a QR at all, the cashier may still cancel
+   * refused and the payment becomes `paid`. A payment no longer open under the lock is not touched: a `paid`
+   * one is refused the same way, any other is answered as it is. When the PG cannot close a QR at all, the cashier may still cancel
    * (configurable): the payment is `cancelled`, and money that later arrives on that QR is refunded.
    */
   private async cancelPending(tenantId: string, id: string, actorRef: string) {

@@ -1666,7 +1666,9 @@ describe('purchase payments and returns (UMK-1970)', () => {
       for (const who of [buyer, sari]) {
         const no = await voidRefund(who.auth, o.id, ids[0]).expect(403);
         expect(no.body).toMatchObject({ code: 'DRAWER_REFUND_NOT_YOURS' });
-        expect(no.body.message).toMatch(/kasir shift itu, admin, atau pemilik/);
+        expect(no.body.message).toMatch(
+          /kasir shift tempat uang itu masuk, admin, atau pemilik/,
+        );
       }
       // Nothing changed: the refund is live and the drawer still holds it.
       expect((await figures(s, o.id)).refunded).toBe(20_000);
@@ -1849,7 +1851,7 @@ describe('purchase payments and returns (UMK-1970)', () => {
       expect(await onHand(a, p)).toBe(8);
     });
 
-    it('paying, returning and voiding need purchasing.manage (403; a refund void is looked up first); a cashier sees no purchase money', async () => {
+    it('paying, returning and voiding need purchasing.manage (403); a cashier sees no purchase money', async () => {
       const s = await createStore();
       const { o, line } = await designOrder(s);
       const paid = await pay(s.auth, o.id, {
@@ -1880,12 +1882,14 @@ describe('purchase payments and returns (UMK-1970)', () => {
         .set('Idempotency-Key', randomUUID())
         .send({ amount: 1_000, destination: 'drawer' })
         .expect(403);
-      // A Kasir may void their own drawer's refund (owner ruling 2026-11-27), so the route looks it up: none here.
-      await post(
+      // A Kasir may void only their own drawer's refund (owner ruling 2026-11-27); any other id, an unknown one
+      // included, answers the same 403.
+      const noRefund = await post(
         kasir.auth,
         `/purchasing/orders/${o.id}/refunds/${paid.body.id}/void`,
         { reason: 'x' },
-      ).expect(404);
+      ).expect(403);
+      expect(noRefund.body).toMatchObject({ code: 'DRAWER_REFUND_NOT_YOURS' });
       const seen = await get(kasir.auth, `/purchasing/orders/${o.id}`).expect(
         200,
       );

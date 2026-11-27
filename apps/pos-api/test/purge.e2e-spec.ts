@@ -301,7 +301,13 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     // UMK-1990: a PIN approval of a line discount above 30%, taken by a sale: discount_approvals.
     const approval = await post(
       '/sales/discount-approvals',
-      { approverId: s.userId, pin: '482913', productId, maxBps: 5000 },
+      {
+        approverId: s.userId,
+        pin: '482913',
+        productId,
+        maxBps: 5000,
+        maxAmount: 3000,
+      },
       randomUUID(),
     ).expect(201);
     await post(

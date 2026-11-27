@@ -7,6 +7,7 @@ import { ApproverPinFields } from './-approver-fields'
 import { approveDiscount, loadDiscountApprovers } from './-discount-api'
 import {
   approvalBps,
+  approvalCovers,
   discountOf,
   discountRefusal,
   discountTextError,
@@ -19,12 +20,17 @@ import {
 } from './-discount'
 import type { Approver } from './-void-helpers'
 
-/** The cart line being discounted: its name, "4 × Rp5.000", its total at the server's price, and its current discount. */
+/**
+ * The cart line being discounted: its name, "4 × Rp5.000", its quantity and unit price, its total at the server's
+ * price, and its current discount.
+ */
 export type DiscountTarget = {
   key: string
   productId: string
   name: string
   qtyText: string
+  qty: number
+  unitPrice: number
   lineTotal: number
   current?: LineDiscount
 }
@@ -32,8 +38,9 @@ export type DiscountTarget = {
 type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ready'; list: Approver[] }
 
 /**
- * UMK-1990 "Beri diskon": Persen or Rupiah, the new line price at once, then Terapkan. Above 30% the approver types
- * their own PIN on this device ("PIN admin"); the approval pos-api answers goes with the line. 100% is refused.
+ * UMK-1990 "Beri diskon": Persen, Rupiah or Harga (a manual unit price below the current one, ruling 2026-11-26), the
+ * new line price at once, then Terapkan. Above 30% the approver types their own PIN on this device ("PIN admin"); the
+ * approval pos-api answers goes with the line. 100% is refused.
  */
 export function DiscountDialog({
   target,
@@ -80,9 +87,11 @@ export function DiscountDialog({
   if (!target) return null
 
   const lineTotal = target.lineTotal
-  const error = discountTextError(kind, text, lineTotal)
+  const qty = target.qty
+  const error = discountTextError(kind, text, lineTotal, qty)
   const value = parseDiscount(kind, text)
-  const off = error ? 0 : discountOf(lineTotal, { kind, value })
+  const off = error ? 0 : discountOf(lineTotal, { kind, value }, qty)
+  const isPrice = kind === 'price'
   const big = !error && needsApproval(off, lineTotal)
   const list = approvers.state === 'ready' ? approvers.list : []
 
@@ -96,7 +105,7 @@ export function DiscountDialog({
     if (error) return showError({ status: 422 }, { action: 'menerapkan diskon' }, () => discountRefusal(error))
     // The same share already approved for this line needs no second PIN.
     const kept = target.current?.approval
-    if (big && !(kept && off * 10000 <= kept.maxBps * lineTotal)) return setStep('pin')
+    if (big && !(kept && approvalCovers(kept, off, lineTotal))) return setStep('pin')
     apply({ kind, value, ...(big && kept ? { approval: kept } : {}) })
   }
   const submitPin = async () => {
@@ -107,7 +116,8 @@ export function DiscountDialog({
     if (Object.keys(errs).length || busy) return
     setBusy(true)
     const maxBps = approvalBps(off, lineTotal)
-    const r = await approveDiscount({ data: { approverId, pin, productId: target.productId, maxBps } }).catch(() => ({
+    // The approval covers this share and this many rupiah, no more (PR 72 review).
+    const r = await approveDiscount({ data: { approverId, pin, productId: target.productId, maxBps, maxAmount: off } }).catch(() => ({
       ok: false as const,
       status: 0,
       error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.',
@@ -116,7 +126,16 @@ export function DiscountDialog({
     setBusy(false)
     setPin('')
     if (r.ok)
-      return apply({ kind, value, approval: { id: r.approval.id, maxBps: r.approval.maxBps, approverName: r.approval.approver.name } })
+      return apply({
+        kind,
+        value,
+        approval: {
+          id: r.approval.id,
+          maxBps: r.approval.maxBps,
+          maxAmount: r.approval.maxAmount ?? null,
+          approverName: r.approval.approver.name,
+        },
+      })
     // A wrong PIN or a locked approver stays on its field; anything else is the error dialog, the form kept.
     if (r.errors?.pin || r.errors?.approverId) return setPinErrors({ pin: r.errors.pin, approverId: r.errors.approverId })
     showError(r, { action: 'menyetujui diskon' })
@@ -148,6 +167,7 @@ export function DiscountDialog({
             options={[
               { value: 'percent', label: 'Persen' },
               { value: 'amount', label: 'Rupiah' },
+              { value: 'price', label: 'Harga' },
             ]}
             value={kind}
             onChange={(v) => {
@@ -157,11 +177,11 @@ export function DiscountDialog({
             }}
           />
           <TextField
-            label="Diskon"
+            label={isPrice ? 'Harga satuan baru' : 'Diskon'}
             autoFocus
             inputMode="numeric"
-            placeholder={kind === 'percent' ? '10' : '2.000'}
-            {...(kind === 'amount' ? { prefix: 'Rp' } : { trailingAdornment: <span aria-hidden>%</span> })}
+            placeholder={kind === 'percent' ? '10' : isPrice ? String(Math.max(target.unitPrice - 1, 1)) : '2.000'}
+            {...(kind === 'percent' ? { trailingAdornment: <span aria-hidden>%</span> } : { prefix: 'Rp' })}
             value={text}
             error={touched || text.trim() ? error : undefined}
             onChange={(e) => setText(e.target.value)}
@@ -172,7 +192,7 @@ export function DiscountDialog({
               <dd>{rupiah(lineTotal)}</dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-default-secondary">Diskon</dt>
+              <dt className="text-default-secondary">{isPrice ? 'Potongan harga' : 'Diskon'}</dt>
               <dd className="text-default-brand">−{rupiah(off)}</dd>
             </div>
             <div className="flex justify-between gap-3 border-t border-default-primary pt-1 font-bold">
@@ -180,7 +200,11 @@ export function DiscountDialog({
               <dd className="text-default-brand">{rupiah(lineTotal - off)}</dd>
             </div>
           </dl>
-          <p className="text-xs text-default-secondary">Lebih dari 30% meminta PIN admin. Tidak bisa 100%.</p>
+          <p className="text-xs text-default-secondary">
+            {isPrice
+              ? `Harga normal ${rupiah(target.unitPrice)} per item. Lebih dari 30% di bawahnya meminta PIN admin.`
+              : 'Lebih dari 30% meminta PIN admin. Tidak bisa 100%.'}
+          </p>
           <ActionRow>
             <Button width="auto" type="outline" color="light" onClick={onClose}>
               Batal
@@ -214,7 +238,9 @@ export function DiscountDialog({
           }}
         >
           <p className="text-sm">
-            Diskon {percentText(off, lineTotal)} ({rupiah(off)}) untuk {target.name} lebih dari batas 30%.
+            {isPrice
+              ? `Harga manual ${rupiah(value)} untuk ${target.name} ${percentText(off, lineTotal)} (${rupiah(off)}) di bawah harga normal, lebih dari batas 30%.`
+              : `Diskon ${percentText(off, lineTotal)} (${rupiah(off)}) untuk ${target.name} lebih dari batas 30%.`}
           </p>
           {approvers.state === 'loading' && (
             <div className="flex items-center gap-2 text-sm text-default-secondary" role="status">

@@ -428,6 +428,7 @@ describe('line discounts (UMK-1990)', () => {
         pin: OWNER_PIN,
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(403);
       expect(await onHand(s, s.teh)).toBe(100);
       // The cashier's client price is ignored: charged the server's 4 × 5.000.
@@ -461,6 +462,7 @@ describe('line discounts (UMK-1990)', () => {
         pin: OWNER_PIN,
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       const body = {
         lines: [
@@ -499,6 +501,7 @@ describe('line discounts (UMK-1990)', () => {
           pin: OWNER_PIN,
           productId: s.teh,
           maxBps: 4000,
+          maxAmount: 8000,
         }).expect(201);
         const body = {
           lines: [
@@ -557,8 +560,10 @@ describe('line discounts (UMK-1990)', () => {
         pin: string;
         productId: string;
         maxBps: number;
+        maxAmount?: number;
       },
-    ) => post(auth, '/sales/discount-approvals', body);
+      // Every new approval names its rupiah (PR 72 re-review): 4 Teh at 40% is 8.000.
+    ) => post(auth, '/sales/discount-approvals', { maxAmount: 8000, ...body });
 
     it('exactly 30% needs none; more needs one; the approvers are the holders of sales.price_override but the asking cashier', async () => {
       const { s, rina, tono, ayu } = await withAdmin();
@@ -677,6 +682,7 @@ describe('line discounts (UMK-1990)', () => {
         pin: ADMIN_PIN,
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       const line = {
         productId: s.teh,
@@ -702,6 +708,7 @@ describe('line discounts (UMK-1990)', () => {
         pin: ADMIN_PIN,
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       expect(approval.body).toMatchObject({
         id: expect.any(String),
@@ -742,6 +749,7 @@ describe('line discounts (UMK-1990)', () => {
         pin: '000000',
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(422);
       expect(wrong.body.errors).toEqual({ pin: 'PIN salah' });
       // Tono's right PIN: he cannot approve a discount, so it reads as a wrong PIN.
@@ -750,6 +758,7 @@ describe('line discounts (UMK-1990)', () => {
         pin: '135790',
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(422);
       await ask(ayu.auth, {
         approverId: rina.staffId,
@@ -810,6 +819,7 @@ describe('line discounts (UMK-1990)', () => {
       pin: ADMIN_PIN,
       productId: a.teh,
       maxBps: 4000,
+      maxAmount: 8000,
     }).expect(201);
     const b = await shop(0);
     const listed = await get(b.auth, '/sales/discount-approvers').expect(200);
@@ -822,6 +832,7 @@ describe('line discounts (UMK-1990)', () => {
       pin: ADMIN_PIN,
       productId: b.teh,
       maxBps: 4000,
+      maxAmount: 8000,
     }).expect(422);
     // A's product.
     const foreign = await post(b.auth, '/sales/discount-approvals', {
@@ -829,6 +840,7 @@ describe('line discounts (UMK-1990)', () => {
       pin: OWNER_PIN,
       productId: a.teh,
       maxBps: 4000,
+      maxAmount: 8000,
     }).expect(422);
     expect(foreign.body.errors).toEqual({
       productId: 'Produk tidak ditemukan',

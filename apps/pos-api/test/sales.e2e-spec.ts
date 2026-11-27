@@ -273,15 +273,18 @@ describe('sales and shifts (U3)', () => {
     await openShift(store.auth).expect(201);
     const res = await sell(store.auth, {
       lines: [{ productId, qty: 3 }],
-      discount: 5000,
-      paid: 11_000,
+      // 30% of the subtotal: the most an order discount takes without a PIN approval (ruling 2026-11-26).
+      discount: 4500,
+      paid: 11_600,
     }).expect(201);
-    // (15.000 − 5.000) × 10% = 1.000; Lakasir taxed the 15.000 before the discount.
+    // (15.000 − 4.500) × 10% = 1.050; Lakasir taxed the 15.000 before the discount. Cash rounds 11.550 up to
+    // 11.600, outside the total.
     expect(res.body).toMatchObject({
       subtotal: 15_000,
-      discount: 5000,
-      tax: 1000,
-      total: 11_000,
+      discount: 4500,
+      tax: 1050,
+      total: 11_550,
+      rounding: 50,
       change: 0,
     });
     await http()

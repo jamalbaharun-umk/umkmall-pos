@@ -383,7 +383,7 @@ function Register({
   const listPriced = priceEntries(cart, quote?.sig ? quote.quote : null)
   const quoteLines = requestLines(cart).map((l, i) => {
     const d = discounts[entryKey(cart[i])]
-    return lineDiscountState(listPriced[i].lineTotal, d).problem ? l : { ...l, ...discountFields(d, false) }
+    return lineDiscountState(listPriced[i].lineTotal, d, cart[i].qty).problem ? l : { ...l, ...discountFields(d, false) }
   })
   const sig = cartSignature(cart) + JSON.stringify(quoteLines)
   useEffect(() => {
@@ -412,7 +412,7 @@ function Register({
   const priced = priceEntries(cart, current)
   const hints = wholesaleHints(cart, current)
   const subtotal = subtotalOf(priced)
-  const lineStates = priced.map((pl, i) => lineDiscountState(pl.lineTotal, discounts[entryKey(cart[i])]))
+  const lineStates = priced.map((pl, i) => lineDiscountState(pl.lineTotal, discounts[entryKey(cart[i])], cart[i].qty))
   const lineDiscount = lineStates.reduce((n, d) => n + d.discount, 0)
   const discountProblem = lineStates.find((d) => d.problem)?.problem
   // Estimate shown to the cashier; pos-api computes the charged total the same way: line discounts, then the voucher
@@ -629,7 +629,7 @@ function Register({
                       )}
                       {d && ds.discount > 0 && (
                         <Badge color="warning" size="small">
-                          Diskon
+                          {d.kind === 'price' ? 'Harga manual' : 'Diskon'}
                         </Badge>
                       )}
                     </p>
@@ -682,6 +682,8 @@ function Register({
                               productId: l.product.id,
                               name: l.product.name,
                               qtyText,
+                              qty: l.qty,
+                              unitPrice: pl.unitPrice,
                               lineTotal: pl.lineTotal,
                               current: d,
                             })

@@ -266,9 +266,35 @@ export class PurchasingController {
   }
 }
 
+/**
+ * A supplier refund voided from the drawer screen (Kas laci), where a till cashier sees no purchase: the refund names
+ * its purchase. Same rules and answers as `POST /purchasing/orders/:id/refunds/:refundId/void`.
+ */
+@Controller('purchasing/refunds')
+export class PurchaseRefundsController {
+  constructor(private readonly payments: PurchasePaymentsService) {}
+
+  // No route permission, as the purchase route: the service decides who may void which refund.
+  @Post(':refundId/void')
+  @HttpCode(200)
+  voidRefund(
+    @CurrentSession() s: PosSession,
+    @Param('refundId') refundId: string,
+    @Body() body: unknown,
+  ) {
+    const refund = parseId(refundId);
+    return this.payments.voidRefund(
+      s,
+      null,
+      refund,
+      validate(VoidInput, body).reason,
+    );
+  }
+}
+
 @Module({
   imports: [StockModule, ShiftsModule],
-  controllers: [PurchasingController],
+  controllers: [PurchasingController, PurchaseRefundsController],
   providers: [PurchasingService, PurchasePaymentsService],
 })
 export class PurchasingModule {}

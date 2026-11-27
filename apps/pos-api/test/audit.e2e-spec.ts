@@ -399,6 +399,7 @@ describe('staff audit log (UMK-1969, design 32)', () => {
       pin: '913482',
       productId,
       maxBps: 4000,
+      maxAmount: 8000,
     }).expect(201);
     expect(await rows(s.tenantId, 'discount_approval')).toHaveLength(0); // the grant alone is not the discount
     const sale = await keyed(s.auth, '/sales', {

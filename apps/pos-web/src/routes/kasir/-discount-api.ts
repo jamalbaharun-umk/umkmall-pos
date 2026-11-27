@@ -18,10 +18,16 @@ export const loadDiscountApprovers = createServerFn().handler(async (): Promise<
   return { ok: true, approvers: (await res.json()) as Approver[] }
 })
 
-export type DiscountApproval = { id: string; maxBps: number; expiresAt: string; approver: { id: string; name: string } }
+export type DiscountApproval = {
+  id: string
+  maxBps: number
+  maxAmount?: number | null
+  expiresAt: string
+  approver: { id: string; name: string }
+}
 export type ApproveAnswer = { ok: true; approval: DiscountApproval } | ({ ok: false } & Refusal)
 
-type ApproveInput = { approverId: string; pin: string; productId: string; maxBps: number }
+type ApproveInput = { approverId: string; pin: string; productId: string; maxBps: number; maxAmount: number }
 
 export const approveDiscount = createServerFn({ method: 'POST' })
   .validator((d: ApproveInput) => d)

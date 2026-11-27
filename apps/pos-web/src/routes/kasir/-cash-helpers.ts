@@ -18,6 +18,8 @@ export type CashEntryRow = {
   reason: string | null
   reasonLabel: string | null
   createdAt: string
+  /** The source row: for `purchase_refund`, the supplier refund's id. */
+  refId?: string | null
 }
 
 /**
@@ -36,6 +38,17 @@ const SHOWN_KINDS = [
 /** The shift's manual entries, collector deposits and supplier cash (sales, kasbon and expenses are in the closing screen), newest first. */
 export function manualEntries<T extends { kind: string; createdAt: string }>(rows: T[]): T[] {
   return rows.filter((r) => SHOWN_KINDS.includes(r.kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/**
+ * The supplier refunds of this drawer that can still be voided from Kas laci: a `purchase_refund` entry without the
+ * `purchase_refund_reversal` its void writes into the same (open) shift.
+ */
+export function voidableRefunds(rows: { kind: string; refId?: string | null }[]): Set<string> {
+  const reversed = new Set(rows.filter((r) => r.kind === 'purchase_refund_reversal').map((r) => r.refId))
+  return new Set(
+    rows.flatMap((r) => (r.kind === 'purchase_refund' && r.refId && !reversed.has(r.refId) ? [r.refId] : [])),
+  )
 }
 
 /** What a server function reports on a refusal; `status` 0 means pos-api could not be reached. */

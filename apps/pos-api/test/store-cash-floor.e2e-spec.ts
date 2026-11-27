@@ -336,7 +336,7 @@ describe('store cash floor across purchases and kasbon (UMK-1970, UMK-1971)', ()
     }
     // A refund into the store cash is purchasing's: a Kasir without purchasing.manage is refused.
     const notDrawer = await voidRefund(rina.auth, k, store).expect(403);
-    expect(notDrawer.body.code).toBeUndefined();
+    expect(notDrawer.body.code).toBe('DRAWER_REFUND_NOT_YOURS');
 
     // Rina's own drawer: voided by her, open shift or closed.
     await voidRefund(rina.auth, k, first).expect(200);
@@ -345,8 +345,73 @@ describe('store cash floor across purchases and kasbon (UMK-1970, UMK-1971)', ()
     expect(drawer.expectedCash).toBe(5_000);
     await refund(k.auth, k, 5_000, 'store_cash');
     await closeShift(rina.auth, 5_000);
-    await voidRefund(rina.auth, k, second).expect(200);
+    // From Kas laci: the route that needs no purchase id.
+    const fromDrawer = await post(
+      rina.auth,
+      `/purchasing/refunds/${second}/void`,
+      { reason: 'Salah catat' },
+    ).expect(200);
+    expect(fromDrawer.body).toMatchObject({
+      id: second,
+      voidedAt: expect.any(String),
+      drawerReversed: false,
+    });
     // The buyer still voids the store cash refund.
     await voidRefund(buyer.auth, k, store).expect(200);
+  });
+
+  it('a Kasir without purchasing.manage learns nothing from a refund void: one 403 for another’s, a store cash one, another store’s and an unknown id, before the purchase is locked', async () => {
+    const k = await floorStore();
+    const other = await floorStore();
+    const otherRefund = await refund(other.auth, other, 5_000, 'drawer');
+    const ownersDrawer = await refund(k.auth, k, 5_000, 'drawer');
+    const storeRefund = await refund(k.auth, k, 5_000, 'store_cash');
+    const kasir = await createCashier(app, k, ['sales.create']);
+
+    const bodies: unknown[] = [];
+    for (const id of [ownersDrawer, storeRefund, otherRefund, randomUUID()]) {
+      for (const url of [
+        `/purchasing/orders/${k.orderId}/refunds/${id}/void`,
+        `/purchasing/refunds/${id}/void`,
+      ]) {
+        const res = await post(kasir.auth, url, { reason: 'x' }).expect(403);
+        bodies.push(res.body);
+      }
+    }
+    expect(new Set(bodies.map((b) => JSON.stringify(b))).size).toBe(1);
+    expect(bodies[0]).toMatchObject({ code: 'DRAWER_REFUND_NOT_YOURS' });
+    // Someone who sees purchases still gets 404 for another store's refund (the cross-tenant rule).
+    await post(k.auth, `/purchasing/refunds/${otherRefund}/void`, {
+      reason: 'x',
+    }).expect(404);
+
+    // The purchase row is held: the refusal does not wait for it (decided before the lock).
+    let settled = false;
+    let waited = false;
+    await locker.begin(async (sql) => {
+      await sql`select id from pos.purchase_orders where id = ${k.orderId} for update`;
+      const sent = voidRefund(kasir.auth, k, ownersDrawer).then((r) => {
+        settled = true;
+        return r;
+      });
+      for (let i = 0; i < 200 && !settled; i++) {
+        const [{ n }] = await admin<{ n: number }[]>`
+          select count(*)::int as n from pg_locks l join pg_stat_activity a on a.pid = l.pid
+           where not l.granted and a.datname = current_database()`;
+        if (n > 0) {
+          waited = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      if (waited) return; // releasing the lock lets the request finish
+      expect((await sent).status).toBe(403);
+    });
+    expect(waited).toBe(false);
+    // Nothing was voided.
+    const [{ live }] = await admin<{ live: number }[]>`
+      select count(*)::int as live from pos.purchase_refunds
+       where tenant_id = ${k.tenantId} and voided_at is null`;
+    expect(live).toBe(2);
   });
 });
