@@ -14,6 +14,7 @@ import {
   formatRupiah,
   Rupiah,
 } from '../common/validation';
+import { recordAudit } from '../audit/record';
 import { type Db, InjectDb } from '../db/db.module';
 import {
   AGENT_LABEL,
@@ -203,6 +204,11 @@ export class PurchasePaymentsService {
         : `Pemasok sudah mengembalikan ${formatRupiah(refunded)} untuk retur. Batalkan dulu uang retur yang diterima, lalu batalkan returnya.`,
       { refunded },
     );
+  }
+
+  /** The audit row's target: the purchase, by its store number. */
+  private auditTarget(orderId: string, number: number | null) {
+    return { type: 'purchase', id: orderId, label: purchaseNumber(number) };
   }
 
   private assertApproved(status: string, what: string) {
@@ -447,6 +453,18 @@ export class PurchasePaymentsService {
             eq(purchasePayments.id, paymentId),
           ),
         );
+      // Ids and amounts only: the reason is free text and stays on the payment row.
+      await recordAudit(tx, s, 'purchase_payment_void', {
+        target: this.auditTarget(orderId, order.number),
+        details: {
+          orderId,
+          paymentId,
+          amount: row.amount,
+          source: row.source,
+          shiftId: row.shiftId,
+          drawerReversed,
+        },
+      });
     });
     return this.payment(s.tenantId, orderId, paymentId);
   }
@@ -652,6 +670,16 @@ export class PurchasePaymentsService {
           actorId: s.actorId,
           actorKind: s.kind,
         });
+        await recordAudit(tx, s, 'purchase_return_undo', {
+          target: this.auditTarget(orderId, order.number),
+          details: {
+            orderId,
+            returnId,
+            reversalId,
+            total: ret.total,
+            units: lines.reduce((n, l) => n + l.qty, 0),
+          },
+        });
       });
     } catch (e) {
       // A concurrent undo of the same return committed first: its reversal is the answer.
@@ -745,6 +773,16 @@ export class PurchasePaymentsService {
           idempotencyKey: key,
           requestHash: hash,
         });
+        await recordAudit(tx, s, 'purchase_refund', {
+          target: this.auditTarget(orderId, order.number),
+          details: {
+            orderId,
+            refundId: newId,
+            amount: input.amount,
+            destination: input.destination,
+            shiftId,
+          },
+        });
         return newId;
       });
     } catch (e) {
@@ -769,7 +807,7 @@ export class PurchasePaymentsService {
   ) {
     await this.db.transaction(async (tx) => {
       // Lock order: the purchase row, the refund row, then its shift.
-      await this.lockOrder(tx, s.tenantId, orderId);
+      const order = await this.lockOrder(tx, s.tenantId, orderId);
       const [row] = await tx
         .select({
           destination: purchaseRefunds.destination,
@@ -835,6 +873,17 @@ export class PurchasePaymentsService {
             eq(purchaseRefunds.id, refundId),
           ),
         );
+      await recordAudit(tx, s, 'purchase_refund_void', {
+        target: this.auditTarget(orderId, order.number),
+        details: {
+          orderId,
+          refundId,
+          amount: row.amount,
+          destination: row.destination,
+          shiftId: row.shiftId,
+          drawerReversed,
+        },
+      });
     });
     return this.refundRow(s.tenantId, orderId, refundId);
   }
@@ -986,12 +1035,25 @@ export class PurchasePaymentsService {
           ),
         ),
       );
+    // Returns whose products a stock count (opname) changed after them: undoing one adds its units on top of a count
+    // that already left them out, so the screen warns before the undo.
+    const counted = await this.db.execute(sql`
+      select distinct rl.return_id
+        from pos.purchase_return_lines rl
+        join pos.purchase_returns pr on pr.tenant_id = rl.tenant_id and pr.id = rl.return_id
+        join pos.stock_movements m on m.tenant_id = rl.tenant_id and m.product_id = rl.product_id
+       where rl.tenant_id = ${tenantId} and pr.order_id = ${orderId}
+         and m.reason = 'opname' and m.created_at > pr.created_at`);
+    const countedSince = new Set(
+      (counted as unknown as { return_id: string }[]).map((r) => r.return_id),
+    );
     return heads
       .map((h, i) => ({ h, refundDue: due[i] }))
       .filter(({ h }) => !returnId || h.id === returnId)
       .map(({ h, refundDue }) => ({
         ...h,
         refundDue,
+        countedSince: countedSince.has(h.id),
         reasonLabel: PURCHASE_RETURN_REASON_LABELS[h.reason],
         lines: lines
           .filter((x) => x.returnId === h.id)

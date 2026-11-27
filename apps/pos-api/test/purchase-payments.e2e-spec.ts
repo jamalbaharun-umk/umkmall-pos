@@ -269,6 +269,7 @@ describe('purchase payments and returns (UMK-1970)', () => {
         reversedAt: null,
         reverseReason: null,
         reversedByName: null,
+        countedSince: false,
         lines: [
           {
             orderLineId: line.id,
@@ -1061,6 +1062,10 @@ describe('purchase payments and returns (UMK-1970)', () => {
       }).expect(201);
       await post(s.auth, `/stock-opnames/${op.body.id}/approve`).expect(200);
       expect(await batchOf(o.id)).toBe(2);
+      // The screen warns before the undo: a count of this product came after the return.
+      expect((await detail(s, o.id)).returns[0]).toMatchObject({
+        countedSince: true,
+      });
 
       const undone = await reverse(s.auth, o.id, back.body.id).expect(200);
       expect(undone.body).toMatchObject({
@@ -1341,6 +1346,203 @@ describe('purchase payments and returns (UMK-1970)', () => {
         refunded: 0,
         remaining: 150_000,
         refundDue: 0,
+      });
+    });
+
+    const auditRows = (tenantId: string) =>
+      admin<
+        {
+          event: string;
+          target_label: string;
+          details: Record<string, unknown>;
+        }[]
+      >`
+        select event, target_label, details from pos.audit_log
+         where tenant_id = ${tenantId} and event like 'purchase_%' order by seq`;
+
+    it('every supplier money change writes one audit row in its transaction; a refused or repeated one writes none', async () => {
+      const s = await createStore();
+      const { o, paymentId, returnId } = await overpaid(s);
+      await openShift(s, 100_000);
+
+      // Refused first: nothing logged.
+      await refund(s.auth, o.id, {
+        amount: 99_000,
+        destination: 'drawer',
+      }).expect(422);
+      await reverse(s.auth, o.id, returnId).expect(200);
+      expect(await auditRows(s.tenantId)).toEqual([
+        {
+          event: 'purchase_return_undo',
+          target_label: 'PB-0001',
+          details: {
+            orderId: o.id,
+            returnId,
+            reversalId: expect.any(String),
+            total: 30_000,
+            units: 2,
+          },
+        },
+      ]);
+      // A repeated undo writes no second row.
+      await reverse(s.auth, o.id, returnId).expect(200);
+      expect(await auditRows(s.tenantId)).toHaveLength(1);
+
+      // Paid in full again and one more back: money due back, received into the drawer.
+      await giveBack(s.auth, o.id, {
+        reason: 'rusak',
+        lines: [{ lineId: o.lines[0].id, qty: 1 }],
+      }).expect(201);
+      const key = randomUUID();
+      const got = await refund(
+        s.auth,
+        o.id,
+        {
+          amount: 15_000,
+          destination: 'drawer',
+          note: 'diantar sales Budi 081234567890',
+        },
+        key,
+      ).expect(201);
+      // A replay writes no second row.
+      await refund(
+        s.auth,
+        o.id,
+        {
+          amount: 15_000,
+          destination: 'drawer',
+          note: 'diantar sales Budi 081234567890',
+        },
+        key,
+      ).expect(201);
+      // Refused void of the payment (the refund depends on it): nothing logged.
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paymentId}/void`,
+        { reason: 'Salah transfer' },
+      ).expect(422);
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paymentId}/void`,
+        { reason: 'Salah transfer' },
+      ).expect(200);
+
+      const rows = await auditRows(s.tenantId);
+      expect(rows.map((r) => r.event)).toEqual([
+        'purchase_return_undo',
+        'purchase_refund',
+        'purchase_refund_void',
+        'purchase_payment_void',
+      ]);
+      expect(rows[1].details).toEqual({
+        orderId: o.id,
+        refundId: got.body.id,
+        amount: 15_000,
+        destination: 'drawer',
+        shiftId: expect.any(String),
+      });
+      expect(rows[2].details).toMatchObject({
+        refundId: got.body.id,
+        amount: 15_000,
+        drawerReversed: true,
+      });
+      expect(rows[3].details).toEqual({
+        orderId: o.id,
+        paymentId,
+        amount: 150_000,
+        source: 'outside',
+        shiftId: null,
+        drawerReversed: null,
+      });
+      // Ids and amounts only: no note, no reason text, no phone number.
+      const text = JSON.stringify(rows);
+      for (const word of ['diantar', '0812', 'Salah', 'note', 'reason'])
+        expect(text).not.toContain(word);
+    });
+
+    it('the same refund key sent twice at once: one refund; on two purchases the loser meets the unique key and is refused', async () => {
+      const s = await createStore();
+      const one = await overpaid(s);
+      const key = randomUUID();
+      const body = { amount: 10_000, destination: 'store_cash' };
+      // Same purchase: the second waits for the purchase lock, then finds the first under its key and answers it.
+      const [a, b] = await racing(
+        (sql) =>
+          sql`select id from pos.purchase_orders where id = ${one.o.id} for update`,
+        () => [
+          refund(s.auth, one.o.id, body, key).then((r) => r),
+          refund(s.auth, one.o.id, body, key).then((r) => r),
+        ],
+      );
+      expect([a.status, b.status]).toEqual([201, 201]);
+      expect(a.body).toEqual(b.body);
+
+      // Two purchases, one new key: no shared row lock, so both pass every check and the second insert hits the
+      // unique key (the unique-violation path), reads the winner and refuses the other body.
+      const two = await overpaid(s);
+      const three = await overpaid(s);
+      const shared = randomUUID();
+      const [c, d] = await racing(
+        (sql) =>
+          sql`select id from pos.purchase_orders where id in (${two.o.id}, ${three.o.id}) for update`,
+        () => [
+          refund(s.auth, two.o.id, body, shared).then((r) => r),
+          refund(s.auth, three.o.id, body, shared).then((r) => r),
+        ],
+      );
+      expect([c.status, d.status].sort()).toEqual([201, 422]);
+      expect((c.status === 422 ? c : d).body).toMatchObject({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+      });
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from pos.purchase_refunds where tenant_id = ${s.tenantId}`;
+      expect(n).toBe(2);
+      // The loser's store cash entry and audit row rolled back with it.
+      expect(await storeCash(s)).toBe(20_000);
+      expect(await auditRows(s.tenantId)).toHaveLength(2);
+    });
+
+    it('the shift report after a drawer refund voided once its shift closed: the shift keeps the refund, the store cash gives it back', async () => {
+      const s = await createStore();
+      const { o } = await overpaid(s);
+      await openShift(s, 50_000);
+      const got = await refund(s.auth, o.id, {
+        amount: 12_000,
+        destination: 'drawer',
+      }).expect(201);
+      await post(s.auth, '/shifts/current/close', {
+        countedCash: 62_000,
+      }).expect(200);
+      const today = await storeDay(0);
+      const shiftRow = async () =>
+        (
+          await get(s.auth, `/reports/shifts?from=${today}&to=${today}`).expect(
+            200,
+          )
+        ).body.rows[0] as Record<string, unknown>;
+      const before = await shiftRow();
+      expect(before).toMatchObject({
+        purchaseRefunds: 12_000,
+        purchaseRefundReversals: 0,
+        cashIn: 12_000,
+        expectedCash: 62_000,
+        countedCash: 62_000,
+        difference: 0,
+      });
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      // The closed shift's row is exactly as it was; the cash left the store cash instead.
+      expect(await shiftRow()).toEqual(before);
+      expect(await storeCash(s)).toBe(-12_000);
+      expect(
+        await admin`select direction, kind, amount from pos.store_cash_entries where tenant_id = ${s.tenantId}`,
+      ).toEqual([
+        { direction: 'out', kind: 'purchase_refund_void', amount: '12000' },
+      ]);
+      expect(await figures(s, o.id)).toMatchObject({
+        refunded: 0,
+        refundDue: 30_000,
       });
     });
 

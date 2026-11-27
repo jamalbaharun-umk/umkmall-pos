@@ -121,4 +121,20 @@ describe('Log aktivitas (UMK-1969)', () => {
       { value: ID, label: 'Rina' },
     ])
   })
+
+  it('names the supplier money of a purchase (UMK-1970) with its amount and where the cash went', () => {
+    expect(actionLabel('purchase_refund')).toBe('Terima uang retur pemasok')
+    expect(actionLabel('purchase_refund_void')).toBe('Batalkan uang retur pemasok')
+    expect(actionLabel('purchase_payment_void')).toBe('Batalkan bayar pemasok')
+    expect(actionLabel('purchase_return_undo')).toBe('Batalkan retur pembelian')
+    expect(detailText(row({ event: 'purchase_refund', details: { amount: 20000, destination: 'drawer' } }))).toBe('Rp20.000 · laci shift')
+    expect(detailText(row({ event: 'purchase_refund', details: { amount: 5000, destination: 'store_cash' } }))).toBe('Rp5.000 · kas toko')
+    expect(detailText(row({ event: 'purchase_refund_void', details: { amount: 7000, destination: 'drawer', drawerReversed: false } }))).toBe(
+      'Rp7.000 · kas toko',
+    )
+    expect(detailText(row({ event: 'purchase_payment_void', details: { amount: 50000, source: 'outside', drawerReversed: null } }))).toBe(
+      'Rp50.000 · di luar laci',
+    )
+    expect(detailText(row({ event: 'purchase_return_undo', details: { total: 30000, units: 2 } }))).toBe('Rp30.000 · 2 unit kembali ke stok')
+  })
 })
