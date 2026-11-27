@@ -397,21 +397,29 @@ export class SummariesService {
     };
   }
 
-  async dailyTarget(tenantId: string) {
-    const tz = await this.reports.timezone(tenantId);
-    const [days, [row]] = await Promise.all([
-      this.dayTotals(tenantId, tz, 1),
-      this.rows(
-        sql`select daily_target from pos.sales_settings where tenant_id = ${tenantId}`,
-      ),
-    ]);
+  /**
+   * Today's net sales against the owner's target. `money` = the actor holds `reports.view`: only then the rupiah
+   * figures (`target`, `today`) come back. A cashier without it sees only whether a target is set and the percent,
+   * never the store's takings (GET /sales shows them only their own sales); with no target, no figure at all.
+   */
+  async dailyTarget(tenantId: string, money: boolean) {
+    const [row] = await this.rows(
+      sql`select daily_target from pos.sales_settings where tenant_id = ${tenantId}`,
+    );
     const target = row?.daily_target == null ? null : n(row.daily_target);
-    const total = days[0].total;
+    if (target === null && !money)
+      return { set: false, target: null, today: null, percent: null };
+    const tz = await this.reports.timezone(tenantId);
+    const total = (await this.dayTotals(tenantId, tz, 1))[0].total;
+    // Whole percent, may pass 100; none without a target.
+    const percent = target
+      ? Math.max(0, Math.floor((total * 100) / target))
+      : null;
     return {
-      target,
-      today: total,
-      // Whole percent, may pass 100; none without a target.
-      percent: target ? Math.max(0, Math.floor((total * 100) / target)) : null,
+      set: target !== null,
+      target: money ? target : null,
+      today: money ? total : null,
+      percent,
     };
   }
 
@@ -423,6 +431,6 @@ export class SummariesService {
         target: salesSettings.tenantId,
         set: { dailyTarget: target },
       });
-    return this.dailyTarget(tenantId);
+    return this.dailyTarget(tenantId, true);
   }
 }

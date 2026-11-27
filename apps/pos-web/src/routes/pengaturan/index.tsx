@@ -6,7 +6,7 @@ import { SCROLL_TABS } from '@/lib/scroll-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
-import { useCan } from '@/components/shell'
+import { useCan, useIsOwner } from '@/components/shell'
 import { DailyTargetForm } from '../ringkasan/-target-form'
 import { SetupBoard } from '../ringkasan/-panels'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
@@ -40,6 +40,8 @@ const TIMEZONES = [
 function SettingsPage() {
   const { profile, taxBps, timezone } = Route.useLoaderData()
   const canEdit = useCan('catalog.manage')
+  // The daily target is set by the owner (owner ruling); an admin with catalog.manage does not see the form.
+  const owner = useIsOwner()
   return (
     <Page title="Pengaturan" crumbs={[{ label: 'Pengaturan' }]}>
       {canEdit && <SetupBoard />}
@@ -61,7 +63,7 @@ function SettingsPage() {
           </TabsContent>
           <TabsContent value="aplikasi">
             <AppForm taxBps={taxBps} timezone={timezone} />
-            <DailyTargetForm />
+            {owner && <DailyTargetForm />}
           </TabsContent>
           <TabsContent value="tentang">
             <Panel className="mt-4 flex flex-col gap-2 p-6 text-sm text-default-secondary">

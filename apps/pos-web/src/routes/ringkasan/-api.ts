@@ -64,9 +64,11 @@ export type SetupSummary = {
   doneCount: number
   complete: boolean
 }
+/** `target` and `today` (rupiah) come only with `reports.view`; a cashier gets `set` and `percent`. */
 export type DailyTarget = {
+  set: boolean
   target: number | null
-  today: number
+  today: number | null
   percent: number | null
 }
 
@@ -122,7 +124,7 @@ export const loadSummary = createServerFn()
   })
   .handler(({ data }) => load<SummaryKinds[SummaryKind]>(`/summaries/${data}`))
 
-/** Sets the daily sales target (rupiah), or clears it with `null`. Owner only (catalog.manage). */
+/** Sets the daily sales target (rupiah), or clears it with `null`. The owner only. */
 export const saveDailyTarget = createServerFn({ method: 'POST' })
   .validator((target: number | null) => target)
   .handler(async ({ data }): Promise<SummaryResult<DailyTarget>> => {

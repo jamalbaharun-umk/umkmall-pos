@@ -101,17 +101,22 @@ export class SummariesController {
     return this.summaries.setup(s.tenantId);
   }
 
-  /** The cashier's finished receipt shows it, so `sales.create` reads it as well as `reports.view`. */
+  /**
+   * The cashier's finished receipt shows it, so `sales.create` reads it as well as `reports.view`; without
+   * `reports.view` it answers the percent only (no rupiah figure).
+   */
   @Get('daily-target')
   dailyTarget(@CurrentSession() s: PosSession) {
     if (!hasPermission(s, 'sales.create') && !this.money(s))
       throw new ForbiddenException();
-    return this.summaries.dailyTarget(s.tenantId);
+    return this.summaries.dailyTarget(s.tenantId, this.money(s));
   }
 
+  /** Owner ruling: the target is set by the owner. An admin with `catalog.manage` is refused before the body is read. */
   @Put('daily-target')
   @RequirePermission('catalog.manage')
   setDailyTarget(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    if (s.kind !== 'owner') throw new ForbiddenException();
     return this.summaries.setDailyTarget(
       s.tenantId,
       validate(TargetInput, body).target,

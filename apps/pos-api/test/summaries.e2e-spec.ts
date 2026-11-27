@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import postgres from 'postgres';
 import request from 'supertest';
+import { ADMIN_PERMISSIONS } from '../src/staff/permissions';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
@@ -350,11 +351,13 @@ describe('summaries across menus (feature 39)', () => {
       expect(
         (await get(a.auth, '/summaries/daily-target').expect(200)).body,
       ).toEqual({
+        set: false,
         target: null,
         today: 15_500,
         percent: null,
       });
       expect((await put(a.auth, { target: 31_000 }).expect(200)).body).toEqual({
+        set: true,
         target: 31_000,
         today: 15_500,
         percent: 50,
@@ -364,7 +367,41 @@ describe('summaries across menus (feature 39)', () => {
       ).toBe(155);
       expect(
         (await put(a.auth, { target: null }).expect(200)).body,
-      ).toMatchObject({ target: null, percent: null });
+      ).toMatchObject({ set: false, target: null, percent: null });
+    });
+
+    it('a cashier without reports.view gets the percent only: never the store total nor the target in rupiah', async () => {
+      // No target: nothing at all, not even today's total.
+      expect(
+        (await get(sari.auth, '/summaries/daily-target').expect(200)).body,
+      ).toEqual({ set: false, target: null, today: null, percent: null });
+      await put(a.auth, { target: 31_000 }).expect(200);
+      expect(
+        (await get(sari.auth, '/summaries/daily-target').expect(200)).body,
+      ).toEqual({ set: true, target: null, today: null, percent: 50 });
+      // reports.view sees the figures.
+      const viewer = await createCashier(app, a, ['reports.view']);
+      expect(
+        (await get(viewer.auth, '/summaries/daily-target').expect(200)).body,
+      ).toEqual({ set: true, target: 31_000, today: 15_500, percent: 50 });
+      await put(a.auth, { target: null }).expect(200);
+    });
+
+    it('is set by the owner only: an admin with every Admin permission gets 403 and changes nothing', async () => {
+      const adminStaff = await createCashier(app, a, [...ADMIN_PERMISSIONS]);
+      await put(adminStaff.auth, { target: 20_000 }).expect(403);
+      // Refused before the body is read: a bad body is 403 too, not 422.
+      await put(adminStaff.auth, { target: 'x' }).expect(403);
+      expect(
+        (await get(adminStaff.auth, '/summaries/daily-target').expect(200)).body
+          .target,
+      ).toBeNull();
+      await put(a.auth, { target: 20_000 }).expect(200);
+      expect(
+        (await get(adminStaff.auth, '/summaries/daily-target').expect(200)).body
+          .target,
+      ).toBe(20_000);
+      await put(a.auth, { target: null }).expect(200);
     });
 
     it('refuses bad targets with 422 and leaves the stored one', async () => {
@@ -380,14 +417,13 @@ describe('summaries across menus (feature 39)', () => {
 
     it("is the store's own: store B has no target and sees none of A's sales", async () => {
       const r = (await get(b.auth, '/summaries/daily-target').expect(200)).body;
-      expect(r).toEqual({ target: null, today: 0, percent: null });
+      expect(r).toEqual({ set: false, target: null, today: 0, percent: null });
     });
 
     it('a cashier reads it for the receipt but cannot set it; a role with neither cannot read', async () => {
       expect(
-        (await get(sari.auth, '/summaries/daily-target').expect(200)).body
-          .target,
-      ).toBe(31_000);
+        (await get(sari.auth, '/summaries/daily-target').expect(200)).body,
+      ).toMatchObject({ set: true, percent: 50 });
       await put(sari.auth, { target: 5000 }).expect(403);
       const none = await createCashier(app, a, ['expenses.manage']);
       await get(none.auth, '/summaries/daily-target').expect(403);

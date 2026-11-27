@@ -24,7 +24,10 @@ and Pengaturan shows a "Kelengkapan toko" board that disappears when complete. C
   value, revenue by category) need `reports.view` and come back `null` without it. Sales are dated by `paid_at`,
   only `FINAL_SALE_STATUSES`; the daily total follows the report rule (sales by `paid_at` minus voids by their day);
   the per-menu shares count completed receipts only.
-- `GET/PUT /summaries/daily-target`: read by `sales.create` or `reports.view`, set by `catalog.manage`. Stored in
+- `GET/PUT /summaries/daily-target`: read by `sales.create` or `reports.view`; set by the owner only (owner ruling: an
+  admin holding `catalog.manage` gets 403, the form shows to the owner only). Without `reports.view` the read answers
+  only whether a target is set and the percent, never a rupiah figure (a cashier sees only their own sales
+  elsewhere), so the receipt card shows the percent only. Stored in
   `pos.sales_settings.daily_target` (nullable rupiah). Migration also adds `sales_settings.tax_set_at` so the board
   can tell "tax set to 0%" from "never set" (`PUT /sales/settings` stamps it).
 - Web `routes/ringkasan/`: a server function per summary and one panel component per menu; a panel loads on its
@@ -37,7 +40,8 @@ and Pengaturan shows a "Kelengkapan toko" board that disappears when complete. C
 - [test] each endpoint returns exact figures for a seeded store (money integer rupiah, `paid_at` dating, voids)
 - [test] cross-tenant: store B never sees store A's names or figures, per endpoint
 - [test] 403 without the menu's permission; cost-bearing fields null without `reports.view`
-- [test] daily target: set, clear, validation 422, cashier read, cashier cannot set; percent math
+- [test] daily target: set, clear, validation 422, cashier read (percent only, no rupiah), cashier and admin cannot
+  set (owner only); percent math
 - [test] revert-red: the `reports.view` gate on margin/value fields, proven by breaking it
 - [test] web helpers (shapes to chart data, percent, hide-when-complete) unit tested
 - [qa] browser at 375 and 1024: each panel with data, empty and error

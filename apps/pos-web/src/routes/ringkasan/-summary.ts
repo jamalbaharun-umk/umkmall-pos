@@ -44,6 +44,3 @@ export function parseTarget(text: string): number | null | 'invalid' {
   const n = Number(digits)
   return n >= 1 && n <= 1_000_000_000 ? n : 'invalid'
 }
-
-/** A target's progress for the receipt: the bar stops at 100, the number does not ("Rp… dari Rp… 120%"). */
-export const targetPercent = (today: number, target: number): number => Math.max(0, Math.floor((today * 100) / target))

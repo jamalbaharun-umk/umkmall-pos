@@ -6,7 +6,6 @@ import {
   parseTarget,
   setupProgress,
   showSetupBoard,
-  targetPercent,
   usedPercent,
   voucherStatus,
   weekday,
@@ -59,11 +58,5 @@ describe('summary helpers', () => {
     expect(parseTarget('-5')).toBe('invalid')
     expect(parseTarget('abc')).toBe('invalid')
     expect(parseTarget('1000000001')).toBe('invalid')
-  })
-
-  it('computes the target percent as a whole number that may pass 100', () => {
-    expect(targetPercent(1_350_000, 2_000_000)).toBe(67)
-    expect(targetPercent(2_400_000, 2_000_000)).toBe(120)
-    expect(targetPercent(-5000, 2_000_000)).toBe(0)
   })
 })

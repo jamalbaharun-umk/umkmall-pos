@@ -25,7 +25,6 @@ import {
   monthName,
   setupProgress,
   showSetupBoard,
-  targetPercent,
   usedPercent,
   voucherStatus,
   weekday,
@@ -512,17 +511,13 @@ function SetupBoardInner() {
   )
 }
 
-/** The cashier's finished receipt: today's sales against the owner's target. Nothing at all when no target is set. */
+/**
+ * The cashier's finished receipt: today's progress against the owner's target, as a percent only (a cashier may not
+ * see the store's takings). Nothing at all when no target is set.
+ */
 export function DailyTargetCard() {
   // Quiet: the receipt is done and paid; a target that cannot load is simply not shown, without a dialog.
   const { loaded } = useSummary('daily-target', true)
-  if (loaded.state !== 'ready' || loaded.data.target === null) return null
-  const { target, today } = loaded.data
-  return (
-    <MarginTile
-      label="Target harian"
-      percent={targetPercent(today, target)}
-      amount={`${rp(Math.max(0, today))} dari ${rp(target)}`}
-    />
-  )
+  if (loaded.state !== 'ready' || !loaded.data.set || loaded.data.percent === null) return null
+  return <MarginTile label="Target harian" percent={loaded.data.percent} hint="Penjualan hari ini terhadap target" />
 }
