@@ -665,14 +665,17 @@ async function storeA(userA) {
   A.reports = { sales, products, dash, shifts, purch, pl };
   check(
     'A.report.pl',
-    'profit and loss: revenue ex tax, COGS, gross, expenses, net, tax, rounding',
-    pick(pl.current, ['revenue', 'cost', 'grossProfit', 'expenses', 'netProfit', 'tax', 'rounding']),
+    'profit and loss: revenue ex tax, COGS, gross, Susut stok, expenses, net, tax, rounding',
+    pick(pl.current, ['revenue', 'cost', 'grossProfit', 'shrinkage', 'expenses', 'netProfit', 'tax', 'rounding']),
     {
       revenue: 331750,
       cost: 260000,
       grossProfit: 71750,
+      // UMK-2072 Susut stok: the approved opname took Kerupuk 1 short, 1 x cost 2.000.
+      shrinkage: 2000,
       expenses: 10000,
-      netProfit: 61750,
+      // gross 71.750 - Susut stok 2.000 - expenses 10.000
+      netProfit: 59750,
       tax: 33175,
       rounding: 75,
     },
@@ -744,7 +747,7 @@ async function storeA(userA) {
       .split(/\r?\n/)
       .find((l) => l.startsWith('Untung bersih'))
       ?.split(',')[1],
-    '61750',
+    '59750',
   );
   for (const c of Object.values(csvs)) delete c.text;
   A.csvs = csvs;

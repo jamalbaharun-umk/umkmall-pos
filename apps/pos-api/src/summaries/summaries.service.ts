@@ -74,6 +74,23 @@ export class SummariesService {
     }));
   }
 
+  /**
+   * Today's net sales WITHOUT tax, the dashboard's definition (`DashboardWidgetsService.overview`): final sales
+   * paid today minus the voids done today, each as `total - tax` (tax is held for the government, not revenue;
+   * rounding is not in `total`). Only the daily target uses it; the history cards keep the amount paid.
+   */
+  async netSalesToday(tenantId: string, tz: string) {
+    const { today } = this.clock(tz);
+    const [r] = await this.rows(sql`
+      select (select coalesce(sum(s.total - s.tax), 0) from pos.sales s
+               where s.tenant_id = ${tenantId} and s.status in (${FINAL_LIST})
+                 and ${this.onDay(sql`s.paid_at`, today, tz)})
+           - (select coalesce(sum(v.total - v.tax), 0) from pos.sale_voids v
+               where v.tenant_id = ${tenantId}
+                 and ${this.onDay(sql`v.created_at`, today, tz)}) as sales`);
+    return n(r.sales);
+  }
+
   async salesHistory(tenantId: string) {
     const tz = await this.reports.timezone(tenantId);
     const { today } = this.clock(tz);
@@ -419,7 +436,7 @@ export class SummariesService {
   }
 
   /**
-   * Today's net sales against the owner's target. `money` = the actor holds `reports.view`: only then the rupiah
+   * Today's net sales (tax left out, as on the dashboard) against the owner's target. `money` = the actor holds `reports.view`: only then the rupiah
    * figures (`target`, `today`) come back. A cashier without it sees only whether a target is set and the percent,
    * never the store's takings (GET /sales shows them only their own sales); with no target, no figure at all.
    */
@@ -431,7 +448,7 @@ export class SummariesService {
     if (target === null && !money)
       return { set: false, target: null, today: null, percent: null };
     const tz = await this.reports.timezone(tenantId);
-    const total = (await this.dayTotals(tenantId, tz, 1))[0].total;
+    const total = await this.netSalesToday(tenantId, tz);
     // Whole percent, may pass 100; none without a target.
     const percent = target
       ? Math.max(0, Math.floor((total * 100) / target))

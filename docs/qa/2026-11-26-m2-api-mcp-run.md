@@ -56,7 +56,7 @@ Shift: opening 200.000, cash sales 189.200, kasbon payments 30.000, deposit 12.5
 Reports for the day (owner): salesCount 5, grossSales 346.750, voucher 15.000, tax 33.175, **revenue 364.925**, cost
 260.000, **gross profit 71.750**, rounding 75, voidCount 2. Products: Teh 26 base units, Beras 3, Kerupuk 1 (Gula sold
 and reversed nets out). The dashboard equals the sales report. Shifts: Budi, difference −500. Purchasing 1.024.000.
-Profit and loss: revenue without tax 331.750, COGS 260.000, gross 71.750, expenses 10.000, **net 61.750**. All six
+Profit and loss: revenue without tax 331.750, COGS 260.000, gross 71.750, expenses 10.000, **net 61.750** (recorded before UMK-2072 "Susut stok"; the script now expects Susut stok 2.000 and **net 59.750**). All six
 CSVs (`/reports/{sales,products,shifts,purchasing,profit-loss}/csv`, `/expenses/csv`) answer `text/csv` with the same
 totals.
 

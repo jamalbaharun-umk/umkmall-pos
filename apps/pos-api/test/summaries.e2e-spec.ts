@@ -469,6 +469,75 @@ describe('summaries across menus (feature 39)', () => {
       ).toMatchObject({ set: false, target: null, percent: null });
     });
 
+    it("progress is on the dashboard's basis: net sales WITHOUT tax, voids taken off (UMK-2117)", async () => {
+      const t = await createStore();
+      const cat = await post(t.auth, '/catalog/categories', {
+        name: 'Umum',
+      }).expect(201);
+      const teh = (
+        await post(t.auth, '/catalog/products', {
+          categoryId: cat.body.id,
+          name: 'Es Teh',
+          costPrice: 5000,
+          sellingPrice: 10_000,
+        }).expect(201)
+      ).body.id as string;
+      await post(t.auth, '/stock/opening', { productId: teh, qty: 100 }).expect(
+        201,
+      );
+      await post(t.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      await http()
+        .put('/void-pin')
+        .set('Authorization', t.freshAuth)
+        .send({ pin: '246810' })
+        .expect(200);
+      await http()
+        .put('/sales/settings')
+        .set('Authorization', t.auth)
+        .send({ taxBps: 1000 })
+        .expect(200);
+      const sell = async (qty: number) =>
+        (
+          await post(t.auth, '/sales', {
+            lines: [{ productId: teh, qty }],
+            paid: 1_000_000,
+          }).expect(201)
+        ).body as { id: string; total: number };
+      const widget = async () =>
+        (
+          await get(t.auth, '/reports/widgets/overview?period=today').expect(
+            200,
+          )
+        ).body.current.sales as number;
+      const target = async (t0: number) =>
+        (
+          await http()
+            .put('/summaries/daily-target')
+            .set('Authorization', t.auth)
+            .send({ target: t0 })
+            .expect(200)
+        ).body as { today: number; percent: number };
+
+      // 5 x 10.000 = 50.000 + 10% tax = 55.000 paid: the target sees 50.000, not 55.000.
+      const first = await sell(5);
+      expect(first.total).toBe(55_000);
+      let r = await target(100_000);
+      expect(r).toMatchObject({ today: 50_000, percent: 50 });
+      expect(r.today).toBe(await widget());
+
+      // A second taxed sale (2 x 10.000 + 2.000 tax) and the first one's void (taken off WITH its tax out).
+      await sell(2);
+      expect((await target(100_000)).today).toBe(70_000);
+      await post(t.auth, `/sales/${first.id}/void`, {
+        reasonCode: 'wrong_item_or_qty',
+        approverId: t.userId,
+        pin: '246810',
+      }).expect(201);
+      r = await target(100_000);
+      expect(r).toMatchObject({ today: 20_000, percent: 20 });
+      expect(r.today).toBe(await widget());
+    });
+
     it('a cashier without reports.view gets the percent only: never the store total nor the target in rupiah', async () => {
       // No target: nothing at all, not even today's total.
       expect(

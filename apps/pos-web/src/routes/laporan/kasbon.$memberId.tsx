@@ -104,7 +104,7 @@ function KasbonCard({ k }: { k: KasbonItem }) {
               Dibayar {shortDate(p.paidOn)} ({p.method.toLowerCase()})
               {p.byCollector && <span className="block text-xs">Diambil penagih di luar shift</span>}
             </dt>
-            <dd className="tabular-nums text-default-success">−{rupiah(p.amount)}</dd>
+            <dd className="tabular-nums text-default-success">{rupiah(-p.amount)}</dd>
           </div>
         ))}
         <div className="flex justify-between gap-4 border-t border-default-secondary pt-2">
