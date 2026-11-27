@@ -7,6 +7,10 @@ import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
 import { cashDiff, checkRange, REPORTS, type Column, type ReportDef } from './-reports'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
 import { ActionRow } from '@/components/action-row'
+import { ReportVisuals } from '@/components/report-visual'
+import { PdfButton } from './-pdf-button'
+import { rangeLabel } from './-pdf'
+import { KIND_BY_JENIS } from './-visuals'
 
 type Search = { from?: string; to?: string }
 
@@ -49,6 +53,7 @@ function ReportPage() {
       {result.ok ? (
         <>
           <RangeForm key={`${result.data.from}_${result.data.to}`} jenis={jenis} from={result.data.from} to={result.data.to} />
+          <ReportVisuals kind={KIND_BY_JENIS[jenis]} query={{ from: result.data.from, to: result.data.to }} />
           <Printable def={def} report={result.data} />
         </>
       ) : (
@@ -127,6 +132,7 @@ function RangeForm({ jenis, from: from0, to: to0, serverErrors }: { jenis: strin
           >
             Unduh CSV
           </Button>
+          <PdfButton jenis={jenis} query={{ from, to }} label={rangeLabel(from, to)} disabled={!!serverErrors} beforeStart={valid} />
           <Button htmlType="button" type="outline" color="primary" width="auto" disabled={!!serverErrors} onClick={() => window.print()}>Cetak</Button>
           <Button htmlType="submit" type="primary" color="primary" width="auto">Tampilkan</Button>
         </ActionRow>

@@ -33,6 +33,12 @@ function ReportIndex() {
             </Card>
           </Link>
         ))}
+        <Link to="/laporan/penjualan-pengeluaran" search={{ scale: 'day', metric: 'both' }} className="block">
+          <Card variant="outlined" padding="medium" className="h-full hover:border-default-brand">
+            <h2 className="font-semibold text-default-primary">Penjualan dan pengeluaran</h2>
+            <p className="mt-1 text-sm text-default-secondary">Diagram batang per hari, bulan, atau tahun, dan bisa diunduh sebagai PDF.</p>
+          </Card>
+        </Link>
         <Link to="/laporan/untung-rugi" search={{ period: 'today' }} className="block">
           <Card variant="outlined" padding="medium" className="h-full hover:border-default-brand">
             <h2 className="font-semibold text-default-primary">Untung rugi</h2>
