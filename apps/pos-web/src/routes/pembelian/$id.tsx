@@ -3,6 +3,7 @@ import { Badge, Button, Card, Table, TableBody, TableCell, TableHead, TableHeade
 import { useState } from 'react'
 import { act, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
+import { formatDay } from '@/lib/expiry'
 import { loadOrderPage, orderAction } from './-api'
 import {
   dueText,
@@ -299,6 +300,7 @@ function OrderPage() {
               <TableHead className="text-right">Jumlah</TableHead>
               {approved && <TableHead className="text-right">Diretur</TableHead>}
               <TableHead className="text-right max-sm:hidden">Harga beli</TableHead>
+              <TableHead className="max-sm:hidden">Kedaluwarsa</TableHead>
               <TableHead className="text-right">Subtotal</TableHead>
             </TableRow>
           </TableHeader>
@@ -312,6 +314,7 @@ function OrderPage() {
                 <TableCell className="text-right max-sm:hidden">
                   {l.unitCost === undefined ? '–' : rupiah(l.unitCost)}
                 </TableCell>
+                <TableCell className="max-sm:hidden">{l.expiresAt ? formatDay(l.expiresAt) : '–'}</TableCell>
                 <TableCell className="text-right">
                   {l.unitCost === undefined ? '–' : rupiah(l.qty * l.unitCost)}
                 </TableCell>

@@ -5,6 +5,7 @@ import { SCROLL_ROW } from '@/lib/scroll-row'
 import {
   AgingCard,
   ExpensesCard,
+  ExpiringCard,
   Headline,
   HourlyCard,
   LowStockCard,
@@ -53,6 +54,7 @@ export function DashboardWidgets() {
         <PaymentCard ctx={ctx} />
         <TopProductsCard ctx={ctx} />
         <LowStockCard ctx={ctx} />
+        <ExpiringCard ctx={ctx} />
         <AgingCard ctx={ctx} />
         <ExpensesCard ctx={ctx} />
       </div>

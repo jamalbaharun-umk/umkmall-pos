@@ -44,6 +44,8 @@ export type Order = OrderSummary & {
     sku: string
     qty: number
     unitCost?: number
+    /** Best-before date of the batch this line becomes (`YYYY-MM-DD`), null when it does not expire. */
+    expiresAt: string | null
     /** Units sent back so far, and what is left in the line's stock batch (the most a return may take). */
     returnedQty: number
     returnable: number
@@ -262,7 +264,7 @@ type OrderInput = {
   paymentMethod: string | null
   note: string | null
   dueDate: string | null
-  lines: { productId: string; qty: number; unitCost: number }[]
+  lines: { productId: string; qty: number; unitCost: number; expiresAt: string | null }[]
 }
 export const updateOrder = createServerFn({ method: 'POST' })
   .validator((d: OrderInput & { id?: string }) => d)

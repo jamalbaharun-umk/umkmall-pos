@@ -67,6 +67,23 @@ export type LowStock = {
     status: 'out' | 'low'
   }[]
 }
+export type Expiring = {
+  days: number
+  /** Products whose stock expires within the window or already has. */
+  total: number
+  /** Of those, the products whose earliest date is already past. */
+  expired: number
+  rows: {
+    productId: string
+    name: string
+    sku: string
+    unit: string
+    qty: number
+    expiresAt: string
+    daysLeft: number
+    expired: boolean
+  }[]
+}
 export type Aging = {
   total: number
   customers: number
@@ -88,5 +105,7 @@ export const loadTopProducts = createServerFn().handler(() =>
 )
 
 export const loadLowStock = createServerFn().handler(() => get<LowStock>('/reports/widgets/low-stock?limit=5'))
+
+export const loadExpiring = createServerFn().handler(() => get<Expiring>('/reports/widgets/expiring?days=30&limit=5'))
 
 export const loadAging = createServerFn().handler(() => get<Aging>('/reports/receivables/aging'))
