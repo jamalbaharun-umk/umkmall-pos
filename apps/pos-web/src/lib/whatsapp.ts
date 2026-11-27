@@ -138,3 +138,6 @@ export function remindedAgainNote(name: string, daysAgo: number | null): string 
   if (daysAgo === null || daysAgo >= REMIND_AGAIN_DAYS) return null
   return `${name} terakhir diingatkan ${daysAgo === 0 ? 'hari ini' : `${daysAgo} hari lalu`}. Tetap kirim?`
 }
+
+/** The customer list narrowed to one customer (it searches by name): where "Buka pelanggan" goes, not the whole list. */
+export const customerSearch = (memberName: string) => ({ q: memberName.trim().slice(0, 60) || undefined })

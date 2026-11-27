@@ -5,6 +5,7 @@ import {
   receiptMessage,
   reminderMessage,
   remindedAgainNote,
+  customerSearch,
   shortDate,
   whatsappLink,
   type ReceiptSource,
@@ -167,5 +168,16 @@ describe('remindedAgainNote', () => {
     expect(remindedAgainNote('Bu Rina', 0)).toBe('Bu Rina terakhir diingatkan hari ini. Tetap kirim?')
     expect(remindedAgainNote('Bu Rina', 3)).toBeNull()
     expect(remindedAgainNote('Bu Rina', null)).toBeNull()
+  })
+})
+
+describe('customerSearch (UMK-2089)', () => {
+  it('opens the customer list narrowed to the one customer', () => {
+    expect(customerSearch(' Bu Rina ')).toEqual({ q: 'Bu Rina' })
+  })
+
+  it('keeps the list unfiltered when the name is empty and within the 60 characters the API takes', () => {
+    expect(customerSearch('  ')).toEqual({ q: undefined })
+    expect(customerSearch('x'.repeat(80)).q).toHaveLength(60)
   })
 })
