@@ -950,6 +950,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
             discountPercent: null,
             netTotal: 39_600,
             discountNeedsApproval: false,
+            priceNeedsApproval: false,
           },
           {
             productId,
@@ -968,8 +969,11 @@ describe('units and wholesale pricing (UMK-1985)', () => {
             discountPercent: null,
             netTotal: 78_000,
             discountNeedsApproval: false,
+            priceNeedsApproval: false,
           },
         ],
+        orderDiscount: 0,
+        orderDiscountNeedsApproval: false,
       });
       // The design's hint at 12 loose pcs: "Tambah 36 pcs lagi untuk harga Rp3.200".
       const twelve = await quote([{ productId, qty: 12 }]).expect(200);
@@ -988,8 +992,17 @@ describe('units and wholesale pricing (UMK-1985)', () => {
       expect((await get(store, '/sales').expect(200)).body.data).toHaveLength(
         0,
       );
-      // A price is not part of a quote; a bad unit or product is 422; it needs sales.create.
-      await quote([{ productId, qty: 1, price: 1 }]).expect(422);
+      // A manual price is quoted as the sale takes it (ruling 2026-11-26: the owner holds sales.price_override):
+      // Rp1 for a Rp3.500 pcs is more than 30% below, so the sale would need a PIN approval. A bad unit or product
+      // is 422; it needs sales.create.
+      const manual = await quote([{ productId, qty: 1, price: 1 }]).expect(200);
+      expect(manual.body.lines[0]).toMatchObject({
+        unitPrice: 1,
+        lineTotal: 1,
+        manualPrice: true,
+        appliedTier: null,
+        priceNeedsApproval: true,
+      });
       await quote([{ productId, qty: 1, unit: 'karton' }]).expect(422);
       await quote([{ productId: randomUUID(), qty: 1 }]).expect(422);
       await quote([]).expect(422);

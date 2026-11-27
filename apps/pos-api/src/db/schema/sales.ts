@@ -215,6 +215,9 @@ export const sales = pos
       costTotal: rupiah('cost_total').notNull(),
       // Actor who set a client price or discount (needs sales.price_override); null when none was used.
       overrideBy: uuid('override_by'),
+      // UMK-1990 (ruling 2026-11-26): who approved by PIN an order discount above 30% of what it came off; null
+      // when none was needed.
+      discountApprovedBy: uuid('discount_approved_by'),
       // Lakasir's order note, typed by the cashier; shown on the receipt.
       note: text('note'),
       status: text('status', { enum: SALE_STATUSES })
@@ -401,11 +404,17 @@ export const saleLines = pos
   )
   .enableRLS();
 
+/** What a PIN approval covers: one line of a product (its discount or a lower manual price), or the order discount. */
+export const DISCOUNT_APPROVAL_SCOPES = ['line', 'order'] as const;
+export type DiscountApprovalScope = (typeof DISCOUNT_APPROVAL_SCOPES)[number];
+
 /**
- * UMK-1990: a PIN approval of a line discount above 30% (`DISCOUNT_APPROVAL_BPS`). The approver (the owner or staff
- * holding `sales.price_override`) types their own PIN at the till; the row lets the actor who asked put a discount
- * of at most `max_bps` of the line on one line of `product_id`, once, until `expires_at`. Taken (`used_at`,
- * `sale_id`) inside the sale's transaction. No PIN is kept here: only the approver's own hashed PIN is checked.
+ * UMK-1990: a PIN approval of a manual reduction above 30% (`DISCOUNT_APPROVAL_BPS`). The approver (the owner or
+ * staff holding `sales.price_override`) types their own PIN at the till; the row lets the actor who asked take at
+ * most `max_bps` off, once, until `expires_at`: scope `line`, off one line of `product_id` (a line discount, or a
+ * manual price below the server's, ruling 2026-11-26); scope `order`, off the order (the order discount, of the
+ * subtotal after line discounts; no product). Taken (`used_at`, `sale_id`) inside the sale's transaction. No PIN is
+ * kept here: only the approver's own hashed PIN is checked.
  */
 export const discountApprovals = pos
   .table(
@@ -419,10 +428,14 @@ export const discountApprovals = pos
       approverKind: text('approver_kind', {
         enum: ['owner', 'cashier'],
       }).notNull(),
-      productId: uuid('product_id')
+      scope: text('scope', { enum: DISCOUNT_APPROVAL_SCOPES })
         .notNull()
-        .references(() => products.id, { onDelete: 'restrict' }),
-      // The largest discount approved, in basis points of the line's total.
+        .default('line'),
+      // The line's product; null for an order approval.
+      productId: uuid('product_id').references(() => products.id, {
+        onDelete: 'restrict',
+      }),
+      // The largest reduction approved, in basis points of the line's total (of the order's, for `order`).
       maxBps: integer('max_bps').notNull(),
       expiresAt: ts('expires_at').notNull(),
       usedAt: ts('used_at'),
@@ -438,6 +451,10 @@ export const discountApprovals = pos
       check(
         'discount_approvals_ck',
         sql`${t.maxBps} between 1 and 9999 and (${t.usedAt} is null) = (${t.saleId} is null)`,
+      ),
+      check(
+        'discount_approvals_scope_ck',
+        sql`${t.scope} in ('line', 'order') and (${t.scope} = 'order') = (${t.productId} is null)`,
       ),
     ],
   )

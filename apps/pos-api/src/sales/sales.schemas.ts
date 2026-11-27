@@ -77,8 +77,10 @@ export const SaleInput = z
         .refine(noDoubleDiscount, DOUBLE_DISCOUNT),
     ),
     // The order discount (before UMK-1990; the cashier screen now gives line discounts). Honoured only with
-    // sales.price_override; it comes off after the line discounts, before the voucher.
+    // sales.price_override; it comes off after the line discounts, before the voucher. Above 30% of what it comes
+    // off (ruling 2026-11-26) it names an `order` PIN approval in `discountApprovalId`.
     discount: rupiah.optional(),
+    discountApprovalId: Uuid.optional(),
     // U7: member (required for a credit method), voucher code, payment method (default Tunai).
     memberId: Uuid.optional(),
     voucherCode: z.string().trim().min(1).max(40).optional(),
@@ -115,13 +117,15 @@ export const AgentSaleInput = z
  */
 export const QuoteInput = z
   .object({
-    // UMK-1990: with line discounts (sales.price_override), so the cart shows the server's discounted lines.
+    // UMK-1990: with line discounts (sales.price_override), so the cart shows the server's discounted lines; a
+    // manual price and the order discount as the sale takes them, to answer whether each needs a PIN approval.
     lines: linesOf(
       z
-        .object({ ...lineFields, ...discountFields })
+        .object({ ...lineFields, price: rupiah.optional(), ...discountFields })
         .strict()
         .refine(noDoubleDiscount, DOUBLE_DISCOUNT),
     ),
+    discount: rupiah.optional(),
     voucherCode: z.string().trim().min(1).max(40).optional(),
     paymentMethodId: Uuid.optional(),
   })
@@ -137,21 +141,38 @@ export const AgentQuoteInput = z
   .strict();
 
 /**
- * UMK-1990: a PIN approval of a line discount above 30%: whose PIN (`approverId`, the owner or staff holding
- * sales.price_override), the product, and the largest share of the line approved, in basis points (3001-9999).
+ * UMK-1990: a PIN approval of a reduction above 30%: whose PIN (`approverId`, the owner or staff holding
+ * sales.price_override), what it covers (`scope`: `line`, the default, a line of `productId`, by discount or manual
+ * price; `order`, the order discount, no product, ruling 2026-11-26), and the largest share approved, in basis
+ * points (3001-9999).
  */
 export const DiscountApprovalInput = z
   .object({
     approverId: Uuid,
     pin: VoidPin,
-    productId: Uuid,
+    scope: z.enum(['line', 'order']).default('line'),
+    productId: Uuid.optional(),
     maxBps: z
       .number()
       .int('Harus bilangan bulat')
       .min(3001, 'Diskon sampai 30% tidak perlu persetujuan')
       .max(9999, 'Diskon 100% tidak diperbolehkan'),
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.scope === 'line' && v.productId === undefined)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['productId'],
+        message: 'Wajib diisi',
+      });
+    if (v.scope === 'order' && v.productId !== undefined)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['productId'],
+        message: 'Diskon transaksi tidak memakai produk',
+      });
+  });
 
 export const SalesQuery = z.object({
   shiftId: Uuid.optional(),

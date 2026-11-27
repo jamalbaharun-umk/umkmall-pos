@@ -358,6 +358,13 @@
       "when": 1795744570949,
       "tag": "0050_member_last_reminded",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795748911607,
+      "tag": "0051_discount_gate_scope",
+      "breakpoints": true
     }
   ]
 }

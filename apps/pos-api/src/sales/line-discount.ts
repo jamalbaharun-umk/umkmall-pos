@@ -50,6 +50,14 @@ export const leavesSomething = (discount: number, lineTotal: number) =>
 export const needsApproval = (discount: number, lineTotal: number) =>
   BigInt(discount) * 10000n > BigInt(lineTotal) * BigInt(DISCOUNT_APPROVAL_BPS);
 
+/**
+ * Owner ruling 2026-11-26: a manual price below the server's price is a reduction of the line like a discount,
+ * measured on the line at the server's price (`listPrice × qty`, the wholesale tier applied). 0 for a price at or
+ * above the server's.
+ */
+export const priceCutOf = (listPrice: number, price: number, qty: number) =>
+  Math.max(listPrice - price, 0) * qty;
+
 /** Whether an approval of at most `maxBps` of the line covers this discount. */
 export const withinApproval = (
   discount: number,

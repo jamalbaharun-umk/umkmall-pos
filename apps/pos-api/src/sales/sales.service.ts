@@ -67,6 +67,7 @@ import {
   lineDiscountOf,
   leavesSomething,
   needsApproval,
+  priceCutOf,
   withinApproval,
 } from './line-discount';
 import { saleNumbers, takeNumber } from './numbers';
@@ -204,6 +205,70 @@ function discountsOf(
     };
   });
 }
+
+/**
+ * Ruling 2026-11-26: a manual price (honoured with sales.price_override) is the line's price; below the server's
+ * price it is a reduction measured like a line discount (`priceCut` of `listTotal`). A price of Rp0 on a line the
+ * server prices above Rp0 is refused (422 `DISCOUNT_INVALID`): no approval covers 100%.
+ */
+function manualPriceOf(
+  l: { qty: number; price?: number },
+  listPrice: number,
+  canOverride: boolean,
+  index: number,
+) {
+  const overridden =
+    canOverride && l.price !== undefined && l.price !== listPrice;
+  const unitPrice = overridden ? l.price! : listPrice;
+  const listTotal = listPrice * l.qty;
+  const priceCut = overridden ? priceCutOf(listPrice, unitPrice, l.qty) : 0;
+  if (priceCut > 0 && priceCut >= listTotal)
+    throw codedError(
+      DISCOUNT_INVALID,
+      `lines.${index}.price`,
+      'Harga manual tidak boleh Rp0',
+    );
+  return {
+    overridden,
+    unitPrice,
+    lineTotal: unitPrice * l.qty,
+    listTotal,
+    priceCut,
+    priceNeedsApproval: priceCut > 0 && needsApproval(priceCut, listTotal),
+  };
+}
+
+/**
+ * Ruling 2026-11-26: the order discount comes off what is left after the line discounts (`base`); above 30% of it
+ * it needs an `order` PIN approval. More than the base keeps its old refusal; all of it is refused like 100% of a
+ * line (`DISCOUNT_INVALID`).
+ */
+function orderDiscountOf(discount: number, base: number) {
+  if (discount > base) throw fail('Diskon melebihi subtotal', {}, 'discount');
+  if (discount > 0 && discount === base)
+    throw codedError(
+      DISCOUNT_INVALID,
+      'discount',
+      'Diskon 100% tidak diperbolehkan',
+    );
+  return { discount, needsApproval: needsApproval(discount, base) };
+}
+
+/** A reduction above 30% and the approval the request names for it (`lockApprovals`). */
+type ApprovalWant = {
+  key: string;
+  scope: 'line' | 'order';
+  productId: string | null;
+  reduction: number;
+  base: number;
+  approvalId?: string;
+  field: string;
+  message: string;
+};
+
+const NEEDS_PIN = 'Diskon lebih dari 30% perlu PIN admin';
+const PRICE_NEEDS_PIN =
+  'Harga manual lebih dari 30% di bawah harga normal perlu PIN admin';
 
 /**
  * Cash sales (Lakasir SellingService + classic cashier). The server computes every price and total
@@ -431,9 +496,8 @@ export class SalesService {
       const p = byId.get(l.productId)!;
       const q = priced[i];
       // A client price replaces the price of the line's unit, and only with the permission.
-      const overridden =
-        canOverride && l.price !== undefined && l.price !== q.listPrice;
-      const unitPrice = overridden ? l.price! : q.listPrice;
+      const { overridden, unitPrice, listTotal, priceCut, priceNeedsApproval } =
+        manualPriceOf(l, q.listPrice, canOverride, i);
       return {
         productId: p.id,
         name: p.name,
@@ -449,6 +513,9 @@ export class SalesService {
         listPrice: q.listPrice,
         unitPrice,
         lineTotal: unitPrice * l.qty,
+        listTotal,
+        priceCut,
+        priceNeedsApproval,
         priceOverriddenBy: overridden ? s.actorId : null,
         overridden,
         index: i,
@@ -461,20 +528,55 @@ export class SalesService {
     const discounts = discountsOf(
       lines.map((l) => ({ ...input.lines[l.index], ...l })),
     );
-    const approvals = await this.lockApprovals(
-      tx,
-      s,
-      lines.map((l, i) => ({
-        ...discounts[i],
-        productId: l.productId,
-        lineTotal: l.lineTotal,
-        approvalId: input.lines[i].discountApprovalId,
-      })),
-    );
     const lineDiscount = discounts.reduce((n, d) => n + d.discount, 0);
-    const orderDiscount = canOverride ? (input.discount ?? 0) : 0;
-    if (orderDiscount > subtotal - lineDiscount)
-      throw fail('Diskon melebihi subtotal', {}, 'discount');
+    const order = orderDiscountOf(
+      canOverride ? (input.discount ?? 0) : 0,
+      subtotal - lineDiscount,
+    );
+    const orderDiscount = order.discount;
+    // Ruling 2026-11-26: every manual reduction above 30% names a PIN approval, the line discount's, a manual
+    // price's and the order discount's, all taken under one lock in this transaction.
+    const wants: ApprovalWant[] = lines.flatMap((l, i): ApprovalWant[] => {
+      const line = {
+        key: `line:${i}`,
+        scope: 'line' as const,
+        productId: l.productId,
+        approvalId: input.lines[i].discountApprovalId,
+        field: `lines.${i}.discountApprovalId`,
+      };
+      if (discounts[i].needsApproval)
+        return [
+          {
+            ...line,
+            reduction: discounts[i].discount,
+            base: l.lineTotal,
+            message: NEEDS_PIN,
+          },
+        ];
+      if (l.priceNeedsApproval)
+        return [
+          {
+            ...line,
+            reduction: l.priceCut,
+            base: l.listTotal,
+            message: PRICE_NEEDS_PIN,
+          },
+        ];
+      return [];
+    });
+    if (order.needsApproval)
+      wants.push({
+        key: 'order',
+        scope: 'order',
+        productId: null,
+        reduction: orderDiscount,
+        base: subtotal - lineDiscount,
+        approvalId: input.discountApprovalId,
+        field: 'discountApprovalId',
+        message: NEEDS_PIN,
+      });
+    const approvals = await this.lockApprovals(tx, s, wants);
+    const orderApproval = approvals.get('order');
     const discount = lineDiscount + orderDiscount;
     // U7: validated before anything is taken (Lakasir flaw 1); quota is consumed below, in this transaction.
     const voucher = input.voucherCode
@@ -582,6 +684,7 @@ export class SalesService {
         change: Math.max(input.paid - amountDue, 0),
         costTotal: 0,
         overrideBy,
+        discountApprovedBy: orderApproval?.approverId ?? null,
         note: input.note || null,
         status: charged ? 'awaiting_payment' : 'completed',
         // Fixed now: a later edit of the method's kind does not change what this sale is charged as.
@@ -604,6 +707,16 @@ export class SalesService {
             ),
           ),
         );
+    if (orderApproval)
+      await recordAudit(tx, s, 'discount_approval', {
+        target: { type: 'sale', id: sale.id },
+        details: {
+          saleId: sale.id,
+          scope: 'order',
+          discount: orderDiscount,
+          approvedBy: orderApproval.approverId,
+        },
+      });
 
     let costTotal = 0;
     // Product-id order: two multi-item sales lock batches in the same order (no deadlock).
@@ -673,10 +786,11 @@ export class SalesService {
         priceOverriddenBy: l.priceOverriddenBy,
         discount: discounts[l.index].discount,
         discountPercent: discounts[l.index].discountPercent,
-        discountApprovedBy: approvals.get(l.index)?.approverId ?? null,
+        discountApprovedBy:
+          approvals.get(`line:${l.index}`)?.approverId ?? null,
         costTotal: cost,
       });
-      const approval = approvals.get(l.index);
+      const approval = approvals.get(`line:${l.index}`);
       if (approval)
         await recordAudit(tx, s, 'discount_approval', {
           target: { type: 'product', id: l.productId, label: l.name },
@@ -685,6 +799,7 @@ export class SalesService {
             productId: l.productId,
             discount: discounts[l.index].discount,
             discountPercent: discounts[l.index].discountPercent,
+            ...(l.priceCut ? { priceCut: l.priceCut } : {}),
             approvedBy: approval.approverId,
           },
         });
@@ -715,29 +830,18 @@ export class SalesService {
   }
 
   /**
-   * UMK-1990: the PIN approval of every line whose discount is above 30%, locked for this transaction. The
-   * approval must be this store's, asked by this actor, for the line's product, unused, unexpired, and cover
-   * the discount; one approval serves one line. 422 `DISCOUNT_APPROVAL_REQUIRED` otherwise. An approval named on
-   * a line that does not need one is left unused.
+   * UMK-1990: the PIN approval of every reduction above 30% (a line discount, a manual price, the order discount,
+   * ruling 2026-11-26), locked for this transaction. The approval must be this store's, asked by this actor, of the
+   * same scope (a line's for the line's product; the order's has none), unused, unexpired, and cover the reduction;
+   * one approval serves one want. 422 `DISCOUNT_APPROVAL_REQUIRED` otherwise. An approval named where none is needed
+   * is left unused.
    */
-  private async lockApprovals(
-    tx: Tx,
-    s: PosSession,
-    lines: {
-      discount: number;
-      needsApproval: boolean;
-      productId: string;
-      lineTotal: number;
-      approvalId?: string;
-    }[],
-  ) {
-    const taken = new Map<number, { id: string; approverId: string }>();
-    for (const [i, l] of lines.entries()) {
-      if (!l.needsApproval) continue;
-      const field = `lines.${i}.discountApprovalId`;
+  private async lockApprovals(tx: Tx, s: PosSession, wants: ApprovalWant[]) {
+    const taken = new Map<string, { id: string; approverId: string }>();
+    for (const w of wants) {
       const refuse = (message: string) =>
-        codedError(DISCOUNT_APPROVAL_REQUIRED, field, message);
-      if (!l.approvalId) throw refuse('Diskon lebih dari 30% perlu PIN admin');
+        codedError(DISCOUNT_APPROVAL_REQUIRED, w.field, message);
+      if (!w.approvalId) throw refuse(w.message);
       const [a] = await tx
         .select({
           id: discountApprovals.id,
@@ -748,9 +852,12 @@ export class SalesService {
         .where(
           and(
             eq(discountApprovals.tenantId, s.tenantId),
-            eq(discountApprovals.id, l.approvalId),
+            eq(discountApprovals.id, w.approvalId),
             eq(discountApprovals.actorId, s.actorId),
-            eq(discountApprovals.productId, l.productId),
+            eq(discountApprovals.scope, w.scope),
+            w.productId === null
+              ? isNull(discountApprovals.productId)
+              : eq(discountApprovals.productId, w.productId),
             isNull(discountApprovals.usedAt),
             sql`${discountApprovals.expiresAt} > now()`,
           ),
@@ -760,11 +867,11 @@ export class SalesService {
         throw refuse(
           'Persetujuan diskon tidak berlaku lagi. Minta PIN admin sekali lagi.',
         );
-      if (!withinApproval(l.discount, l.lineTotal, a.maxBps))
+      if (!withinApproval(w.reduction, w.base, a.maxBps))
         throw refuse(
           'Diskon lebih besar dari yang disetujui. Minta PIN admin sekali lagi.',
         );
-      taken.set(i, { id: a.id, approverId: a.approverId });
+      taken.set(w.key, { id: a.id, approverId: a.approverId });
     }
     return taken;
   }
@@ -783,17 +890,22 @@ export class SalesService {
         'approverId',
         'Diskon ini harus disetujui admin lain atau pemilik',
       );
-    const [product] = await this.db
-      .select({ id: products.id })
-      .from(products)
-      .where(
-        and(
-          eq(products.tenantId, s.tenantId),
-          eq(products.id, input.productId),
-          isNull(products.deletedAt),
-        ),
-      );
-    if (!product) throw fail('Produk tidak ditemukan', {}, 'productId');
+    // An order approval (ruling 2026-11-26) has no product; a line's names a live product of this store.
+    const [product] =
+      input.scope === 'order'
+        ? [null]
+        : await this.db
+            .select({ id: products.id })
+            .from(products)
+            .where(
+              and(
+                eq(products.tenantId, s.tenantId),
+                eq(products.id, input.productId!),
+                isNull(products.deletedAt),
+              ),
+            );
+    if (product === undefined)
+      throw fail('Produk tidak ditemukan', {}, 'productId');
     const approver = await this.pins.verify(
       s.tenantId,
       input.approverId,
@@ -807,12 +919,14 @@ export class SalesService {
         actorId: s.actorId,
         approverId: approver.id,
         approverKind: approver.kind,
-        productId: product.id,
+        scope: input.scope,
+        productId: product?.id ?? null,
         maxBps: input.maxBps,
         expiresAt: sql`now() + make_interval(secs => ${DISCOUNT_APPROVAL_TTL_SECONDS})`,
       })
       .returning({
         id: discountApprovals.id,
+        scope: discountApprovals.scope,
         maxBps: discountApprovals.maxBps,
         expiresAt: discountApprovals.expiresAt,
       });
@@ -902,17 +1016,47 @@ export class SalesService {
   async quote(s: PosSession, input: QuoteInput) {
     assertMayDiscount(s, input.lines);
     const { byId, priced } = await this.price(this.db, s.tenantId, input.lines);
+    // A manual price counts as the sale counts it: with sales.price_override only (ruling 2026-11-26).
+    const canOverride = hasPermission(s, 'sales.price_override');
+    const manual = input.lines.map((l, i) =>
+      manualPriceOf(l, priced[i].listPrice, canOverride, i),
+    );
     // UMK-1990: the discount of each line, as the sale computes it (an approval is asked only by the sale).
     const discounts = discountsOf(
       input.lines.map((l, i) => ({
         ...l,
-        lineTotal: priced[i].listPrice * l.qty,
-        overridden: false,
+        lineTotal: manual[i].lineTotal,
+        overridden: manual[i].overridden,
       })),
     );
     const lines = input.lines.map((l, i) => {
       const q = priced[i];
       const d = discounts[i];
+      const m = manual[i];
+      if (m.overridden)
+        // Owner ruling 2026-11-25: a manual price is not wholesale (no tier, no savings), as the sale records it.
+        return {
+          productId: l.productId,
+          name: byId.get(l.productId)!.name,
+          qty: l.qty,
+          unit: q.unit,
+          unitQty: q.unitQty,
+          baseQty: q.baseQty,
+          normalUnitPrice: q.normalUnitPrice,
+          listPrice: q.listPrice,
+          unitPrice: m.unitPrice,
+          lineTotal: m.lineTotal,
+          manualPrice: true,
+          appliedTier: null,
+          savings: 0,
+          nextTier: null,
+          discount: 0,
+          discountPercent: null,
+          netTotal: m.lineTotal,
+          discountNeedsApproval: false,
+          // More than 30% below the server's price: the sale must name a PIN approval for it.
+          priceNeedsApproval: m.priceNeedsApproval,
+        };
       return {
         productId: l.productId,
         name: byId.get(l.productId)!.name,
@@ -931,20 +1075,33 @@ export class SalesService {
         netTotal: q.listPrice * l.qty - d.discount,
         // Above 30% of the line: the sale must name a PIN approval for it.
         discountNeedsApproval: d.needsApproval,
+        priceNeedsApproval: false,
       };
     });
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
     const lineDiscount = discounts.reduce((n, d) => n + d.discount, 0);
-    if (!input.voucherCode && !input.paymentMethodId)
-      return { lines, subtotal, lineDiscount };
+    // The order discount as the sale takes it (ignored without the permission); above 30% of what is left after
+    // the line discounts the sale must name an `order` approval.
+    const order = orderDiscountOf(
+      canOverride ? (input.discount ?? 0) : 0,
+      subtotal - lineDiscount,
+    );
+    const head = {
+      lines,
+      subtotal,
+      lineDiscount,
+      orderDiscount: order.discount,
+      orderDiscountNeedsApproval: order.needsApproval,
+    };
+    if (!input.voucherCode && !input.paymentMethodId) return head;
     // UMK-1981: the rest of the sale's arithmetic, as `insert` does it, without taking the voucher or a number.
     const voucher = input.voucherCode
       ? await evaluateVoucher(
           this.db,
           s.tenantId,
           input.voucherCode,
-          subtotal - lineDiscount,
+          subtotal - lineDiscount - order.discount,
         )
       : null;
     const voucherDiscount = voucher?.discount ?? 0;
@@ -954,13 +1111,11 @@ export class SalesService {
       : null;
     const { taxBps } = await this.settings(s.tenantId);
     return {
-      lines,
-      subtotal,
-      lineDiscount,
+      ...head,
       voucherDiscount,
       ...saleAmounts({
         subtotal,
-        discount: lineDiscount,
+        discount: lineDiscount + order.discount,
         voucherDiscount,
         taxBps,
         isCash: method?.isCash ?? false,
@@ -1302,6 +1457,8 @@ export class SalesService {
         change: sales.change,
         costTotal: sales.costTotal,
         overrideBy: sales.overrideBy,
+        // Who approved by PIN an order discount above 30% (ruling 2026-11-26); null when none was needed.
+        discountApprovedBy: sales.discountApprovedBy,
         note: sales.note,
         status: sales.status,
         paymentMethodCode: sales.paymentMethodCode,
