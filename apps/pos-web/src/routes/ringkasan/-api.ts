@@ -15,7 +15,8 @@ export type SalesHistorySummary = {
 export type MembersSummary = {
   total: number
   kasbonRest: number | null
-  top: { name: string; amount: number }[]
+  /** `amount` (spend) only with `reports.view`; else the receipt count tells the order. */
+  top: { name: string; receipts: number; amount: number | null }[]
   newCount: number
   returningCount: number
 }
@@ -36,7 +37,8 @@ export type CategoriesSummary = {
 }
 export type PaymentMethodsSummary = {
   activeCount: number
-  methods: { name: string; uses: number; amount: number }[]
+  /** `amount` only with `reports.view`. */
+  methods: { name: string; uses: number; amount: number | null }[]
 }
 export type StockOpnameSummary =
   | { opname: null }
@@ -52,7 +54,8 @@ export type VouchersSummary = {
   days: { date: string; count: number }[]
 }
 export type StaffSummary = {
-  cashiers: { name: string; receipts: number; amount: number }[]
+  /** `amount` only with `reports.view`. */
+  cashiers: { name: string; receipts: number; amount: number | null }[]
   hours: number[]
 }
 export type SuppliersSummary = {

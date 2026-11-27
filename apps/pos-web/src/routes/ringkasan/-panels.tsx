@@ -28,6 +28,7 @@ import {
   usedPercent,
   voucherStatus,
   weekday,
+  withMoney,
 } from './-summary'
 
 // The picture summaries above each menu's list (design feature 39). Each panel loads on its own, so a failed one
@@ -181,37 +182,44 @@ export function SalesHistorySummary() {
 export function MembersSummary() {
   return (
     <Shell kind="members" permission="members.manage" title="Ringkasan pelanggan">
-      {(d) => (
-        <>
-          <Tiles>
-            <StatTile label="Pelanggan" value={d.total.toLocaleString('id-ID')} />
-            {d.kasbonRest !== null && <StatTile label="Kasbon berjalan" value={rp(d.kasbonRest)} />}
-          </Tiles>
-          <Grid>
-            <BarChart
-              boxed
-              title="Pelanggan terbesar bulan ini"
-              unit="rupiah"
-              orientation="horizontal"
-              categories={d.top.map((x) => x.name)}
-              series={[{ label: 'Belanja', values: d.top.map((x) => x.amount) }]}
-              state={state(d.top.length === 0)}
-              emptyText={EMPTY}
-            />
-            <SegmentedBar
-              boxed
-              title="Baru dan kembali bulan ini"
-              unit="count"
-              parts={[
-                { label: 'Kembali', value: d.returningCount },
-                { label: 'Baru', value: d.newCount },
-              ]}
-              state={state(d.returningCount + d.newCount === 0)}
-              emptyText={EMPTY}
-            />
-          </Grid>
-        </>
-      )}
+      {(d) => {
+        const money = withMoney(d.top)
+        return (
+          <>
+            <Tiles>
+              <StatTile label="Pelanggan" value={d.total.toLocaleString('id-ID')} />
+              {d.kasbonRest !== null && <StatTile label="Kasbon berjalan" value={rp(d.kasbonRest)} />}
+            </Tiles>
+            <Grid>
+              <BarChart
+                boxed
+                title="Pelanggan terbesar bulan ini"
+                unit={money ? 'rupiah' : 'count'}
+                orientation="horizontal"
+                categories={d.top.map((x) => x.name)}
+                series={[
+                  money
+                    ? { label: 'Belanja', values: d.top.map((x) => x.amount ?? 0) }
+                    : { label: 'Struk', values: d.top.map((x) => x.receipts) },
+                ]}
+                state={state(d.top.length === 0)}
+                emptyText={EMPTY}
+              />
+              <SegmentedBar
+                boxed
+                title="Baru dan kembali bulan ini"
+                unit="count"
+                parts={[
+                  { label: 'Kembali', value: d.returningCount },
+                  { label: 'Baru', value: d.newCount },
+                ]}
+                state={state(d.returningCount + d.newCount === 0)}
+                emptyText={EMPTY}
+              />
+            </Grid>
+          </>
+        )
+      }}
     </Shell>
   )
 }
@@ -320,8 +328,8 @@ export function PaymentMethodsSummary() {
           <SegmentedBar
             boxed
             title="Porsi pemakaian bulan ini"
-            unit="rupiah"
-            parts={d.methods.map((m) => ({ label: m.name, value: m.amount }))}
+            unit={withMoney(d.methods) ? 'rupiah' : 'count'}
+            parts={d.methods.map((m) => ({ label: m.name, value: m.amount ?? m.uses }))}
             state={state(d.methods.length === 0)}
             emptyText={EMPTY}
           />
@@ -407,29 +415,36 @@ export function VouchersSummary() {
 export function StaffSummary() {
   return (
     <Shell kind="staff" permission="staff.manage" title="Ringkasan staf">
-      {(d) => (
-        <Grid>
-          <BarChart
-            boxed
-            title="Penjualan per kasir bulan ini"
-            unit="rupiah"
-            orientation="horizontal"
-            categories={d.cashiers.map((c) => clip(c.name))}
-            series={[{ label: 'Penjualan', values: d.cashiers.map((c) => c.amount) }]}
-            state={state(d.cashiers.length === 0)}
-            emptyText={EMPTY}
-          />
-          <HeatStrip
-            boxed
-            title="Jam sibuk bulan ini"
-            valueLabel="struk"
-            values={d.hours}
-            labels={d.hours.map((_, h) => String(h).padStart(2, '0'))}
-            state={state(allZero(d.hours))}
-            emptyText={EMPTY}
-          />
-        </Grid>
-      )}
+      {(d) => {
+        const money = withMoney(d.cashiers)
+        return (
+          <Grid>
+            <BarChart
+              boxed
+              title={money ? 'Penjualan per kasir bulan ini' : 'Struk per kasir bulan ini'}
+              unit={money ? 'rupiah' : 'count'}
+              orientation="horizontal"
+              categories={d.cashiers.map((c) => clip(c.name))}
+              series={[
+                money
+                  ? { label: 'Penjualan', values: d.cashiers.map((c) => c.amount ?? 0) }
+                  : { label: 'Struk', values: d.cashiers.map((c) => c.receipts) },
+              ]}
+              state={state(d.cashiers.length === 0)}
+              emptyText={EMPTY}
+            />
+            <HeatStrip
+              boxed
+              title="Jam sibuk bulan ini"
+              valueLabel="struk"
+              values={d.hours}
+              labels={d.hours.map((_, h) => String(h).padStart(2, '0'))}
+              state={state(allZero(d.hours))}
+              emptyText={EMPTY}
+            />
+          </Grid>
+        )
+      }}
     </Shell>
   )
 }

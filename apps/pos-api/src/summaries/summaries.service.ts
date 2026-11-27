@@ -97,7 +97,8 @@ export class SummariesService {
     };
   }
 
-  async members(tenantId: string, withKasbon: boolean) {
+  /** `money`: the spend per top customer (else their receipt count only); `withKasbon`: the kasbon still owed. */
+  async members(tenantId: string, money: boolean, withKasbon: boolean) {
     const tz = await this.reports.timezone(tenantId);
     const { monthStart } = this.clock(tz);
     const [[count], top, [fresh], kasbon] = await Promise.all([
@@ -105,12 +106,13 @@ export class SummariesService {
         sql`select count(*) as n from pos.members where tenant_id = ${tenantId} and deleted_at is null`,
       ),
       this.rows(sql`
-        select m.name, sum(s.total) as amount
+        select m.name, count(*) as receipts, sum(s.total) as amount
           from pos.sales s
           join pos.members m on m.tenant_id = s.tenant_id and m.id = s.member_id
          where s.tenant_id = ${tenantId} and s.status = 'completed' and s.paid_at >= ${monthStart}
+           and m.deleted_at is null
          group by m.id, m.name
-         order by amount desc, m.name
+         order by ${money ? sql`amount` : sql`receipts`} desc, m.name
          limit ${TOP}`),
       this.rows(sql`
         select count(*) filter (where first_paid >= ${monthStart}) as fresh,
@@ -127,7 +129,11 @@ export class SummariesService {
     return {
       total: n(count.n),
       kasbonRest: kasbon,
-      top: top.map((r) => ({ name: r.name as string, amount: n(r.amount) })),
+      top: top.map((r) => ({
+        name: r.name as string,
+        receipts: n(r.receipts),
+        amount: money ? n(r.amount) : null,
+      })),
       newCount: n(fresh.fresh),
       returningCount: n(fresh.returning),
     };
@@ -170,7 +176,8 @@ export class SummariesService {
     };
   }
 
-  async paymentMethods(tenantId: string) {
+  /** This month's use per method; the rupiah per method only with `money`, else the counts. */
+  async paymentMethods(tenantId: string, money: boolean) {
     const tz = await this.reports.timezone(tenantId);
     const { monthStart } = this.clock(tz);
     const [rows, [active]] = await Promise.all([
@@ -180,7 +187,7 @@ export class SummariesService {
           join pos.payment_methods pm on pm.tenant_id = s.tenant_id and pm.id = s.payment_method_id
          where s.tenant_id = ${tenantId} and s.status = 'completed' and s.paid_at >= ${monthStart}
          group by pm.id, pm.name
-         order by amount desc, pm.name`),
+         order by ${money ? sql`amount` : sql`uses`} desc, pm.name`),
       this.rows(
         sql`select count(*) as n from pos.payment_methods where tenant_id = ${tenantId} and deleted_at is null`,
       ),
@@ -190,7 +197,7 @@ export class SummariesService {
       methods: rows.map((r) => ({
         name: r.name as string,
         uses: n(r.uses),
-        amount: n(r.amount),
+        amount: money ? n(r.amount) : null,
       })),
     };
   }
@@ -302,8 +309,11 @@ export class SummariesService {
     };
   }
 
-  /** This month's sales per cashier (the owner is "Pemilik") and receipts per hour of the store day. */
-  async staff(tenantId: string) {
+  /**
+   * This month's receipts per cashier (the owner is "Pemilik"), their rupiah only with `money`, and receipts per
+   * hour of the store day.
+   */
+  async staff(tenantId: string, money: boolean) {
     const tz = await this.reports.timezone(tenantId);
     const { monthStart } = this.clock(tz);
     const [cashiers, hours] = await Promise.all([
@@ -316,7 +326,7 @@ export class SummariesService {
           left join pos.staff st on st.tenant_id = s.tenant_id and st.id = s.actor_id
          where s.tenant_id = ${tenantId} and s.status = 'completed' and s.paid_at >= ${monthStart}
          group by 1
-         order by amount desc, 1
+         order by ${money ? sql`amount` : sql`receipts`} desc, 1
          limit 8`),
       this.rows(sql`
         select extract(hour from s.paid_at at time zone ${tz})::int as hour, count(*) as receipts
@@ -330,7 +340,7 @@ export class SummariesService {
       cashiers: cashiers.map((c) => ({
         name: c.name as string,
         receipts: n(c.receipts),
-        amount: n(c.amount),
+        amount: money ? n(c.amount) : null,
       })),
       hours: perHour,
     };

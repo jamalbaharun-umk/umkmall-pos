@@ -29,8 +29,9 @@ const TargetInput = z
 
 /**
  * The summaries above each menu (design feature 39). Each route asks for the permission that opens its menu; what
- * reveals cost or profit (margin, stock value, revenue by category) also needs `reports.view` and is `null`
- * without it. The tenant is always the session's.
+ * reveals cost, profit or takings (margin, stock value, revenue per category, method, cashier or customer, the
+ * store's daily total) also needs `reports.view` and is `null` without it (counts stay). The tenant is always the
+ * session's.
  */
 @Controller('summaries')
 export class SummariesController {
@@ -49,6 +50,7 @@ export class SummariesController {
   members(@CurrentSession() s: PosSession) {
     return this.summaries.members(
       s.tenantId,
+      this.money(s),
       this.money(s) || hasPermission(s, 'receivables.manage'),
     );
   }
@@ -68,7 +70,7 @@ export class SummariesController {
   @Get('payment-methods')
   @RequirePermission('catalog.manage')
   paymentMethods(@CurrentSession() s: PosSession) {
-    return this.summaries.paymentMethods(s.tenantId);
+    return this.summaries.paymentMethods(s.tenantId, this.money(s));
   }
 
   @Get('stock-opname')
@@ -92,7 +94,7 @@ export class SummariesController {
   @Get('staff')
   @RequirePermission('staff.manage')
   staff(@CurrentSession() s: PosSession) {
-    return this.summaries.staff(s.tenantId);
+    return this.summaries.staff(s.tenantId, this.money(s));
   }
 
   @Get('setup')

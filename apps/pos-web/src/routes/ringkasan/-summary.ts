@@ -44,3 +44,6 @@ export function parseTarget(text: string): number | null | 'invalid' {
   const n = Number(digits)
   return n >= 1 && n <= 1_000_000_000 ? n : 'invalid'
 }
+
+/** Whether a summary's rows carry rupiah (`reports.view`); without it they come with counts only. */
+export const withMoney = (rows: { amount: number | null }[]): boolean => rows.every((r) => r.amount !== null)

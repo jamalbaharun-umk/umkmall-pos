@@ -166,9 +166,9 @@ describe('summaries across menus (feature 39)', () => {
     const r = (await get(a.auth, '/summaries/members').expect(200)).body;
     expect(r.total).toBe(3);
     expect(r.top).toEqual([
-      { name: 'Budi', amount: 3500 },
-      { name: 'Siti', amount: 3000 },
-      { name: 'Lama', amount: 2000 },
+      { name: 'Budi', receipts: 1, amount: 3500 },
+      { name: 'Siti', receipts: 1, amount: 3000 },
+      { name: 'Lama', receipts: 1, amount: 2000 },
     ]);
     expect(r).toMatchObject({
       newCount: 2,
@@ -460,9 +460,32 @@ describe('summaries across menus (feature 39)', () => {
     expect(cats.categories[0].revenue).toBeNull();
     expect(cats.categories[0].stockValue).toBeNull();
     // Kasbon owed is a receivable figure: neither reports.view nor receivables.manage, no figure.
+    const members = (await get(c.auth, '/summaries/members').expect(200)).body;
+    expect(members.kasbonRest).toBeNull();
+    // Spend per customer is takings: the top customers come with their receipt count only.
+    expect(members.top).toHaveLength(3);
+    for (const m of arr(members.top)) {
+      expect(m.receipts).toBe(1);
+      expect(m.amount).toBeNull();
+    }
+  });
+
+  it('revenue per method and per cashier is null without reports.view; the counts stay', async () => {
+    const c = await createCashier(app, a, ['catalog.manage', 'staff.manage']);
+    const methods = (await get(c.auth, '/summaries/payment-methods').expect(200))
+      .body;
+    expect(methods.methods.length).toBeGreaterThan(0);
+    const uses = nums(arr(methods.methods).map((m): number => m.uses)).reduce(
+      (x, y) => x + y,
+      0,
+    );
+    expect(uses).toBe(5 + (yesterdayInMonth ? 1 : 0));
+    for (const m of arr(methods.methods)) expect(m.amount).toBeNull();
+    const staff = (await get(c.auth, '/summaries/staff').expect(200)).body;
     expect(
-      (await get(c.auth, '/summaries/members').expect(200)).body.kasbonRest,
-    ).toBeNull();
+      arr(staff.cashiers).find((x) => x.name === 'Sari'),
+    ).toEqual({ name: 'Sari', receipts: 1, amount: null });
+    for (const x of arr(staff.cashiers)) expect(x.amount).toBeNull();
   });
 
   it('store B sees nothing of store A on any summary', async () => {

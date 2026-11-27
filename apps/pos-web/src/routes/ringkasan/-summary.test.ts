@@ -9,6 +9,7 @@ import {
   usedPercent,
   voucherStatus,
   weekday,
+  withMoney,
 } from './-summary'
 
 describe('summary helpers', () => {
@@ -58,5 +59,11 @@ describe('summary helpers', () => {
     expect(parseTarget('-5')).toBe('invalid')
     expect(parseTarget('abc')).toBe('invalid')
     expect(parseTarget('1000000001')).toBe('invalid')
+  })
+
+  it('tells rows with rupiah from rows with counts only', () => {
+    expect(withMoney([{ amount: 5000 }, { amount: 0 }])).toBe(true)
+    expect(withMoney([{ amount: null }, { amount: 5000 }])).toBe(false)
+    expect(withMoney([])).toBe(true)
   })
 })
