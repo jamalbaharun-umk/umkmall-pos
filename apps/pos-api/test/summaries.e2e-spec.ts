@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import postgres from 'postgres';
 import request from 'supertest';
-import { ADMIN_PERMISSIONS } from '../src/staff/permissions';
+import { ADMIN_PERMISSIONS, PERMISSIONS, type Permission } from '../src/staff/permissions';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
@@ -358,6 +358,77 @@ describe('summaries across menus (feature 39)', () => {
     expect(await steps(b)).toMatchObject({ doneCount: 4, complete: true });
   });
 
+  it("days are the store's own around midnight (Asia/Jayapura), a void takes off its total and count, inactive products are not counted", async () => {
+    const c = await createStore();
+    const tz = 'Asia/Jayapura'; // UTC+9: local midnight is 15:00 UTC of the day before
+    const jayapura = (offsetDays = 0) =>
+      new Date(Date.now() + 9 * 3_600_000 + offsetDays * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+    await http()
+      .put('/reports/settings')
+      .set('Authorization', c.auth)
+      .send({ timezone: tz })
+      .expect(200);
+    const cat = await post(c.auth, '/catalog/categories', {
+      name: 'Minuman',
+    }).expect(201);
+    const product = async (name: string) =>
+      (
+        await post(c.auth, '/catalog/products', {
+          categoryId: cat.body.id,
+          name,
+          costPrice: 500,
+          sellingPrice: 1000,
+        }).expect(201)
+      ).body.id as string;
+    const air = await product('Air');
+    const lawas = await product('Lawas');
+    await admin`update pos.products set is_active = false where id = ${lawas}`;
+    await post(c.auth, '/stock/opening', { productId: air, qty: 100 }).expect(
+      201,
+    );
+    await post(c.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+    await http()
+      .put('/void-pin')
+      .set('Authorization', c.freshAuth)
+      .send({ pin: '246810' })
+      .expect(200);
+    const sell = async (qty: number) =>
+      (
+        await post(c.auth, '/sales', {
+          lines: [{ productId: air, qty }],
+          paid: qty * 1000,
+        }).expect(201)
+      ).body.id as string;
+    const atMidnight = await sell(1);
+    const justBefore = await sell(2);
+    const voided = await sell(4);
+    // Today's local midnight, and one second before it (yesterday's last second).
+    await admin`update pos.sales
+      set paid_at = date_trunc('day', now() at time zone ${tz}) at time zone ${tz}
+      where id = ${atMidnight}`;
+    await admin`update pos.sales
+      set paid_at = (date_trunc('day', now() at time zone ${tz}) at time zone ${tz}) - interval '1 second'
+      where id = ${justBefore}`;
+    await post(c.auth, `/sales/${voided}/void`, {
+      reasonCode: 'wrong_item_or_qty',
+      approverId: c.userId,
+      pin: '246810',
+    }).expect(201);
+    const r = (await get(c.auth, '/summaries/sales-history').expect(200)).body;
+    expect(r.timezone).toBe(tz);
+    // Today: 1.000 (midnight) + 4.000 (voided) − 4.000 (its void); 2 receipts − 1 void.
+    expect(r.days[6]).toEqual({ date: jayapura(), total: 1000, count: 1 });
+    expect(r.today).toEqual({ count: 1, total: 1000 });
+    expect(r.days[5]).toEqual({ date: jayapura(-1), total: 2000, count: 1 });
+    expect(r.methods).toEqual([{ name: 'Tunai', amount: 1000 }]);
+    const cats = (await get(c.auth, '/summaries/categories').expect(200)).body;
+    expect(cats.categories).toEqual([
+      expect.objectContaining({ name: 'Minuman', products: 1 }),
+    ]);
+  });
+
   describe('daily target', () => {
     const put = (auth: string, body: object) =>
       http()
@@ -448,8 +519,14 @@ describe('summaries across menus (feature 39)', () => {
     });
   });
 
-  it('every menu summary is 403 without the permission that opens the menu', async () => {
-    const routes: Array<[string, string]> = [
+  it('401 without a session', async () => {
+    await http().get('/summaries/sales-history').expect(401);
+    await http().get('/summaries/daily-target').expect(401);
+    await http().put('/summaries/daily-target').send({ target: 5000 }).expect(401);
+  });
+
+  it("each menu summary opens with its own permission alone, and is 403 with every permission but that one", async () => {
+    const routes: Array<[string, Permission]> = [
       ['sales-history', 'reports.view'],
       ['members', 'members.manage'],
       ['products', 'catalog.manage'],
@@ -461,9 +538,20 @@ describe('summaries across menus (feature 39)', () => {
       ['staff', 'staff.manage'],
       ['setup', 'catalog.manage'],
     ];
-    for (const [path] of routes) {
-      await get(sari.auth, `/summaries/${path}`).expect(403);
-      await get(a.auth, `/summaries/${path}`).expect(200);
+    const only = new Map<Permission, string>();
+    const allBut = new Map<Permission, string>();
+    for (const [, perm] of routes) {
+      if (only.has(perm)) continue;
+      only.set(perm, (await createCashier(app, a, [perm])).auth);
+      allBut.set(
+        perm,
+        (await createCashier(app, a, PERMISSIONS.filter((p) => p !== perm)))
+          .auth,
+      );
+    }
+    for (const [path, perm] of routes) {
+      await get(only.get(perm)!, `/summaries/${path}`).expect(200);
+      await get(allBut.get(perm)!, `/summaries/${path}`).expect(403);
     }
   });
 
@@ -537,6 +625,20 @@ describe('summaries across menus (feature 39)', () => {
     const hist = (await get(b.auth, '/summaries/sales-history').expect(200))
       .body;
     expect(hist.today).toEqual({ count: 0, total: 0 });
+    expect(hist.methods).toEqual([]);
+    const methods = (await get(b.auth, '/summaries/payment-methods').expect(200))
+      .body;
+    expect(methods.methods).toEqual([]);
+    const staff = (await get(b.auth, '/summaries/staff').expect(200)).body;
+    expect(staff.cashiers).toEqual([]);
+    expect(nums(staff.hours).every((h) => h === 0)).toBe(true);
+    const sup = (await get(b.auth, '/summaries/suppliers').expect(200)).body;
+    expect(sup.supplierCount).toBe(0);
+    expect(arr(sup.months).every((m) => m.total === 0)).toBe(true);
+    const vouchers = (await get(b.auth, '/summaries/vouchers').expect(200))
+      .body;
+    expect(vouchers.vouchers).toEqual([]);
+    expect(arr(vouchers.days).every((d) => d.count === 0)).toBe(true);
     expect(
       (await get(b.auth, '/summaries/stock-opname').expect(200)).body,
     ).toEqual({ opname: null });

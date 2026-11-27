@@ -41,21 +41,30 @@ export class SummariesService {
     };
   }
 
+  /**
+   * `col` (a timestamptz) falls on the store day `day` (a date expression) in `tz`: a half-open range from that
+   * day's local midnight to the next, so an index on the column can serve it (unlike `(col at time zone tz)::date`).
+   */
+  private onDay(col: SQL, day: SQL, tz: string): SQL {
+    return sql`(${col} >= ((${day})::date::timestamp at time zone ${tz})
+                and ${col} < (((${day})::date + 1)::timestamp at time zone ${tz}))`;
+  }
+
   /** The last `count` store days (oldest first, today last) with the net sales total and receipt count of each. */
   async dayTotals(tenantId: string, tz: string, count: number) {
     const { today } = this.clock(tz);
+    const sold = this.onDay(sql`s.paid_at`, sql`d.day`, tz);
+    const voided = this.onDay(sql`v.created_at`, sql`d.day`, tz);
     const rows = await this.rows(sql`
       select to_char(d.day, 'YYYY-MM-DD') as day,
              (select coalesce(sum(s.total), 0) from pos.sales s
-               where s.tenant_id = ${tenantId} and s.status in (${FINAL_LIST})
-                 and (s.paid_at at time zone ${tz})::date = d.day)
+               where s.tenant_id = ${tenantId} and s.status in (${FINAL_LIST}) and ${sold})
            - (select coalesce(sum(v.total), 0) from pos.sale_voids v
-               where v.tenant_id = ${tenantId} and (v.created_at at time zone ${tz})::date = d.day) as total,
+               where v.tenant_id = ${tenantId} and ${voided}) as total,
              (select count(*) from pos.sales s
-               where s.tenant_id = ${tenantId} and s.status in (${FINAL_LIST})
-                 and (s.paid_at at time zone ${tz})::date = d.day)
+               where s.tenant_id = ${tenantId} and s.status in (${FINAL_LIST}) and ${sold})
            - (select count(*) from pos.sale_voids v
-               where v.tenant_id = ${tenantId} and (v.created_at at time zone ${tz})::date = d.day) as receipts
+               where v.tenant_id = ${tenantId} and ${voided}) as receipts
         from generate_series(${today} - ${count - 1}::int, ${today}, interval '1 day') as d(day)
        order by d.day`);
     return rows.map((r) => ({
@@ -74,13 +83,13 @@ export class SummariesService {
         from (select s.payment_method_id as pm_id, s.total as amount
                 from pos.sales s
                where s.tenant_id = ${tenantId} and s.status in (${FINAL_LIST})
-                 and (s.paid_at at time zone ${tz})::date = ${today}
+                 and ${this.onDay(sql`s.paid_at`, today, tz)}
               union all
               select s.payment_method_id, -v.total
                 from pos.sale_voids v
                 join pos.sales s on s.tenant_id = v.tenant_id and s.id = v.sale_id
                where v.tenant_id = ${tenantId}
-                 and (v.created_at at time zone ${tz})::date = ${today}) x
+                 and ${this.onDay(sql`v.created_at`, today, tz)}) x
         join pos.payment_methods pm on pm.tenant_id = ${tenantId} and pm.id = x.pm_id
        group by pm.id, pm.name
       having sum(x.amount) > 0
@@ -255,7 +264,7 @@ export class SummariesService {
         select to_char(d.day, 'YYYY-MM-DD') as day,
                (select count(*) from pos.sales s
                  where s.tenant_id = ${tenantId} and s.voucher_id is not null and s.status = 'completed'
-                   and (s.paid_at at time zone ${tz})::date = d.day) as redeemed
+                   and ${this.onDay(sql`s.paid_at`, sql`d.day`, tz)}) as redeemed
           from generate_series(${today} - 6, ${today}, interval '1 day') as d(day)
          order by d.day`),
     ]);
@@ -276,7 +285,8 @@ export class SummariesService {
     const cats = await this.rows(sql`
       select c.id, c.name,
              (select count(*) from pos.products p
-               where p.tenant_id = c.tenant_id and p.category_id = c.id and p.deleted_at is null) as products
+               where p.tenant_id = c.tenant_id and p.category_id = c.id and p.deleted_at is null
+                 and p.is_active) as products
         from pos.categories c
        where c.tenant_id = ${tenantId}
        order by c.name`);
@@ -355,7 +365,8 @@ export class SummariesService {
         select to_char(m.month, 'YYYY-MM') as month,
                (select coalesce(sum(o.total), 0) from pos.purchase_orders o
                  where o.tenant_id = ${tenantId} and o.status = 'approved'
-                   and date_trunc('month', o.approved_at at time zone ${tz}) = m.month) as total
+                   and o.approved_at >= (m.month at time zone ${tz})
+                   and o.approved_at < ((m.month + interval '1 month') at time zone ${tz})) as total
           from generate_series(date_trunc('month', ${today}::timestamp) - interval '5 months',
                                date_trunc('month', ${today}::timestamp), interval '1 month') as m(month)
          order by m.month`),
