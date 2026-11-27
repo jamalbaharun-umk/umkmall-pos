@@ -195,6 +195,30 @@ export class ReportsService {
   }
 
   /**
+   * UMK-2072 (owner ruling 2026-11-26) "Susut stok": the cost of the units approved stock opnames took out, for
+   * whole store days `[from, to]` (with `cutoff` as `salesTotals`), dated by the opname's approval. Each unit at
+   * the cost of the batch it was drawn from (FIFO, `stock_movements.batch_id`). A surplus (a positive opname line)
+   * adds nothing; a draft opname has no movements. Integer rupiah, positive.
+   */
+  async shrinkage(
+    tenantId: string,
+    tz: string,
+    range: DateRange,
+    cutoff?: SQL,
+  ) {
+    const { start, end } = this.bounds(range, tz);
+    const until = cutoff ? sql`least(${end}, ${cutoff})` : end;
+    const [r] = await this.rows(sql`
+      select coalesce(sum(-m.delta * b.unit_cost), 0) as shrinkage
+        from pos.stock_movements m
+        join pos.stock_opnames o on o.tenant_id = m.tenant_id and o.id = m.ref_id
+        join pos.stock_batches b on b.tenant_id = m.tenant_id and b.id = m.batch_id
+       where m.tenant_id = ${tenantId} and m.reason = 'opname' and m.delta < 0
+         and o.status = 'approved' and o.approved_at >= ${start} and o.approved_at < ${until}`);
+    return n(r.shrinkage);
+  }
+
+  /**
    * Current period so far vs the same span one period earlier ("this week so far" vs "last week up to the same
    * moment"). Lakasir compared overlapping windows.
    */

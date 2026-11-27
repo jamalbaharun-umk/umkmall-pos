@@ -7,7 +7,10 @@ import { ExpensesService, resolvePeriod } from './expenses.service';
 /**
  * The simple profit and loss report (UMK-1984), in the design's words:
  *   revenue ("Hasil jualan") − cost ("Modal barang terjual") = grossProfit ("Untung kotor");
- *   grossProfit − expenses ("Pengeluaran") = netProfit ("Untung bersih").
+ *   grossProfit − shrinkage ("Susut stok") − expenses ("Pengeluaran") = netProfit ("Untung bersih").
+ * `shrinkage` (UMK-2072, owner ruling 2026-11-26) is the batch cost of the units approved stock opnames took out
+ * (`ReportsService.shrinkage`): a loss of the store, not of its sales, so it is not in grossProfit; a surplus
+ * adds nothing.
  * The figures come from the reports' own (`ReportsService.salesTotals`): kasbon sales included, voids
  * as reversals on the day of the void, cost as stored on the sale lines. `expenses` are the live expense
  * rows dated in the span, WITHOUT supplier payments (their goods are in `cost` when sold).
@@ -22,6 +25,7 @@ export const PROFIT_LOSS_LABELS = {
   revenue: 'Hasil jualan (tanpa pajak)',
   cost: 'Modal barang terjual',
   grossProfit: 'Untung kotor (tanpa pajak)',
+  shrinkage: 'Susut stok (selisih stok opname)',
   expenses: 'Pengeluaran',
   netProfit: 'Untung bersih (tanpa pajak)',
   tax: 'Pajak (titipan, di luar hasil jualan)',
@@ -47,9 +51,10 @@ export class ProfitLossService {
       ? sql`(((now() at time zone ${tz}) - (${range.step})::interval) at time zone ${tz})`
       : undefined;
     const side = async (from: string, to: string, until?: typeof cutoff) => {
-      const [sales, spent] = await Promise.all([
+      const [sales, spent, shrinkage] = await Promise.all([
         this.reports.salesTotals(tenantId, tz, { from, to }, until),
         this.expenses.totals(tenantId, from, to),
+        this.reports.shrinkage(tenantId, tz, { from, to }, until),
       ]);
       // `sales.grossProfit` is revenue − tax − cost, the one definition (reports.service `metrics`).
       const { grossProfit } = sales;
@@ -63,8 +68,9 @@ export class ProfitLossService {
           tax: sales.tax,
           cost: sales.cost,
           grossProfit,
+          shrinkage,
           expenses: spent.expenses,
-          netProfit: grossProfit - spent.expenses,
+          netProfit: grossProfit - shrinkage - spent.expenses,
           // Outside the sum: tax held for remittance, cash rounding, and money paid to suppliers.
           rounding: sales.rounding,
           supplierPayments: spent.supplierPayments,

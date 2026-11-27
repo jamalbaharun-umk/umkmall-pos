@@ -84,6 +84,8 @@ export type ProfitLossFigures = {
   tax: number
   cost: number
   grossProfit: number
+  /** UMK-2072: batch cost of the units approved stock opnames took out; between gross and net profit. */
+  shrinkage: number
   expenses: number
   netProfit: number
   rounding: number
@@ -94,7 +96,10 @@ export type ProfitLoss = {
   from: string
   to: string
   taxIncluded: boolean
-  labels: Record<'revenue' | 'cost' | 'grossProfit' | 'expenses' | 'netProfit' | 'tax' | 'rounding' | 'supplierPayments', string>
+  labels: Record<
+    'revenue' | 'cost' | 'grossProfit' | 'shrinkage' | 'expenses' | 'netProfit' | 'tax' | 'rounding' | 'supplierPayments',
+    string
+  >
   current: ProfitLossFigures
   previous: ProfitLossFigures
   netProfitChange: number
