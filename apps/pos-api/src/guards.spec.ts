@@ -403,6 +403,8 @@ describe('repo guards', () => {
       path.join('shifts', 'shifts.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('agent', 'ledger.controller.ts'),
+      path.join('reports', 'export', 'trend.service.ts'),
+      path.join('reports', 'export', 'visuals.service.ts'),
     ]) {
       const text = files.find((x) => x.f === f)!.text;
       expect(text).toContain('FINAL_SALE_STATUSES');
@@ -422,6 +424,9 @@ describe('repo guards', () => {
       path.join('payments-client', 'payment-sync.service.ts'),
       // One sale by id, of any status: the payment screen of a sale that still waits.
       path.join('payments-client', 'sale-payment.service.ts'),
+      // The report charts and the sales and expenses trend: receipts only (`FINAL_LIST` from FINAL_SALE_STATUSES).
+      path.join('reports', 'export', 'trend.service.ts'),
+      path.join('reports', 'export', 'visuals.service.ts'),
       // The kasbon report (UMK-1964): each open kasbon's sale number, joined by id, receipts only.
       path.join('reports', 'receivables-report.service.ts'),
       path.join('reports', 'reports.service.ts'),
