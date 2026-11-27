@@ -42,3 +42,13 @@ boxes. Any name a store owner might enter must render. Latin text keeps today's 
 
 `apps/pos-api/src/reports/pdf/fonts.ts`, `pdf-fonts.ts`, `fonts.spec.ts`, `pdf-document.ts` (draw calls),
 `apps/pos-api/test/report-pdf.e2e-spec.ts`, `apps/pos-api/package.json`, `package-lock.json`.
+
+## Decisions and limits (filled in after building)
+
+- CJK: one package, `@fontsource/noto-sans-sc` (Han and kana; 74 MB in `node_modules`, of which the 400/600/700 woff
+  files the report loads are about 15 MB). Japanese and Korean packages add 84 MB and 53 MB and are not installed.
+  Noto Sans SC has no Hangul glyphs, so Korean names still print as boxes; they would need `@fontsource/noto-sans-kr`
+  (decision for the owner). Japanese kana render; kanji draw in Chinese forms.
+- Digits, spaces and punctuation always belong to the primary face, so a Latin cell is one run exactly as before.
+- Arabic: shaped per run by fontkit; single-line strings are laid out right to left by run order; wrapped mixed
+  text keeps logical order. Hebrew and emoji have no face (boxes).

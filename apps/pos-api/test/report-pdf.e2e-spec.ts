@@ -399,6 +399,53 @@ describe('report PDFs and visuals', () => {
       }
     });
 
+    it('prints a name in Latin-extended, Cyrillic, Arabic and Chinese with the fallback faces (UMK-2074)', async () => {
+      const store = await createStore();
+      const names = ['Café Ñandú', 'Кофе с молоком', 'قهوة عربية', '北京烤鸭'];
+      await http()
+        .put('/store/profile')
+        .set('Authorization', store.auth)
+        .send({
+          name: 'Toko 北京 Jaya',
+          businessType: 'retail',
+          address: 'Jl. Melati No. 12, Bandung',
+        })
+        .expect(200);
+      await http()
+        .post('/shifts/open')
+        .set('Authorization', store.auth)
+        .send({ openingCash: 0 })
+        .expect(201);
+      for (const name of names) {
+        const id = await product(store, name, 5000, 3000);
+        await sell(store, { lines: [{ productId: id, qty: 1 }], paid: 5000 });
+      }
+      for (const path of [
+        '/reports/pdf/sales?' + range(),
+        '/reports/pdf/products?' + range(),
+      ]) {
+        const bytes = (await pdf(store.auth, path).expect(200)).body as Buffer;
+        const t = pdfText(bytes).text;
+        for (const part of [...names, 'Toko 北京 Jaya'])
+          expect([path, t.includes(part) ? part : `MISSING ${part}`]).toEqual([
+            path,
+            part,
+          ]);
+        // Each script's own face is embedded, next to the primary one.
+        const raw = bytes.toString('latin1');
+        for (const face of [
+          'BeVietnamPro',
+          'NotoSans-Regular',
+          'NotoSansArabic-Regular',
+          'NotoSansSC-Regular',
+        ])
+          expect([path, raw.includes(face) ? face : `NO ${face}`]).toEqual([
+            path,
+            face,
+          ]);
+      }
+    });
+
     it('prints no customer phone number, and the cashier’s name when a cashier prints it', async () => {
       const s = await knownStore();
       const cashier = await createCashier(app, s, ['reports.view']);
