@@ -20,12 +20,12 @@ const meta = {
 describe('export limits', () => {
   it('runs at most MAX_CONCURRENT at once, then refuses at once with EXPORT_BUSY, and frees the slot', async () => {
     const gates: Array<() => void> = [];
-    const held = Array.from({ length: MAX_CONCURRENT }, () =>
-      withExportSlot(() => new Promise<void>((r) => gates.push(r))),
+    const held = Array.from({ length: MAX_CONCURRENT }, (_, i) =>
+      withExportSlot(`t${i}`, () => new Promise<void>((r) => gates.push(r))),
     );
     expect(runningExports()).toBe(MAX_CONCURRENT);
     await expect(
-      withExportSlot(() => Promise.resolve(1)),
+      withExportSlot('t9', () => Promise.resolve(1)),
     ).rejects.toMatchObject({
       response: { code: 'EXPORT_BUSY' },
       status: 503,
@@ -33,22 +33,55 @@ describe('export limits', () => {
     gates.forEach((g) => g());
     await Promise.all(held);
     expect(runningExports()).toBe(0);
-    await expect(withExportSlot(() => Promise.resolve(7))).resolves.toBe(7);
+    await expect(withExportSlot('t1', () => Promise.resolve(7))).resolves.toBe(
+      7,
+    );
   });
 
-  it('gives up a document that takes too long (EXPORT_TIMEOUT) and releases its slot', async () => {
+  it("lets one store hold only MAX_PER_TENANT slots, and keeps a timed-out job's slot until it settles", async () => {
+    let finish: () => void = () => undefined;
+    const first = withExportSlot(
+      'one',
+      () => new Promise<void>((r) => (finish = r)),
+      20,
+    );
+    await expect(first).rejects.toMatchObject({
+      response: { code: 'EXPORT_TIMEOUT' },
+    });
+    // Timed out for the caller, still running: the slot is not free yet.
+    expect(runningExports()).toBe(1);
     await expect(
-      withExportSlot(() => new Promise<void>(() => undefined), 20),
+      withExportSlot('one', () => Promise.resolve(1)),
+    ).rejects.toMatchObject({
+      response: { code: 'EXPORT_BUSY' },
+    });
+    // Another store is served.
+    await expect(withExportSlot('two', () => Promise.resolve(2))).resolves.toBe(
+      2,
+    );
+    finish();
+    await new Promise((r) => setImmediate(r));
+    expect(runningExports()).toBe(0);
+  });
+
+  it('gives up a document that takes too long (EXPORT_TIMEOUT) and frees its slot once the job ends', async () => {
+    await expect(
+      withExportSlot(
+        't5',
+        () => new Promise<void>((r) => setTimeout(r, 60)),
+        20,
+      ),
     ).rejects.toMatchObject({
       response: { code: 'EXPORT_TIMEOUT' },
       status: 503,
     });
+    await new Promise((r) => setTimeout(r, 100));
     expect(runningExports()).toBe(0);
   });
 
   it('frees the slot when the job throws', async () => {
     await expect(
-      withExportSlot(() => Promise.reject(new Error('x'))),
+      withExportSlot('t6', () => Promise.reject(new Error('x'))),
     ).rejects.toThrow('x');
     expect(runningExports()).toBe(0);
   });

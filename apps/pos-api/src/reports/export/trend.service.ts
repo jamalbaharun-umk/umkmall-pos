@@ -172,7 +172,14 @@ export class SalesExpensesService {
       return out;
     })();
     const prevFrom = prevStarts[0];
-    const prevTo = addDays(from, -1);
+    // A window that is still running is compared with the same number of days of the one before (like-for-like, as
+    // the profit and loss report does); a finished one with the whole previous window.
+    const partial = lastEnd > today;
+    const elapsedDays = Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
+        86_400_000,
+    );
+    const prevTo = partial ? addDays(prevFrom, elapsedDays) : addDays(from, -1);
 
     const [series, totals, previous] = await Promise.all([
       this.perBucket(tenantId, tz, scale, from, to),
@@ -194,7 +201,7 @@ export class SalesExpensesService {
       count,
       periodLabel: periodLabel(scale, from, to),
       // The last bucket is still running (the year of "2026 baru berjalan sampai 26 Nov").
-      partialLast: lastEnd > today,
+      partialLast: partial,
       buckets,
       totals,
       previous: {
