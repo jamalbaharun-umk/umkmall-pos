@@ -9,6 +9,7 @@ import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/
 import { useCan, useIsOwner } from '@/components/shell'
 import { DailyTargetForm } from '../ringkasan/-target-form'
 import { SetupBoard } from '../ringkasan/-panels'
+import { appSettingsPayload } from './-app-settings'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { IMAGE_ERROR, splitImages, storeProfileErrors, taxToBps, type Errors } from '@/lib/validate'
 import {
@@ -408,12 +409,7 @@ function AppForm({
     setErrors({})
     setBusy(true)
     const r = await saveAppSettings({
-      // The tax is an explicit choice when the owner touched it, or when it is the only thing to save. A timezone-only
-      // change leaves it out, so it is not taken as "tax chosen" for the Kelengkapan toko board.
-      data: {
-        ...(taxTouched || timezone === null || tz === timezone ? { taxBps: parsed.bps } : {}),
-        ...(timezone === null ? {} : { timezone: tz }),
-      },
+      data: appSettingsPayload({ bps: parsed.bps, taxTouched, timezone, tz }),
     }).catch(() => ({ error: GENERIC_ERROR, errors: undefined, status: 0 }))
     setBusy(false)
     if (r.error) {
