@@ -22,6 +22,7 @@ describe('summaries across menus (feature 39)', () => {
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1 });
   const http = () => request(app.getHttpServer());
   /** A JSON array of a supertest body (untyped by design). */
+  const nums = (x: unknown) => x as number[];
   const arr = (x: unknown) => x as Array<Record<string, any>>;
   const get = (auth: string, path: string) =>
     http().get(path).set('Authorization', auth);
@@ -188,17 +189,16 @@ describe('summaries across menus (feature 39)', () => {
 
     const month = (await get(a.auth, '/summaries/payment-methods').expect(200))
       .body;
-    const total = arr(month.methods).reduce(
-      (s: number, m: { amount: number }) => s + m.amount,
-      0,
-    );
+    const total = nums(
+      arr(month.methods).map((m): number => Number(m.amount)),
+    ).reduce((s, m) => s + m, 0);
     expect(total).toBe(15_500 + (yesterdayInMonth ? 1000 : 0));
     expect(month.activeCount).toBeGreaterThanOrEqual(2);
 
     const c = (await get(a.auth, '/summaries/categories').expect(200)).body;
     const sembako = arr(c.categories).find(
       (x: { name: string }) => x.name === 'Sembako',
-    );
+    )!;
     // Line totals before the voucher: 5.000 + 3.000 + 4.000 + 2.000 + 2.000 (+ yesterday 1.000).
     expect(sembako.revenue).toBe(16_000 + (yesterdayInMonth ? 1000 : 0));
     // Gula left: 500 − 5 − 3 − 4 − 2 − 1 − 2 (the 40 days ago and yesterday sales took stock too) = 482.
@@ -230,10 +230,10 @@ describe('summaries across menus (feature 39)', () => {
     expect(sariRow).toMatchObject({ receipts: 1, amount: 2000 });
     const owner = arr(r.cashiers).find(
       (c: { name: string }) => c.name === 'Pemilik',
-    );
+    )!;
     expect(owner.amount).toBe(13_500 + (yesterdayInMonth ? 1000 : 0));
     expect(r.hours).toHaveLength(24);
-    expect(arr(r.hours).reduce((s: number, h: number) => s + h, 0)).toBe(
+    expect(nums(r.hours).reduce((s, h) => s + h, 0)).toBe(
       5 + (yesterdayInMonth ? 1 : 0),
     );
   });

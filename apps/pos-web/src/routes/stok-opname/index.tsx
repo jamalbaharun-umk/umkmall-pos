@@ -16,6 +16,7 @@ import { Empty, formatDate, LoadError, Page, Pending } from '@/components/pos-pa
 import { useCan } from '@/components/shell'
 import { loadOpnames } from '../pembelian/-api'
 import { inDays, StatusBadge } from '../pembelian/-ui'
+import { StockOpnameSummary } from '../ringkasan/-panels'
 
 // Lakasir's Stock Opnames list: date, note, status, with status and date filters.
 export const Route = createFileRoute('/stok-opname/')({
@@ -54,6 +55,7 @@ function OpnamesPage() {
         )
       }
     >
+      <StockOpnameSummary />
       <Card variant="outlined" padding="none">
         <div className="flex flex-wrap items-end gap-3 p-4">
           <div className="w-44">

@@ -3,6 +3,7 @@ import { TextField } from '@umkmall/ui'
 import { useState } from 'react'
 import { loadMembers, type Member } from './-api'
 import { LoadError, Pending, ResourcePage } from './-ui'
+import { MembersSummary } from '../ringkasan/-panels'
 
 // Lakasir MemberResource: name, code, phone, address (email and identity fields dropped: minimised PII).
 export const Route = createFileRoute('/pelanggan/')({
@@ -26,6 +27,7 @@ function MembersPage() {
   return (
     <ResourcePage<Member>
       title="Pelanggan"
+      summary={<MembersSummary />}
       crumbs={[{ label: 'Pelanggan' }, { label: 'Daftar' }]}
       singular="pelanggan"
       resource="members"

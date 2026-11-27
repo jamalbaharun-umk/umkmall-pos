@@ -114,6 +114,7 @@ import {
   type LineDiscount,
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
+import { DailyTargetCard } from '../ringkasan/-panels'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
 // the left, "Orders details" on the right, then the payment modal (method, quick amounts, numpad, "Pay it") and the
@@ -1599,6 +1600,12 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
               : `Kembalian: ${rupiah(sale.change)}`}
         </Text>
         {/* A sale found paid after the till was away: say which sale it is, for how much and its receipt (UMK-2058). */}
+        {/* Feature 39: today's sales against the owner's optional daily target. */}
+        {sale && (
+          <div className="w-full text-left">
+            <DailyTargetCard />
+          </div>
+        )}
         {sale && (sale.receiptNumber != null || sale.amount != null) && (
           <dl className="w-full space-y-1 text-sm" aria-label="Rincian penjualan">
             {sale.receiptNumber != null && <Row label="Struk" value={`#${sale.receiptNumber}`} />}

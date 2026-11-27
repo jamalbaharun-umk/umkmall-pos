@@ -7,6 +7,8 @@ import { notifySuccess, showError } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
 import { useCan } from '@/components/shell'
+import { DailyTargetForm } from '../ringkasan/-target-form'
+import { SetupBoard } from '../ringkasan/-panels'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { IMAGE_ERROR, splitImages, storeProfileErrors, taxToBps, type Errors } from '@/lib/validate'
 import {
@@ -40,6 +42,7 @@ function SettingsPage() {
   const canEdit = useCan('catalog.manage')
   return (
     <Page title="Pengaturan" crumbs={[{ label: 'Pengaturan' }]}>
+      {canEdit && <SetupBoard />}
       {!canEdit ? (
         <NoAccess permission="Mengelola katalog" />
       ) : (
@@ -58,6 +61,7 @@ function SettingsPage() {
           </TabsContent>
           <TabsContent value="aplikasi">
             <AppForm taxBps={taxBps} timezone={timezone} />
+            <DailyTargetForm />
           </TabsContent>
           <TabsContent value="tentang">
             <Panel className="mt-4 flex flex-col gap-2 p-6 text-sm text-default-secondary">

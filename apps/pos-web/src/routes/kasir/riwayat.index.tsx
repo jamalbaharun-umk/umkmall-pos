@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { loadHistory } from './-api'
 import { hasRounding } from './-money'
+import { SalesHistorySummary } from '../ringkasan/-panels'
 
 const PER_PAGE = 20
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -62,6 +63,7 @@ function HistoryPage() {
       crumbs={[{ label: 'Riwayat penjualan', to: '/kasir/riwayat' }, { label: 'Daftar' }]}
       title="Riwayat penjualan"
     >
+      <SalesHistorySummary />
       <div className="grid gap-4 sm:grid-cols-3">
         <Stat label={`Pendapatan (${period})`} value={rupiah(summary.revenue)} />
         <Stat label={`Jumlah penjualan (${period})`} value={String(summary.count)} />
