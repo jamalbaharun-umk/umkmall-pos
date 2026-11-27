@@ -1844,7 +1844,7 @@ describe('purchase payments and returns (UMK-1970)', () => {
       expect(await onHand(a, p)).toBe(8);
     });
 
-    it('paying, returning and voiding need purchasing.manage (403); a cashier sees no purchase money', async () => {
+    it('paying, returning and voiding need purchasing.manage (403; a refund void is looked up first); a cashier sees no purchase money', async () => {
       const s = await createStore();
       const { o, line } = await designOrder(s);
       const paid = await pay(s.auth, o.id, {
@@ -1875,11 +1875,12 @@ describe('purchase payments and returns (UMK-1970)', () => {
         .set('Idempotency-Key', randomUUID())
         .send({ amount: 1_000, destination: 'drawer' })
         .expect(403);
+      // A Kasir may void their own drawer's refund (owner ruling 2026-11-27), so the route looks it up: none here.
       await post(
         kasir.auth,
         `/purchasing/orders/${o.id}/refunds/${paid.body.id}/void`,
         { reason: 'x' },
-      ).expect(403);
+      ).expect(404);
       const seen = await get(kasir.auth, `/purchasing/orders/${o.id}`).expect(
         200,
       );

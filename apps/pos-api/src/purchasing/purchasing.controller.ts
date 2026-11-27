@@ -210,8 +210,9 @@ export class PurchasingController {
   }
 
   /** The correction of a refund: voided with a reason, never edited or deleted. */
+  // No route permission: a drawer refund's own cashier voids it without `purchasing.manage` (owner ruling
+  // 2026-11-27); the service checks who may void which refund.
   @Post(':id/refunds/:refundId/void')
-  @RequirePermission('purchasing.manage')
   @HttpCode(200)
   voidRefund(
     @CurrentSession() s: PosSession,

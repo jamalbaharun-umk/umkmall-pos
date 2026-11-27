@@ -1,10 +1,11 @@
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { codedError, formatRupiah } from '../common/validation';
 import {
   type STORE_CASH_DIRECTIONS,
   type STORE_CASH_KINDS,
   storeCashEntries,
 } from '../db/schema';
+import type { Db } from '../db/db.module';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
 
@@ -18,11 +19,17 @@ import type { PosSession } from '../tenancy/session';
  * receivable payment's, a deposit's), so the two exist together or not at all; the unique index on the source row
  * refuses a second entry for the same source.
  *
- * Every `out` takes the store's cash lock first (a transaction-scoped advisory lock per tenant, `lockStoreCash`),
- * so outflows are written one at a time. An outflow that must be covered (`mustCover`, owner ruling 2026-11-27:
- * kas toko never goes negative through a correction) reads the balance under that lock and is refused with
- * `STORE_CASH_INSUFFICIENT` (with `available`) when the store does not hold it. Callers take their row locks
- * (purchase, staff, shift) before writing here, so this lock is always the last one taken.
+ * Store cash never goes negative through a correction (owner rulings 2026-11-27): an outflow written with
+ * `mustCover` (a supplier refund voided out of the store cash, a kasbon reversal of a closed shift or of the owner's
+ * own collection) takes the store's cash lock (`lockStoreCash`, a transaction-scoped advisory lock per tenant), reads
+ * `available` under it and is refused with `STORE_CASH_INSUFFICIENT` (with `available`) when the store does not
+ * hold the amount. `available` is the cash actually in the store: the balance minus what cashier collectors still
+ * hold undeposited (their outstanding); what the owner collected counts as in the store.
+ *
+ * Only `mustCover` outflows take the lock. A collector's deposit or the reversal of a cashier collector's instalment
+ * lowers the balance and that collector's outstanding by the same amount, so `available` stays as it was; an inflow
+ * only raises it. Every caller of `mustCover` takes all its row locks (purchase, staff, every shift it will write
+ * to) BEFORE writing here and takes none after, so this lock is the last one each such transaction takes.
  */
 
 export type StoreCashEntry = {
@@ -35,32 +42,70 @@ export type StoreCashEntry = {
   note?: string;
 };
 
-/** The store's cash lock, held until the transaction ends. Taken by every outflow. */
+/** The store's cash lock, held until the transaction ends. Taken by every `mustCover` outflow, last. */
 export async function lockStoreCash(tx: Tx, tenantId: string): Promise<void> {
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtext('pos.store_cash'), hashtext(${tenantId}))`,
   );
 }
 
-/** Σ in − Σ out of the store's cash (a `transfer` moved nothing). */
-export async function storeCashBalance(
-  tx: Tx,
+/**
+ * The cash actually in the store: Σ in − Σ out (a `transfer` moved nothing) minus what each cashier collector still
+ * holds undeposited (what they collected outside a shift, less reversals of those instalments, less their deposits;
+ * the figure `StoreCashDepositsService.collectors` shows as `outstanding`). Never below zero.
+ */
+export async function storeCashAvailable(
+  db: Db | Tx,
   tenantId: string,
 ): Promise<number> {
-  const e = storeCashEntries;
-  const [row] = await tx
-    .select({
-      balance: sql<string>`coalesce(sum(case ${e.direction} when 'in' then ${e.amount} when 'out' then -${e.amount} else 0 end), 0)`,
-    })
-    .from(e)
-    .where(eq(e.tenantId, tenantId));
-  return Number(row.balance);
+  const [row] = await db.execute<{ balance: string; held: string }>(sql`
+    select
+      (select coalesce(sum(case e.direction when 'in' then e.amount when 'out' then -e.amount else 0 end), 0)
+         from pos.store_cash_entries e where e.tenant_id = ${tenantId}) as balance,
+      (select coalesce(sum(greatest(x.collected - coalesce(h.handed_over, 0), 0)), 0)
+         from (
+           select c.actor_id, sum(c.amount) as collected
+             from (
+               select e.actor_id, e.amount
+                 from pos.store_cash_entries e
+                where e.tenant_id = ${tenantId} and e.direction = 'in' and e.kind = 'receivable_payment'
+                  and e.actor_kind = 'cashier'
+               union all
+               select p.actor_id, -e.amount
+                 from pos.store_cash_entries e
+                 join pos.receivable_payments r on r.tenant_id = e.tenant_id and r.id = e.ref_id
+                 join pos.receivable_payments p on p.tenant_id = r.tenant_id and p.id = r.reverses_id
+                where e.tenant_id = ${tenantId} and e.direction = 'out' and e.kind = 'receivable_reversal'
+                  and p.actor_kind = 'cashier') c
+            group by c.actor_id) x
+         left join lateral (
+           select sum(dep.amount) as handed_over from pos.store_cash_deposits dep
+            where dep.tenant_id = ${tenantId} and dep.collector_id = x.actor_id) h on true) as held`);
+  return Math.max(Number(row.balance) - Number(row.held), 0);
 }
 
 /**
- * Adds one movement to the store's cash, inside the caller's transaction. An `out` takes the store's cash lock;
- * with `mustCover` it is refused (422 `STORE_CASH_INSUFFICIENT`, `available`) when it would take the balance
- * below zero.
+ * 422 `STORE_CASH_INSUFFICIENT` (with `available`) unless the store holds `amount`. Under `lockStoreCash` it is the
+ * rule; without the lock it is an early refusal only (the kasbon correction runs it before asking for the PIN).
+ */
+export async function assertStoreCashCovers(
+  db: Db | Tx,
+  tenantId: string,
+  amount: number,
+): Promise<void> {
+  const available = await storeCashAvailable(db, tenantId);
+  if (amount > available)
+    throw codedError(
+      'STORE_CASH_INSUFFICIENT',
+      '_',
+      `Kas toko (${formatRupiah(available)}) kurang dari ${formatRupiah(amount)} yang harus dikeluarkan.`,
+      { available },
+    );
+}
+
+/**
+ * Adds one movement to the store's cash, inside the caller's transaction. With `mustCover` (an `out` only) it takes
+ * the store's cash lock and is refused (422 `STORE_CASH_INSUFFICIENT`, `available`) unless the store holds it.
  */
 export async function recordStoreCash(
   tx: Tx,
@@ -68,18 +113,9 @@ export async function recordStoreCash(
   entry: StoreCashEntry,
   opts: { mustCover?: boolean } = {},
 ): Promise<void> {
-  if (entry.direction === 'out') {
+  if (opts.mustCover && entry.direction === 'out') {
     await lockStoreCash(tx, s.tenantId);
-    if (opts.mustCover) {
-      const available = Math.max(await storeCashBalance(tx, s.tenantId), 0);
-      if (entry.amount > available)
-        throw codedError(
-          'STORE_CASH_INSUFFICIENT',
-          '_',
-          `Kas toko (${formatRupiah(available)}) kurang dari ${formatRupiah(entry.amount)} yang harus dikeluarkan.`,
-          { available },
-        );
-    }
+    await assertStoreCashCovers(tx, s.tenantId, entry.amount);
   }
   await tx.insert(storeCashEntries).values({
     tenantId: s.tenantId,

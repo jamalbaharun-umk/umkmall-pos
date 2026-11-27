@@ -37,7 +37,10 @@ import { isSelfApproval } from '../sales/line-discount';
 import { hasPermission } from '../staff/require-permission';
 import type { Tx } from '../stock/stock.service';
 import { StoreCashDepositsService } from '../store-cash/store-cash-deposits.service';
-import { recordStoreCash } from '../store-cash/store-cash-ledger';
+import {
+  assertStoreCashCovers,
+  recordStoreCash,
+} from '../store-cash/store-cash-ledger';
 import type { PosSession } from '../tenancy/session';
 import { type Approver, VoidPins } from '../void/void-pin';
 import { VoidPin } from '../void/void.schemas';
@@ -127,6 +130,9 @@ type CashBack =
   | { kind: 'none' }
   | { kind: 'shift'; shiftId: string; open: boolean }
   | { kind: 'collector'; collectorId: string; collectorKind: string };
+
+/** The reversal's cash leaves the store's own cash: the instalment was taken in a shift that has closed since. */
+const outOfStoreCash = (back: CashBack) => back.kind === 'shift' && !back.open;
 
 /**
  * "Koreksi pembayaran kasbon" (UMK-1971, design feature 31, owner decision: reversal plus new payment). A correction
@@ -344,6 +350,9 @@ export class ReceivableCorrectionsService {
         throw codedError('SHIFT_REQUIRED', '_', NO_SHIFT_CASH);
       if (back.kind === 'collector')
         await this.assertHeld(db, s, back, p.amount);
+      // Cash that goes back out of the store's cash, which never goes negative: refused before the PIN.
+      if (outOfStoreCash(back))
+        await assertStoreCashCovers(db, s.tenantId, p.amount);
     }
     return { r, p, method, back, restAfterReversal };
   }
@@ -496,6 +505,8 @@ export class ReceivableCorrectionsService {
         )
         .for('update');
       await this.assertHeld(tx, s, back, p.amount);
+      // Lowers the balance and what this cashier collector holds alike (an owner never collects outside a shift: the
+      // owner holds `sales.create`), so the store's own cash is untouched: no store cash lock.
       await recordStoreCash(tx, s, cashOut);
     } else if (back.kind === 'shift') {
       // The instalment's shift and the actor's open one, locked together in id order: two cashiers correcting each

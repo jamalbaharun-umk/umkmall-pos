@@ -801,9 +801,11 @@ export class PurchasePaymentsService {
    * drawer no longer holds it); otherwise the cash leaves the store cash, which never goes below zero
    * (`STORE_CASH_INSUFFICIENT`, owner ruling 2026-11-27). Repeating changes nothing.
    *
-   * A drawer refund is voided only by a person at that till (owner ruling 2026-11-27): the owner, the cashier whose
-   * shift took the cash, or an admin (a `sales.void` holder, the permission that reverses another cashier's till
-   * money); anyone else, purchasing staff without cashier rights included, gets 403 `DRAWER_REFUND_NOT_YOURS`.
+   * A drawer refund is voided only by a person at that till (owner rulings 2026-11-27): the owner, the cashier whose
+   * shift took the cash (with or without `purchasing.manage`), or an admin (a `sales.void` holder, the permission
+   * that reverses another cashier's till money); anyone else, purchasing staff without cashier rights included, gets
+   * 403 `DRAWER_REFUND_NOT_YOURS`. Any other refund needs `purchasing.manage` (the route carries no permission of its
+   * own for that reason).
    */
   async voidRefund(
     s: PosSession,
@@ -811,6 +813,13 @@ export class PurchasePaymentsService {
     refundId: string,
     reason: string,
   ) {
+    // Before any query: who could void no refund at all (neither purchasing, nor at a till, nor admin).
+    if (
+      !hasPermission(s, 'purchasing.manage') &&
+      !hasPermission(s, 'sales.create') &&
+      !hasPermission(s, 'sales.void')
+    )
+      throw new ForbiddenException();
     await this.db.transaction(async (tx) => {
       // Lock order: the purchase row, the refund row, then its shift.
       const order = await this.lockOrder(tx, s.tenantId, orderId);
@@ -833,6 +842,8 @@ export class PurchasePaymentsService {
       if (!row) throw new NotFoundException();
       if (row.destination === 'drawer')
         await this.assertMayVoidDrawerRefund(tx, s, row.shiftId);
+      else if (!hasPermission(s, 'purchasing.manage'))
+        throw new ForbiddenException();
       if (row.voidedAt) return;
       let drawerReversed: boolean | null = null;
       if (row.destination === 'drawer' && row.shiftId) {
