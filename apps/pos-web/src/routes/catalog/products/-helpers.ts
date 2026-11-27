@@ -2,8 +2,8 @@
 // pos-api's catalog/pricing.ts so an obviously wrong list never reaches the server; the server stays the authority.
 import { check, compact, type FieldErrors } from '../../../lib/form-checks'
 import { plainNumber } from '../../../lib/validate'
-
 import { rupiah } from '../../../lib/rupiah'
+
 /** What the form holds: raw text, so "1,5" gets a message instead of silently becoming 15. */
 export type UnitRow = { name: string; unitQty: string; price: string }
 export type TierRow = { minQty: string; price: string }

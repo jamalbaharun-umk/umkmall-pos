@@ -56,8 +56,9 @@ describe('Laporan kasir columns (UMK-2088)', () => {
 
   it('product report: Total penjualan is the sum of net rows, the discount is the order one', () => {
     const labels = Object.fromEntries(REPORTS.produk.totals.map((t) => [t.key, t.label]))
-    expect(labels.grossSales).toBe('Total penjualan')
-    expect(labels.discount).toBe('Diskon pesanan')
+    expect(labels.netSales).toBe('Total penjualan')
+    expect(labels.orderDiscount).toBe('Diskon pesanan')
+    expect(labels.grossSales).toBeUndefined()
     expect(REPORTS.penjualan.totals.find((t) => t.key === 'grossSales')?.label).toBe('Penjualan kotor')
   })
 })

@@ -157,7 +157,7 @@ export function OwnerSignIn({ failed, devSignIn }: { failed?: number; devSignIn:
               aria-label="Kode verifikasi"
               // The six boxes (44 px each) are wider than a phone card's inner width: let the row take the card's width
               // and the boxes share it, up to their own size, so nothing runs past the card's padding at 375 px.
-              className="w-full [&>div]:flex [&>div]:w-full [&>div]:justify-center [&>div>span]:w-auto [&>div>span]:min-w-0 [&>div>span]:max-w-11 [&>div>span]:flex-1"
+              className="w-full [&>div:has(>input)]:flex [&>div:has(>input)]:w-full [&>div:has(>input)]:justify-center [&>div:has(>input)>span]:w-auto [&>div:has(>input)>span]:min-w-0 [&>div:has(>input)>span]:max-w-11 [&>div:has(>input)>span]:flex-1"
               length={otpLength}
               value={otp}
               onChange={(v) => {
