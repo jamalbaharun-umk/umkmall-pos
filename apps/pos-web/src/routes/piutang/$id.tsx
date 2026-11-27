@@ -25,6 +25,7 @@ import { cashRoute, cashRouteNotice, paymentPlace, restAfter } from '../kasir/-s
 import { ActionRow } from '@/components/action-row'
 import { CorrectionDialog } from './-correction-dialog'
 import { correctionReasonLabel, paidFromBook, rowStatus, signedRupiah } from './-correction'
+import { WhatsappReminderDialog } from '@/components/whatsapp-dialogs'
 
 // Lakasir ViewReceivable: details, the sale's items, the payment history and the "add payment" action.
 export const Route = createFileRoute('/piutang/$id')({
@@ -42,6 +43,7 @@ function ReceivablePage() {
   const [correcting, setCorrecting] = useState<(typeof r.payments)[number] | null>(null)
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [reminding, setReminding] = useState(false)
   const [amount, setAmount] = useState('')
   const [methodId, setMethodId] = useState(methods[0]?.id ?? '')
   const [busy, setBusy] = useState(false)
@@ -119,6 +121,11 @@ function ReceivablePage() {
             <Link to="/piutang">Kembali</Link>
           </Button>
           {r.rest > 0 && (
+            <Button width="auto" type="outline" color="light" onClick={() => setReminding(true)}>
+              Kirim pengingat
+            </Button>
+          )}
+          {r.rest > 0 && (
             <Button width="auto" onClick={openDialog}>
               Tambah pembayaran
             </Button>
@@ -142,6 +149,12 @@ function ReceivablePage() {
           <dd className="text-right">{rupiah(paidFromBook(r.payments))}</dd>
           <dt className="font-bold">Sisa piutang</dt>
           <dd className="text-right font-bold">{rupiah(r.rest)}</dd>
+          {r.memberLastRemindedAt && (
+            <>
+              <dt className="font-medium">Terakhir diingatkan</dt>
+              <dd className="text-right">{formatMomentDay(r.memberLastRemindedAt)}</dd>
+            </>
+          )}
           <dt className="font-medium">Status</dt>
           <dd className="text-right">
             {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
@@ -311,6 +324,16 @@ function ReceivablePage() {
         onChanged={() => router.invalidate()}
       />
 
+      {reminding && (
+        <WhatsappReminderDialog
+          memberId={r.memberId}
+          onClose={() => setReminding(false)}
+          onDone={() => {
+            setReminding(false)
+            void router.invalidate()
+          }}
+        />
+      )}
       <Dialog open={open} onOpenChange={setOpen} centered title="Tambah pembayaran">
         <form onSubmit={submit} noValidate className="space-y-4 px-6 pb-6">
           <p className="text-sm text-default-secondary">Sisa piutang {rupiah(r.rest)}</p>

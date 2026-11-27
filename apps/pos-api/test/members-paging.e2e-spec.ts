@@ -192,11 +192,13 @@ describe('U7 lists: paging, search, cross-tenant', () => {
         openRest: 24_000,
         openCount: 2,
         outsideShiftCollected: 0,
+        overdueMemberIds: [],
       });
       expect(p2.summary).toEqual({
         openRest: 24_000,
         openCount: 2,
         outsideShiftCollected: 0,
+        overdueMemberIds: [],
       });
       // The tab filters rows, not the summary.
       const settled = await list(a, 'status=settled');
@@ -205,6 +207,7 @@ describe('U7 lists: paging, search, cross-tenant', () => {
         openRest: 24_000,
         openCount: 2,
         outsideShiftCollected: 0,
+        overdueMemberIds: [],
       });
     });
 
@@ -215,6 +218,7 @@ describe('U7 lists: paging, search, cross-tenant', () => {
         openRest: 24_000,
         openCount: 2,
         outsideShiftCollected: 0,
+        overdueMemberIds: [],
       });
       const budi = await list(a, 'q=budi');
       expect(budi).toMatchObject({

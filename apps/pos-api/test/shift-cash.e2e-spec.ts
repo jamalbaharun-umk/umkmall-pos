@@ -673,6 +673,7 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
         openRest: 0,
         openCount: 0,
         outsideShiftCollected: 6000,
+        overdueMemberIds: [],
       });
       expect(await ledger(s.tenantId)).toEqual([]);
       expect(await current(s.auth)).toMatchObject({ expectedCash: 100_000 });
@@ -725,6 +726,7 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
         openRest: 10_000,
         openCount: 2,
         outsideShiftCollected: 0,
+        overdueMemberIds: [],
       });
       expect(await storeCash(s.auth)).toMatchObject({
         data: [],

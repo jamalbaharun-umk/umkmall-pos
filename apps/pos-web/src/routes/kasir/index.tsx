@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState, useRef } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
+import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import {
   createSale,
   loadCashier,
@@ -1583,6 +1584,8 @@ type PaidSale = PaidSaleInfo
 
 function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void }) {
   const navigate = useNavigate()
+  // UMK-1987: the receipt offered on WhatsApp, on top of this dialog (the paid sale stays on screen behind it).
+  const [sharing, setSharing] = useState(false)
   return (
     <Dialog open={!!sale} onOpenChange={(o) => !o && onClose()} centered size="small" label="Pembayaran berhasil">
       <div className="flex flex-col items-center gap-2 px-6 pb-6 pt-8 text-center">
@@ -1606,9 +1609,13 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
             {sale.method && <Row label="Cara bayar" value={sale.method} />}
           </dl>
         )}
-        <ActionRow className="mt-4">
+        {/* Three buttons do not fit this small dialog in one row: a column at every width. */}
+        <ActionRow stacked className="mt-4">
           <Button width="auto" type="outline" color="light" onClick={onClose}>
             Tutup
+          </Button>
+          <Button width="auto" type="outline" color="light" disabled={!sale} onClick={() => setSharing(true)}>
+            Kirim struk WhatsApp
           </Button>
           <Button
             width="auto"
@@ -1618,6 +1625,7 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
           </Button>
         </ActionRow>
       </div>
+      {sharing && sale && <WhatsappReceiptDialog saleId={sale.id} onClose={() => setSharing(false)} />}
     </Dialog>
   )
 }
