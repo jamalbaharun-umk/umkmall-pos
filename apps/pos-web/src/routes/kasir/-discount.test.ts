@@ -98,4 +98,45 @@ describe('line discount (UMK-1990)', () => {
     // a receipt from before line discounts: all of it was an order discount
     expect(receiptDiscounts({ discount: 5000 })).toEqual({ lines: 0, order: 5000 })
   })
+
+  describe('a manual price (ruling 2026-11-26)', () => {
+    const price = (value: number): LineDiscount => ({ kind: 'price', value })
+
+    it('its reduction is the line at the server price minus the price × qty, gated at 30% like a discount', () => {
+      // 4 × Rp5.000 = 20.000; Rp3.500 each = 14.000: 6.000 off, exactly 30%.
+      expect(discountOf(20_000, price(3500), 4)).toBe(6000)
+      expect(needsApproval(discountOf(20_000, price(3500), 4), 20_000)).toBe(false)
+      expect(discountOf(20_000, price(3499), 4)).toBe(6004)
+      expect(needsApproval(6004, 20_000)).toBe(true)
+      expect(approvalBps(6004, 20_000)).toBe(3002)
+      expect(lineDiscountState(20_000, price(3500), 4)).toEqual({ discount: 6000, netTotal: 14_000 })
+      expect(lineDiscountState(20_000, price(2500), 4).problem).toBe(
+        'Harga manual lebih dari 30% di bawah harga normal perlu PIN admin lagi. Ubah harganya.',
+      )
+      const approval = { id: 'x', maxBps: 5000, approverName: 'Rina' }
+      expect(lineDiscountState(20_000, { ...price(2500), approval }, 4)).toEqual({ discount: 10_000, netTotal: 10_000 })
+      // The wholesale tier dropped the line's price below the manual one: fix it before paying.
+      expect(lineDiscountState(13_200, price(3500), 4).problem).toBe(
+        'Harga manual tidak lagi di bawah harga sekarang. Ubah harganya.',
+      )
+    })
+
+    it('refuses an empty, negative, not whole, Rp0 or not lower price', () => {
+      expect(discountTextError('price', '', 20_000, 4)).toBe('Wajib diisi')
+      expect(discountTextError('price', '-1', 20_000, 4)).toBe('Harga tidak boleh negatif')
+      expect(discountTextError('price', '3,5', 20_000, 4)).toBe('Harus bilangan bulat rupiah, misalnya 3.500')
+      expect(discountTextError('price', '0', 20_000, 4)).toBe('Harga manual tidak boleh Rp0')
+      expect(discountTextError('price', '5.000', 20_000, 4)).toBe('Harga baru harus di bawah harga sekarang')
+      expect(discountTextError('price', '3.500', 20_000, 4)).toBeUndefined()
+    })
+
+    it('goes to the sale as the line price with its approval, never to the quote; labels and toast say Harga', () => {
+      const approved: LineDiscount = { ...price(2500), approval: { id: 'ap1', maxBps: 5000, approverName: 'Rina' } }
+      expect(discountFields(approved, true)).toEqual({ price: 2500, discountApprovalId: 'ap1' })
+      expect(discountFields(price(3500), true)).toEqual({ price: 3500 })
+      expect(discountFields(approved, false)).toEqual({})
+      expect(discountLabel(price(3500))).toBe('harga Rp3.500')
+      expect(discountToast('Teh Botol', price(3500))).toBe('Harga Rp3.500 diterapkan pada Teh Botol')
+    })
+  })
 })

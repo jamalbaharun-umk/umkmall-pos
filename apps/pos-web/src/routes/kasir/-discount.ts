@@ -5,9 +5,13 @@ import type { ErrorDescription } from '@/lib/describe-error'
 import { rupiah } from '../../lib/rupiah'
 import { taxOf } from './-money'
 
-export type DiscountKind = 'percent' | 'amount'
+/**
+ * `price` (owner ruling 2026-11-26): a manual unit price below the line's current one, sent as the line's `price`
+ * (sales.price_override). Its reduction (current total − price × qty) is shown and gated like a discount.
+ */
+export type DiscountKind = 'percent' | 'amount' | 'price'
 
-/** A line's discount as the cashier gave it. An approval is the PIN approval of a discount above 30%. */
+/** A line's discount as the cashier gave it. An approval is the PIN approval of a reduction above 30%. */
 export type LineDiscount = {
   kind: DiscountKind
   value: number
@@ -19,9 +23,16 @@ export const APPROVAL_BPS = 3000
 
 const rp = rupiah
 
-/** The rupiah off a line of `lineTotal`: an amount as given, a percent rounded half up (pos-api's rule). */
-export const discountOf = (lineTotal: number, d: Pick<LineDiscount, 'kind' | 'value'>) =>
-  d.kind === 'percent' ? Math.floor((lineTotal * d.value + 50) / 100) : d.value
+/**
+ * The rupiah off a line of `lineTotal` (`qty` items): an amount as given, a percent rounded half up (pos-api's rule),
+ * a manual price the difference to the line's total at it (negative when it is higher).
+ */
+export const discountOf = (lineTotal: number, d: Pick<LineDiscount, 'kind' | 'value'>, qty = 1) =>
+  d.kind === 'percent'
+    ? Math.floor((lineTotal * d.value + 50) / 100)
+    : d.kind === 'price'
+      ? lineTotal - d.value * qty
+      : d.value
 
 /** More than 30% of the line. */
 export const needsApproval = (discount: number, lineTotal: number) => discount * 10000 > lineTotal * APPROVAL_BPS
@@ -38,14 +49,22 @@ const digits = (t: string) => (/^\d+$/.test(t) ? Number(t) : NaN)
 const rupiahText = (t: string) =>
   /^\d+$/.test(t) || /^\d{1,3}(\.\d{3})+$/.test(t) ? Number(t.replace(/\./g, '')) : NaN
 
-/** The typed value, or NaN when it is not a whole number (percent) or whole rupiah (amount). */
+/** The typed value, or NaN when it is not a whole number (percent) or whole rupiah (amount, price). */
 export const parseDiscount = (kind: DiscountKind, text: string) =>
   kind === 'percent' ? digits(text.trim()) : rupiahText(text.trim())
 
-/** Why the typed discount cannot be applied to a line of `lineTotal`; undefined when it can. */
-export function discountTextError(kind: DiscountKind, text: string, lineTotal: number): string | undefined {
+/** Why the typed discount cannot be applied to a line of `lineTotal` (`qty` items); undefined when it can. */
+export function discountTextError(kind: DiscountKind, text: string, lineTotal: number, qty = 1): string | undefined {
   const t = text.trim()
   if (!t) return 'Wajib diisi'
+  if (kind === 'price') {
+    if (/^-/.test(t)) return 'Harga tidak boleh negatif'
+    const price = parseDiscount(kind, t)
+    if (Number.isNaN(price)) return 'Harus bilangan bulat rupiah, misalnya 3.500'
+    if (price < 1) return 'Harga manual tidak boleh Rp0'
+    if (price * qty >= lineTotal) return 'Harga baru harus di bawah harga sekarang'
+    return undefined
+  }
   if (/^-/.test(t)) return 'Diskon tidak boleh negatif'
   const n = parseDiscount(kind, t)
   if (Number.isNaN(n)) return kind === 'percent' ? 'Isi persen bilangan bulat, misalnya 10' : 'Harus bilangan bulat rupiah, misalnya 2.000'
@@ -69,29 +88,47 @@ export type LineDiscountState = {
  * A cart line's discount against its current total: an amount that became the whole line, or a share that grew past
  * its PIN approval (fewer items), is a problem the cashier fixes before paying; it is not sent meanwhile.
  */
-export function lineDiscountState(lineTotal: number, d: LineDiscount | undefined): LineDiscountState {
+export function lineDiscountState(lineTotal: number, d: LineDiscount | undefined, qty = 1): LineDiscountState {
   if (!d) return { discount: 0, netTotal: lineTotal }
-  const discount = discountOf(lineTotal, d)
+  const discount = discountOf(lineTotal, d, qty)
+  if (d.kind === 'price' && discount <= 0)
+    return { discount: 0, netTotal: lineTotal, problem: 'Harga manual tidak lagi di bawah harga sekarang. Ubah harganya.' }
   if (discount >= lineTotal) return { discount: 0, netTotal: lineTotal, problem: 'Diskon melebihi harga baris. Ubah diskonnya.' }
   if (needsApproval(discount, lineTotal) && (!d.approval || discount * 10000 > d.approval.maxBps * lineTotal))
-    return { discount: 0, netTotal: lineTotal, problem: 'Diskon lebih dari 30% perlu PIN admin lagi. Ubah diskonnya.' }
+    return {
+      discount: 0,
+      netTotal: lineTotal,
+      problem:
+        d.kind === 'price'
+          ? 'Harga manual lebih dari 30% di bawah harga normal perlu PIN admin lagi. Ubah harganya.'
+          : 'Diskon lebih dari 30% perlu PIN admin lagi. Ubah diskonnya.',
+    }
   return { discount, netTotal: lineTotal - discount }
 }
 
-/** The fields of a line's discount in a request; the quote takes no approval. */
+/**
+ * The fields of a line's discount in a request; the quote takes no approval. A manual price goes to the sale as the
+ * line's `price` and not to the quote: the quote keeps the server's price, which the reduction is measured on.
+ */
 export function discountFields(d: LineDiscount | undefined, withApproval: boolean) {
   if (!d) return {}
+  if (d.kind === 'price') {
+    if (!withApproval) return {}
+    return d.approval ? { price: d.value, discountApprovalId: d.approval.id } : { price: d.value }
+  }
   const value = d.kind === 'percent' ? { discountPercent: d.value } : { discountAmount: d.value }
   return withApproval && d.approval ? { ...value, discountApprovalId: d.approval.id } : value
 }
 
-/** "diskon 10%" or "diskon Rp2.000", next to the line's quantity. */
+/** "diskon 10%", "diskon Rp2.000" or "harga Rp3.500", next to the line's quantity. */
 export const discountLabel = (d: Pick<LineDiscount, 'kind' | 'value'>) =>
-  d.kind === 'percent' ? `diskon ${d.value}%` : `diskon ${rp(d.value)}`
+  d.kind === 'percent' ? `diskon ${d.value}%` : d.kind === 'price' ? `harga ${rp(d.value)}` : `diskon ${rp(d.value)}`
 
-/** The success toast: "Diskon 10% diterapkan pada Teh Botol". */
+/** The success toast: "Diskon 10% diterapkan pada Teh Botol", "Harga Rp3.500 diterapkan pada Teh Botol". */
 export const discountToast = (name: string, d: Pick<LineDiscount, 'kind' | 'value'>) =>
-  `Diskon ${d.kind === 'percent' ? `${d.value}%` : rp(d.value)} diterapkan pada ${name}`
+  d.kind === 'price'
+    ? `Harga ${rp(d.value)} diterapkan pada ${name}`
+    : `Diskon ${d.kind === 'percent' ? `${d.value}%` : rp(d.value)} diterapkan pada ${name}`
 
 /** Only the discounts of lines still in the cart. */
 export function pruneDiscounts(discounts: Record<string, LineDiscount>, keys: string[]) {

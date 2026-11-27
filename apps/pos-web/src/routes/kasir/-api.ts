@@ -230,9 +230,12 @@ export const closeShift = createServerFn({ method: 'POST' })
 
 /** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
 type LineDiscountFields = { discountPercent?: number; discountAmount?: number }
+/** A manual unit price (sales.price_override, ruling 2026-11-26); more than 30% below the server's needs an approval. */
+type ManualPrice = { price?: number }
 type SaleInput = {
   key: string
-  lines: ({ productId: string; qty: number; unit?: string; discountApprovalId?: string } & LineDiscountFields)[]
+  lines: ({ productId: string; qty: number; unit?: string; discountApprovalId?: string } & LineDiscountFields &
+    ManualPrice)[]
   paid: number
   note?: string
   // U7: member (required for a kasbon method), voucher code, payment method (default Tunai).
