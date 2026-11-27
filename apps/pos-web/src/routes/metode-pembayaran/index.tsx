@@ -3,6 +3,7 @@ import { Alert, Badge } from '@umkmall/ui'
 import { gatewayLabel } from '../kasir/-online'
 import { listResource, type PaymentKind, type PaymentMethod } from '../pelanggan/-api'
 import { LoadError, Pending, ResourcePage } from '../pelanggan/-ui'
+import { PaymentMethodsSummary } from '../ringkasan/-panels'
 
 // Lakasir PaymentMethodResource. Exactly one kind per method; "Kasbon" (credit) sales create a receivable.
 const KINDS: { value: PaymentKind; label: string }[] = [
@@ -29,6 +30,7 @@ export const Route = createFileRoute('/metode-pembayaran/')({
   component: () => (
     <ResourcePage<PaymentMethod>
       title="Metode pembayaran"
+      summary={<PaymentMethodsSummary />}
       crumbs={[{ label: 'Metode pembayaran' }, { label: 'Daftar' }]}
       singular="metode pembayaran"
       resource="payment-methods"

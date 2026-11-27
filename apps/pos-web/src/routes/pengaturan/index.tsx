@@ -6,7 +6,9 @@ import { SCROLL_TABS } from '@/lib/scroll-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
-import { useCan } from '@/components/shell'
+import { useCan, useIsOwner } from '@/components/shell'
+import { DailyTargetForm } from '../ringkasan/-target-form'
+import { SetupBoard } from '../ringkasan/-panels'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { IMAGE_ERROR, splitImages, storeProfileErrors, taxToBps, type Errors } from '@/lib/validate'
 import {
@@ -38,8 +40,14 @@ const TIMEZONES = [
 function SettingsPage() {
   const { profile, taxBps, timezone } = Route.useLoaderData()
   const canEdit = useCan('catalog.manage')
+  // The daily target is set by the owner (owner ruling); an admin with catalog.manage does not see the form.
+  const owner = useIsOwner()
+  // "Kelengkapan toko" reads the store's steps again after a form on this page saves.
+  const [setupRound, setSetupRound] = useState(0)
+  const onSaved = () => setSetupRound((n) => n + 1)
   return (
     <Page title="Pengaturan" crumbs={[{ label: 'Pengaturan' }]}>
+      {canEdit && <SetupBoard refresh={setupRound} />}
       {!canEdit ? (
         <NoAccess permission="Mengelola katalog" />
       ) : (
@@ -51,13 +59,14 @@ function SettingsPage() {
             <TabsTrigger value="tentang">Tentang</TabsTrigger>
           </TabsList>
           <TabsContent value="profil">
-            <ProfileForm profile={profile} />
+            <ProfileForm profile={profile} onSaved={onSaved} />
           </TabsContent>
           <TabsContent value="pembayaran">
             <QrisForm profile={profile} />
           </TabsContent>
           <TabsContent value="aplikasi">
-            <AppForm taxBps={taxBps} timezone={timezone} />
+            <AppForm taxBps={taxBps} timezone={timezone} onSaved={onSaved} />
+            {owner && <DailyTargetForm />}
           </TabsContent>
           <TabsContent value="tentang">
             <Panel className="mt-4 flex flex-col gap-2 p-6 text-sm text-default-secondary">
@@ -75,7 +84,7 @@ function SettingsPage() {
   )
 }
 
-function ProfileForm({ profile }: { profile: Profile }) {
+function ProfileForm({ profile, onSaved }: { profile: Profile; onSaved: () => void }) {
   const router = useRouter()
   const confirm = useConfirm()
   const [form, setForm] = useState({
@@ -126,6 +135,7 @@ function ProfileForm({ profile }: { profile: Profile }) {
         } else setLogo(null)
       }
       notifySuccess('Pengaturan toko disimpan')
+      onSaved()
       await router.invalidate() // the shell shows the new store name
     } catch (e) {
       setError(GENERIC_ERROR)
@@ -368,7 +378,15 @@ function QrisForm({ profile }: { profile: Profile }) {
   )
 }
 
-function AppForm({ taxBps, timezone }: { taxBps: number | null; timezone: string | null }) {
+function AppForm({
+  taxBps,
+  timezone,
+  onSaved,
+}: {
+  taxBps: number | null
+  timezone: string | null
+  onSaved: () => void
+}) {
   const router = useRouter()
   const [tax, setTax] = useState(taxBps === null ? '' : String(taxBps / 100).replace('.', ','))
   const [tz, setTz] = useState(timezone ?? 'Asia/Jakarta')
@@ -399,6 +417,7 @@ function AppForm({ taxBps, timezone }: { taxBps: number | null; timezone: string
       return showError(r, 'menyimpan pengaturan aplikasi')
     }
     notifySuccess('Pengaturan aplikasi disimpan')
+    onSaved()
     await router.invalidate()
   }
 

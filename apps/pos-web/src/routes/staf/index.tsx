@@ -6,6 +6,7 @@ import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { Empty, Page, PageError, PageLoading, Panel, dateTime } from '@/components/page'
 import { deleteStaff, loadStaffPage } from './-api'
+import { StaffSummary } from '../ringkasan/-panels'
 
 export const Route = createFileRoute('/staf/')({
   loader: () => loadStaffPage(),
@@ -45,6 +46,7 @@ function StaffPage() {
         </Button>
       }
     >
+      <StaffSummary />
       <Panel>
         <div className="flex justify-end border-b border-border-light p-4">
           <div className="w-full md:w-72">

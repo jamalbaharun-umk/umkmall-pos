@@ -83,6 +83,8 @@ export function ResourcePage<T extends { id: string }>(props: {
   emptyHint: string
   canManage?: (row: T) => boolean
   toolbar?: ReactNode
+  /** The picture summary above the list (design feature 39). */
+  summary?: ReactNode
   /** Server paging (Lakasir's table footer: "Menampilkan X–Y dari Z" and page buttons). */
   paging?: { page: number; perPage: number; total: number; onPage: (page: number) => void }
 }) {
@@ -173,6 +175,7 @@ export function ResourcePage<T extends { id: string }>(props: {
       crumbs={props.crumbs}
       actions={<Button onClick={() => open()}>Tambah {props.singular}</Button>}
     >
+      {props.summary}
       <Card variant="outlined" padding="none" className="overflow-hidden">
         {props.toolbar && <div className="border-b border-default-primary p-4">{props.toolbar}</div>}
         {props.rows.length === 0 ? (

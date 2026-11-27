@@ -70,7 +70,7 @@ const stateOf = (s: { status: string }, empty: boolean): ChartState =>
 
 const OpenCashier = (
   <Button asChild type="primary" color="primary" size="small" width="auto">
-    <a href="/kasir">Buka kasir</a>
+    <Link to="/kasir">Buka kasir</Link>
   </Button>
 )
 

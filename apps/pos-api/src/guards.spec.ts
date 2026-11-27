@@ -403,6 +403,7 @@ describe('repo guards', () => {
       path.join('shifts', 'shifts.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('agent', 'ledger.controller.ts'),
+      path.join('summaries', 'summaries.service.ts'),
       path.join('reports', 'export', 'trend.service.ts'),
       path.join('reports', 'export', 'visuals.service.ts'),
     ]) {
@@ -434,6 +435,8 @@ describe('repo guards', () => {
       path.join('reports', 'reports.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('shifts', 'shifts.service.ts'),
+      // The summaries above each menu (feature 39): receipts only, by status.
+      path.join('summaries', 'summaries.service.ts'),
       path.join('void', 'void.service.ts'),
     ]);
   });

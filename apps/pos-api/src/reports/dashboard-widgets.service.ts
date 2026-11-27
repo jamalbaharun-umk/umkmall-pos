@@ -285,8 +285,7 @@ export class DashboardWidgetsService {
              coalesce(sum(b.qty_remaining), 0) as on_hand,
              (select lb.qty_initial from pos.stock_batches lb
                where lb.tenant_id = p.tenant_id and lb.product_id = p.id
-               order by lb.received_at desc, lb.created_at desc limit 1) as last_in,
-             count(*) over () as total_rows
+               order by lb.received_at desc, lb.created_at desc limit 1) as last_in
         from pos.products p
         left join pos.stock_batches b on b.tenant_id = p.tenant_id and b.product_id = p.id
        where p.tenant_id = ${tenantId} and p.type = 'product' and p.deleted_at is null

@@ -365,6 +365,13 @@
       "when": 1795749462794,
       "tag": "0051_discount_gate_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795757587729,
+      "tag": "0052_summaries_target_tax_set",
+      "breakpoints": true
     }
   ]
 }

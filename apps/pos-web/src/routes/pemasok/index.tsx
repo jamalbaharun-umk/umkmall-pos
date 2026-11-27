@@ -27,6 +27,7 @@ import {
 import { useCan } from '@/components/shell'
 import { deleteSupplier, loadSuppliers, saveSupplier, type Supplier } from '../pembelian/-api'
 import { ActionRow } from '@/components/action-row'
+import { SuppliersSummary } from '../ringkasan/-panels'
 
 // Lakasir's Suppliers resource: a table (name, phone, address) with edit/delete row actions and a modal form.
 export const Route = createFileRoute('/pemasok/')({
@@ -72,6 +73,7 @@ function SuppliersPage() {
         )
       }
     >
+      <SuppliersSummary />
       <Card variant="outlined" padding="none">
         <div className="flex justify-end p-4">
           <div className="w-full sm:w-72">

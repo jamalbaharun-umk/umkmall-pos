@@ -24,6 +24,7 @@ import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components
 import { deleteProduct, listCategories, listProducts, type ProductSearch } from '../-api'
 import { TYPE_LABEL } from './-form'
 import { filterLabel, stockState } from '../../kasir/-stock'
+import { ProductsSummary } from '../../ringkasan/-panels'
 
 export const Route = createFileRoute('/catalog/products/')({
   validateSearch: (s: Record<string, unknown>): ProductSearch => ({
@@ -83,6 +84,7 @@ function ProductsPage() {
         )
       }
     >
+      <ProductsSummary />
       <Panel>
         <div className="flex flex-col gap-3 border-b border-border-light p-4 md:flex-row md:items-center md:justify-end">
           <SegmentedControl
