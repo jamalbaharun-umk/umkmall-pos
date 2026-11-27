@@ -2,6 +2,7 @@ import {
   bucketEnd,
   bucketLabel,
   bucketStarts,
+  comparisonEnd,
   nextBucket,
   percentChange,
   periodLabel,
@@ -73,5 +74,24 @@ describe('report scales', () => {
     expect(TrendQuery.safeParse({ to: '2026-02-30' }).success).toBe(false);
     expect(TrendQuery.safeParse({ count: '0' }).success).toBe(false);
     expect(TrendQuery.parse({ count: '12' }).count).toBe(12);
+  });
+});
+
+describe('comparisonEnd', () => {
+  it('compares a finished window with the whole window before it', () => {
+    // 20 to 26 Nov, finished: the one before is 13 to 19 Nov.
+    expect(comparisonEnd(false, '2026-11-20', '2026-11-26', '2026-11-13')).toBe(
+      '2026-11-19',
+    );
+  });
+  it('compares a window still running with the same elapsed days of the one before', () => {
+    // 3 days of a 7-day window have passed (20 to 22 Nov): the one before counts 13 to 15 Nov only.
+    expect(comparisonEnd(true, '2026-11-20', '2026-11-22', '2026-11-13')).toBe(
+      '2026-11-15',
+    );
+    // A running year: Jan 1 to Nov 26 against Jan 1 to Nov 26 of the year before.
+    expect(comparisonEnd(true, '2026-01-01', '2026-11-26', '2025-01-01')).toBe(
+      '2025-11-26',
+    );
   });
 });

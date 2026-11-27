@@ -173,6 +173,10 @@ export class ReportPdfService {
           },
         ]);
       for (const v of visuals) b.chart(v);
+      if (kind === 'sales' && visuals.length > 0)
+        b.note(
+          'Diagram memakai penjualan tanpa pajak dan hanya struk yang punya cara bayar; tabel dan ringkasan di bawah memuat pajak per baris, jadi angkanya bisa berbeda.',
+        );
       const rows = r.rows as Row[];
       const shown = rows.slice(0, MAX_TABLE_ROWS);
       if (rows.length === 0) b.note('Belum ada data pada rentang ini.');
@@ -358,11 +362,15 @@ export class ReportPdfService {
             value: rp(t.sales),
             strong: true,
           },
-          { label: 'Harga pokok penjualan', value: rp(t.cost) },
-          { label: 'Laba kotor', value: rp(t.grossProfit) },
-          { label: 'Susut stok', value: rp(t.shrinkage) },
+          { label: PROFIT_LOSS_LABELS.cost, value: rp(t.cost) },
+          { label: PROFIT_LOSS_LABELS.grossProfit, value: rp(t.grossProfit) },
+          { label: PROFIT_LOSS_LABELS.shrinkage, value: rp(t.shrinkage) },
           { label: 'Pengeluaran', value: rp(t.expenses) },
-          { label: 'Laba bersih', value: rp(t.netProfit), strong: true },
+          {
+            label: PROFIT_LOSS_LABELS.netProfit,
+            value: rp(t.netProfit),
+            strong: true,
+          },
           { label: 'Pajak dikumpulkan (bukan pendapatan)', value: rp(t.tax) },
         ]);
       const empty = visualIsEmpty(r.visual);

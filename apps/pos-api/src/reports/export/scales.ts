@@ -43,6 +43,21 @@ export function addDays(d: string, n: number): string {
   return ymd(parse(d) + n * 86_400_000);
 }
 
+/**
+ * Where the window before ends. A finished window is compared with the whole window before it; a window still
+ * running (`partial`) with the same number of elapsed days of it, so "turun x%" is never a part against a whole.
+ */
+export function comparisonEnd(
+  partial: boolean,
+  from: string,
+  to: string,
+  prevFrom: string,
+): string {
+  if (!partial) return addDays(from, -1);
+  const elapsed = Math.round((parse(to) - parse(from)) / 86_400_000);
+  return addDays(prevFrom, elapsed);
+}
+
 /** The first day of the bucket that holds `d`. */
 export function bucketStart(scale: Scale, d: string): string {
   return scale === 'day'

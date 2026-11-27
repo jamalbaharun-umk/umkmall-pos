@@ -132,6 +132,27 @@ describe('chart colours for the PDF', () => {
     expect(r.svg).toContain('Rp1,5 jt');
   });
 
+  it('keeps & < > " \' and non-Latin names in a label from breaking the drawing or the PDF', async () => {
+    const names = [`Kopi & Teh <b> "x" 'y'`, '日本語 كوب', 'Normal'];
+    const v: Visual = {
+      id: 'x',
+      kind: 'bars',
+      title: 'T',
+      unit: 'rupiah',
+      orientation: 'vertical',
+      categories: names,
+      series: [{ label: 'Penjualan', values: [100_000, 200_000, 300_000] }],
+    };
+    const r = renderChart(v, 520, 190)!;
+    // Well-formed: the markup of a name is escaped, never read as markup.
+    expect(r.svg).not.toContain('<b>');
+    expect(r.svg).not.toMatch(/&(?!amp;|lt;|gt;|quot;|#x?[0-9a-f]+;|apos;)/);
+    const b = new PdfBuilder(meta);
+    b.chart(v);
+    const bytes = await b.finish();
+    expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
   it('draws one column of one value as a figure, not a picture (the component does the same on screen)', () => {
     const v: Visual = {
       id: 'x',

@@ -304,12 +304,12 @@ describe('report PDFs and visuals', () => {
       const chart = await only('chart');
       expect(chart).toContain('Penjualan dan pengeluaran per hari');
       expect(chart).not.toContain('Rincian per hari');
-      expect(chart).not.toContain('Harga pokok penjualan');
+      expect(chart).not.toContain('Modal barang terjual');
       const table = await only('table');
       expect(table).toContain('Rincian per hari');
       expect(table).not.toContain('Rp100 rb');
       const summary = await only('summary');
-      expect(summary).toContain('Harga pokok penjualan');
+      expect(summary).toContain('Modal barang terjual');
       expect(summary).not.toContain('Rincian per hari');
     });
 
