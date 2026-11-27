@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Dialog, Icon, Spinner, Text, TextField } from '@u
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { rupiah } from '@/components/pos-page'
+import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import { notifySuccess, showError, type FailureLike } from '@/lib/feedback'
 import {
   loadAwaitingSales,
@@ -308,6 +309,8 @@ export function OnlineWait({
     notifySuccess('Penjualan dibayar tunai')
   }
 
+  // UMK-1987: the paid sale's receipt offered on WhatsApp.
+  const [sharing, setSharing] = useState(false)
   const finish = (kind: OnlineFinish['kind'], print = false) => {
     onFinish(
       kind === 'paid'
@@ -736,6 +739,9 @@ export function OnlineWait({
                 <Button width="auto" className="w-full" onClick={() => finish('paid')}>
                   Penjualan baru
                 </Button>
+                <Button width="auto" className="w-full" type="outline" color="light" onClick={() => setSharing(true)}>
+                  Kirim struk WhatsApp
+                </Button>
                 <Button width="auto" className="w-full" type="outline" color="light" onClick={() => finish('paid', true)}>
                   Cetak struk
                 </Button>
@@ -750,6 +756,7 @@ export function OnlineWait({
         </div>
       </Dialog>
       {confirm.dialog}
+      {sharing && <WhatsappReceiptDialog saleId={id} onClose={() => setSharing(false)} />}
     </>
   )
 }

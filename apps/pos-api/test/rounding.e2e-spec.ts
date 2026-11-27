@@ -170,9 +170,26 @@ describe('cash rounding to the next Rp100 (UMK-1993)', () => {
       },
     );
 
-    it('a total of Rp0 (discount = subtotal) has no rounding', async () => {
+    it('a total of Rp0 (a voucher of the whole subtotal) has no rounding', async () => {
+      // Since the ruling of 2026-11-26 an order discount of the whole subtotal is refused (no PIN approval covers
+      // 100%), so a Rp0 sale is one whose voucher takes all of it.
       const s = await shop(0);
-      const sale = await s.sell({ discount: PRICE, paid: 0 }).expect(201);
+      const all = await s.sell({ discount: PRICE, paid: 0 }).expect(422);
+      expect(all.body.code).toBe('DISCOUNT_INVALID');
+      await post(s.auth, '/vouchers', {
+        name: 'Gratis',
+        code: 'GRATIS',
+        type: 'flat',
+        nominal: PRICE,
+        kuota: 1,
+        startDate: new Date(Date.now() + 7 * 3_600_000)
+          .toISOString()
+          .slice(0, 10),
+        expired: new Date(Date.now() + 31 * 3_600_000)
+          .toISOString()
+          .slice(0, 10),
+      }).expect(201);
+      const sale = await s.sell({ voucherCode: 'GRATIS', paid: 0 }).expect(201);
       expect(sale.body).toMatchObject({
         total: 0,
         rounding: 0,

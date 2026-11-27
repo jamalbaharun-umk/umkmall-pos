@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { rupiah as realRupiah } from '../../lib/rupiah'
 import {
   cashRoute,
+  shiftCashier,
+  drawerRowText,
   parseWaitingSales,
   sentence,
   waitingSearch,
@@ -40,6 +43,30 @@ describe('drawerRows', () => {
     expect(drawerAddsUp(rows)).toBe(true)
   })
 
+  it('UMK-1971: a corrected cash kasbon instalment is its own cash-out line, and the rows still add up', () => {
+    // The design's closed-shift case in the open drawer: Rp2.500 out (the old cash), Rp3.000 in (the new): +Rp500.
+    const rows = drawerRows({
+      openingCash: 0,
+      cashSales: 0,
+      cashIn: 3_000,
+      cashOut: 2_500,
+      receivablePayments: 3_000,
+      receivableReversals: 2_500,
+      expectedCash: 500,
+    })
+    expect(rows.map((r) => [r.key, r.amount])).toEqual([
+      ['opening', 0],
+      ['sales', 0],
+      ['receivables', 3_000],
+      ['kasbon-corrections', 2_500],
+      ['expected', 500],
+    ])
+    expect(drawerAddsUp(rows)).toBe(true)
+    expect(entryKindLabel('receivable_reversal')).toBe('Koreksi kasbon (uang dikeluarkan)')
+    expect(storeKindLabel('receivable_reversal')).toBe('Koreksi kasbon yang dikumpulkan di luar shift')
+    expect(storeKindLabel('receivable_reversal_closed_shift')).toBe('Koreksi kasbon dari shift yang sudah ditutup')
+  })
+
   it('drops zero ledger lines but keeps opening cash and sales', () => {
     const rows = drawerRows({ openingCash: 0, cashSales: 0, expectedCash: 0 })
     expect(rows.map((r) => r.key)).toEqual(['opening', 'sales', 'expected'])
@@ -64,6 +91,27 @@ describe('drawerRows', () => {
     ])
     expect(drawerAddsUp(rows)).toBe(true)
     expect(entryKindLabel('purchase_payment')).toBe('Bayar pemasok dari laci')
+  })
+
+  it('names money a supplier handed back into the drawer and its void (UMK-1970) instead of "lain"', () => {
+    const rows = drawerRows({
+      openingCash: 100_000,
+      cashSales: 0,
+      cashIn: 30_000,
+      cashOut: 10_000,
+      purchaseRefunds: 30_000,
+      purchaseRefundReversals: 10_000,
+      expectedCash: 120_000,
+    })
+    expect(rows.map((r) => [r.key, r.amount])).toEqual([
+      ['opening', 100_000],
+      ['sales', 0],
+      ['supplier-refund', 30_000],
+      ['supplier-refund-back', 10_000],
+      ['expected', 120_000],
+    ])
+    expect(drawerAddsUp(rows)).toBe(true)
+    expect(entryKindLabel('purchase_refund')).toBe('Uang retur dari pemasok')
   })
 
   it('shows cash the named kinds do not explain as "lain" so the rows still add up', () => {
@@ -100,7 +148,8 @@ describe('ledger entry wording', () => {
 
   it('signs the amount by direction', () => {
     expect(signedAmount({ direction: 'in', amount: 2500 }, rupiah)).toBe('+Rp2500')
-    expect(signedAmount({ direction: 'out', amount: 30000 }, rupiah)).toBe('-Rp30000')
+    expect(signedAmount({ direction: 'out', amount: 30000 }, realRupiah)).toBe('−Rp30.000')
+    expect(signedAmount({ direction: 'in', amount: 30000 }, realRupiah)).toBe('+Rp30.000')
     expect(directionLabel('in')).toBe('Kas masuk')
     expect(directionLabel('out')).toBe('Kas keluar')
   })
@@ -199,5 +248,29 @@ describe('sentence (PR 40 review)', () => {
     expect(sentence('Masih ada penjualan menunggu #3')).toBe('Masih ada penjualan menunggu #3.')
     expect(sentence('Masih ada penjualan menunggu #3.')).toBe('Masih ada penjualan menunggu #3.')
     expect(sentence('Masih ada penjualan menunggu.. ')).toBe('Masih ada penjualan menunggu.')
+  })
+})
+
+describe('shiftCashier (UMK-2088)', () => {
+  it("names the cashier from the row, not just 'Staf'", () => {
+    expect(shiftCashier({ actorKind: 'cashier', actorName: 'Budi' })).toBe('Budi')
+    expect(shiftCashier({ actorKind: 'owner', actorName: 'Pemilik' })).toBe('Pemilik')
+  })
+
+  it('falls back to the kind when no name came', () => {
+    expect(shiftCashier({ actorKind: 'cashier' })).toBe('Staf')
+    expect(shiftCashier({ actorKind: 'owner', actorName: ' ' })).toBe('Pemilik')
+  })
+})
+
+describe('drawerRowText (UMK-2089)', () => {
+  it('prints a taken-out row with the real minus, never a hyphen before Rp', () => {
+    expect(drawerRowText({ amount: 8000, sign: '-' }, realRupiah)).toBe('−Rp8.000')
+    expect(drawerRowText({ amount: 20000, sign: '-' }, realRupiah)).toBe('−Rp20.000')
+  })
+
+  it('keeps + and unsigned rows', () => {
+    expect(drawerRowText({ amount: 2500, sign: '+' }, realRupiah)).toBe('+Rp2.500')
+    expect(drawerRowText({ amount: 1000, sign: '' }, realRupiah)).toBe('Rp1.000')
   })
 })

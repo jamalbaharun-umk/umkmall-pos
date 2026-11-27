@@ -18,6 +18,15 @@ export const DISCOUNT_APPROVAL_REQUIRED = 'DISCOUNT_APPROVAL_REQUIRED';
 /** A cashier named themself as the approver: the gate needs a second person (only the owner may confirm their own). */
 export const DISCOUNT_SELF_APPROVAL = 'DISCOUNT_SELF_APPROVAL';
 
+/**
+ * The approver named is the asking actor, unless that actor is the owner (who may confirm their own). A PIN gate
+ * (a line discount UMK-1990, a kasbon correction UMK-1971) needs a second person.
+ */
+export const isSelfApproval = (
+  s: { kind: string; actorId: string },
+  approverId: string,
+) => s.kind !== 'owner' && approverId.toLowerCase() === s.actorId.toLowerCase();
+
 export type LineDiscountInput = {
   discountPercent?: number;
   discountAmount?: number;
@@ -41,9 +50,47 @@ export const leavesSomething = (discount: number, lineTotal: number) =>
 export const needsApproval = (discount: number, lineTotal: number) =>
   BigInt(discount) * 10000n > BigInt(lineTotal) * BigInt(DISCOUNT_APPROVAL_BPS);
 
+/**
+ * Owner ruling 2026-11-26: a manual price below the server's price is a reduction of the line like a discount,
+ * measured on the line at the server's price (`listPrice × qty`, the wholesale tier applied). 0 for a price at or
+ * above the server's.
+ */
+export const priceCutOf = (listPrice: number, price: number, qty: number) =>
+  Math.max(listPrice - price, 0) * qty;
+
 /** Whether an approval of at most `maxBps` of the line covers this discount. */
 export const withinApproval = (
   discount: number,
   lineTotal: number,
   maxBps: number,
 ) => BigInt(discount) * 10000n <= BigInt(lineTotal) * BigInt(maxBps);
+
+/**
+ * Owner ruling on PR 72 (major 1): ONE combined test over the whole sale. Every manual reduction (manual-price cuts,
+ * line discounts, the order discount) is added up. The reductions of lines that carry their own line approval (each
+ * above 30% of its line) are covered by those approvals; what is left (`uncovered`: the other lines' cuts and the
+ * order discount) is measured against the list subtotal of the UNCOVERED lines only (Σ list price × qty of the lines
+ * without a line approval, the wholesale tier applied), never the whole list subtotal: a covered line's list total in
+ * the denominator would let the order discount escape the gate (re-review of 6d5a185: line A list 100.000 sold at
+ * 1.000 with its approval, line B 10.000, an order discount of 10.900 would pass and the sale be Rp100). With every
+ * line covered the base is 0, so any order discount needs the approval. Above 30% the sale must name an `order`
+ * approval, which then covers the WHOLE reduction (`max_bps` of the whole list subtotal, `max_amount`). So 30% off
+ * a line plus 30% off the order (51% in all) needs a PIN, while one line above 30% with its own approval (UMK-1990,
+ * PR 63) and no order discount needs nothing more.
+ */
+export function combinedOf(a: {
+  listSubtotal: number;
+  uncoveredListSubtotal: number;
+  reduction: number;
+  coveredByLines: number;
+}) {
+  return {
+    listSubtotal: a.listSubtotal,
+    uncoveredListSubtotal: a.uncoveredListSubtotal,
+    reduction: a.reduction,
+    needsApproval: needsApproval(
+      a.reduction - a.coveredByLines,
+      a.uncoveredListSubtotal,
+    ),
+  };
+}

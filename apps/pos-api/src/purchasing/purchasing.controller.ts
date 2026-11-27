@@ -17,11 +17,12 @@ import { ShiftsModule } from '../shifts/shifts.module';
 import { StockModule } from '../stock/stock.module';
 import { parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   PaymentInput,
   PurchasePaymentsService,
+  RefundInput,
   ReturnInput,
   VoidInput,
 } from './purchase-payments.service';
@@ -36,7 +37,15 @@ const seesCost = (s: PosSession) =>
   hasPermission(s, 'purchasing.manage') || hasPermission(s, 'reports.view');
 
 /** The money of a purchase (UMK-1970) is cost too: hidden with the total, the status and due date stay. */
-const MONEY = ['total', 'paid', 'returned', 'remaining', 'credit'] as const;
+const MONEY = [
+  'total',
+  'paid',
+  'returned',
+  'remaining',
+  'credit',
+  'refunded',
+  'refundDue',
+] as const;
 const withoutMoney = <T extends object>(r: T) =>
   ({
     ...r,
@@ -73,6 +82,26 @@ export class PurchasingController {
     );
   }
 
+  /**
+   * UMK-2070: goods received in one step (written and approved in one transaction), once per Idempotency-Key. The
+   * one purchase route UMKMall's agent reaches: it can neither approve nor edit any other purchase.
+   */
+  @AgentRoute()
+  @Post('stock-in')
+  @RequirePermission('purchasing.manage')
+  stockIn(
+    @CurrentSession() s: PosSession,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    return this.orders.stockIn(
+      s.tenantId,
+      s.actorId,
+      keyOf(key),
+      validate(OrderCreate, body),
+    );
+  }
+
   @Get(':id')
   async get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     const order = await this.orders.get(s.tenantId, parseId(id));
@@ -82,6 +111,7 @@ export class PurchasingController {
       lines: order.lines.map((l) => ({ ...l, unitCost: undefined })),
       payments: undefined,
       returns: undefined,
+      refunds: undefined,
     };
   }
 
@@ -141,6 +171,65 @@ export class PurchasingController {
     );
   }
 
+  /** Undo a return (UMK-1970 addition): the goods back into their batches, the debt back up; a reason is required. */
+  @Post(':id/returns/:returnId/reverse')
+  @RequirePermission('purchasing.manage')
+  @HttpCode(200)
+  reverseReturn(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('returnId') returnId: string,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    const ret = parseId(returnId);
+    return this.payments.reverseReturn(
+      s,
+      orderId,
+      ret,
+      validate(VoidInput, body).reason,
+    );
+  }
+
+  /** "Terima uang retur": money the supplier hands back, into the drawer or the store cash; `Idempotency-Key`. */
+  @Post(':id/refunds')
+  @RequirePermission('purchasing.manage')
+  refund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    return this.payments.refund(
+      s,
+      orderId,
+      keyOf(key),
+      validate(RefundInput, body),
+    );
+  }
+
+  /** The correction of a refund: voided with a reason, never edited or deleted. */
+  // No route permission: a drawer refund's own cashier voids it without `purchasing.manage` (owner ruling
+  // 2026-11-27); the service checks who may void which refund.
+  @Post(':id/refunds/:refundId/void')
+  @HttpCode(200)
+  voidRefund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('refundId') refundId: string,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    const refund = parseId(refundId);
+    return this.payments.voidRefund(
+      s,
+      orderId,
+      refund,
+      validate(VoidInput, body).reason,
+    );
+  }
+
   @Patch(':id')
   @RequirePermission('purchasing.manage')
   update(
@@ -177,9 +266,35 @@ export class PurchasingController {
   }
 }
 
+/**
+ * A supplier refund voided from the drawer screen (Kas laci), where a till cashier sees no purchase: the refund names
+ * its purchase. Same rules and answers as `POST /purchasing/orders/:id/refunds/:refundId/void`.
+ */
+@Controller('purchasing/refunds')
+export class PurchaseRefundsController {
+  constructor(private readonly payments: PurchasePaymentsService) {}
+
+  // No route permission, as the purchase route: the service decides who may void which refund.
+  @Post(':refundId/void')
+  @HttpCode(200)
+  voidRefund(
+    @CurrentSession() s: PosSession,
+    @Param('refundId') refundId: string,
+    @Body() body: unknown,
+  ) {
+    const refund = parseId(refundId);
+    return this.payments.voidRefund(
+      s,
+      null,
+      refund,
+      validate(VoidInput, body).reason,
+    );
+  }
+}
+
 @Module({
   imports: [StockModule, ShiftsModule],
-  controllers: [PurchasingController],
+  controllers: [PurchasingController, PurchaseRefundsController],
   providers: [PurchasingService, PurchasePaymentsService],
 })
 export class PurchasingModule {}

@@ -16,6 +16,12 @@ export type CashTotals = {
   purchasePayments?: number
   /** Those payments voided while the shift was open (part of cashIn). */
   purchasePaymentReversals?: number
+  /** Cash of corrected kasbon instalments taken back out of the drawer (part of cashOut, UMK-1971). */
+  receivableReversals?: number
+  /** Money suppliers handed back after a return, into the drawer (part of cashIn, UMK-1970). */
+  purchaseRefunds?: number
+  /** Those refunds voided while the shift was open (part of cashOut). */
+  purchaseRefundReversals?: number
 }
 
 export const NO_CASH: CashTotals = {
@@ -27,6 +33,9 @@ export const NO_CASH: CashTotals = {
   expenseReversals: 0,
   purchasePayments: 0,
   purchasePaymentReversals: 0,
+  receivableReversals: 0,
+  purchaseRefunds: 0,
+  purchaseRefundReversals: 0,
 }
 
 export type DrawerRow = { key: string; label: string; amount: number; sign: '+' | '-' | ''; strong?: boolean }
@@ -47,8 +56,11 @@ export function drawerRows(
   const c = { ...NO_CASH, ...s }
   const supplierPaid = c.purchasePayments ?? 0
   const supplierBack = c.purchasePaymentReversals ?? 0
-  const otherIn = c.cashIn - c.receivablePayments - c.expenseReversals - supplierBack
-  const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid
+  const kasbonOut = c.receivableReversals ?? 0
+  const refundIn = c.purchaseRefunds ?? 0
+  const refundOut = c.purchaseRefundReversals ?? 0
+  const otherIn = c.cashIn - c.receivablePayments - c.expenseReversals - supplierBack - refundIn
+  const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid - kasbonOut - refundOut
   const rows: DrawerRow[] = [
     { key: 'opening', label: 'Uang awal di laci', amount: s.openingCash, sign: '' },
     {
@@ -61,10 +73,13 @@ export function drawerRows(
     { key: 'receivables', label: 'Kasbon dibayar tunai', amount: c.receivablePayments, sign: '+' },
     { key: 'reversals', label: 'Pengeluaran dibatalkan (uang kembali ke laci)', amount: c.expenseReversals, sign: '+' },
     { key: 'supplier-back', label: 'Bayar pemasok dibatalkan (uang kembali ke laci)', amount: supplierBack, sign: '+' },
+    { key: 'supplier-refund', label: 'Uang retur dari pemasok', amount: refundIn, sign: '+' },
     { key: 'in-other', label: 'Kas masuk lain', amount: otherIn, sign: '+' },
     { key: 'expenses', label: 'Pengeluaran dari laci', amount: c.expenses, sign: '-' },
     { key: 'supplier', label: 'Bayar pemasok dari laci', amount: supplierPaid, sign: '-' },
+    { key: 'supplier-refund-back', label: 'Uang retur dari pemasok dibatalkan', amount: refundOut, sign: '-' },
     { key: 'voids', label: 'Uang dikembalikan (batalkan struk)', amount: c.voidRefunds, sign: '-' },
+    { key: 'kasbon-corrections', label: 'Koreksi kasbon tunai (uang keluar)', amount: kasbonOut, sign: '-' },
     { key: 'out-other', label: 'Kas keluar lain', amount: otherOut, sign: '-' },
   ]
   const shown = rows.filter((r) => r.key === 'opening' || r.key === 'sales' || r.amount !== 0)
@@ -98,6 +113,9 @@ const KIND_LABELS: Record<string, string> = {
   collector_deposit: 'Setoran penagih diterima',
   purchase_payment: 'Bayar pemasok dari laci',
   purchase_payment_reversal: 'Bayar pemasok dibatalkan',
+  receivable_reversal: 'Koreksi kasbon (uang dikeluarkan)',
+  purchase_refund: 'Uang retur dari pemasok',
+  purchase_refund_reversal: 'Uang retur dari pemasok dibatalkan',
 }
 
 /** The reason of a cash in/out entry in words; an unknown kind (a newer server) is shown as what it is. */
@@ -106,9 +124,13 @@ export const entryKindLabel = (kind: string) => KIND_LABELS[kind] ?? 'Kas lain'
 /** "Kas masuk" / "Kas keluar" for the badge next to an entry. */
 export const directionLabel = (d: 'in' | 'out') => (d === 'in' ? 'Kas masuk' : 'Kas keluar')
 
-/** An entry's amount with its sign: "+Rp2.500" or "-Rp120.000" (the caller formats the rupiah). */
+/** An entry's amount with its sign: "+Rp2.500" or "−Rp120.000" (the caller formats the rupiah). */
 export const signedAmount = (e: { direction: 'in' | 'out'; amount: number }, fmt: (n: number) => string) =>
-  `${e.direction === 'in' ? '+' : '-'}${fmt(e.amount)}`
+  e.direction === 'in' ? `+${fmt(e.amount)}` : fmt(-e.amount)
+
+/** A drawer row as the close screen and the shift detail print it: "+Rp2.500", "−Rp8.000", "Rp1.000". */
+export const drawerRowText = (r: { amount: number; sign: '+' | '-' | '' }, fmt: (n: number) => string) =>
+  r.sign === '-' ? fmt(-r.amount) : `${r.sign}${fmt(r.amount)}`
 
 /** What to do about a close refused for pending payments: they are opened from the register's waiting list. */
 export const CLOSE_BLOCKED_HINT =
@@ -225,8 +247,17 @@ const STORE_KIND_LABELS: Record<string, string> = {
   expense_void: 'Pengeluaran laci dibatalkan setelah shift ditutup',
   collector_deposit: 'Setoran penagih masuk ke laci shift',
   purchase_payment_void: 'Bayar pemasok dari laci dibatalkan setelah shift ditutup',
+  receivable_reversal: 'Koreksi kasbon yang dikumpulkan di luar shift',
+  receivable_reversal_closed_shift: 'Koreksi kasbon dari shift yang sudah ditutup',
+  purchase_refund: 'Uang retur dari pemasok',
+  purchase_refund_void: 'Uang retur dari pemasok dibatalkan',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'
 
 /** A text as one sentence: a single full stop at its end, whether or not the server's own text ended with one. */
 export const sentence = (text: string) => text.trim().replace(/[.!?]+$/, '') + '.'
+
+/** Whose shift a history row is: the name pos-api sends ("Pemilik" or the staff name), "Staf" only when none came. */
+export function shiftCashier(s: { actorKind: 'owner' | 'cashier'; actorName?: string }): string {
+  return s.actorName?.trim() || (s.actorKind === 'owner' ? 'Pemilik' : 'Staf')
+}

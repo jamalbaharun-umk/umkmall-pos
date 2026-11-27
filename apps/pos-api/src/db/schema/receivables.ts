@@ -70,7 +70,22 @@ export const receivables = pos
   )
   .enableRLS();
 
-// Append-only payment ledger (Lakasir allowed edit/delete).
+/**
+ * Why a payment was corrected (UMK-1971, design feature 31); `other` needs a note. Sent to payment-api as its own
+ * cancel reasons by `CORRECTION_CANCEL_REASON` (src/receivables/receivable-corrections.service.ts).
+ */
+export const CORRECTION_REASONS = [
+  'wrong_amount',
+  'wrong_method',
+  'wrong_customer',
+  'duplicate',
+  'other',
+] as const;
+export type CorrectionReason = (typeof CORRECTION_REASONS)[number];
+
+// Append-only payment ledger (Lakasir allowed edit/delete). A wrong payment is corrected by a REVERSAL row
+// (`reverses_id`, negative amount) plus, optionally, a new payment (`replaces_id`); no row is ever changed, so
+// remaining = total − Σ amount, and a closed day or shift keeps its figures (UMK-1971).
 export const receivablePayments = pos
   .table(
     'receivable_payments',
@@ -99,6 +114,20 @@ export const receivablePayments = pos
       paymentId: uuid('payment_id'),
       // payment-api's method, fixed when the payment was taken (set with `seq`).
       paymentMethodCode: text('payment_method_code'),
+      // UMK-1971: on a reversal row, the payment it cancels (at most one reversal per payment). Its `amount` is
+      // minus that payment's, its `rest_before` the rest just before the correction, its actor who corrected.
+      reversesId: uuid('reverses_id'),
+      // On the new payment of a correction: the payment it replaces (its reversal is the row before it).
+      replacesId: uuid('replaces_id'),
+      // A reversal's reason, note and the approver whose void PIN was checked.
+      reasonCode: text('reason_code', { enum: CORRECTION_REASONS }),
+      note: text('note'),
+      approvedBy: uuid('approved_by'),
+      approvedByKind: text('approved_by_kind', { enum: ACTOR_KINDS }),
+      // A reversal whose original payment is still to be voided in payment-api (the job repeats it).
+      paymentSyncPending: boolean('payment_sync_pending')
+        .notNull()
+        .default(false),
       createdAt: createdAt(),
     },
     (t) => [
@@ -121,9 +150,29 @@ export const receivablePayments = pos
         columns: [t.tenantId, t.paymentMethodId],
         foreignColumns: [paymentMethods.tenantId, paymentMethods.id],
       }).onDelete('restrict'),
+      // One reversal per payment, one replacement per payment: a second correction fails here too. The links
+      // are `no action` (checked at the end of a statement), so the purge's one delete of a store's rows passes.
+      uniqueIndex('receivable_payments_reverses_uq')
+        .on(t.tenantId, t.reversesId)
+        .where(sql`${t.reversesId} is not null`),
+      uniqueIndex('receivable_payments_replaces_uq')
+        .on(t.tenantId, t.replacesId)
+        .where(sql`${t.replacesId} is not null`),
+      foreignKey({
+        name: 'receivable_payments_reverses_fk',
+        columns: [t.tenantId, t.reversesId],
+        foreignColumns: [t.tenantId, t.id],
+      }).onDelete('no action'),
+      foreignKey({
+        name: 'receivable_payments_replaces_fk',
+        columns: [t.tenantId, t.replacesId],
+        foreignColumns: [t.tenantId, t.id],
+      }).onDelete('no action'),
       check(
         'receivable_payments_ck',
-        sql`${t.amount} > 0 and ${t.amount} <= ${t.restBefore}`,
+        sql`(${t.reversesId} is null and ${t.amount} > 0 and ${t.amount} <= ${t.restBefore})
+          or (${t.reversesId} is not null and ${t.amount} < 0 and ${t.replacesId} is null and ${t.seq} is null
+            and ${t.reasonCode} is not null and ${t.approvedBy} is not null and ${t.approvedByKind} is not null)`,
       ),
     ],
   )

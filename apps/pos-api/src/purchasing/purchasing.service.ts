@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ConflictException,
   Injectable,
@@ -15,7 +16,13 @@ import {
   suppliers,
 } from '../db/schema';
 import { StockService } from '../stock/stock.service';
-import { debtFromRow, dueInDaysSql, paidSql, returnedSql } from './debt';
+import {
+  debtFromRow,
+  dueInDaysSql,
+  paidSql,
+  refundedSql,
+  returnedSql,
+} from './debt';
 import {
   PurchasePaymentsService,
   purchaseNumber,
@@ -115,6 +122,7 @@ export class PurchasingService {
         createdAt: purchaseOrders.createdAt,
         paid: paidSql,
         returned: returnedSql,
+        refunded: refundedSql,
         dueInDays: dueInDaysSql(tenantId),
       })
       .from(purchaseOrders)
@@ -122,16 +130,16 @@ export class PurchasingService {
       .where(eq(purchaseOrders.tenantId, tenantId))
       .orderBy(desc(purchaseOrders.createdAt))
       .limit(200);
-    return rows.map(({ paid, returned, dueInDays, ...r }) => ({
+    return rows.map(({ paid, returned, refunded, dueInDays, ...r }) => ({
       ...r,
       code: purchaseNumber(r.number),
-      ...debtFromRow({ ...r, paid, returned, dueInDays }),
+      ...debtFromRow({ ...r, paid, returned, refunded, dueInDays }),
     }));
   }
 
   /**
    * The store's debt to its suppliers over EVERY approved purchase (not only the listed 200): what is owed, the part
-   * past its due date, and the part due within the next 7 days (today included). Store calendar days.
+   * past its due date, and the part due within 7 days counting today (today up to today + 6). Store calendar days.
    */
   async summary(tenantId: string) {
     const today = storeToday(tenantId);
@@ -139,13 +147,16 @@ export class PurchasingService {
       select coalesce(sum(x.remaining), 0) as total,
              coalesce(sum(x.remaining) filter (where x.due_date < ${today}), 0) as overdue,
              coalesce(sum(x.remaining) filter (
-               where x.due_date >= ${today} and x.due_date <= ${today} + 7), 0) as due_soon,
+               where x.due_date >= ${today} and x.due_date < ${today} + 7), 0) as due_soon,
              count(*) filter (where x.remaining > 0)::int as open_count,
              count(*) filter (where x.remaining > 0 and x.due_date < ${today})::int as overdue_count
         from (select o.due_date,
                      greatest(o.total
                        - coalesce((select sum(pr.total) from pos.purchase_returns pr
-                                    where pr.tenant_id = o.tenant_id and pr.order_id = o.id), 0)
+                                    where pr.tenant_id = o.tenant_id and pr.order_id = o.id
+                                      and not exists (select 1 from pos.purchase_return_reversals rr
+                                                       where rr.tenant_id = pr.tenant_id
+                                                         and rr.return_id = pr.id)), 0)
                        - coalesce((select sum(pp.amount) from pos.purchase_payments pp
                                     where pp.tenant_id = o.tenant_id and pp.order_id = o.id
                                       and pp.voided_at is null), 0), 0) as remaining
@@ -177,6 +188,7 @@ export class PurchasingService {
         createdAt: purchaseOrders.createdAt,
         paid: paidSql,
         returned: returnedSql,
+        refunded: refundedSql,
         dueInDays: dueInDaysSql(tenantId),
       })
       .from(purchaseOrders)
@@ -203,17 +215,18 @@ export class PurchasingService {
         ),
       )
       .orderBy(products.name);
-    const { paid, returned, dueInDays, ...head } = order;
+    const { paid, returned, refunded, dueInDays, ...head } = order;
     // UMK-1970: the debt, its history (payments, voided ones too, and returns) and per line what may still go back.
-    const [payments, returns, stock] = await Promise.all([
+    const [payments, returns, refunds, stock] = await Promise.all([
       this.payments.payments(tenantId, id),
       this.payments.returns(tenantId, id),
+      this.payments.refunds(tenantId, id),
       this.payments.lineStock(tenantId, id),
     ]);
     return {
       ...head,
       code: purchaseNumber(head.number),
-      ...debtFromRow({ ...head, paid, returned, dueInDays }),
+      ...debtFromRow({ ...head, paid, returned, refunded, dueInDays }),
       lines: lines.map((l) => ({
         ...l,
         returnedQty: stock.get(l.id)?.returnedQty ?? 0,
@@ -222,6 +235,7 @@ export class PurchasingService {
       })),
       payments,
       returns,
+      refunds,
     };
   }
 
@@ -230,32 +244,95 @@ export class PurchasingService {
     actorId: string,
     input: z.infer<typeof OrderCreate>,
   ) {
+    const id = await this.db.transaction((tx) =>
+      this.insertOrder(tx, tenantId, actorId, input),
+    );
+    return this.get(tenantId, id);
+  }
+
+  /**
+   * UMK-2070: goods received in one step: the purchase is written and approved (stock in at its costs) in ONE
+   * transaction, once per Idempotency-Key: a retry with the same key and body answers the first purchase, another
+   * body under the key is 422. Used by UMKMall's agent (`stock_in`), so nothing is ever left half done.
+   */
+  async stockIn(
+    tenantId: string,
+    actorId: string,
+    key: string,
+    input: z.infer<typeof OrderCreate>,
+  ) {
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify(input))
+      .digest('hex');
     const id = await this.db.transaction(async (tx) => {
-      await this.assertSupplier(tx, tenantId, input.supplierId);
-      // The next number of this store, one creation at a time (released at commit).
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext('pos.purchase_number'), hashtext(${tenantId}))`,
-      );
-      const [last] = await tx
-        .select({ n: sql<number | null>`max(${purchaseOrders.number})` })
-        .from(purchaseOrders)
-        .where(eq(purchaseOrders.tenantId, tenantId));
-      const [order] = await tx
-        .insert(purchaseOrders)
-        .values({
-          tenantId,
-          number: Number(last?.n ?? 0) + 1,
-          supplierId: input.supplierId,
-          paymentMethod: input.paymentMethod,
-          note: input.note,
-          dueDate: input.dueDate ?? null,
-          createdBy: actorId,
-        })
-        .returning({ id: purchaseOrders.id });
-      await this.writeLines(tx, tenantId, order.id, input.lines);
-      return order.id;
+      const id = await this.insertOrder(tx, tenantId, actorId, input, {
+        key,
+        requestHash,
+      });
+      await this.receiveOrder(tx, tenantId, actorId, id);
+      return id;
     });
     return this.get(tenantId, id);
+  }
+
+  /** A new draft under the store's next number; with a key, the purchase already made under it instead. */
+  private async insertOrder(
+    tx: Tx,
+    tenantId: string,
+    actorId: string,
+    input: z.infer<typeof OrderCreate>,
+    idem?: { key: string; requestHash: string },
+  ): Promise<string> {
+    await this.assertSupplier(tx, tenantId, input.supplierId);
+    // The next number of this store, one creation at a time (released at commit). It also serializes two
+    // requests with one Idempotency-Key: the second finds the first's purchase below.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('pos.purchase_number'), hashtext(${tenantId}))`,
+    );
+    if (idem) {
+      const [prev] = await tx
+        .select({
+          id: purchaseOrders.id,
+          requestHash: purchaseOrders.requestHash,
+        })
+        .from(purchaseOrders)
+        .where(
+          and(
+            eq(purchaseOrders.tenantId, tenantId),
+            eq(purchaseOrders.idempotencyKey, idem.key),
+          ),
+        );
+      if (prev) {
+        if (prev.requestHash !== idem.requestHash)
+          throw fieldError(
+            'idempotencyKey',
+            'Idempotency-Key ini sudah dipakai untuk pembelian lain',
+          );
+        return prev.id;
+      }
+    }
+    const [last] = await tx
+      .select({ n: sql<number | null>`max(${purchaseOrders.number})` })
+      .from(purchaseOrders)
+      .where(eq(purchaseOrders.tenantId, tenantId));
+    const [order] = await tx
+      .insert(purchaseOrders)
+      .values({
+        tenantId,
+        number: Number(last?.n ?? 0) + 1,
+        supplierId: input.supplierId,
+        paymentMethod: input.paymentMethod,
+        note: input.note,
+        dueDate: input.dueDate ?? null,
+        createdBy: actorId,
+        ...(idem && {
+          idempotencyKey: idem.key,
+          requestHash: idem.requestHash,
+        }),
+      })
+      .returning({ id: purchaseOrders.id });
+    await this.writeLines(tx, tenantId, order.id, input.lines);
+    return order.id;
   }
 
   /**
@@ -307,37 +384,47 @@ export class PurchasingService {
    * check); a cancelled one is 409.
    */
   async approve(tenantId: string, actorId: string, id: string) {
-    await this.db.transaction(async (tx) => {
-      const status = await this.lock(tx, tenantId, id);
-      if (status === 'approved') return;
-      if (status === 'cancelled')
-        throw new ConflictException('Pembelian sudah dibatalkan');
-      const lines = await tx
-        .select()
-        .from(purchaseOrderLines)
-        .where(eq(purchaseOrderLines.orderId, id))
-        .orderBy(purchaseOrderLines.productId);
-      for (const l of lines)
-        await this.stock.receive(tx, {
-          tenantId,
-          productId: l.productId,
-          qty: l.qty,
-          unitCost: l.unitCost,
-          source: 'purchase',
-          sourceId: id,
-          actorId,
-        });
-      await tx
-        .update(purchaseOrders)
-        .set({
-          status: 'approved',
-          approvedBy: actorId,
-          approvedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(purchaseOrders.id, id));
-    });
+    await this.db.transaction((tx) =>
+      this.receiveOrder(tx, tenantId, actorId, id),
+    );
     return this.get(tenantId, id);
+  }
+
+  /** Draft → approved under the order's row lock; approved stays approved (no second receipt); cancelled → 409. */
+  private async receiveOrder(
+    tx: Tx,
+    tenantId: string,
+    actorId: string,
+    id: string,
+  ) {
+    const status = await this.lock(tx, tenantId, id);
+    if (status === 'approved') return;
+    if (status === 'cancelled')
+      throw new ConflictException('Pembelian sudah dibatalkan');
+    const lines = await tx
+      .select()
+      .from(purchaseOrderLines)
+      .where(eq(purchaseOrderLines.orderId, id))
+      .orderBy(purchaseOrderLines.productId);
+    for (const l of lines)
+      await this.stock.receive(tx, {
+        tenantId,
+        productId: l.productId,
+        qty: l.qty,
+        unitCost: l.unitCost,
+        source: 'purchase',
+        sourceId: id,
+        actorId,
+      });
+    await tx
+      .update(purchaseOrders)
+      .set({
+        status: 'approved',
+        approvedBy: actorId,
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(purchaseOrders.id, id));
   }
 
   /** Draft → cancelled; cancelled stays cancelled; approved → 409 (its stock is already in). */

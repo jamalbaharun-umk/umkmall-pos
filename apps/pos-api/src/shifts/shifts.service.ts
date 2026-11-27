@@ -335,10 +335,19 @@ export class ShiftsService {
       s.tenantId,
       rows.map((r) => r.id),
     );
+    // An open shift stores no expected cash yet: show what the drawer should hold right now.
+    const live = await Promise.all(
+      rows.map(async (r) =>
+        r.closedAt === null
+          ? await this.expectedCashOf(this.db, s.tenantId, r.id)
+          : r.expectedCash,
+      ),
+    );
     return {
-      data: rows.map((r) => ({
+      data: rows.map((r, i) => ({
         ...withDifference(r),
         ...(cash.get(r.id) ?? NO_CASH),
+        expectedCash: live[i],
       })),
       total,
     };
@@ -385,6 +394,15 @@ export class ShiftsService {
           undoneEntryId: undone.id,
           voidedSaleId: saleVoids.saleId,
           receivableCancelledAt: receivables.cancelledAt,
+          // UMK-1971: a kasbon instalment corrected later; for a `receivable_reversal`, the payment it cancels.
+          paymentReversed: sql<boolean>`${e.kind} = 'receivable_payment' and exists (
+            select 1 from pos.receivable_payments x
+             where x.tenant_id = ${e.tenantId} and x.reverses_id = ${e.refId})`,
+          reversedPaymentId: sql<
+            string | null
+          >`case when ${e.kind} = 'receivable_reversal' then (
+            select x.reverses_id from pos.receivable_payments x
+             where x.tenant_id = ${e.tenantId} and x.id = ${e.refId}) end`,
           createdAt: e.createdAt,
         })
         .from(e)
@@ -461,12 +479,19 @@ export class ShiftsService {
     return {
       ...withDifference(row),
       ...cash,
+      // Open shift: the stored column is still null, so compute it from the same ledger the close uses.
+      expectedCash:
+        row.closedAt === null
+          ? await this.expectedCashOf(this.db, s.tenantId, id)
+          : row.expectedCash,
       cashEntries: cashEntries.map(
         ({
           expenseVoidedAt,
           undoneEntryId,
           voidedSaleId,
           receivableCancelledAt,
+          paymentReversed,
+          reversedPaymentId,
           ...c
         }) => ({
           ...c,
@@ -474,7 +499,8 @@ export class ShiftsService {
           // This entry's source was undone later.
           reversed:
             (c.kind === 'expense' && expenseVoidedAt !== null) ||
-            (c.kind === 'receivable_payment' && receivableCancelledAt !== null),
+            (c.kind === 'receivable_payment' &&
+              (receivableCancelledAt !== null || paymentReversed)),
           // This entry undoes something: an expense's cash-out (`entryId`: that ledger row), or a
           // sale's cash (a sale's cash is not a ledger row, so no `entryId`).
           reversalOf:
@@ -486,7 +512,13 @@ export class ShiftsService {
                 }
               : c.kind === 'void_refund' && voidedSaleId
                 ? { type: 'sale' as const, id: voidedSaleId, entryId: null }
-                : null,
+                : reversedPaymentId
+                  ? {
+                      type: 'receivable_payment' as const,
+                      id: reversedPaymentId,
+                      entryId: null,
+                    }
+                  : null,
         }),
       ),
     };

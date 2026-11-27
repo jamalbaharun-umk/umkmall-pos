@@ -22,7 +22,10 @@ import {
   staff,
 } from '../db/schema';
 import { recordAudit } from '../audit/record';
-import { cancelReceivable } from '../receivables/receivables.controller';
+import {
+  cancelReceivable,
+  standingPayment,
+} from '../receivables/receivables.controller';
 import { actorRef, PaymentSync } from '../payments-client/payment-sync.service';
 import { isOnlineMethod } from '../payments-client/payments.client';
 import {
@@ -232,6 +235,7 @@ export class VoidService {
             eq(receivables.tenantId, s.tenantId),
             eq(receivables.saleId, saleId),
             eq(paymentMethods.isCash, true),
+            standingPayment,
           ),
         );
       cashDue = paid.reduce((n, p) => n + p.amount, 0);

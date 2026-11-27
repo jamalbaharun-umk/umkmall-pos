@@ -1,4 +1,4 @@
-import { sql, type SQL } from 'drizzle-orm';
+import { sql, type AnyColumn, type SQL } from 'drizzle-orm';
 import { reportSettings } from '../db/schema';
 
 /**
@@ -8,3 +8,10 @@ import { reportSettings } from '../db/schema';
  */
 export const storeToday = (tenantId: string): SQL<string> =>
   sql<string>`(now() at time zone coalesce((select ${reportSettings.timezone} from ${reportSettings} where ${reportSettings.tenantId} = ${tenantId}), 'Asia/Jakarta'))::date`;
+
+/** The store's calendar date of a timestamp (same timezone rule as `storeToday`), as a Postgres `date`. */
+export const storeDayOf = (
+  tenantId: string,
+  at: SQL | AnyColumn,
+): SQL<string> =>
+  sql<string>`(${at} at time zone coalesce((select ${reportSettings.timezone} from ${reportSettings} where ${reportSettings.tenantId} = ${tenantId}), 'Asia/Jakarta'))::date`;

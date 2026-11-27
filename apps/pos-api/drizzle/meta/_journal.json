@@ -330,6 +330,41 @@
       "when": 1795704027670,
       "tag": "0046_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795708670923,
+      "tag": "0047_purchase_stock_in_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1795709310427,
+      "tag": "0048_receivable_corrections",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1795743153686,
+      "tag": "0049_purchase_return_refunds",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795744570949,
+      "tag": "0050_member_last_reminded",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795749462794,
+      "tag": "0051_discount_gate_scope",
+      "breakpoints": true
     }
   ]
 }

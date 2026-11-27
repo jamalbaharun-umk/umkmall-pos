@@ -29,13 +29,17 @@ import {
   manualEntries,
   maxTakeOut,
   signedRupiah,
+  voidableRefunds,
   withCode,
   type CashDirection,
 } from './-cash-helpers'
 import { ActionRow } from '@/components/action-row'
+import { VoidRefundDialog } from '../pembelian/-money-dialogs'
 
 // Drawer cash in/out by hand (design feature 20): "Tambah uang" and "Ambil uang" for the open shift, and the shift's
 // manual entries. Entry point: the "Kas laci" button on the Kasir screen. pos-api refuses a cash-out above the drawer.
+// A supplier refund that went into this drawer can be voided here ("Batalkan"): its own cashier may, without access to
+// Pembelian (owner ruling 2026-11-27); pos-api decides and the purchase screen's void dialog and help are reused.
 export const Route = createFileRoute('/kasir/kas-laci')({
   loader: () => loadCashDrawer(),
   component: CashDrawerPage,
@@ -45,8 +49,24 @@ export const Route = createFileRoute('/kasir/kas-laci')({
 
 function CashDrawerPage() {
   const { shift, reasons, entries } = Route.useLoaderData()
+  const router = useRouter()
   const [open, setOpen] = useState<CashDirection>()
+  const [voiding, setVoiding] = useState<{ id: string; amount: number } | null>(null)
   const rows = manualEntries(entries)
+  const voidable = voidableRefunds(entries)
+  const voidButton = (e: (typeof rows)[number]) =>
+    e.kind === 'purchase_refund' && e.refId && voidable.has(e.refId) ? (
+      <Button
+        type="outline"
+        color="danger"
+        width="auto"
+        className="whitespace-nowrap"
+        aria-label={`Batalkan uang retur pemasok ${rupiah(e.amount)}`}
+        onClick={() => setVoiding({ id: e.refId!, amount: e.amount })}
+      >
+        Batalkan
+      </Button>
+    ) : null
   return (
     <Page title="Kas laci" crumbs={[{ label: 'Kasir', to: '/kasir' }, { label: 'Kas laci' }]}>
       {!shift ? (
@@ -84,8 +104,8 @@ function CashDrawerPage() {
             <h2 className="px-4 pt-4 text-base font-bold text-default-primary">Shift ini</h2>
             {rows.length === 0 ? (
               <Empty
-                title="Belum ada uang masuk atau keluar manual"
-                hint="Tambah modal laci, setor ke bank, atau setoran penagih yang Anda terima akan muncul di sini."
+                title="Belum ada uang masuk atau keluar"
+                hint="Tambah modal laci, setor ke bank, setoran penagih yang Anda terima, bayar pemasok dari laci, dan uang retur dari pemasok akan muncul di sini."
               />
             ) : (
               <>
@@ -97,11 +117,14 @@ function CashDrawerPage() {
                         <p className="text-xs text-default-secondary">{formatDate(e.createdAt)}</p>
                         {e.note && <p className="text-sm text-default-secondary">{e.note}</p>}
                       </div>
-                      <span
-                        className={`font-semibold whitespace-nowrap tabular-nums ${e.direction === 'in' ? 'text-default-success' : 'text-default-error'}`}
-                      >
-                        {signedRupiah(e.direction, e.amount)}
-                      </span>
+                      <div className="flex flex-col items-end gap-2">
+                        <span
+                          className={`font-semibold whitespace-nowrap tabular-nums ${e.direction === 'in' ? 'text-default-success' : 'text-default-error'}`}
+                        >
+                          {signedRupiah(e.direction, e.amount)}
+                        </span>
+                        {voidButton(e)}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -114,6 +137,9 @@ function CashDrawerPage() {
                         <TableHead>Jenis</TableHead>
                         <TableHead>Catatan</TableHead>
                         <TableHead className="text-right">Jumlah</TableHead>
+                        <TableHead>
+                          <span className="sr-only">Aksi</span>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -128,6 +154,7 @@ function CashDrawerPage() {
                           </TableCell>
                           <TableCell>{e.note ?? '–'}</TableCell>
                           <TableCell className="text-right tabular-nums">{signedRupiah(e.direction, e.amount)}</TableCell>
+                          <TableCell className="text-right">{voidButton(e)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -136,6 +163,12 @@ function CashDrawerPage() {
               </>
             )}
           </Card>
+          <VoidRefundDialog
+            orderId={null}
+            refund={voiding && { ...voiding, destination: 'drawer' }}
+            onClose={() => setVoiding(null)}
+            onDone={() => router.invalidate()}
+          />
           {open && (
             <CashEntryDialog
               key={open}

@@ -83,6 +83,30 @@ describe('Log aktivitas (UMK-1969)', () => {
     expect(detailLines(row({ event: 'sign_in', target: null, details: { deviceId: ID } }), 'Asia/Jakarta').map((l) => l[0])).toEqual(['Waktu', 'Siapa', 'Aksi'])
   })
 
+  it('UMK-1971: words a kasbon correction, its amounts and reason, never a note', () => {
+    const k = row({
+      event: 'kasbon_correction',
+      target: { type: 'receivable', id: ID, label: 'Kasbon struk #12' },
+      details: { oldAmount: 2500, newAmount: 3000, reasonCode: 'wrong_amount', paymentId: ID },
+    })
+    expect(actionLabel('kasbon_correction')).toBe('Koreksi pembayaran kasbon')
+    expect(targetLabel(k)).toBe('Kasbon struk #12')
+    expect(detailText(k)).toBe('Rp2.500 jadi Rp3.000 · Salah jumlah')
+    expect(detailText(row({ event: 'kasbon_correction', details: { oldAmount: 1000, newAmount: null, reasonCode: 'duplicate' } }))).toBe(
+      'Rp1.000 dibatalkan · Tercatat dua kali',
+    )
+    expect(detailLines(k, 'Asia/Jakarta').slice(3)).toEqual([
+      ['Target', 'Kasbon struk #12'],
+      ['Alasan', 'Salah jumlah'],
+      ['Pembayaran lama', 'Rp2.500'],
+      ['Pembayaran baru', 'Rp3.000'],
+    ])
+    expect(detailLines(row({ event: 'kasbon_correction', details: { oldAmount: 1000, newAmount: null } }), 'Asia/Jakarta').at(-1)).toEqual([
+      'Pembayaran baru',
+      'Dibatalkan saja',
+    ])
+  })
+
   it('writes the time in the store timezone', () => {
     expect(whenLabel('2026-11-26T03:12:00.000Z', 'Asia/Jakarta')).toMatch(/^26 Nov,? 10[.:]12$/)
     expect(whenLabel('2026-11-25T17:30:00.000Z', 'Asia/Jayapura')).toMatch(/^26 Nov,? 02[.:]30$/)
@@ -96,5 +120,21 @@ describe('Log aktivitas (UMK-1969)', () => {
       { value: 'owner', label: 'Pemilik' },
       { value: ID, label: 'Rina' },
     ])
+  })
+
+  it('names the supplier money of a purchase (UMK-1970) with its amount and where the cash went', () => {
+    expect(actionLabel('purchase_refund')).toBe('Terima uang retur pemasok')
+    expect(actionLabel('purchase_refund_void')).toBe('Batalkan uang retur pemasok')
+    expect(actionLabel('purchase_payment_void')).toBe('Batalkan bayar pemasok')
+    expect(actionLabel('purchase_return_undo')).toBe('Batalkan retur pembelian')
+    expect(detailText(row({ event: 'purchase_refund', details: { amount: 20000, destination: 'drawer' } }))).toBe('Rp20.000 · laci shift')
+    expect(detailText(row({ event: 'purchase_refund', details: { amount: 5000, destination: 'store_cash' } }))).toBe('Rp5.000 · kas toko')
+    expect(detailText(row({ event: 'purchase_refund_void', details: { amount: 7000, destination: 'drawer', drawerReversed: false } }))).toBe(
+      'Rp7.000 · kas toko',
+    )
+    expect(detailText(row({ event: 'purchase_payment_void', details: { amount: 50000, source: 'outside', drawerReversed: null } }))).toBe(
+      'Rp50.000 · di luar laci',
+    )
+    expect(detailText(row({ event: 'purchase_return_undo', details: { total: 30000, units: 2 } }))).toBe('Rp30.000 · 2 unit kembali ke stok')
   })
 })

@@ -31,6 +31,9 @@ export const members = pos
       code: text('code').notNull(),
       phone: text('phone'),
       address: text('address'),
+      // UMK-1973: when the owner last opened a WhatsApp reminder for this customer's kasbon. A date only: the
+      // message is never stored.
+      lastRemindedAt: timestamp('last_reminded_at', { withTimezone: true }),
       deletedAt: deletedAt(),
       createdAt: createdAt(),
       updatedAt: updatedAt(),

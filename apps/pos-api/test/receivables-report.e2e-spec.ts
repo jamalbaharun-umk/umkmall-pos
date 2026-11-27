@@ -373,6 +373,46 @@ describe('kasbon report (UMK-1964)', () => {
     });
   });
 
+  it('UMK-1971: a corrected collector instalment is no longer "dipegang penagih" (the store ledger reversal counts)', async () => {
+    const s = await shop();
+    await http()
+      .put('/void-pin')
+      .set('Authorization', s.freshAuth)
+      .send({ pin: OWNER_PIN })
+      .expect(200);
+    const siti = await s.member('Siti');
+    const k = await s.kasbonSale(siti, 6000);
+    const collector = await createCashier(app, s, ['receivables.manage']);
+    await s.pay(collector.auth, k.receivableId, 2500);
+    const paid = await s.pay(collector.auth, k.receivableId, 1000);
+    const wrong = (paid.body.payments as { id: string }[]).at(-1)!;
+    expect((await report(s.auth)).summary).toMatchObject({
+      totalRest: 2500,
+      collectorHeld: 3500,
+    });
+
+    // The Rp1.000 was never handed over ("Batalkan saja"): the collector holds Rp2.500, the customer owes Rp3.500.
+    await post(
+      s.auth,
+      `/receivables/${k.receivableId}/payments/${wrong.id}/correction`,
+      {
+        replacement: null,
+        reasonCode: 'duplicate',
+        approverId: s.userId,
+        pin: OWNER_PIN,
+      },
+    ).expect(201);
+    const after = await report(s.auth);
+    expect(after.summary).toMatchObject({
+      totalRest: 3500,
+      paidThisMonth: 2500,
+      collectorHeld: 2500,
+    });
+    // The same figure as Setoran penagih's.
+    const store = await get(s.auth, '/store-cash').expect(200);
+    expect(store.body.summary).toMatchObject({ outstanding: 2500 });
+  });
+
   it('overdue counts store-timezone calendar days: due today is due (0 days), due tomorrow is not', async () => {
     const s = await shop();
     // A zone whose date differs from UTC's right now, so a UTC (or server) date gives other answers.

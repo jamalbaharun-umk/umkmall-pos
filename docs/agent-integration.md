@@ -220,6 +220,10 @@ In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `payment
 
 - The sale goes into the owner's open shift; with none open the tool answers "Belum ada shift yang dibuka" and records
   nothing.
+- A line `price`, `discountPercent` or `discountAmount`, or an order `discount`, that the agent sends anyway is
+  **ignored and said so** (UMK-2069): the preview and the answer carry `ignored` (`linePrices` with `sentPrice`,
+  `sentDiscountPercent`, `sentDiscountAmount`; `discount`; a sentence), whole numbers only; the sale uses the catalog
+  price and no discount.
 - **The agent never sends a price or a discount** (an agent's `POST /sales` refuses `price` and `discount`, 422). The
   preview is the server's full quote (`POST /sales/quote` with the method: line prices with units and wholesale tiers,
   voucher discount, tax after discounts, total, cash rounding, amount due).
@@ -270,7 +274,17 @@ the product and the size; the idempotency record keeps the photo's sha256, not t
 the agent (the owner can add more in the POS); the 11th answers an error on `file`. `/mcp` accepts bodies up to
 3 MB for this tool (every other route keeps 100 kB).
 
+### `stock_in`
+Goods received from a supplier (UMK-2070). Needs `pos.write`. In: `supplierId`, `lines` (1 to 200, one per product:
+`productId`, `qty` 1 to 100,000, `unitCost` 0 to Rp1,000,000,000: what the store paid per unit, whole rupiah),
+`paymentMethod?`, `note?` + write controls. One route, `POST /purchasing/orders/stock-in` with an `Idempotency-Key`:
+the purchase is written and approved in one transaction (stock in at those costs, FIFO), once per key; a retry with
+the same key answers the first purchase, another body under the key is 422. The agent cannot create a draft purchase
+nor approve one (`POST /purchasing/orders` and `/approve` are not agent routes). Only stock-tracked products
+(`type: product`); a cost never changes a selling price. The preview checks the same bounds and shows each product's
+`stockBefore` and `stockAfter`. After a lost answer send it again with the same key.
+
 ## 6. Not yet
 
-Online payment methods through the agent; supplier payments and expenses "outside the drawer"; purchase order and
-stock count drafts (rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982).
+Online payment methods through the agent; supplier payments and expenses "outside the drawer"; stock count drafts
+(rest of UMK-1980); the full scripted end-to-end run (rest of UMK-1982).

@@ -1,20 +1,23 @@
 import { Alert, Button, Select, Spinner, TextField } from '@umkmall/ui/primitives'
 import { useCallback, useEffect, useState } from 'react'
-import { loadApprovers } from './-void-api'
+import { type ApproversAnswer, loadApprovers } from './-void-api'
 import { approverOptions, pinDigits, type Approver } from './-void-helpers'
 
 export type Approvers = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ready'; list: Approver[] }
 
-/** Who can approve (name, has a PIN, locked until): read when `open` turns true, and again by `reload`. */
-export function useApprovers(open: boolean) {
+/**
+ * Who can approve (name, has a PIN, locked until): read when `open` turns true, and again by `reload`. `load` is the
+ * list of a gate that needs a second person (the kasbon correction's); the void's by default.
+ */
+export function useApprovers(open: boolean, load: () => Promise<ApproversAnswer> = loadApprovers) {
   const [approvers, setApprovers] = useState<Approvers>({ state: 'loading' })
   const reload = useCallback(() => {
     setApprovers({ state: 'loading' })
-    loadApprovers().then(
+    load().then(
       (r) => setApprovers(r.ok ? { state: 'ready', list: r.approvers } : { state: 'error', error: r.error }),
       () => setApprovers({ state: 'error', error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }),
     )
-  }, [])
+  }, [load])
   useEffect(() => {
     if (open) reload()
   }, [open, reload])

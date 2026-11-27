@@ -18,6 +18,15 @@ const salesTotals: TotalLine[] = [
   { key: 'rounding', label: 'Pembulatan', money: true },
 ]
 
+/** The product report's rows are net of line discounts: its Total is their sum (`netSales`), its discount the order's. */
+const productTotals: TotalLine[] = salesTotals.map((t) =>
+  t.key === 'grossSales'
+    ? { key: 'netSales', label: 'Total penjualan', money: true }
+    : t.key === 'discount'
+      ? { key: 'orderDiscount', label: 'Diskon pesanan', money: true }
+      : t,
+)
+
 export const REPORTS: Record<string, ReportDef> = {
   penjualan: {
     kind: 'sales',
@@ -49,7 +58,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'cost', label: 'Modal', money: true },
       { key: 'grossProfit', label: 'Laba kotor', money: true },
     ],
-    totals: salesTotals,
+    totals: productTotals,
   },
   shift: {
     kind: 'shifts',
@@ -64,6 +73,9 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'grossProfit', label: 'Laba kotor', money: true },
       { key: 'rounding', label: 'Pembulatan', money: true },
       { key: 'openingCash', label: 'Kas awal', money: true },
+      { key: 'receivablePayments', label: 'Pembayaran piutang', money: true },
+      { key: 'cashIn', label: 'Kas masuk', money: true },
+      { key: 'cashOut', label: 'Kas keluar', money: true },
       { key: 'expectedCash', label: 'Kas seharusnya', money: true },
       { key: 'countedCash', label: 'Kas dihitung', money: true },
       { key: 'difference', label: 'Selisih', money: true, cashDiff: true },

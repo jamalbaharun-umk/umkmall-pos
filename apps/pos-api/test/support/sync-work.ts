@@ -16,6 +16,9 @@ export async function syncWorkLeft(sql: postgres.Sql, tenants: string[]) {
     select 'kasbon payment not recorded', id from pos.receivable_payments
      where seq is not null and payment_id is null and tenant_id in ${sql(tenants)}
     union all
+    select 'kasbon correction not sent', id from pos.receivable_payments
+     where payment_sync_pending and tenant_id in ${sql(tenants)}
+    union all
     select 'void not sent', id from pos.sale_voids
      where payment_sync_pending and tenant_id in ${sql(tenants)}
     union all

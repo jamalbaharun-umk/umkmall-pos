@@ -814,7 +814,7 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
       // Pool closed: every sweep fails, the tick still resolves.
       await expect(timedSync.tick()).resolves.toMatchObject({
         completed: 0,
-        failed: 4, // one per sweep: sales, kasbon payments, voids, pending refunds
+        failed: 5, // one per sweep: sales, kasbon payments, kasbon corrections, voids, pending refunds
       });
     }, 30_000);
 
@@ -980,6 +980,123 @@ describe('pos-api with payment-api on (UMK-1991)', () => {
         [`${k.receivableId}:2`, '500', 'cash', 'voided'],
       ]);
       expect(await sync.tick()).toMatchObject({ recorded: 0, voided: 0 });
+    });
+  });
+
+  describe('kasbon correction (UMK-1971)', () => {
+    it('voids the corrected payment with the reason, the actor and the PIN approver, and records the new one as <receivableId>:<n>; a repeat sends nothing new', async () => {
+      const s = await shop(6000);
+      const kasbon = await method(s, 'Kasbon', 'credit');
+      const member = await post(s.auth, '/members', {
+        name: 'Siti',
+        code: `M${Math.random().toString(36).slice(2, 8)}`,
+      }).expect(201);
+      const sale = await sell(s, {
+        paymentMethodId: kasbon,
+        memberId: member.body.id,
+        paid: 0,
+      }).expect(201);
+      const rid = sale.body.receivableId as string;
+      const paid = await post(
+        s.auth,
+        `/receivables/${rid}/payments`,
+        { amount: 2500 },
+        randomUUID(),
+      ).expect(201);
+      const old = paid.body.payments[0].id as string;
+      const key = randomUUID();
+      const correct = () =>
+        post(
+          s.auth,
+          `/receivables/${rid}/payments/${old}/correction`,
+          {
+            replacement: { amount: 3000 },
+            reasonCode: 'wrong_amount',
+            approverId: s.userId,
+            pin: OWNER_PIN,
+          },
+          key,
+        );
+      const done = await correct().expect(201);
+      expect(done.body.correction).toMatchObject({
+        oldAmount: 2500,
+        newAmount: 3000,
+        restAfter: 3000,
+      });
+      const rows = (await paymentsOf(s.tenantId)).map((p) => [
+        p.order_ref,
+        p.amount,
+        p.status,
+      ]);
+      expect(rows).toEqual([
+        [`${rid}:1`, '2500', 'voided'],
+        [`${rid}:2`, '3000', 'paid'],
+      ]);
+      const voidedId = (await paymentsOf(s.tenantId))[0].id;
+      expect((await eventsOf(voidedId))[2]).toMatchObject({
+        to_status: 'voided',
+        actor_ref: `owner:${s.userId}`,
+        approved_by: `owner:${s.userId}`,
+        reason_code: 'other',
+      });
+      await correct().expect(201);
+      expect(await sync.tick()).toMatchObject({
+        recorded: 0,
+        reversed: 0,
+        failed: 0,
+      });
+      expect(await paymentsOf(s.tenantId)).toHaveLength(2);
+      expect(await eventsOf(voidedId)).toHaveLength(3);
+    });
+
+    it('a correction while payment-api is down is kept and the job voids the old payment and records the new one', async () => {
+      const s = await shop(6000);
+      const kasbon = await method(s, 'Kasbon', 'credit');
+      const member = await post(s.auth, '/members', {
+        name: 'Siti',
+        code: `M${Math.random().toString(36).slice(2, 8)}`,
+      }).expect(201);
+      const sale = await sell(s, {
+        paymentMethodId: kasbon,
+        memberId: member.body.id,
+        paid: 0,
+      }).expect(201);
+      const rid = sale.body.receivableId as string;
+      link = 'down';
+      const paid = await post(
+        s.auth,
+        `/receivables/${rid}/payments`,
+        { amount: 1000 },
+        randomUUID(),
+      ).expect(201);
+      await post(
+        s.auth,
+        `/receivables/${rid}/payments/${paid.body.payments[0].id}/correction`,
+        {
+          replacement: null,
+          reasonCode: 'duplicate',
+          approverId: s.userId,
+          pin: OWNER_PIN,
+        },
+        randomUUID(),
+      ).expect(201);
+      expect(await paymentsOf(s.tenantId)).toEqual([]);
+      link = 'ok';
+      expect(await sync.tick()).toMatchObject({
+        recorded: 1,
+        reversed: 1,
+        failed: 0,
+      });
+      const [p] = await paymentsOf(s.tenantId);
+      expect([p.order_ref, p.amount, p.status]).toEqual([
+        `${rid}:1`,
+        '1000',
+        'voided',
+      ]);
+      expect((await eventsOf(p.id))[2].reason_code).toBe(
+        'duplicate_transaction',
+      );
+      expect(await sync.tick()).toMatchObject({ recorded: 0, reversed: 0 });
     });
   });
 

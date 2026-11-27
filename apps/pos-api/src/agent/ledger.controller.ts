@@ -57,8 +57,12 @@ export class LedgerController {
          where s.tenant_id = ${s.tenantId} and s.status in (${statuses}) and not pm.is_credit
            and s.paid_at >= ${start} and s.paid_at < ${end} and s.paid - s.change > 0
         union all
-        select 'kasbon_payment:' || rp.id, rp.created_at, ${day(sql`rp.created_at`)}, 'in',
-               'kasbon_payment', 'pembayaran_kasbon', 'Pembayaran kasbon', rp.amount, pm.name, null, null
+        select 'kasbon_payment:' || rp.id, rp.created_at, ${day(sql`rp.created_at`)},
+               -- UMK-1971: a correction's reversal row (negative) is money given back, on the correction's day.
+               case when rp.amount < 0 then 'out' else 'in' end,
+               'kasbon_payment', 'pembayaran_kasbon',
+               case when rp.amount < 0 then 'Koreksi pembayaran kasbon' else 'Pembayaran kasbon' end,
+               abs(rp.amount), pm.name, null, null
           from pos.receivable_payments rp
           join pos.payment_methods pm on pm.tenant_id = rp.tenant_id and pm.id = rp.payment_method_id
          where rp.tenant_id = ${s.tenantId} and rp.created_at >= ${start} and rp.created_at < ${end}
@@ -82,6 +86,8 @@ export class LedgerController {
                'Tunai', null, m.note
           from pos.manual_cash_entries m
          where m.tenant_id = ${s.tenantId} and m.created_at >= ${start} and m.created_at < ${end}
+        union all select 'purchase_payment:' || pp.id, pp.created_at, ${day(sql`pp.created_at`)}, 'out', 'supplier_payment', 'bayar_pemasok', 'Bayar pemasok', pp.amount, case when pp.source = 'drawer' then 'Tunai' end, null, pp.note from pos.purchase_payments pp where pp.tenant_id = ${s.tenantId} and pp.voided_at is null and pp.created_at >= ${start} and pp.created_at < ${end}
+        union all select 'purchase_refund:' || rf.id, rf.created_at, ${day(sql`rf.created_at`)}, 'in', 'supplier_refund', 'retur_pemasok', 'Uang retur dari pemasok', rf.amount, 'Tunai', null, rf.note from pos.purchase_refunds rf where rf.tenant_id = ${s.tenantId} and rf.voided_at is null and rf.created_at >= ${start} and rf.created_at < ${end}
       ) x
       order by date, at, id
       limit ${LEDGER_ROW_CAP + 1}`)) as Row[];

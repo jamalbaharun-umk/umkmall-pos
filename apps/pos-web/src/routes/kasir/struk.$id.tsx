@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button } from '@umkmall/ui'
+import { useState } from 'react'
+import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import { LoadError, Pending, rupiah } from '@/components/pos-page'
 import { loadReceipt } from './-api'
 import { soldQtyText, soldPriceNote } from './-helpers'
@@ -18,6 +20,8 @@ export const Route = createFileRoute('/kasir/struk/$id')({
 
 function ReceiptPage() {
   const r = Route.useLoaderData()
+  const { id } = Route.useParams()
+  const [sharing, setSharing] = useState(false)
   return (
     <main className="min-h-svh bg-default-secondary px-4 py-6 print:bg-white print:p-0">
       <div className="flex flex-col items-center gap-4 print:block">
@@ -68,14 +72,20 @@ function ReceiptPage() {
           <hr className="my-2 border-dashed border-black/40" />
           <p className="text-center">Terima kasih</p>
         </article>
-        <ActionRow className="max-w-[320px] print:hidden">
+        <ActionRow stacked className="max-w-[320px] print:hidden">
           <Button width="auto" asChild size="large" type="outline" color="light">
             <Link to="/kasir">Transaksi baru</Link>
           </Button>
+          {r.status === 'completed' && (
+            <Button width="auto" size="large" type="outline" color="light" onClick={() => setSharing(true)}>
+              Kirim struk WhatsApp
+            </Button>
+          )}
           <Button width="auto" size="large" onClick={() => window.print()}>
             Cetak struk
           </Button>
         </ActionRow>
+        {sharing && <WhatsappReceiptDialog saleId={id} onClose={() => setSharing(false)} />}
       </div>
     </main>
   )

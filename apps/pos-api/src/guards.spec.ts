@@ -75,6 +75,8 @@ describe('repo guards', () => {
         'POST /sales/quote',
         'POST /shifts/open',
         'POST /suppliers',
+        // UMK-2070
+        'POST /purchasing/orders/stock-in',
       ].sort(),
     );
   });
@@ -140,12 +142,12 @@ describe('repo guards', () => {
     expect(service).not.toMatch(/\.(update|delete)\(\s*expenseEdits\b/);
   });
 
-  it('writes supplier payments, purchase returns and their ledger kinds only in purchasing/purchase-payments.service.ts (UMK-1970)', () => {
+  it('writes supplier payments, purchase returns, their reversals, supplier refunds and their ledger kinds only in purchasing/purchase-payments.service.ts (UMK-1970)', () => {
     const own = path.join('purchasing', 'purchase-payments.service.ts');
     const offenders = files
       .filter(({ f }) => f !== own)
       .filter(({ text }) =>
-        /\.(insert|update|delete)\(\s*(purchasePayments|purchaseReturns|purchaseReturnLines)\b|(insert\s+into|update|delete\s+from)\s+pos\.purchase_(payments|returns|return_lines)\b|kind:\s*['"`]purchase_payment(_reversal|_void)?['"`]/i.test(
+        /\.(insert|update|delete)\(\s*(purchasePayments|purchaseReturns|purchaseReturnLines|purchaseReturnReversals|purchaseRefunds)\b|(insert\s+into|update|delete\s+from)\s+pos\.purchase_(payments|returns|return_lines|return_reversals|refunds)\b|kind:\s*['"`]purchase_(payment|refund)(_reversal|_void)?['"`]/i.test(
           text,
         ),
       )
@@ -156,12 +158,17 @@ describe('repo guards', () => {
     expect(service).toMatch(/recordShiftCash\(/);
     expect(service).toMatch(/recordShiftCashInShift\(/);
     expect(service).toMatch(/this\.stock\.returnToSupplier\(/);
-    // Returns are append-only; a payment changes only by its void (an update of the voided_* columns).
+    expect(service).toMatch(/this\.stock\.undoReturnToSupplier\(/);
+    // Returns and their reversals are append-only; a payment or a refund changes only by its void (an update of
+    // the voided_* columns).
     expect(service).not.toMatch(
-      /\.(update|delete)\(\s*(purchaseReturns|purchaseReturnLines)\b/,
+      /\.(update|delete)\(\s*(purchaseReturns|purchaseReturnLines|purchaseReturnReversals)\b/,
     );
-    expect(service).not.toMatch(/\.delete\(\s*purchasePayments\b/);
+    expect(service).not.toMatch(
+      /\.delete\(\s*(purchasePayments|purchaseRefunds)\b/,
+    );
     expect(service.match(/\.update\(\s*purchasePayments\b/g)).toHaveLength(1);
+    expect(service.match(/\.update\(\s*purchaseRefunds\b/g)).toHaveLength(1);
   });
 
   it('writes pos.manual_cash_entries and the manual kinds of the shift ledger only in shifts/cash-entries.service.ts', () => {
@@ -251,6 +258,42 @@ describe('repo guards', () => {
     expect(service).toMatch(/\.for\('update'\)/);
     expect(service).toMatch(/\.insert\(storeCashDeposits\)/);
     expect(service).not.toMatch(/\.(update|delete)\(\s*storeCashDeposits\b/);
+  });
+
+  it('writes the kinds receivable_reversal(_closed_shift) only in receivables/receivable-corrections.service.ts, and the book stays append-only (UMK-1971)', () => {
+    const own = path.join('receivables', 'receivable-corrections.service.ts');
+    const offenders = files
+      .filter(({ f }) => f !== own)
+      .filter(({ text }) => {
+        const code = text.replace(/^\s*\/\/.*$/gm, '');
+        return (
+          /direction:\s*['"`](in|out)['"`],\s*kind:\s*['"`]receivable_reversal['"`]/.test(
+            code,
+          ) || /kind:\s*['"`]receivable_reversal_closed_shift['"`]/.test(code)
+        );
+      })
+      .map(({ f }) => f);
+    expect(offenders).toEqual([]);
+    const service = files.find(({ f }) => f === own)!.text;
+    // A person at the till, under the receivable's row lock, through the ledgers' own writers.
+    expect(service).toMatch(/assertPersonAtTill\(s\.kind\)/);
+    expect(service).toMatch(/\.for\('update'\)/);
+    expect(service).toMatch(/recordShiftCashInShift\(/);
+    expect(service).toMatch(/recordStoreCash\(/);
+    // A payment row is never changed or deleted by pos-api's own code: only payment-sync stamps payment-api's
+    // answer on it (`payment_id`, `payment_sync_pending`).
+    const changers = files
+      .filter(
+        ({ f }) =>
+          f !== path.join('payments-client', 'payment-sync.service.ts'),
+      )
+      .filter(({ text }) =>
+        /\.(update|delete)\(\s*(receivablePayments|rp)\b|(update|delete\s+from)\s+pos\.receivable_payments\b/i.test(
+          text,
+        ),
+      )
+      .map(({ f }) => f);
+    expect(changers).toEqual([]);
   });
 
   it('touches the void PIN table only in void/void-pin.ts (the hash never reaches a response or a log)', () => {

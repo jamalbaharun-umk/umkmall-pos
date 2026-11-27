@@ -61,6 +61,10 @@ export const purchaseOrders = pos
       number: integer('number'),
       // UMK-1970: when the supplier wants the money (store calendar day); optional, never late without it.
       dueDate: date('due_date', { mode: 'string' }),
+      // UMK-2070: a purchase made and received in one step (POST /purchasing/stock-in) carries its request's
+      // Idempotency-Key and the request's fingerprint, so a retry answers the first purchase and stock comes in once.
+      idempotencyKey: text('idempotency_key'),
+      requestHash: text('request_hash'),
       createdBy: uuid('created_by').notNull(),
       approvedBy: uuid('approved_by'),
       approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -70,6 +74,10 @@ export const purchaseOrders = pos
     (t) => [
       index('purchase_orders_tenant_idx').on(t.tenantId, t.createdAt),
       uniqueIndex('purchase_orders_tenant_number_uq').on(t.tenantId, t.number),
+      uniqueIndex('purchase_orders_tenant_key_uq').on(
+        t.tenantId,
+        t.idempotencyKey,
+      ),
       check(
         'purchase_orders_status_ck',
         sql`${t.status} in ('draft', 'approved', 'cancelled')`,

@@ -3,7 +3,18 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { rupiah } from '@/components/pos-page'
 import { notifySuccess, showError } from '@/lib/feedback'
-import { type MoneyResult, type Order, payOrder, returnGoods, setDueDate, voidPayment } from './-api'
+import {
+  type MoneyResult,
+  type Order,
+  payOrder,
+  receiveRefund,
+  returnGoods,
+  reverseReturn,
+  setDueDate,
+  voidDrawerRefund,
+  voidPayment,
+  voidRefund,
+} from './-api'
 import {
   drawerNotice,
   formatAmountInput,
@@ -12,18 +23,25 @@ import {
   payAmountError,
   type Payment,
   type PaySource,
+  type Refund,
+  REFUND_DESTINATIONS,
+  refundAmountError,
+  type RefundDestination,
+  refundNotice,
+  type RefusalContext,
   refusalTodo,
+  type Return,
   RETURN_REASONS,
   returnPreview,
   returnSummary,
 } from './-debt'
 
 // The money dialogs of a purchase (UMK-1970, design feature 29): pay the supplier, send goods back, void a payment,
-// set the due date. Each is a form that stays filled when pos-api refuses it (error dialog with what to do).
+// undo a return, take the money the supplier hands back and void it, set the due date. Each is a form that stays filled when pos-api refuses it (error dialog with what to do).
 
 /** The shared error dialog for a refused payment or return, with the code's "what to do". */
-function refused(res: Extract<MoneyResult<unknown>, { ok: false }>, action: string) {
-  showError({ ...res, todo: refusalTodo(res.code, res, rupiah) }, action)
+function refused(res: Extract<MoneyResult<unknown>, { ok: false }>, action: string, context: RefusalContext) {
+  showError({ ...res, todo: refusalTodo(res.code, res, rupiah, context) }, action)
 }
 
 /** A fresh idempotency key whenever the form changes: a retry of the same form is one record. */
@@ -72,7 +90,7 @@ export function PayDialog({
       })
       if (!res.ok) {
         setError(res.errors?.amount)
-        return refused(res, 'mencatat pembayaran pemasok')
+        return refused(res, 'mencatat pembayaran pemasok', 'pay')
       }
       notifySuccess(`Pembayaran ${rupiah(amount)} ke ${order.supplierName} tercatat`)
       setAmountText('')
@@ -107,7 +125,11 @@ export function PayDialog({
         <p className="-mt-2 text-sm text-default-secondary">
           Paling banyak {rupiah(remaining)} (sisa hutang).{' '}
           {remaining > 0 && (
-            <button type="button" className="underline" onClick={() => setAmountText(formatAmountInput(String(remaining)))}>
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center underline"
+              onClick={() => setAmountText(formatAmountInput(String(remaining)))}
+            >
               Bayar semua
             </button>
           )}
@@ -198,7 +220,7 @@ export function ReturnDialog({
           byLine[line ? line.id : path === 'note' ? 'note' : '_'] = msg
         }
         setErrors(byLine)
-        return refused(res, 'mencatat retur')
+        return refused(res, 'mencatat retur', 'return')
       }
       notifySuccess(`Retur ${rupiah(res.data.total)} ke ${order.supplierName} tercatat`)
       setQtyText({})
@@ -309,7 +331,7 @@ export function VoidPaymentDialog({
     setBusy(true)
     try {
       const res = await voidPayment({ data: { id: orderId, paymentId: payment.id, reason: reason.trim() } })
-      if (!res.ok) return refused(res, 'membatalkan pembayaran')
+      if (!res.ok) return refused(res, 'membatalkan pembayaran', 'payment_void')
       notifySuccess(`Pembayaran ${rupiah(payment.amount)} dibatalkan`)
       setReason('')
       onClose()
@@ -358,6 +380,293 @@ export function VoidPaymentDialog({
         </ActionRow>
       </form>
     </Dialog>
+  )
+}
+
+export function RefundDialog({
+  order,
+  drawerCash,
+  open,
+  onClose,
+  onDone,
+}: {
+  order: Order
+  drawerCash: number | null
+  open: boolean
+  onClose: () => void
+  onDone: () => Promise<void>
+}) {
+  const due = order.refundDue ?? 0
+  const [amountText, setAmountText] = useState('')
+  const [destination, setDestination] = useState<RefundDestination>(drawerCash === null ? 'store_cash' : 'drawer')
+  const [note, setNote] = useState('')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const lock = useRef(false)
+  const key = useAttemptKey([amountText, destination, note])
+  const amount = parseAmount(amountText)
+  const notice = refundNotice(destination, amount, drawerCash, rupiah)
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (lock.current) return
+    const bad = refundAmountError(amount, due)
+    setError(bad)
+    if (bad) return
+    lock.current = true
+    setBusy(true)
+    try {
+      const res = await receiveRefund({
+        data: { id: order.id, key, body: { amount, destination, ...(note.trim() ? { note: note.trim() } : {}) } },
+      })
+      if (!res.ok) {
+        setError(res.errors?.amount)
+        return refused(res, 'mencatat uang retur', 'refund')
+      }
+      notifySuccess(
+        `Uang retur ${rupiah(amount)} dari ${order.supplierName} masuk ${destination === 'drawer' ? 'laci' : 'kas toko'}`,
+      )
+      setAmountText('')
+      setNote('')
+      onClose()
+      await onDone()
+    } catch (err) {
+      showError(err, 'mencatat uang retur')
+    } finally {
+      lock.current = false
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !busy && onClose()} title="Terima uang retur" size="medium">
+      <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
+        <TextField
+          label="Jumlah"
+          prefix="Rp"
+          inputMode="numeric"
+          size="large"
+          placeholder="0"
+          required
+          value={amountText}
+          error={error}
+          onChange={(e) => {
+            setAmountText(formatAmountInput(e.target.value))
+            setError(undefined)
+          }}
+        />
+        <p className="-mt-2 text-sm text-default-secondary">
+          Paling banyak {rupiah(due)} (yang masih harus dikembalikan pemasok). Boleh sebagian.{' '}
+          {due > 0 && (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center underline"
+              onClick={() => setAmountText(formatAmountInput(String(due)))}
+            >
+              Terima semua
+            </button>
+          )}
+        </p>
+        <div className="flex flex-col gap-2">
+          <span id="tujuan-uang" className="text-sm text-default-secondary">
+            Uang masuk ke mana?
+          </span>
+          <SegmentedControl
+            aria-labelledby="tujuan-uang"
+            options={REFUND_DESTINATIONS}
+            value={destination}
+            onChange={setDestination}
+          />
+          <Alert variant={notice.tone} size="small">
+            {notice.text}
+          </Alert>
+        </div>
+        <TextField
+          label="Catatan (boleh kosong)"
+          value={note}
+          maxLength={200}
+          placeholder="mis. diantar sales"
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <ActionRow>
+          <Button htmlType="button" type="outline" color="light" width="auto" disabled={busy} onClick={onClose}>
+            Batal
+          </Button>
+          <Button htmlType="submit" width="auto" isLoading={busy}>
+            Catat uang masuk
+          </Button>
+        </ActionRow>
+      </form>
+    </Dialog>
+  )
+}
+
+/** A confirmation with a required reason: undoing a return, voiding a refund. */
+function ReasonDialog({
+  open,
+  title,
+  body,
+  warning,
+  confirm,
+  placeholder,
+  send,
+  onClose,
+}: {
+  open: boolean
+  title: string
+  body: string
+  /** A caution shown above the reason (an undo after a stock count). */
+  warning?: string
+  confirm: string
+  placeholder: string
+  /** Sends the request; true once it is done (the dialog then closes), false after a refusal was shown. */
+  send: (reason: string) => Promise<boolean>
+  onClose: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const lock = useRef(false)
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (lock.current) return
+    if (!reason.trim()) return setError('Tulis alasannya')
+    lock.current = true
+    setBusy(true)
+    try {
+      if (await send(reason.trim())) {
+        setReason('')
+        onClose()
+      }
+    } finally {
+      lock.current = false
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !busy && onClose()} title={title} size="small" centered>
+      <form noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
+        <p className="text-sm text-default-secondary">{body}</p>
+        {warning && (
+          <Alert variant="warning" size="small">
+            {warning}
+          </Alert>
+        )}
+        <TextField
+          label="Alasan (wajib)"
+          value={reason}
+          maxLength={200}
+          error={error}
+          placeholder={placeholder}
+          onChange={(e) => {
+            setReason(e.target.value)
+            setError(undefined)
+          }}
+        />
+        <ActionRow>
+          <Button htmlType="button" type="outline" color="light" width="auto" disabled={busy} onClick={onClose}>
+            Batal
+          </Button>
+          <Button htmlType="submit" color="danger" width="auto" isLoading={busy}>
+            {confirm}
+          </Button>
+        </ActionRow>
+      </form>
+    </Dialog>
+  )
+}
+
+export function ReverseReturnDialog({
+  orderId,
+  ret,
+  onClose,
+  onDone,
+}: {
+  orderId: string
+  ret: Return | null
+  onClose: () => void
+  onDone: () => Promise<void>
+}) {
+  async function send(reason: string) {
+    if (!ret) return false
+    try {
+      const res = await reverseReturn({ data: { id: orderId, returnId: ret.id, reason } })
+      if (!res.ok) {
+        refused(res, 'membatalkan retur', 'return_undo')
+        return false
+      }
+      notifySuccess(`Retur ${rupiah(ret.total)} dibatalkan, barang kembali ke stok`)
+      await onDone()
+      return true
+    } catch (err) {
+      showError(err, 'membatalkan retur')
+      return false
+    }
+  }
+  return (
+    <ReasonDialog
+      open={ret !== null}
+      title="Batalkan retur?"
+      body={`Retur ${ret ? rupiah(ret.total) : ''} tetap tercatat di riwayat, lalu dibalik dengan catatan pembatalan. Barangnya kembali ke stok pembelian ini dan sisa hutang bertambah lagi.`}
+      warning={
+        ret?.countedSince
+          ? 'Stok barang ini sudah dihitung ulang (stok opname) setelah retur. Bila dibatalkan, barang ditambahkan lagi di atas hasil hitungan itu: periksa stoknya setelah ini.'
+          : undefined
+      }
+      confirm="Batalkan retur"
+      placeholder="mis. salah catat barang"
+      send={send}
+      onClose={onClose}
+    />
+  )
+}
+
+/** Voids a supplier refund; `orderId` null from Kas laci (the refund names its purchase there). */
+export function VoidRefundDialog({
+  orderId,
+  refund,
+  onClose,
+  onDone,
+}: {
+  orderId: string | null
+  refund: Pick<Refund, 'id' | 'amount' | 'destination'> | null
+  onClose: () => void
+  onDone: () => Promise<void>
+}) {
+  async function send(reason: string) {
+    if (!refund) return false
+    try {
+      const res = orderId
+        ? await voidRefund({ data: { id: orderId, refundId: refund.id, reason } })
+        : await voidDrawerRefund({ data: { refundId: refund.id, reason } })
+      if (!res.ok) {
+        refused(res, 'membatalkan uang retur', 'refund_void')
+        return false
+      }
+      notifySuccess(`Uang retur ${rupiah(refund.amount)} dibatalkan`)
+      await onDone()
+      return true
+    } catch (err) {
+      showError(err, 'membatalkan uang retur')
+      return false
+    }
+  }
+  return (
+    <ReasonDialog
+      open={refund !== null}
+      title="Batalkan uang retur?"
+      body={`Uang ${refund ? rupiah(refund.amount) : ''} tetap tercatat di riwayat, lalu dibalik dengan catatan pembatalan.${
+        refund?.destination === 'drawer'
+          ? ' Bila shift-nya masih buka, uang keluar lagi dari laci itu; bila sudah ditutup, uang keluar dari kas toko.'
+          : ' Uang keluar lagi dari kas toko.'
+      }`}
+      confirm="Batalkan uang retur"
+      placeholder="mis. salah jumlah"
+      send={send}
+      onClose={onClose}
+    />
   )
 }
 

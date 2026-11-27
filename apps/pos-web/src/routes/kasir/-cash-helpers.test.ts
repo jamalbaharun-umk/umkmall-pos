@@ -6,6 +6,7 @@ import {
   drawerPreview,
   manualEntries,
   signedRupiah,
+  voidableRefunds,
   withCode,
   type CashReasons,
 } from './-cash-helpers'
@@ -70,7 +71,7 @@ describe('drawer figures', () => {
   })
   it('signs the list amounts', () => {
     expect(signedRupiah('in', 200_000)).toBe('+Rp200.000')
-    expect(signedRupiah('out', 500_000)).toBe('-Rp500.000')
+    expect(signedRupiah('out', 500_000)).toBe('−Rp500.000')
   })
 })
 
@@ -100,5 +101,33 @@ describe('manualEntries', () => {
       { kind: 'collector_deposit', createdAt: '2026-11-25T05:00:00Z' },
     ]
     expect(manualEntries(rows).map((r) => r.kind)).toEqual(['collector_deposit', 'manual_in'])
+  })
+  it('also lists supplier payments and supplier refunds through the drawer, and their reversals (UMK-2083)', () => {
+    const rows = [
+      { kind: 'purchase_payment', createdAt: '2026-11-25T01:00:00Z' },
+      { kind: 'purchase_payment_reversal', createdAt: '2026-11-25T02:00:00Z' },
+      { kind: 'purchase_refund', createdAt: '2026-11-25T03:00:00Z' },
+      { kind: 'purchase_refund_reversal', createdAt: '2026-11-25T04:00:00Z' },
+      { kind: 'expense', createdAt: '2026-11-25T05:00:00Z' },
+    ]
+    expect(manualEntries(rows).map((r) => r.kind)).toEqual([
+      'purchase_refund_reversal',
+      'purchase_refund',
+      'purchase_payment_reversal',
+      'purchase_payment',
+    ])
+  })
+
+  it('offers Batalkan only for supplier refunds into this drawer that were not voided yet', () => {
+    const rows = [
+      { kind: 'purchase_refund', refId: 'r1' },
+      { kind: 'purchase_refund', refId: 'r2' },
+      { kind: 'purchase_refund_reversal', refId: 'r2' },
+      { kind: 'purchase_payment', refId: 'p1' },
+      { kind: 'manual_in', refId: 'm1' },
+      { kind: 'purchase_refund', refId: null },
+    ]
+    expect([...voidableRefunds(rows)]).toEqual(['r1'])
+    expect(voidableRefunds([]).size).toBe(0)
   })
 })

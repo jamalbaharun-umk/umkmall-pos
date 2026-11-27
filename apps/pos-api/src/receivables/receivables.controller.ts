@@ -1,7 +1,9 @@
 import {
   Body,
+  ConflictException,
   Controller,
   Get,
+  HttpCode,
   Injectable,
   Module,
   NotFoundException,
@@ -9,6 +11,7 @@ import {
   Post,
   Query,
   Headers,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   and,
@@ -18,6 +21,7 @@ import {
   eq,
   gt,
   ilike,
+  inArray,
   isNotNull,
   isNull,
   or,
@@ -33,7 +37,7 @@ import {
   UuidField,
   validate,
 } from '../common/validation';
-import { storeToday } from '../common/store-day';
+import { storeDayOf, storeToday } from '../common/store-day';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { type Db, InjectDb } from '../db/db.module';
 import {
@@ -45,6 +49,7 @@ import {
   saleLines,
   sales,
   shiftCashEntries,
+  shifts,
   staff,
 } from '../db/schema';
 import { isUniqueViolation, parseId } from '../staff/http';
@@ -54,8 +59,14 @@ import { paymentMethodCode } from '../payments-client/payments.client';
 import { recordShiftCashIfOpen } from '../shifts/cash-ledger';
 import type { Tx } from '../stock/stock.service';
 import { recordStoreCash } from '../store-cash/store-cash-ledger';
+import { StoreCashDepositsService } from '../store-cash/store-cash-deposits.service';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
+import { VoidPins } from '../void/void-pin';
+import {
+  CorrectionInput,
+  ReceivableCorrectionsService,
+} from './receivable-corrections.service';
 
 const PaymentInput = z
   .object({
@@ -96,12 +107,29 @@ const outsideShiftCollected = sql<string>`(
     and ${receivablePayments.receivableId} = ${receivables.id}
     and ${receivablePayments.collectedOutsideShift})`.mapWith(Number);
 
-const columns = {
+/**
+ * A payment that still stands (UMK-1971): not a reversal row and not reversed by one. Only these are given back
+ * when the kasbon's sale is voided; the book's Σ amount already nets a reversed payment and its reversal to 0.
+ */
+export const standingPayment = sql`(${receivablePayments.reversesId} is null and not exists (
+  select 1 from ${receivablePayments} x
+  where x.tenant_id = ${receivablePayments.tenantId} and x.reverses_id = ${receivablePayments.id}))`;
+
+const columns = (tenantId: string) => ({
   id: receivables.id,
   saleId: receivables.saleId,
   saleNumber: sales.number,
   memberId: receivables.memberId,
   memberName: members.name,
+  // UMK-1973: when the customer was last reminded (a date, never the message) and how late an open balance is, in
+  // whole days of the store's day; 0 when it is not yet due or nothing is owed.
+  memberLastRemindedAt: members.lastRemindedAt,
+  // A deleted customer cannot be reminded (no reminder button, not in the late queue).
+  memberDeleted: sql<boolean>`${members.deletedAt} is not null`,
+  overdueDays:
+    sql<number>`case when ${receivables.rest} > 0 then greatest(0, ${storeToday(tenantId)} - ${receivables.dueDate}) else 0 end`.mapWith(
+      Number,
+    ),
   total: receivables.total,
   rest: receivables.rest,
   dueDate: receivables.dueDate,
@@ -110,7 +138,7 @@ const columns = {
   cancelledAmount: receivables.cancelledAmount,
   outsideShiftCollected,
   createdAt: receivables.createdAt,
-};
+});
 
 /**
  * A credit sale's receivable, inside the sale's transaction. Totals come from the server-computed
@@ -198,6 +226,7 @@ export async function cancelReceivable(
       and(
         eq(receivablePayments.tenantId, tenantId),
         eq(receivablePayments.receivableId, r.id),
+        standingPayment,
       ),
     )
     .orderBy(asc(receivablePayments.createdAt), asc(receivablePayments.id));
@@ -217,9 +246,9 @@ export class ReceivablesService {
     private readonly payments: PaymentSync,
   ) {}
 
-  private base() {
+  private base(tenantId: string) {
     return this.db
-      .select(columns)
+      .select(columns(tenantId))
       .from(receivables)
       .innerJoin(sales, eq(sales.id, receivables.saleId))
       .innerJoin(members, eq(members.id, receivables.memberId));
@@ -253,8 +282,8 @@ export class ReceivablesService {
         : undefined,
       q.status === 'cancelled' ? isNotNull(receivables.cancelledAt) : undefined,
     );
-    const [data, [{ total }], [summary]] = await Promise.all([
-      this.base()
+    const [data, [{ total }], [summary], overdue] = await Promise.all([
+      this.base(tenantId)
         .where(where)
         .orderBy(desc(receivables.createdAt), desc(receivables.id))
         .limit(q.perPage)
@@ -275,6 +304,27 @@ export class ReceivablesService {
         .innerJoin(sales, eq(sales.id, receivables.saleId))
         .innerJoin(members, eq(members.id, receivables.memberId))
         .where(search),
+      // UMK-1973: customers with a phone number whose open balance is past due, oldest first ("Kirim pengingat ke
+      // yang terlambat"), over the whole store: a reminder queue does not follow the list's search.
+      this.db
+        .select({ memberId: receivables.memberId })
+        .from(receivables)
+        .innerJoin(members, eq(members.id, receivables.memberId))
+        .where(
+          and(
+            eq(receivables.tenantId, tenantId),
+            gt(receivables.rest, 0),
+            isNotNull(members.phone),
+            isNull(members.deletedAt),
+            sql`${receivables.dueDate} < ${storeToday(tenantId)}`,
+          ),
+        )
+        .groupBy(receivables.memberId)
+        .orderBy(
+          asc(sql`min(${receivables.dueDate})`),
+          asc(receivables.memberId),
+        )
+        .limit(50),
     ]);
     return {
       data,
@@ -286,12 +336,90 @@ export class ReceivablesService {
         openCount: Number(summary.openCount),
         // Cash taken without an open shift, over the same search: in no shift's expected cash.
         outsideShiftCollected: Number(summary.outsideShiftCollected),
+        overdueMemberIds: overdue.map((o) => o.memberId),
       },
     };
   }
 
+  /** What a kasbon reminder for one customer says, over all the customer's open balances (UMK-1973). */
+  async reminder(tenantId: string, memberId: string) {
+    const [m] = await this.db
+      .select({
+        id: members.id,
+        name: members.name,
+        phone: members.phone,
+        lastRemindedAt: members.lastRemindedAt,
+        // Whole days since the last reminder in the store's day (null when never reminded).
+        remindedDaysAgo: sql<
+          number | null
+        >`(${storeToday(tenantId)} - ${storeDayOf(tenantId, members.lastRemindedAt)})::int`,
+      })
+      .from(members)
+      .where(
+        and(
+          eq(members.tenantId, tenantId),
+          eq(members.id, memberId),
+          isNull(members.deletedAt),
+        ),
+      );
+    if (!m) throw new NotFoundException();
+    const [owed] = await this.db
+      .select({
+        rest: sql<string>`coalesce(sum(${receivables.rest}), 0)`,
+        dueDate: sql<
+          string | null
+        >`to_char(min(${receivables.dueDate}), 'YYYY-MM-DD')`,
+        overdueDays: sql<
+          number | null
+        >`(${storeToday(tenantId)} - min(${receivables.dueDate}))::int`,
+      })
+      .from(receivables)
+      .where(
+        and(
+          eq(receivables.tenantId, tenantId),
+          eq(receivables.memberId, memberId),
+          gt(receivables.rest, 0),
+        ),
+      );
+    const rest = Number(owed.rest);
+    if (rest === 0 || !owed.dueDate)
+      throw new ConflictException({
+        message: 'Pelanggan ini tidak punya sisa kasbon.',
+        code: 'nothing_owed',
+      });
+    return {
+      memberId: m.id,
+      memberName: m.name,
+      phone: m.phone,
+      rest,
+      dueDate: owed.dueDate,
+      overdueDays: Math.max(0, owed.overdueDays ?? 0),
+      lastRemindedAt: m.lastRemindedAt,
+      remindedDaysAgo: m.lastRemindedAt ? m.remindedDaysAgo : null,
+    };
+  }
+
+  /**
+   * The owner opened a reminder in WhatsApp: remember the date on the customer (never the message). The POS cannot
+   * know the message was sent, only that it was offered.
+   */
+  async markReminded(tenantId: string, memberId: string) {
+    const r = await this.reminder(tenantId, memberId);
+    if (!r.phone)
+      throw new ConflictException({
+        message: 'Pelanggan ini belum punya nomor WhatsApp.',
+        code: 'phone_missing',
+      });
+    const [row] = await this.db
+      .update(members)
+      .set({ lastRemindedAt: sql`now()` })
+      .where(and(eq(members.tenantId, tenantId), eq(members.id, memberId)))
+      .returning({ lastRemindedAt: members.lastRemindedAt });
+    return { memberId, lastRemindedAt: row.lastRemindedAt };
+  }
+
   async get(tenantId: string, id: string) {
-    const [row] = await this.base().where(
+    const [row] = await this.base(tenantId).where(
       and(eq(receivables.tenantId, tenantId), eq(receivables.id, id)),
     );
     if (!row) throw new NotFoundException();
@@ -320,6 +448,8 @@ export class ReceivablesService {
           amount: receivablePayments.amount,
           restBefore: receivablePayments.restBefore,
           paymentMethod: paymentMethods.name,
+          // UMK-1971: the method itself, so a correction starts from it (two methods may share a name).
+          paymentMethodId: receivablePayments.paymentMethodId,
           // Who collected it and when; a payment is in one shift's ledger (`shiftId`), or was taken
           // without a shift (`collectedOutsideShift`), or never reached a drawer ledger (down payment,
           // debit, wallet: both empty).
@@ -330,6 +460,25 @@ export class ReceivablesService {
             else coalesce(${staff.name}, 'Staf') end`,
           collectedOutsideShift: receivablePayments.collectedOutsideShift,
           shiftId: shiftCashEntries.shiftId,
+          // UMK-1971: the drawer's shift is closed (a correction's cash then goes through the shift open now).
+          shiftClosed: sql<boolean>`${shifts.closedAt} is not null`,
+          isCash: paymentMethods.isCash,
+          // The kasbon's down payment: part of its sale (the only row without a key), corrected by a void only.
+          downPayment: sql<boolean>`${receivablePayments.idempotencyKey} is null`,
+          // A correction: a reversal row names the payment it cancels, a new payment the one it replaces; a
+          // reversed payment is named by its reversal (`reversedById`).
+          reversesId: receivablePayments.reversesId,
+          replacesId: receivablePayments.replacesId,
+          reversedById: sql<
+            string | null
+          >`(select x.id from ${receivablePayments} x
+            where x.tenant_id = ${receivablePayments.tenantId} and x.reverses_id = ${receivablePayments.id})`,
+          // A reversal of a closed shift's cash instalment: given back from the store's cash (owner ruling 2026-11-26).
+          viaStoreCash: sql<boolean>`exists (select 1 from pos.store_cash_entries x
+            where x.tenant_id = ${receivablePayments.tenantId} and x.kind = 'receivable_reversal_closed_shift'
+              and x.ref_id = ${receivablePayments.id})`,
+          reasonCode: receivablePayments.reasonCode,
+          note: receivablePayments.note,
           createdAt: receivablePayments.createdAt,
         })
         .from(receivablePayments)
@@ -348,8 +497,18 @@ export class ReceivablesService {
           shiftCashEntries,
           and(
             eq(shiftCashEntries.tenantId, receivablePayments.tenantId),
-            eq(shiftCashEntries.kind, 'receivable_payment'),
+            inArray(shiftCashEntries.kind, [
+              'receivable_payment',
+              'receivable_reversal',
+            ]),
             eq(shiftCashEntries.refId, receivablePayments.id),
+          ),
+        )
+        .leftJoin(
+          shifts,
+          and(
+            eq(shifts.tenantId, shiftCashEntries.tenantId),
+            eq(shifts.id, shiftCashEntries.shiftId),
           ),
         )
         .where(
@@ -358,9 +517,32 @@ export class ReceivablesService {
             eq(receivablePayments.receivableId, id),
           ),
         )
-        .orderBy(asc(receivablePayments.createdAt)),
+        // A correction's reversal and its new payment share one instant: the reversal is listed first.
+        .orderBy(
+          asc(receivablePayments.createdAt),
+          sql`${receivablePayments.reversesId} is null`,
+          asc(receivablePayments.id),
+        ),
     ]);
-    return { ...row, lines, payments };
+    return {
+      ...row,
+      lines,
+      payments: payments.map((p) => ({
+        ...p,
+        // `active` stands; `reversed` was cancelled by a correction (its reversal is `reversedById`); `reversal`
+        // is the minus line of a correction.
+        status: p.reversesId
+          ? ('reversal' as const)
+          : p.reversedById
+            ? ('reversed' as const)
+            : ('active' as const),
+        correctable:
+          !p.reversesId &&
+          !p.reversedById &&
+          !p.downPayment &&
+          row.cancelledAt === null,
+      })),
+    };
   }
 
   async pay(s: PosSession, id: string, key: string, input: PaymentInput) {
@@ -491,7 +673,7 @@ export class ReceivablesService {
   }
 
   /** A live, non-credit method of this store (a kasbon is not paid with another kasbon). */
-  private async method(tx: Tx, tenantId: string, id?: string) {
+  async method(tx: Tx, tenantId: string, id?: string) {
     if (!id)
       await tx
         .insert(paymentMethods)
@@ -538,13 +720,40 @@ export class ReceivablesService {
 
 @Controller('receivables')
 export class ReceivablesController {
-  constructor(private readonly receivables: ReceivablesService) {}
+  constructor(
+    private readonly receivables: ReceivablesService,
+    private readonly corrections: ReceivableCorrectionsService,
+  ) {}
 
   @AgentRoute()
   @Get()
   @RequirePermission('receivables.manage')
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
     return this.receivables.list(s.tenantId, validate(ReceivableQuery, query));
+  }
+
+  /**
+   * The approver picker of "Koreksi pembayaran" (UMK-1971): who may approve by void PIN, never the asking staff
+   * member themself (a second person approves; the owner sees themself). Before `:id`, which would take the path.
+   */
+  @Get('correction-approvers')
+  @RequirePermission('sales.void')
+  correctionApprovers(@CurrentSession() s: PosSession) {
+    return this.corrections.approvers(s);
+  }
+
+  // UMK-1973: not an agent route; the reminder carries a customer's phone number.
+  @Get('reminders/:memberId')
+  @RequirePermission('receivables.manage')
+  reminder(@CurrentSession() s: PosSession, @Param('memberId') id: string) {
+    return this.receivables.reminder(s.tenantId, parseId(id));
+  }
+
+  @Post('reminders/:memberId')
+  @HttpCode(200)
+  @RequirePermission('receivables.manage')
+  markReminded(@CurrentSession() s: PosSession, @Param('memberId') id: string) {
+    return this.receivables.markReminded(s.tenantId, parseId(id));
   }
 
   @AgentRoute()
@@ -574,10 +783,45 @@ export class ReceivablesController {
       validate(PaymentInput, body),
     );
   }
+
+  /**
+   * "Koreksi pembayaran" (UMK-1971): a reversal of the payment plus, unless `replacement` is null, the payment as it
+   * should have been. For the owner and staff holding `sales.void` (as a void), approved by a void PIN. Not an
+   * agent route.
+   */
+  @Post(':id/payments/:paymentId/correction')
+  @RequirePermission('sales.void')
+  correct(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    // The kasbon itself is read with `receivables.manage`; a void permission alone does not open it.
+    if (!hasPermission(s, 'receivables.manage')) throw new ForbiddenException();
+    const { idempotencyKey } = validate(
+      z.object({ idempotencyKey: IdempotencyKey }),
+      { idempotencyKey: key },
+    );
+    return this.corrections.correct(
+      s,
+      parseId(id),
+      parseId(paymentId),
+      idempotencyKey,
+      validate(CorrectionInput, body),
+    );
+  }
 }
 
 @Module({
   controllers: [ReceivablesController],
-  providers: [ReceivablesService],
+  providers: [
+    ReceivablesService,
+    ReceivableCorrectionsService,
+    // Stateless readers of their own tables, also provided by the void and store cash modules.
+    VoidPins,
+    StoreCashDepositsService,
+  ],
 })
 export class ReceivablesModule {}
