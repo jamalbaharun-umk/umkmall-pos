@@ -18,6 +18,11 @@ const salesTotals: TotalLine[] = [
   { key: 'rounding', label: 'Pembulatan', money: true },
 ]
 
+/** The product report's rows are net of line discounts, so its Total is their sum and the discount is the order's. */
+const productTotals: TotalLine[] = salesTotals.map((t) =>
+  t.key === 'grossSales' ? { ...t, label: 'Total penjualan' } : t.key === 'discount' ? { ...t, label: 'Diskon pesanan' } : t,
+)
+
 export const REPORTS: Record<string, ReportDef> = {
   penjualan: {
     kind: 'sales',
@@ -49,7 +54,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'cost', label: 'Modal', money: true },
       { key: 'grossProfit', label: 'Laba kotor', money: true },
     ],
-    totals: salesTotals,
+    totals: productTotals,
   },
   shift: {
     kind: 'shifts',

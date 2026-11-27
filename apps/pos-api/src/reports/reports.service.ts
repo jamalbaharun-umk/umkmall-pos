@@ -329,11 +329,20 @@ export class ReportsService {
       cost: n(r.cost),
       grossProfit: n(r.sales) - n(r.cost),
     }));
+    // The rows are net of line discounts, so the Total row is their sum and the discount shown next to it is the
+    // order discount only; "Total - diskon - voucher + pajak = pendapatan" still holds. (The dashboard and the
+    // sales report keep the gross figure and the whole discount.)
+    const netSales = items.reduce((a, r) => a + r.sales, 0);
     return {
       ...range,
       timezone: tz,
       rows: items,
-      totals: { qty: items.reduce((a, r) => a + r.qty, 0), ...totals },
+      totals: {
+        qty: items.reduce((a, r) => a + r.qty, 0),
+        ...totals,
+        grossSales: netSales,
+        discount: totals.discount - (totals.grossSales - netSales),
+      },
     };
   }
 

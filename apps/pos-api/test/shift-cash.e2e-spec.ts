@@ -157,6 +157,14 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
       expectedCash: 102_500,
     });
     const detail = await get(s.auth, `/shifts/${s.shiftId}`).expect(200);
+    // An open shift answers its live expected cash (UMK-2088), not null, in the detail and the list.
+    expect(detail.body.expectedCash).toBe(102_500);
+    expect(detail.body.difference).toBeNull();
+    const openList = await get(s.auth, '/shifts').expect(200);
+    expect(openList.body.data[0]).toMatchObject({
+      id: s.shiftId,
+      expectedCash: 102_500,
+    });
     expect(detail.body.cashEntries).toEqual([
       expect.objectContaining({
         direction: 'in',
