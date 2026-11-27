@@ -37,6 +37,9 @@ export const Route = createFileRoute('/piutang/')({
   component: ReceivablesPage,
 })
 
+/** The queue after this step: the next customer, or nothing after the last. */
+const next = (q: { ids: string[]; index: number }) => (q.index + 1 < q.ids.length ? { ...q, index: q.index + 1 } : null)
+
 function ReceivablesPage() {
   const list = Route.useLoaderData()
   const rows = list.data
@@ -68,11 +71,14 @@ function ReceivablesPage() {
         )}
       </Card>
       {late.length > 0 && (
-        <ActionRow align="start">
-          <Button width="auto" type="outline" color="light" onClick={() => setReminder({ ids: late, index: 0 })}>
-            Kirim pengingat ke yang terlambat ({late.length})
-          </Button>
-        </ActionRow>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-default-secondary">{late.length} pelanggan terlambat dan punya nomor WhatsApp.</p>
+          <ActionRow align="start">
+            <Button width="auto" type="outline" color="light" onClick={() => setReminder({ ids: late, index: 0 })}>
+              Ingatkan yang terlambat
+            </Button>
+          </ActionRow>
+        </div>
       )}
       <Card variant="outlined" padding="none" className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-default-primary p-4 md:flex-row md:items-center md:justify-between">
@@ -163,16 +169,17 @@ function ReceivablesPage() {
                   <TableCell>
                     <div className="flex flex-col items-start gap-1">
                       <span>{r.memberLastRemindedAt ? formatMomentDay(r.memberLastRemindedAt) : '–'}</span>
-                      {r.rest > 0 && (
-                        <Button
-                          type="outline"
-                          color="light"
-                          size="compact"
-                          width="auto"
-                          onClick={() => setReminder({ ids: [r.memberId], index: 0 })}
-                        >
-                          Kirim pengingat
-                        </Button>
+                      {r.rest > 0 && !r.memberDeleted && (
+                        <ActionRow align="start" className="w-auto">
+                          <Button
+                            type="outline"
+                            color="light"
+                            width="auto"
+                            onClick={() => setReminder({ ids: [r.memberId], index: 0 })}
+                          >
+                            Kirim pengingat
+                          </Button>
+                        </ActionRow>
                       )}
                     </div>
                   </TableCell>
@@ -210,8 +217,9 @@ function ReceivablesPage() {
           onClose={() => setReminder(null)}
           onDone={() => {
             void router.invalidate()
-            setReminder(reminder.index + 1 < reminder.ids.length ? { ...reminder, index: reminder.index + 1 } : null)
+            setReminder(next(reminder))
           }}
+          onSkip={reminder.ids.length > 1 ? () => setReminder(next(reminder)) : undefined}
         />
       )}
     </Page>

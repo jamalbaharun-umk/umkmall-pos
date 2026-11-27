@@ -35,6 +35,8 @@ export type ReceivableSummary = {
   memberName: string
   /** UMK-1973: when the customer was last reminded (a date, never the message), and how late an open balance is. */
   memberLastRemindedAt: string | null
+  /** A deleted customer is not reminded. */
+  memberDeleted: boolean
   overdueDays: number
   total: number
   rest: number

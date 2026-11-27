@@ -26,6 +26,9 @@ describe('normalizePhone', () => {
     ['(0812) 3456.7890', '6281234567890'],
     ['  0857 1234 567  ', '628571234567'],
     ['+65 9123 4567', '6591234567'],
+    ['+62 0812 3456 7890', '6281234567890'],
+    ['+620812-3456-7890', '6281234567890'],
+    ['62 0812 3456 7890', '6281234567890'],
   ])('%s → %s', (raw, want) => {
     expect(digits(raw)).toBe(want)
   })
@@ -48,6 +51,7 @@ describe('normalizePhone', () => {
     ['65 9123 4567'], // another country without + or 00
     ['+0'],
     ['+62'],
+    ['+62 00812 3456 7890'],
   ])('refuses %j', (raw) => {
     expect(normalizePhone(raw)).toEqual({ ok: false })
   })
@@ -90,6 +94,7 @@ const sale: ReceiptSource = {
   taxBps: 0,
   total: 35500,
   rounding: 0,
+  amountDue: 35500,
   receivableRest: null,
 }
 
@@ -122,6 +127,7 @@ describe('receiptMessage', () => {
         taxBps: 1100,
         total: 25800,
         rounding: -300,
+        amountDue: 25500,
         receivableRest: 10000,
         paymentMethod: 'Kasbon',
       },
@@ -133,8 +139,8 @@ describe('receiptMessage', () => {
     expect(m).toContain('\nDiskon Rp2.000\n')
     expect(m).toContain('\nVoucher Rp500\n')
     expect(m).toContain('\nPajak 11% Rp2.300\n')
-    expect(m).toContain('Total Rp25.800 (kasbon)')
-    expect(m).toContain('Pembulatan −Rp300')
+    expect(m).toContain('Total Rp25.800\nPembulatan −Rp300\nHarus dibayar Rp25.500 (kasbon)')
+    expect(m).not.toContain('Rp25.800 (kasbon)')
     expect(m).toContain('Sisa kasbon Rp10.000')
     expect(receiptMessage(sale, 'T', '2026-11-26T03:00:00Z')).not.toMatch(/Diskon|Voucher|Pajak|Pembulatan|kasbon/)
   })

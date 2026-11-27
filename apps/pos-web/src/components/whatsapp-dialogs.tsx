@@ -94,15 +94,15 @@ const describe = (error: unknown, fallback: string) => whatsappFailure(error, fa
 function Preview({ text, onCopy }: { text: string; onCopy: () => void }) {
   return (
     <section aria-label="Pratinjau pesan" className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-default-primary">Pratinjau pesan</p>
-        <button type="button" onClick={onCopy} className="h-11 text-sm font-medium text-brand-primary hover:underline">
-          Salin pesan
-        </button>
-      </div>
+      <p className="text-sm font-medium text-default-primary">Pratinjau pesan</p>
       <pre className="whitespace-pre-wrap break-words rounded-xl border border-default-primary bg-default-secondary p-3 font-sans text-sm text-default-primary">
         {text}
       </pre>
+      <ActionRow align="start">
+        <Button type="outline" color="light" width="auto" onClick={onCopy}>
+          Salin pesan
+        </Button>
+      </ActionRow>
     </section>
   )
 }
@@ -234,6 +234,7 @@ export function WhatsappReminderDialog({
   step,
   onClose,
   onDone,
+  onSkip,
 }: {
   memberId: string
   /** "Pengingat 2 dari 5" for a queue of late customers; absent for one customer. */
@@ -241,11 +242,15 @@ export function WhatsappReminderDialog({
   onClose: () => void
   /** The date was saved: refresh the list. In a queue this also moves to the next customer. */
   onDone: () => void
+  /** In a queue: leave this customer and go on with the next (or close after the last). One bad customer never ends the queue. */
+  onSkip?: () => void
 }) {
   const store = useStoreName()
   const navigate = useNavigate()
   const [r, setR] = useState<Reminder | null>(null)
   const [busy, setBusy] = useState(false)
+  // A customer that cannot be reminded ends only this step of a queue.
+  const leave = () => (onSkip ? onSkip() : onClose())
 
   useEffect(() => {
     let live = true
@@ -254,12 +259,12 @@ export function WhatsappReminderDialog({
       (res) => {
         if (!live) return
         if (!res.ok) {
-          onClose()
+          leave()
           showError(res, { action: 'memuat pengingat' }, describe)
           return
         }
         if (!res.data.phone) {
-          onClose()
+          leave()
           showError(
             { code: 'PHONE_MISSING' },
             { action: 'mengirim pengingat', retry: () => void navigate({ to: '/pelanggan' }), retryLabel: 'Buka pelanggan' },
@@ -271,7 +276,7 @@ export function WhatsappReminderDialog({
       },
       (e: unknown) => {
         if (!live) return
-        onClose()
+        leave()
         showError(e, { action: 'memuat pengingat' })
       },
     )
@@ -353,8 +358,13 @@ export function WhatsappReminderDialog({
         )}
         <ActionRow>
           <Button type="outline" color="light" width="auto" onClick={onClose}>
-            {step && step.index < step.total ? 'Berhenti' : 'Batal'}
+            {step ? 'Berhenti' : 'Batal'}
           </Button>
+          {onSkip && (
+            <Button type="outline" color="light" width="auto" disabled={busy} onClick={onSkip}>
+              Lewati
+            </Button>
+          )}
           <Button width="auto" disabled={!r || busy} isLoading={busy} onClick={() => void open()}>
             Buka WhatsApp
           </Button>

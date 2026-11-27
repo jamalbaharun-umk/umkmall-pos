@@ -1609,7 +1609,8 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
             {sale.method && <Row label="Cara bayar" value={sale.method} />}
           </dl>
         )}
-        <ActionRow className="mt-4">
+        {/* Three buttons do not fit this small dialog in one row: a column at every width. */}
+        <ActionRow stacked className="mt-4">
           <Button width="auto" type="outline" color="light" onClick={onClose}>
             Tutup
           </Button>

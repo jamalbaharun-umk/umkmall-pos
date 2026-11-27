@@ -25,8 +25,9 @@ export function normalizePhone(raw: string): Phone {
   else if (!plus && d.startsWith('0')) d = `62${d.slice(1)}`
   else if (!plus && d.startsWith('8')) d = `62${d}`
   if (d.startsWith('62')) {
-    const national = d.slice(2)
-    return NATIONAL.test(national) ? { ok: true, digits: d, display: `+62 ${groups(national)}` } : { ok: false }
+    // "+62 0812...": people keep the trunk 0 after the country code.
+    const national = d.slice(2).replace(/^0/, '')
+    return NATIONAL.test(national) ? { ok: true, digits: `62${national}`, display: `+62 ${groups(national)}` } : { ok: false }
   }
   // Another country, only when written as +... or 00...: WhatsApp's own limit is 15 digits.
   const international = plus || /^\s*00/.test(t)
@@ -76,6 +77,8 @@ export type ReceiptSource = {
   taxBps: number
   total: number
   rounding: number
+  /** What the customer owes now: the server's `total + rounding`. Never recomputed here. */
+  amountDue: number
   receivableRest: number | null
 }
 
@@ -95,8 +98,15 @@ export function receiptMessage(r: ReceiptSource, storeName: string, at: string, 
   if (orderDiscount > 0) out.push(`Diskon ${idr(orderDiscount)}`)
   if (r.voucherDiscount > 0) out.push(`Voucher ${idr(r.voucherDiscount)}`)
   if (r.tax > 0) out.push(`Pajak ${r.taxBps / 100}% ${idr(r.tax)}`)
-  out.push(`Total ${idr(r.total)} (${r.paymentMethod.toLowerCase()})`)
-  if (r.rounding !== 0) out.push(`Pembulatan ${r.rounding < 0 ? '−' : ''}${idr(Math.abs(r.rounding))}`)
+  const method = r.paymentMethod.toLowerCase()
+  if (r.rounding === 0) out.push(`Total ${idr(r.total)} (${method})`)
+  else {
+    // Cash rounding: the customer paid the rounded amount, so that line carries the method (the printed receipt's
+    // "Harus dibayar").
+    out.push(`Total ${idr(r.total)}`)
+    out.push(`Pembulatan ${r.rounding < 0 ? '−' : ''}${idr(Math.abs(r.rounding))}`)
+    out.push(`Harus dibayar ${idr(r.amountDue)} (${method})`)
+  }
   if (r.receivableRest) out.push(`Sisa kasbon ${idr(r.receivableRest)}`)
   out.push('Sampai jumpa lagi!')
   return out.join('\n')
