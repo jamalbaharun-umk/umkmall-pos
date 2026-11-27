@@ -238,6 +238,72 @@ describe('WhatsApp receipt and kasbon reminder (UMK-1987, UMK-1973)', () => {
       ]);
     });
 
+    it('a deleted customer is not reminded: 404 to read and mark, out of the late queue, flagged in the list', async () => {
+      const s = await shop();
+      const gone = await member(s, 'Sudah Dihapus', '081234567890');
+      const kept = await member(s, 'Masih Ada', '081234567891');
+      await owe(s, gone.body.id, 1, -5);
+      await owe(s, kept.body.id, 1, -2);
+      await http()
+        .delete(`/members/${gone.body.id}`)
+        .set('Authorization', s.auth)
+        .expect(204);
+      await get(s.auth, `/receivables/reminders/${gone.body.id}`).expect(404);
+      await post(s.auth, `/receivables/reminders/${gone.body.id}`).expect(404);
+      const list = await get(s.auth, '/receivables?status=open').expect(200);
+      expect(list.body.summary.overdueMemberIds).toEqual([kept.body.id]);
+      const rows = list.body.data as {
+        memberName: string;
+        memberDeleted: boolean;
+      }[];
+      expect(
+        rows.find((r) => r.memberName === 'Sudah Dihapus')?.memberDeleted,
+      ).toBe(true);
+      expect(
+        rows.find((r) => r.memberName === 'Masih Ada')?.memberDeleted,
+      ).toBe(false);
+    });
+
+    it('the amount follows a payment correction: a reversed payment is owed again, a smaller one is owed less', async () => {
+      const s = await shop();
+      const m = await member(s, 'Bu Rina', '081234567890');
+      const sale = await owe(s, m.body.id, 12, -4); // 6.000
+      await http()
+        .put('/void-pin')
+        .set('Authorization', s.freshAuth)
+        .send({ pin: '246810' })
+        .expect(200);
+      const paid = await post(
+        s.auth,
+        `/receivables/${sale.receivableId}/payments`,
+        {
+          amount: 2500,
+        },
+      ).expect(201);
+      const paymentId = (paid.body.payments as { id: string }[]).at(-1)!.id;
+      const rest = async () =>
+        (await get(s.auth, `/receivables/reminders/${m.body.id}`).expect(200))
+          .body.rest as number;
+      expect(await rest()).toBe(3500);
+      const fix = (replacement: { amount: number } | null, paymentId: string) =>
+        post(
+          s.auth,
+          `/receivables/${sale.receivableId}/payments/${paymentId}/correction`,
+          {
+            replacement,
+            reasonCode: 'wrong_amount',
+            approverId: s.userId,
+            pin: '246810',
+          },
+        ).expect(201);
+      // Corrected to Rp3.000: Rp3.000 is owed.
+      const fixed = await fix({ amount: 3000 }, paymentId);
+      expect(await rest()).toBe(3000);
+      // Cancelled altogether: the whole Rp6.000 is owed again, and the reminder says so.
+      await fix(null, fixed.body.correction.newPaymentId as string);
+      expect(await rest()).toBe(6000);
+    });
+
     it('cross-tenant: store B gets 404 on store A members, to read and to mark', async () => {
       const a = await shop();
       const b = await shop();

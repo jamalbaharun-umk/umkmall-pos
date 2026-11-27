@@ -124,6 +124,8 @@ const columns = (tenantId: string) => ({
   // UMK-1973: when the customer was last reminded (a date, never the message) and how late an open balance is, in
   // whole days of the store's day; 0 when it is not yet due or nothing is owed.
   memberLastRemindedAt: members.lastRemindedAt,
+  // A deleted customer cannot be reminded (no reminder button, not in the late queue).
+  memberDeleted: sql<boolean>`${members.deletedAt} is not null`,
   overdueDays:
     sql<number>`case when ${receivables.rest} > 0 then greatest(0, ${storeToday(tenantId)} - ${receivables.dueDate}) else 0 end`.mapWith(
       Number,
@@ -313,6 +315,7 @@ export class ReceivablesService {
             eq(receivables.tenantId, tenantId),
             gt(receivables.rest, 0),
             isNotNull(members.phone),
+            isNull(members.deletedAt),
             sql`${receivables.dueDate} < ${storeToday(tenantId)}`,
           ),
         )
@@ -352,7 +355,13 @@ export class ReceivablesService {
         >`(${storeToday(tenantId)} - ${storeDayOf(tenantId, members.lastRemindedAt)})::int`,
       })
       .from(members)
-      .where(and(eq(members.tenantId, tenantId), eq(members.id, memberId)));
+      .where(
+        and(
+          eq(members.tenantId, tenantId),
+          eq(members.id, memberId),
+          isNull(members.deletedAt),
+        ),
+      );
     if (!m) throw new NotFoundException();
     const [owed] = await this.db
       .select({
