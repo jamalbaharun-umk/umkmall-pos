@@ -438,8 +438,9 @@ export const discountApprovals = pos
       // The largest reduction approved, in basis points of the line's total (of the order's, for `order`).
       maxBps: integer('max_bps').notNull(),
       // The largest reduction approved, in rupiah (PR 72 review): the approval covers at most this much off, so one
-      // asked for a small cart cannot take a large one. Required for `order`; null only on a line approval from a
-      // client that sends none (bound to the share alone, as before).
+      // asked for a small cart cannot take a large one. The route requires it for every new approval; the column stays
+      // nullable (the check requires it for `order` only) so a line approval issued before PR 72, which has none, stays
+      // valid until it expires, bound to its share alone.
       maxAmount: rupiah('max_amount'),
       expiresAt: ts('expires_at').notNull(),
       usedAt: ts('used_at'),

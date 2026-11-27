@@ -269,6 +269,10 @@ function saleCombined(
   const cut = (l: (typeof lines)[number]) => l.priceCut + l.discount;
   return combinedOf({
     listSubtotal: lines.reduce((n, l) => n + l.listTotal, 0),
+    uncoveredListSubtotal: lines.reduce(
+      (n, l) => n + (l.lineApproval ? 0 : l.listTotal),
+      0,
+    ),
     reduction: lines.reduce((n, l) => n + cut(l), 0) + orderDiscount,
     coveredByLines: lines.reduce(
       (n, l) => n + (l.lineApproval ? cut(l) : 0),
@@ -1156,6 +1160,7 @@ export class SalesService {
       orderDiscount,
       orderDiscountNeedsApproval: combined.needsApproval,
       listSubtotal: combined.listSubtotal,
+      uncoveredListSubtotal: combined.uncoveredListSubtotal,
       totalReduction: combined.reduction,
     };
     if (!input.voucherCode && !input.paymentMethodId) return head;

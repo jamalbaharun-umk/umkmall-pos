@@ -67,25 +67,30 @@ export const withinApproval = (
 
 /**
  * Owner ruling on PR 72 (major 1): ONE combined test over the whole sale. Every manual reduction (manual-price cuts,
- * line discounts, the order discount) is added up and measured against the list subtotal (Σ list price × qty, the
- * wholesale tier applied). The reductions of lines that carry their own line approval (each above 30% of its line)
- * are covered by those approvals; when what is left (`uncovered`) is above 30% of the list subtotal the sale must
- * name an `order` approval, which then covers the WHOLE reduction (`max_bps` of the list subtotal, `max_amount`).
- * So 30% off a line plus 30% off the order (51% in all) needs a PIN, while one line above 30% with its own approval
- * (UMK-1990, PR 63) needs nothing more. An order discount above 30% of what it comes off is always above 30% of the
- * list subtotal too, so this test also gates the order discount.
+ * line discounts, the order discount) is added up. The reductions of lines that carry their own line approval (each
+ * above 30% of its line) are covered by those approvals; what is left (`uncovered`: the other lines' cuts and the
+ * order discount) is measured against the list subtotal of the UNCOVERED lines only (Σ list price × qty of the lines
+ * without a line approval, the wholesale tier applied), never the whole list subtotal: a covered line's list total in
+ * the denominator would let the order discount escape the gate (re-review of 6d5a185: line A list 100.000 sold at
+ * 1.000 with its approval, line B 10.000, an order discount of 10.900 would pass and the sale be Rp100). With every
+ * line covered the base is 0, so any order discount needs the approval. Above 30% the sale must name an `order`
+ * approval, which then covers the WHOLE reduction (`max_bps` of the whole list subtotal, `max_amount`). So 30% off
+ * a line plus 30% off the order (51% in all) needs a PIN, while one line above 30% with its own approval (UMK-1990,
+ * PR 63) and no order discount needs nothing more.
  */
 export function combinedOf(a: {
   listSubtotal: number;
+  uncoveredListSubtotal: number;
   reduction: number;
   coveredByLines: number;
 }) {
   return {
     listSubtotal: a.listSubtotal,
+    uncoveredListSubtotal: a.uncoveredListSubtotal,
     reduction: a.reduction,
     needsApproval: needsApproval(
       a.reduction - a.coveredByLines,
-      a.listSubtotal,
+      a.uncoveredListSubtotal,
     ),
   };
 }

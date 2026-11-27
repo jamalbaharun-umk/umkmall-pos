@@ -977,6 +977,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
         orderDiscount: 0,
         orderDiscountNeedsApproval: false,
         listSubtotal: 117_600,
+        uncoveredListSubtotal: 117_600,
         totalReduction: 0,
       });
       // The design's hint at 12 loose pcs: "Tambah 36 pcs lagi untuk harga Rp3.200".

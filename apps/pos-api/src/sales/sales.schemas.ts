@@ -157,13 +157,14 @@ export const DiscountApprovalInput = z
       .int('Harus bilangan bulat')
       .min(3001, 'Diskon sampai 30% tidak perlu persetujuan')
       .max(9999, 'Diskon 100% tidak diperbolehkan'),
-    // PR 72 review: the largest reduction approved, in rupiah (what the till showed the approver). Required for an
-    // order approval; a line approval without it (an older client) is bound to its share alone.
+    // PR 72 review: the largest reduction approved, in rupiah (what the till showed the approver). Required for every
+    // new approval, line and order (the web sends it since PR 72). A line approval issued before that, whose row has
+    // none, stays valid until it expires and is bound to its share alone (`lockApprovals`).
     maxAmount: rupiah.positive('Harus lebih dari 0').optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
-    if (v.scope === 'order' && v.maxAmount === undefined)
+    if (v.maxAmount === undefined)
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['maxAmount'],
