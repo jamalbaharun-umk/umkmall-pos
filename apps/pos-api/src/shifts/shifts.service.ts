@@ -347,9 +347,9 @@ export class ShiftsService {
     );
     // An open shift stores no expected cash yet: show what the drawer should hold right now.
     const live = await Promise.all(
-      rows.map((r) =>
+      rows.map(async (r) =>
         r.closedAt === null
-          ? this.liveExpected(this.db, r, cash.get(r.id) ?? NO_CASH)
+          ? await this.liveExpected(this.db, r, cash.get(r.id) ?? NO_CASH)
           : r.expectedCash,
       ),
     );
