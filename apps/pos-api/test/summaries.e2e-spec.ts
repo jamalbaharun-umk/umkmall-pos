@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import postgres from 'postgres';
 import request from 'supertest';
-import { ADMIN_PERMISSIONS, PERMISSIONS, type Permission } from '../src/staff/permissions';
+import {
+  ADMIN_PERMISSIONS,
+  PERMISSIONS,
+  type Permission,
+} from '../src/staff/permissions';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
@@ -529,10 +533,13 @@ describe('summaries across menus (feature 39)', () => {
   it('401 without a session', async () => {
     await http().get('/summaries/sales-history').expect(401);
     await http().get('/summaries/daily-target').expect(401);
-    await http().put('/summaries/daily-target').send({ target: 5000 }).expect(401);
+    await http()
+      .put('/summaries/daily-target')
+      .send({ target: 5000 })
+      .expect(401);
   });
 
-  it("each menu summary opens with its own permission alone, and is 403 with every permission but that one", async () => {
+  it('each menu summary opens with its own permission alone, and is 403 with every permission but that one', async () => {
     const routes: Array<[string, Permission]> = [
       ['sales-history', 'reports.view'],
       ['members', 'members.manage'],
@@ -552,8 +559,13 @@ describe('summaries across menus (feature 39)', () => {
       only.set(perm, (await createCashier(app, a, [perm])).auth);
       allBut.set(
         perm,
-        (await createCashier(app, a, PERMISSIONS.filter((p) => p !== perm)))
-          .auth,
+        (
+          await createCashier(
+            app,
+            a,
+            PERMISSIONS.filter((p) => p !== perm),
+          )
+        ).auth,
       );
     }
     for (const [path, perm] of routes) {
@@ -585,19 +597,21 @@ describe('summaries across menus (feature 39)', () => {
 
   it('revenue per method and per cashier is null without reports.view; the counts stay', async () => {
     const c = await createCashier(app, a, ['catalog.manage', 'staff.manage']);
-    const methods = (await get(c.auth, '/summaries/payment-methods').expect(200))
-      .body;
+    const methods = (
+      await get(c.auth, '/summaries/payment-methods').expect(200)
+    ).body;
     expect(methods.methods.length).toBeGreaterThan(0);
-    const uses = nums(arr(methods.methods).map((m): number => m.uses)).reduce(
-      (x, y) => x + y,
-      0,
-    );
+    const uses = nums(
+      arr(methods.methods).map((m): number => Number(m.uses)),
+    ).reduce((x, y) => x + y, 0);
     expect(uses).toBe(5 + (yesterdayInMonth ? 1 : 0));
     for (const m of arr(methods.methods)) expect(m.amount).toBeNull();
     const staff = (await get(c.auth, '/summaries/staff').expect(200)).body;
-    expect(
-      arr(staff.cashiers).find((x) => x.name === 'Sari'),
-    ).toEqual({ name: 'Sari', receipts: 1, amount: null });
+    expect(arr(staff.cashiers).find((x) => x.name === 'Sari')).toEqual({
+      name: 'Sari',
+      receipts: 1,
+      amount: null,
+    });
     for (const x of arr(staff.cashiers)) expect(x.amount).toBeNull();
   });
 
@@ -633,8 +647,9 @@ describe('summaries across menus (feature 39)', () => {
       .body;
     expect(hist.today).toEqual({ count: 0, total: 0 });
     expect(hist.methods).toEqual([]);
-    const methods = (await get(b.auth, '/summaries/payment-methods').expect(200))
-      .body;
+    const methods = (
+      await get(b.auth, '/summaries/payment-methods').expect(200)
+    ).body;
     expect(methods.methods).toEqual([]);
     const staff = (await get(b.auth, '/summaries/staff').expect(200)).body;
     expect(staff.cashiers).toEqual([]);
