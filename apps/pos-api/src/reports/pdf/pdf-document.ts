@@ -194,7 +194,11 @@ export class PdfBuilder {
         while (size > 6 && this.fonts.widthOfString(it.value, 700) > inner)
           d.fontSize((size -= 0.5));
         d.fillColor(it.strong ? BRAND : INK);
-        this.fonts.line(it.value, x + 8, top + 26, 700, { truncate: false });
+        // Money is shrunk to fit, never cut; only a value still too wide at the smallest size is clipped to its card.
+        this.fonts.line(it.value, x + 8, top + 26, 700, {
+          width: inner,
+          truncate: this.fonts.widthOfString(it.value, 700) > inner,
+        });
       });
       i += k;
       d.y = top + h + 6;
