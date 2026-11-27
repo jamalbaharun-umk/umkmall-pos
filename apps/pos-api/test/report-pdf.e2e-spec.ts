@@ -4,6 +4,8 @@ import request from 'supertest';
 import { createApp, createStore } from './support/fixtures';
 import { pdfText } from './support/pdf-text';
 import { createCashier } from './support/staff';
+import { REPORT_DEFS } from '../src/reports/export/report-defs';
+import { cashDiff, int, rp } from '../src/reports/pdf/format';
 
 type Store = Awaited<ReturnType<typeof createStore>>;
 
@@ -146,6 +148,19 @@ describe('report PDFs and visuals', () => {
     (r.body as { visuals: Bars[] }).visuals;
 
   const range = () => `from=${today()}&to=${today()}`;
+
+  /**
+   * The PDF's text holds `part`. A right-to-left name is shaped by pdfkit (UMK-2117), and pdf-parse reads shaped
+   * Arabic back word by word in visual order with spacing marks between the letters: such a name is found when each
+   * of its words is in the text once those marks and spaces are taken out.
+   */
+  const carries = (t: string, part: string): boolean => {
+    if (t.includes(part)) return true;
+    if (!/[\u0590-\u08ff]/.test(part)) return false;
+    // eslint-disable-next-line no-control-regex
+    const flat = t.replace(/[\u0000-\u001f\s]/g, '');
+    return part.split(/\s+/).every((w) => flat.includes(w));
+  };
 
   describe('Penjualan dan pengeluaran (feature 37)', () => {
     it('answers buckets, window totals and the change from the period before, from the profit and loss figures', async () => {
@@ -427,7 +442,7 @@ describe('report PDFs and visuals', () => {
         const bytes = (await pdf(store.auth, path).expect(200)).body as Buffer;
         const t = pdfText(bytes).text;
         for (const part of [...names, 'Toko 北京 Jaya'])
-          expect([path, t.includes(part) ? part : `MISSING ${part}`]).toEqual([
+          expect([path, carries(t, part) ? part : `MISSING ${part}`]).toEqual([
             path,
             part,
           ]);
@@ -444,6 +459,223 @@ describe('report PDFs and visuals', () => {
             face,
           ]);
       }
+    });
+
+    it('prints every amount whole and every short name in full, with long names, long SKUs, large and negative amounts (UMK-2117)', async () => {
+      const s = await knownStore();
+      const post = (path: string, body: object) =>
+        http()
+          .post(path)
+          .set('Authorization', s.auth)
+          .set('Idempotency-Key', randomUUID())
+          .send(body);
+      const cat = await post('/catalog/categories', {
+        name: 'Elektronik',
+      }).expect(201);
+      const longName =
+        'Televisi LED Pintar 65 Inci Resolusi 4K Ultra HD dengan Garansi Resmi Lima Tahun';
+      const tv = await post('/catalog/products', {
+        categoryId: cat.body.id,
+        name: longName,
+        sku: 'ELK-TV-65-4K-UHD-SMART-GARANSI-5TH-0001',
+        costPrice: 100_000_000,
+        sellingPrice: 123_456_789,
+      }).expect(201);
+      await post('/stock/opening', { productId: tv.body.id, qty: 10 }).expect(
+        201,
+      );
+      const short = await post('/catalog/products', {
+        categoryId: cat.body.id,
+        name: 'Teh Botol',
+        sku: 'SEM-TEH-0001',
+        costPrice: 3000,
+        sellingPrice: 5000,
+      }).expect(201);
+      await post('/stock/opening', {
+        productId: short.body.id,
+        qty: 10,
+      }).expect(201);
+      await post('/sales', {
+        lines: [{ productId: short.body.id, qty: 3 }],
+        paid: 20_000,
+      }).expect(201);
+      await post('/sales', {
+        lines: [{ productId: tv.body.id, qty: 1 }],
+        paid: 200_000_000,
+      }).expect(201);
+      // A voided sale: negative rows in the sales report.
+      await http()
+        .put('/void-pin')
+        .set('Authorization', s.freshAuth)
+        .send({ pin: '482913' })
+        .expect(200);
+      const voided = await post('/sales', {
+        lines: [{ productId: tv.body.id, qty: 1 }],
+        paid: 200_000_000,
+      }).expect(201);
+      await post(`/sales/${voided.body.id}/void`, {
+        reasonCode: 'wrong_item_or_qty',
+        approverId: s.userId,
+        pin: '482913',
+      }).expect(201);
+      const sup = await post('/suppliers', {
+        name: 'PT Distributor Sembako Nusantara Raya Sejahtera Bersama Indonesia Tbk',
+      }).expect(201);
+      const order = await post('/purchasing/orders', {
+        supplierId: sup.body.id,
+        lines: [
+          { productId: tv.body.id, qty: 10, unitCost: 98_765_432 },
+          { productId: short.body.id, qty: 20, unitCost: 2800 },
+        ],
+      }).expect(201);
+      await http()
+        .post(`/purchasing/orders/${order.body.id}/approve`)
+        .set('Authorization', s.auth)
+        .expect(200);
+      const kasbon = await post('/payment-methods', {
+        name: 'Kasbon',
+        kind: 'credit',
+      }).expect(201);
+      for (const name of [
+        'Bu Sari',
+        'Pak Ahmad bin Abdullah bin Muhammad bin Ismail dari Kampung Melayu Besar',
+      ]) {
+        const m = await post('/members', {
+          name,
+          code: `M${randomUUID().slice(0, 6)}`,
+          phone: '081234567890',
+        }).expect(201);
+        await post('/sales', {
+          lines: [{ productId: short.body.id, qty: 1 }],
+          memberId: m.body.id,
+          paymentMethodId: kasbon.body.id,
+          paid: 0,
+        }).expect(201);
+      }
+
+      const expectAll = (what: string, t: string, parts: string[]) => {
+        for (const part of parts)
+          expect([what, t.includes(part) ? part : `MISSING ${part}`]).toEqual([
+            what,
+            part,
+          ]);
+      };
+      const fmt = (as: string, v: unknown) =>
+        as === 'rp'
+          ? rp(Number(v))
+          : as === 'int'
+            ? int(Number(v))
+            : as === 'diff'
+              ? cashDiff(Number(v))
+              : typeof v === 'string'
+                ? v
+                : '';
+      for (const kind of [
+        'sales',
+        'products',
+        'shifts',
+        'purchasing',
+      ] as const) {
+        const json = (
+          await get(s.auth, `/reports/${kind}?${range()}`).expect(200)
+        ).body as { rows: Array<Record<string, unknown>> };
+        expect(json.rows.length).toBeGreaterThan(0);
+        const t = await text(
+          (await pdf(s.auth, `/reports/pdf/${kind}?${range()}`).expect(200))
+            .body as Buffer,
+        );
+        // Numbers always whole; text when short (a long name or SKU is cut with an ellipsis).
+        const parts = json.rows.flatMap((r) =>
+          REPORT_DEFS[kind].columns
+            .filter((c) => r[c.key] != null)
+            .map((c) => ({ as: c.as, v: fmt(c.as, r[c.key]) }))
+            .filter((x) => x.as !== 'text' || x.v.length <= 16)
+            .map((x) => x.v),
+        );
+        expectAll(kind, t, parts);
+        if (kind !== 'shifts')
+          expect([kind, t.includes('…')]).toEqual([kind, true]);
+      }
+      const sales = await text(
+        (await pdf(s.auth, `/reports/pdf/sales?${range()}`).expect(200))
+          .body as Buffer,
+      );
+      expectAll('sales', sales, [
+        'Rp123.456.789',
+        '−Rp123.456.789',
+        'SEM-TEH-0001',
+        'Televisi LED',
+      ]);
+
+      const pl = (
+        await get(s.auth, '/reports/profit-loss?period=today').expect(200)
+      ).body as {
+        current: Record<string, number>;
+        previous: Record<string, number>;
+        topExpenses: Array<{ label: string; total: number }>;
+      };
+      expectAll(
+        'profit-loss',
+        await text(
+          (
+            await pdf(s.auth, '/reports/pdf/profit-loss?period=today').expect(
+              200,
+            )
+          ).body as Buffer,
+        ),
+        [
+          ...['revenue', 'cost', 'grossProfit', 'expenses', 'netProfit'].map(
+            (k) => rp(pl.current[k]),
+          ),
+          ...pl.topExpenses.flatMap((e) => [rp(e.total), e.label]),
+        ],
+      );
+
+      const kas = (await get(s.auth, '/reports/receivables').expect(200))
+        .body as {
+        rows: Array<{
+          name: string;
+          total: number;
+          paid: number;
+          rest: number;
+        }>;
+      };
+      expect(kas.rows).toHaveLength(2);
+      expectAll(
+        'receivables',
+        await text(
+          (await pdf(s.auth, '/reports/pdf/receivables').expect(200))
+            .body as Buffer,
+        ),
+        [
+          ...kas.rows.flatMap((r) => [rp(r.total), rp(r.paid), rp(r.rest)]),
+          'Bu Sari',
+          'Pak Ahmad bin',
+          '…',
+        ],
+      );
+
+      const trend = (
+        await get(s.auth, '/reports/sales-expenses?scale=day').expect(200)
+      ).body as {
+        buckets: Array<{ sales: number; expenses: number }>;
+        totals: { sales: number; expenses: number; netProfit: number };
+      };
+      expectAll(
+        'sales-expenses',
+        await text(
+          (
+            await pdf(s.auth, '/reports/sales-expenses/pdf?scale=day').expect(
+              200,
+            )
+          ).body as Buffer,
+        ),
+        [
+          ...trend.buckets.flatMap((b) => [rp(b.sales), rp(b.expenses)]),
+          rp(trend.totals.sales),
+          rp(trend.totals.netProfit),
+        ],
+      );
     });
 
     it('prints no customer phone number, and the cashier’s name when a cashier prints it', async () => {
