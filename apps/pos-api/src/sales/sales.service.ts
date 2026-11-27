@@ -1749,13 +1749,23 @@ export class SalesService {
     return { taxBps: row?.taxBps ?? 0 };
   }
 
+  /**
+   * `tax_set_at` (feature 39, "Kelengkapan toko") is stamped the first time a tax above 0 is saved and never moved
+   * after: the settings form always sends the tax, so saving only the timezone with 0% must not count as set.
+   */
   async updateSettings(tenantId: string, taxBps: number) {
     await this.db
       .insert(salesSettings)
-      .values({ tenantId, taxBps, taxSetAt: new Date() })
+      .values({ tenantId, taxBps, taxSetAt: taxBps > 0 ? new Date() : null })
       .onConflictDoUpdate({
         target: salesSettings.tenantId,
-        set: { taxBps, taxSetAt: new Date() },
+        set: {
+          taxBps,
+          taxSetAt:
+            taxBps > 0
+              ? sql`coalesce(${salesSettings.taxSetAt}, now())`
+              : sql`${salesSettings.taxSetAt}`,
+        },
       });
     return { taxBps };
   }

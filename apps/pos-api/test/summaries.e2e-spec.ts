@@ -290,7 +290,7 @@ describe('summaries across menus (feature 39)', () => {
     expect(plain.shortValue).toBeNull();
   });
 
-  it('Kelengkapan toko: steps done as the store is set up, tax counts once chosen even at 0', async () => {
+  it('Kelengkapan toko: steps done as the store is set up, tax counts once a tax above 0 is saved', async () => {
     const steps = async (s: Store) =>
       (await get(s.auth, '/summaries/setup').expect(200)).body as {
         doneCount: number;
@@ -332,11 +332,29 @@ describe('summaries across menus (feature 39)', () => {
     expect(three.steps.find((x: { key: string }) => x.key === 'tax').done).toBe(
       false,
     );
-    await http()
-      .put('/sales/settings')
-      .set('Authorization', b.auth)
-      .send({ taxBps: 0 })
-      .expect(200);
+    const setTax = (taxBps: number) =>
+      http()
+        .put('/sales/settings')
+        .set('Authorization', b.auth)
+        .send({ taxBps })
+        .expect(200);
+    const taxSetAt = async () =>
+      (
+        await admin<{ at: Date | null }[]>`
+          select tax_set_at as at from pos.sales_settings where tenant_id = ${b.tenantId}`
+      )[0]?.at ?? null;
+    // The Aplikasi form always sends the tax: saving only the timezone (tax 0) is not choosing a tax.
+    await setTax(0);
+    expect(await taxSetAt()).toBeNull();
+    expect(await steps(b)).toMatchObject({ doneCount: 3, complete: false });
+    await setTax(1100);
+    const first = await taxSetAt();
+    expect(first).not.toBeNull();
+    expect(await steps(b)).toMatchObject({ doneCount: 4, complete: true });
+    // Saved again (another tax, or 0 with the timezone): the first time stays.
+    await setTax(500);
+    await setTax(0);
+    expect(await taxSetAt()).toEqual(first);
     expect(await steps(b)).toMatchObject({ doneCount: 4, complete: true });
   });
 

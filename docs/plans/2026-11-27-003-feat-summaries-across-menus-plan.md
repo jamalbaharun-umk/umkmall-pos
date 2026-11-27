@@ -28,8 +28,9 @@ and Pengaturan shows a "Kelengkapan toko" board that disappears when complete. C
   admin holding `catalog.manage` gets 403, the form shows to the owner only). Without `reports.view` the read answers
   only whether a target is set and the percent, never a rupiah figure (a cashier sees only their own sales
   elsewhere), so the receipt card shows the percent only. Stored in
-  `pos.sales_settings.daily_target` (nullable rupiah). Migration also adds `sales_settings.tax_set_at` so the board
-  can tell "tax set to 0%" from "never set" (`PUT /sales/settings` stamps it).
+  `pos.sales_settings.daily_target` (nullable rupiah). Migration also adds `sales_settings.tax_set_at`, the board's
+  "Pajak" step: `PUT /sales/settings` stamps it the first time a tax above 0 is saved and never moves it (review
+  of PR 78: the Aplikasi form always sends the tax, so a 0% save with the timezone cannot count as choosing one).
 - Web `routes/ringkasan/`: a server function per summary and one panel component per menu; a panel loads on its
   own, so a failed summary never blocks the list (error state with "Muat ulang"), shows a skeleton while loading
   and a dashed "Gambar muncul setelah ada data" box when empty. Each menu route adds one line.
