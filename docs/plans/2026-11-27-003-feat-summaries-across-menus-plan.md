@@ -21,7 +21,8 @@ and Pengaturan shows a "Kelengkapan toko" board that disappears when complete. C
 
 - API `src/summaries/` (one module, read only except the target): one `GET /summaries/<menu>` per menu, each gated by
   the permission that opens that menu, tenant from the session only. Money and profit figures (cost, margin, stock
-  value, revenue by category) need `reports.view` and come back `null` without it. Sales are dated by `paid_at`,
+  value, revenue per category, payment method, cashier and top customer) need `reports.view` and come back `null`
+  without it; the counts stay and the panels chart them instead. Sales are dated by `paid_at`,
   only `FINAL_SALE_STATUSES`; the daily total follows the report rule (sales by `paid_at` minus voids by their day);
   the per-menu shares count completed receipts only.
 - `GET/PUT /summaries/daily-target`: read by `sales.create` or `reports.view`; set by the owner only (owner ruling: an
