@@ -1296,13 +1296,26 @@ describe('purchase payments and returns (UMK-1970)', () => {
       }).expect(200);
       const before =
         await admin`select * from pos.shifts where id = ${shift.body.id}`;
+      // The store cash is empty: it cannot give the 7.000 back (it never goes below zero, owner ruling 2026-11-27).
+      const empty = await voidRefund(s.auth, o.id, late.body.id).expect(422);
+      expect(empty.body).toMatchObject({
+        code: 'STORE_CASH_INSUFFICIENT',
+        available: 0,
+      });
+      expect(empty.body.message).toMatch(
+        /Kas toko \(Rp0\) kurang dari Rp7\.000/,
+      );
+      await refund(s.auth, o.id, {
+        amount: 7_000,
+        destination: 'store_cash',
+      }).expect(201);
       const closed = await voidRefund(s.auth, o.id, late.body.id).expect(200);
       expect(closed.body).toMatchObject({ drawerReversed: false });
       expect(
         await admin`select * from pos.shifts where id = ${shift.body.id}`,
       ).toEqual(before);
-      expect(await storeCash(s)).toBe(-7_000);
-      expect((await figures(s, o.id)).refunds).toHaveLength(3);
+      expect(await storeCash(s)).toBe(0);
+      expect((await figures(s, o.id)).refunds).toHaveLength(4);
     });
 
     it('what the supplier handed back blocks undoing the return and voiding the payment it came from', async () => {
@@ -1531,19 +1544,149 @@ describe('purchase payments and returns (UMK-1970)', () => {
         countedCash: 62_000,
         difference: 0,
       });
+      // Refused while the store cash holds less than the 12.000; nothing changed.
+      const short = await voidRefund(s.auth, o.id, got.body.id).expect(422);
+      expect(short.body).toMatchObject({
+        code: 'STORE_CASH_INSUFFICIENT',
+        available: 0,
+      });
+      expect(await shiftRow()).toEqual(before);
+      expect((await figures(s, o.id)).refunded).toBe(12_000);
+      // The supplier hands 12.000 more into the store cash: now it can give the drawer's 12.000 back.
+      await refund(s.auth, o.id, {
+        amount: 12_000,
+        destination: 'store_cash',
+      }).expect(201);
       await voidRefund(s.auth, o.id, got.body.id).expect(200);
       // The closed shift's row is exactly as it was; the cash left the store cash instead.
       expect(await shiftRow()).toEqual(before);
-      expect(await storeCash(s)).toBe(-12_000);
+      expect(await storeCash(s)).toBe(0);
       expect(
-        await admin`select direction, kind, amount from pos.store_cash_entries where tenant_id = ${s.tenantId}`,
+        await admin`select direction, kind, amount from pos.store_cash_entries where tenant_id = ${s.tenantId} order by created_at`,
       ).toEqual([
+        { direction: 'in', kind: 'purchase_refund', amount: '12000' },
         { direction: 'out', kind: 'purchase_refund_void', amount: '12000' },
       ]);
       expect(await figures(s, o.id)).toMatchObject({
-        refunded: 0,
-        refundDue: 30_000,
+        refunded: 12_000,
+        refundDue: 18_000,
       });
+    });
+
+    it('store cash never goes negative: a refund received into the store cash is not voided once that cash left, and two voids racing for the last of it get one 200 and one 422', async () => {
+      const s = await createStore();
+      const a = await overpaid(s);
+      const b = await overpaid(s);
+      const c = await overpaid(s);
+      const intoStore = async (o: { id: string }) =>
+        (
+          await refund(s.auth, o.id, {
+            amount: 5_000,
+            destination: 'store_cash',
+          }).expect(201)
+        ).body.id as string;
+      const ra = await intoStore(a.o);
+      const rb = await intoStore(b.o);
+      // C's refund went into a drawer whose shift then closed: its void takes 5.000 out of the store cash.
+      await openShift(s, 0);
+      const rc = await refund(s.auth, c.o.id, {
+        amount: 5_000,
+        destination: 'drawer',
+      }).expect(201);
+      await post(s.auth, '/shifts/current/close', {
+        countedCash: 5_000,
+      }).expect(200);
+      expect(await storeCash(s)).toBe(10_000);
+      await voidRefund(s.auth, c.o.id, rc.body.id).expect(200);
+      expect(await storeCash(s)).toBe(5_000);
+
+      // A and B each want their 5.000 back out of the 5.000 left. Two purchases share no row lock: the store
+      // cash's own lock decides. The ledger is held against inserts (reads still pass) until both requests wait,
+      // so without that lock both would read 5.000 and both would pass.
+      const [x, y] = await racing(
+        (sql) => sql`lock table pos.store_cash_entries in exclusive mode`,
+        () => [
+          voidRefund(s.auth, a.o.id, ra).then((r) => r),
+          voidRefund(s.auth, b.o.id, rb).then((r) => r),
+        ],
+      );
+      expect([x.status, y.status].sort()).toEqual([200, 422]);
+      expect((x.status === 422 ? x : y).body).toMatchObject({
+        code: 'STORE_CASH_INSUFFICIENT',
+        available: 0,
+      });
+      expect(await storeCash(s)).toBe(0);
+      // The loser is still live, its audit row rolled back with it.
+      const [{ live }] = await admin<{ live: number }[]>`
+        select count(*)::int as live from pos.purchase_refunds
+         where tenant_id = ${s.tenantId} and voided_at is null and id in (${ra}, ${rb})`;
+      expect(live).toBe(1);
+      const [{ voids }] = await admin<{ voids: number }[]>`
+        select count(*)::int as voids from pos.audit_log
+         where tenant_id = ${s.tenantId} and event = 'purchase_refund_void'`;
+      expect(voids).toBe(2);
+    });
+
+    it('a drawer refund is voided only by that shift’s cashier, an admin or the owner; purchasing staff and other cashiers get 403 DRAWER_REFUND_NOT_YOURS', async () => {
+      const s = await createStore();
+      const { o } = await overpaid(s);
+      const rina = await createCashier(app, s, [
+        'sales.create',
+        'purchasing.manage',
+      ]);
+      const sari = await createCashier(app, s, [
+        'sales.create',
+        'purchasing.manage',
+      ]);
+      const buyer = await createCashier(app, s, ['purchasing.manage']);
+      const adminStaff = await createCashier(app, s, [
+        'purchasing.manage',
+        'sales.void',
+      ]);
+      await post(rina.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i++)
+        ids.push(
+          (
+            await refund(rina.auth, o.id, {
+              amount: 5_000,
+              destination: 'drawer',
+            }).expect(201)
+          ).body.id as string,
+        );
+      const drawer = async () =>
+        (await current(rina.auth)).expectedCash as number;
+      expect(await drawer()).toBe(20_000);
+
+      for (const who of [buyer, sari]) {
+        const no = await voidRefund(who.auth, o.id, ids[0]).expect(403);
+        expect(no.body).toMatchObject({ code: 'DRAWER_REFUND_NOT_YOURS' });
+        expect(no.body.message).toMatch(/kasir shift itu, admin, atau pemilik/);
+      }
+      // Nothing changed: the refund is live and the drawer still holds it.
+      expect((await figures(s, o.id)).refunded).toBe(20_000);
+      expect(await drawer()).toBe(20_000);
+
+      await voidRefund(rina.auth, o.id, ids[0]).expect(200);
+      await voidRefund(adminStaff.auth, o.id, ids[1]).expect(200);
+      await voidRefund(s.auth, o.id, ids[2]).expect(200);
+      expect(await drawer()).toBe(5_000);
+      // A repeat by someone refused is still refused, also of a refund already voided.
+      await voidRefund(buyer.auth, o.id, ids[0]).expect(403);
+
+      // Its shift closed: still a drawer refund, still refused to the buyer (the cash would leave the store cash).
+      await post(rina.auth, '/shifts/current/close', {
+        countedCash: 5_000,
+      }).expect(200);
+      const late = await voidRefund(buyer.auth, o.id, ids[3]).expect(403);
+      expect(late.body).toMatchObject({ code: 'DRAWER_REFUND_NOT_YOURS' });
+      // A refund into the store cash is not drawer money: purchasing staff void it as before.
+      const store = await refund(buyer.auth, o.id, {
+        amount: 5_000,
+        destination: 'store_cash',
+      }).expect(201);
+      await voidRefund(buyer.auth, o.id, store.body.id).expect(200);
+      expect((await figures(s, o.id)).refunded).toBe(5_000);
     });
 
     it('races: two refunds of the whole amount, an undo against a refund, two undos of one return', async () => {

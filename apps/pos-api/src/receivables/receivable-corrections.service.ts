@@ -523,10 +523,15 @@ export class ReceivableCorrectionsService {
         cashOut,
       );
       if (!inOwnShift)
-        await recordStoreCash(tx, s, {
-          ...cashOut,
-          kind: 'receivable_reversal_closed_shift',
-        });
+        await recordStoreCash(
+          tx,
+          s,
+          {
+            ...cashOut,
+            kind: 'receivable_reversal_closed_shift',
+          },
+          { mustCover: true },
+        );
     }
 
     let recordedId: string | null = null;
