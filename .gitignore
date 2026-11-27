@@ -11,3 +11,6 @@ coverage/
 *.log
 .DS_Store
 .storage/
+
+# Built by apps/pos-api/scripts/bundle-charts.mjs (the report PDF charts)
+apps/pos-api/generated/

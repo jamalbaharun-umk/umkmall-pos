@@ -4,6 +4,7 @@ import postgres from 'postgres';
 import request from 'supertest';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
+import { pdfText } from './support/pdf-text';
 
 const OWNER_PIN = '482913';
 /** A store day in Asia/Jakarta (the default report timezone), `offset` days from today. */
@@ -183,6 +184,48 @@ describe('stock shrinkage in profit and loss (UMK-2072)', () => {
       200,
     );
     expect(dash.body.current.grossProfit).toBe(4000);
+  });
+
+  it('the sales and expenses report, the profit bridge and the PDF carry the shrinkage, so net profit equals the profit and loss', async () => {
+    const s = await shop();
+    await trade(s);
+    await opname(s, [
+      { productId: s.teh, countedQty: 6 },
+      { productId: s.kopi, countedQty: 4 },
+      { productId: s.gula, countedQty: 15 },
+    ]);
+    const pl = await profitLoss(s, `?from=${day()}&to=${day()}`);
+    expect(pl.current).toMatchObject({ shrinkage: 7500, netProfit: -4500 });
+    const trend = await get(
+      s.auth,
+      `/reports/sales-expenses?scale=day&to=${day()}`,
+    ).expect(200);
+    expect(trend.body.totals).toMatchObject({
+      grossProfit: 4000,
+      shrinkage: 7500,
+      expenses: 1000,
+      netProfit: -4500,
+    });
+    const bridge = await get(
+      s.auth,
+      `/reports/visuals/profit-loss?from=${day()}&to=${day()}`,
+    ).expect(200);
+    const b = (bridge.body.visuals ?? bridge.body)[0];
+    expect(b.categories).toContain('Susut stok');
+    expect(b.series[0].values).toEqual([
+      10_000, -6000, 4000, -7500, -1000, -4500,
+    ]);
+    const pdf = await get(s.auth, `/reports/pdf/profit-loss?period=today`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => cb(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    const text = pdfText(pdf.body as Buffer).text;
+    expect(text).toContain('Susut stok');
+    expect(text).toContain('Rp7.500');
   });
 
   it("dated by the opname's approval in the store's timezone: an opname approved yesterday is yesterday's", async () => {

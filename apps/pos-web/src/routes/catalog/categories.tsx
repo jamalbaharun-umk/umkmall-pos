@@ -21,6 +21,7 @@ import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { required } from '@/lib/validate'
 import { deleteCategory, listCategories, saveCategory, type Category } from './-api'
 import { ActionRow } from '@/components/action-row'
+import { CategoriesSummary } from '../ringkasan/-panels'
 
 export const Route = createFileRoute('/catalog/categories')({
   loader: () => listCategories(),
@@ -59,6 +60,7 @@ function CategoriesPage() {
         )
       }
     >
+      <CategoriesSummary />
       <Panel>
         <div className="flex justify-end border-b border-border-light p-4">
           <div className="w-full sm:w-72">

@@ -385,6 +385,6 @@ export class ReportsController {
     ReceivablesReportService,
     DashboardWidgetsService,
   ],
-  exports: [ReportsService],
+  exports: [ReportsService, ReceivablesReportService],
 })
 export class ReportsModule {}

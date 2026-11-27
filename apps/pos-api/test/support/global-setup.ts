@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import postgres from 'postgres';
@@ -15,6 +16,10 @@ const OPS = path.join(__dirname, '..', '..', '..', '..', 'ops');
 // Fresh `pos` schema per run in this session's database, built exactly as production is: stub users
 // table (local only), the owner-run role script, then migrations as pos_app.
 export default async function globalSetup() {
+  // The report PDF draws the UI package's chart components: build the server bundle they run from (about 1 s).
+  execFileSync(process.execPath, [
+    path.join(__dirname, '..', '..', 'scripts', 'bundle-charts.mjs'),
+  ]);
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(TEST_DB)) {
     throw new Error('PGTEST_DB must be a lower-case identifier');
   }

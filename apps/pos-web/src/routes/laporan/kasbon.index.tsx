@@ -18,6 +18,9 @@ import {
 import { ChevronRight } from 'lucide-react'
 import { ActionRow } from '@/components/action-row'
 import { Empty, Panel } from '@/components/page'
+import { ReportVisuals } from '@/components/report-visual'
+import { PdfButton } from './-pdf-button'
+import { rangeLabel } from './-pdf'
 import { useCan } from '@/components/shell'
 import { SCROLL_ROW } from '@/lib/scroll-row'
 import { loadKasbon, rupiah } from './-api'
@@ -81,6 +84,7 @@ function KasbonPage() {
   return (
     <ReportLayout title="Laporan kasbon">
       <Summary report={result.data} />
+      {summary.customers > 0 && <ReportVisuals kind="receivables" query={{ filter: filter === 'all' ? undefined : filter }} />}
       <Panel>
         <div className="flex flex-col gap-3 border-b border-default-primary p-4 md:flex-row md:items-center md:justify-between">
           <SegmentedControl aria-label="Filter jatuh tempo" className={SCROLL_ROW} options={FILTERS} value={filter} onChange={setFilter} />
@@ -89,6 +93,7 @@ function KasbonPage() {
               <Button type="outline" color="primary" width="auto" onClick={() => setExportOpen(true)}>
                 Ekspor CSV
               </Button>
+              <PdfButton jenis="kasbon" query={{ filter: filter === 'all' ? undefined : filter }} label={`posisi ${rangeLabel(summary.today, summary.today)}`} />
             </ActionRow>
           )}
         </div>
