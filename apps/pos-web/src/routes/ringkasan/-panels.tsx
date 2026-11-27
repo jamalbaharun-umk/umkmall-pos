@@ -32,13 +32,17 @@ import {
 } from './-summary'
 
 // The picture summaries above each menu's list (design feature 39). Each panel loads on its own, so a failed one
-// never blocks the list under it: it shows a clear message with "Muat ulang" and the error dialog says why. The
-// numbers come first (StatTile), then charts from the @umkmall/ui chart standard; the table stays below.
+// never blocks the list under it: it shows a clear message with "Muat ulang" in place, quietly (no error dialog
+// over a list that works). The numbers come first (StatTile), then charts from the @umkmall/ui chart standard; the
+// table stays below.
 
 type Loaded<K extends SummaryKind> =
   { state: 'loading' } | { state: 'error' } | { state: 'ready'; data: SummaryKinds[K] }
 
-/** Loads one summary when the panel shows, again on "Muat ulang". A failure opens the error dialog once. */
+/**
+ * Loads one summary when the panel shows, again on "Muat ulang". A failure opens the error dialog once, unless
+ * `quiet` (the caller shows the failure in place).
+ */
 export function useSummary<K extends SummaryKind>(kind: K, quiet = false): { loaded: Loaded<K>; reload: () => void } {
   const [loaded, setLoaded] = useState<Loaded<K>>({ state: 'loading' })
   const [tick, setTick] = useState(0)
@@ -120,7 +124,7 @@ function ShellInner<K extends SummaryKind>({
   title: string
   children: (data: SummaryKinds[K]) => ReactNode
 }) {
-  const { loaded, reload } = useSummary(kind)
+  const { loaded, reload } = useSummary(kind, true)
   if (loaded.state !== 'ready')
     return (
       <section aria-label={title}>
@@ -472,15 +476,25 @@ export function SuppliersSummary() {
   )
 }
 
-/** "Kelengkapan toko" on Pengaturan: the steps done and not yet; it hides itself once every step is done. */
-export function SetupBoard() {
+/**
+ * "Kelengkapan toko" on Pengaturan: the steps done and not yet; it hides itself once every step is done. A change
+ * of `refresh` (a form on the page saved) reads the steps again.
+ */
+export function SetupBoard({ refresh = 0 }: { refresh?: number }) {
   const can = useCan('catalog.manage')
   if (!can) return null
-  return <SetupBoardInner />
+  return <SetupBoardInner refresh={refresh} />
 }
 
-function SetupBoardInner() {
-  const { loaded, reload } = useSummary('setup')
+function SetupBoardInner({ refresh }: { refresh: number }) {
+  // Quiet like the menu panels: a board that fails shows it in place, above forms that still work.
+  const { loaded, reload } = useSummary('setup', true)
+  const seen = useRef(refresh)
+  useEffect(() => {
+    if (seen.current === refresh) return
+    seen.current = refresh
+    reload()
+  }, [refresh, reload])
   if (loaded.state === 'loading') return <ChartFrame boxed title="Kelengkapan toko" state="loading" height={120} />
   if (loaded.state === 'error')
     return (
