@@ -401,7 +401,7 @@ export class SummariesService {
         key: 'products',
         label: 'Produk',
         done: r.products === true,
-        to: '/catalog',
+        to: '/catalog/products',
       },
       {
         key: 'methods',

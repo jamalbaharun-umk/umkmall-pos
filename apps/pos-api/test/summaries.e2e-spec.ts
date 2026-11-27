@@ -305,6 +305,13 @@ describe('summaries across menus (feature 39)', () => {
       'methods',
       'tax',
     ]);
+    // Each step links to the screen that does it (not a redirect).
+    expect(empty.steps.map((x: { to: string }) => x.to)).toEqual([
+      '/pengaturan',
+      '/catalog/products',
+      '/metode-pembayaran',
+      '/pengaturan',
+    ]);
     await http()
       .put('/store/profile')
       .set('Authorization', b.auth)

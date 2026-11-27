@@ -1604,13 +1604,13 @@ function SuccessDialog({ sale, onClose }: { sale?: PaidSale; onClose: () => void
               ? 'Penjualan sudah dibayar'
               : `Kembalian: ${rupiah(sale.change)}`}
         </Text>
-        {/* A sale found paid after the till was away: say which sale it is, for how much and its receipt (UMK-2058). */}
-        {/* Feature 39: today's sales against the owner's optional daily target. */}
+        {/* Feature 39: today's progress against the owner's optional daily target. */}
         {sale && (
           <div className="w-full text-left">
             <DailyTargetCard />
           </div>
         )}
+        {/* A sale found paid after the till was away: say which sale it is, for how much and its receipt (UMK-2058). */}
         {sale && (sale.receiptNumber != null || sale.amount != null) && (
           <dl className="w-full space-y-1 text-sm" aria-label="Rincian penjualan">
             {sale.receiptNumber != null && <Row label="Struk" value={`#${sale.receiptNumber}`} />}
