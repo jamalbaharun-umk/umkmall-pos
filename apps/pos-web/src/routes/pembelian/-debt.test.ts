@@ -209,6 +209,64 @@ describe('purchase debt helpers (UMK-1970)', () => {
     )
   })
 
+  it('says what to do in the words of the dialog the refusal came from', () => {
+    // Pay dialog: the other source is "Di luar laci".
+    expect(refusalTodo('SHIFT_REQUIRED', {}, rp, 'pay')).toBe('Buka shift dulu, atau pilih Di luar laci.')
+    expect(refusalTodo('DRAWER_PERMISSION', {}, rp, 'pay')).toContain('Di luar laci')
+    expect(refusalTodo('DRAWER_INSUFFICIENT', { drawerCash: 300_000 }, rp, 'pay')).toBe(
+      'Isi paling banyak Rp300.000, atau pilih Di luar laci.',
+    )
+    // Refund dialog: the other destination is "Kas toko", never "Di luar laci".
+    expect(refusalTodo('SHIFT_REQUIRED', {}, rp, 'refund')).toBe('Buka shift dulu, atau pilih Kas toko.')
+    expect(refusalTodo('DRAWER_PERMISSION', {}, rp, 'refund')).toBe('Pilih Kas toko, atau minta pemilik memberi izin kasir.')
+    expect(refusalTodo('AGENT_FORBIDDEN', {}, rp, 'refund')).toContain('Kas toko')
+    for (const code of ['SHIFT_REQUIRED', 'DRAWER_PERMISSION', 'AGENT_FORBIDDEN'])
+      expect(refusalTodo(code, {}, rp, 'refund')).not.toContain('Di luar laci')
+    // Refund void dialog: no amount field to change.
+    const voidTodo = refusalTodo('DRAWER_INSUFFICIENT', { drawerCash: 4_000 }, rp, 'refund_void')!
+    expect(voidTodo).toContain('Rp4.000')
+    expect(voidTodo).not.toMatch(/Isi paling banyak|Di luar laci/)
+    // Undo and payment void: the refunds to void first.
+    expect(refusalTodo('RETURN_REFUNDED', { refunded: 10_000 }, rp, 'return_undo')).toContain('Rp10.000')
+    expect(refusalTodo('REFUND_RECEIVED', { refunded: 10_000 }, rp, 'payment_void')).toContain('Rp10.000')
+  })
+
+  it("a return's row says what the supplier handed back of it, oldest return first", () => {
+    const ret = (id: string, at: string, refundDue: number) => ({
+      id,
+      reason: 'rusak',
+      reasonLabel: 'Barang rusak',
+      note: null,
+      total: refundDue,
+      refundDue,
+      actorName: 'Pemilik',
+      createdAt: at,
+      lines: [{ orderLineId: 'l1', qty: 1, unitCost: refundDue }],
+    })
+    const refund = (id: string, amount: number, voidedAt: string | null = null) => ({
+      id,
+      amount,
+      destination: 'store_cash' as const,
+      note: null,
+      actorName: 'Pemilik',
+      createdAt: '2026-11-26T09:00:00Z',
+      voidedAt,
+      voidReason: voidedAt ? 'x' : null,
+      drawerReversed: null,
+    })
+    const rows = historyRows(
+      { approvedAt: null, total: 100, lines: [{ id: 'l1', productName: 'Mentega', qty: 10 }] },
+      [],
+      [ret('r1', '2026-11-26T01:00:00Z', 30_000), ret('r2', '2026-11-26T02:00:00Z', 15_000)],
+      rp,
+      [refund('f1', 40_000), refund('f2', 5_000, '2026-11-26T10:00:00Z')],
+    )
+    expect(rows.filter((r) => r.kind === 'Retur').map((r) => r.detail)).toEqual([
+      '1 Mentega · Barang rusak · Rp30.000 sudah dikembalikan pemasok',
+      '1 Mentega · Barang rusak · Rp10.000 sudah kembali, Rp5.000 masih harus dikembalikan pemasok',
+    ])
+  })
+
   it('reads typed amounts as integer rupiah', () => {
     expect(parseAmount('Rp 500.000')).toBe(500_000)
     expect(formatAmountInput('1400000')).toBe('1.400.000')

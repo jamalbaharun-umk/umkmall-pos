@@ -189,20 +189,30 @@ export function refundNotice(
 // ---- refusals ----
 
 /** "Yang bisa dilakukan" for each refusal code of a payment or return; the server's text is "Apa yang terjadi". */
+/**
+ * The dialog a refusal came from: its "what to do" names only what that dialog offers (the pay dialog's other source
+ * is "Di luar laci", the refund dialog's is "Kas toko"; a void has no amount to change).
+ */
+export type RefusalContext = 'pay' | 'return' | 'payment_void' | 'refund' | 'refund_void' | 'return_undo'
+
 export function refusalTodo(
   code: string | undefined,
   extra: { remaining?: number; drawerCash?: number; available?: number; refundDue?: number; refunded?: number },
   fmt: (n: number) => string,
+  context: RefusalContext = 'pay',
 ) {
+  const other = context === 'refund' ? 'Kas toko' : 'Di luar laci'
   switch (code) {
     case 'PURCHASE_OVERPAY':
       return extra.remaining ? `Isi paling banyak ${fmt(extra.remaining)}.` : 'Pembelian ini sudah lunas. Retur tetap bisa dicatat.'
     case 'SHIFT_REQUIRED':
-      return 'Buka shift dulu, atau pilih Di luar laci.'
+      return `Buka shift dulu, atau pilih ${other}.`
     case 'DRAWER_INSUFFICIENT':
-      return `Isi paling banyak ${fmt(extra.drawerCash ?? 0)}, atau pilih Di luar laci.`
+      if (context === 'refund_void')
+        return `Laci shift itu sekarang berisi ${fmt(extra.drawerCash ?? 0)}, kurang dari uang yang dibatalkan. Tambah uang ke laci lewat Kas laci, atau batalkan setelah shift ditutup (uang keluar dari kas toko).`
+      return `Isi paling banyak ${fmt(extra.drawerCash ?? 0)}, atau pilih ${other}.`
     case 'DRAWER_PERMISSION':
-      return 'Pilih Di luar laci, atau minta pemilik memberi izin kasir.'
+      return `Pilih ${other}, atau minta pemilik memberi izin kasir.`
     case 'RETURN_EXCEEDS_BATCH':
       return `Kurangi jumlahnya menjadi paling banyak ${extra.available ?? 0}.`
     case 'PURCHASE_NOT_APPROVED':
@@ -217,7 +227,9 @@ export function refusalTodo(
     case 'RETURN_UNDO_BATCH_FULL':
       return 'Periksa stok barang ini, lalu hubungi pemilik.'
     case 'AGENT_FORBIDDEN':
-      return 'Catat dari POS sebagai kasir atau pemilik, atau pilih Kas toko.'
+      return context === 'refund'
+        ? 'Catat dari POS sebagai kasir atau pemilik, atau pilih Kas toko.'
+        : 'Catat dari POS sebagai kasir atau pemilik.'
     default:
       return undefined
   }
@@ -249,6 +261,8 @@ export type Return = {
   reversedAt?: string | null
   reverseReason?: string | null
   reversedByName?: string | null
+  /** A stock count (opname) of its products came after it: undoing it adds units on top of that count. */
+  countedSince?: boolean
   lines: { orderLineId: string; qty: number; unitCost: number }[]
 }
 export type Refund = {
@@ -327,13 +341,26 @@ export function historyRows(
         plus: true,
       })
   }
+  // Money handed back, applied to the returns oldest first: a return's row says what is still to come back.
+  let handedBack = refunds.filter((f) => !f.voidedAt).reduce((n, f) => n + f.amount, 0)
   for (const r of returns) {
+    const back = Math.min(r.refundDue, handedBack)
+    handedBack -= back
+    const owed = r.refundDue - back
+    const refundText =
+      owed > 0 && back > 0
+        ? `${fmt(back)} sudah kembali, ${fmt(owed)} masih harus dikembalikan pemasok`
+        : owed > 0
+          ? `${fmt(owed)} harus dikembalikan pemasok`
+          : back > 0
+            ? `${fmt(back)} sudah dikembalikan pemasok`
+            : null
     const what = r.lines.map((l) => `${l.qty} ${names.get(l.orderLineId) ?? 'barang'}`).join(', ')
     rows.push({
       key: `r-${r.id}`,
       at: r.createdAt,
       kind: 'Retur',
-      detail: [what, r.reasonLabel, r.note, r.refundDue ? `${fmt(r.refundDue)} harus dikembalikan pemasok` : null]
+      detail: [what, r.reasonLabel, r.note, refundText]
         .filter(Boolean)
         .join(' · '),
       amount: -r.total,

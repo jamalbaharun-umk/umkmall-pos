@@ -84,8 +84,8 @@ function CashDrawerPage() {
             <h2 className="px-4 pt-4 text-base font-bold text-default-primary">Shift ini</h2>
             {rows.length === 0 ? (
               <Empty
-                title="Belum ada uang masuk atau keluar manual"
-                hint="Tambah modal laci, setor ke bank, setoran penagih yang Anda terima, dan bayar pemasok dari laci akan muncul di sini."
+                title="Belum ada uang masuk atau keluar"
+                hint="Tambah modal laci, setor ke bank, setoran penagih yang Anda terima, bayar pemasok dari laci, dan uang retur dari pemasok akan muncul di sini."
               />
             ) : (
               <>
