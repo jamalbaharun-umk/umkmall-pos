@@ -9,6 +9,7 @@ import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/
 import { useCan, useIsOwner } from '@/components/shell'
 import { DailyTargetForm } from '../ringkasan/-target-form'
 import { SetupBoard } from '../ringkasan/-panels'
+import { appSettingsPayload } from './-app-settings'
 import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { IMAGE_ERROR, splitImages, storeProfileErrors, taxToBps, type Errors } from '@/lib/validate'
 import {
@@ -390,6 +391,7 @@ function AppForm({
   const router = useRouter()
   const [tax, setTax] = useState(taxBps === null ? '' : String(taxBps / 100).replace('.', ','))
   const [tz, setTz] = useState(timezone ?? 'Asia/Jakarta')
+  const [taxTouched, setTaxTouched] = useState(false)
   const [errors, setErrors] = useState<Errors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -407,7 +409,7 @@ function AppForm({
     setErrors({})
     setBusy(true)
     const r = await saveAppSettings({
-      data: { taxBps: parsed.bps, ...(timezone === null ? {} : { timezone: tz }) },
+      data: appSettingsPayload({ bps: parsed.bps, taxTouched, timezone, tz }),
     }).catch(() => ({ error: GENERIC_ERROR, errors: undefined, status: 0 }))
     setBusy(false)
     if (r.error) {
@@ -432,6 +434,7 @@ function AppForm({
           value={tax}
           onChange={(e) => {
             setTax(e.target.value)
+            setTaxTouched(true)
             setErrors({})
           }}
           placeholder="0"

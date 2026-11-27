@@ -30,8 +30,9 @@ and Pengaturan shows a "Kelengkapan toko" board that disappears when complete. C
   only whether a target is set and the percent, never a rupiah figure (a cashier sees only their own sales
   elsewhere), so the receipt card shows the percent only. Stored in
   `pos.sales_settings.daily_target` (nullable rupiah). Migration also adds `sales_settings.tax_set_at`, the board's
-  "Pajak" step: `PUT /sales/settings` stamps it the first time a tax above 0 is saved and never moves it (review
-  of PR 78: the Aplikasi form always sends the tax, so a 0% save with the timezone cannot count as choosing one).
+  "Pajak" step: `PUT /sales/settings` stamps it the first time the tax is saved, at any rate (0% = "tidak memungut pajak" counts; owner ruling via
+  coordinator), and never moves it. The Aplikasi form skips the tax call when only the timezone changed, so that
+  save is not a tax choice (review of PR 78).
 - Web `routes/ringkasan/`: a server function per summary and one panel component per menu; a panel loads on its
   own, so a failed summary never blocks the list (error state with "Muat ulang"), shows a skeleton while loading
   and a dashed "Gambar muncul setelah ada data" box when empty. Each menu route adds one line.

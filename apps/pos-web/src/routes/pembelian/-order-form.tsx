@@ -55,9 +55,12 @@ export function OrderForm({
   const [note, setNote] = useState(order?.note ?? '')
   const [dueDate, setDueDate] = useState(order?.dueDate ?? '')
   const [lines, setLines] = useState<Line[]>(
-    order?.lines.map((l) => ({ productId: l.productId, qty: String(l.qty), unitCost: String(l.unitCost ?? '') })) ?? [
-      { productId: '', qty: '1', unitCost: '' },
-    ],
+    order?.lines.map((l) => ({
+      productId: l.productId,
+      qty: String(l.qty),
+      unitCost: String(l.unitCost ?? ''),
+      expiresAt: l.expiresAt ?? '',
+    })) ?? [{ productId: '', qty: '1', unitCost: '', expiresAt: '' }],
   )
   const [errors, setErrors] = useState<FieldErrors>({})
   const [error, setError] = useState<string>()
@@ -139,7 +142,12 @@ export function OrderForm({
             paymentMethod: paymentMethod.trim() || null,
             note: note.trim() || null,
             dueDate: dueDate || null,
-            lines: lines.map((l) => ({ productId: l.productId, qty: toInt(l.qty), unitCost: toInt(l.unitCost) })),
+            lines: lines.map((l) => ({
+              productId: l.productId,
+              qty: toInt(l.qty),
+              unitCost: toInt(l.unitCost),
+              expiresAt: l.expiresAt || null,
+            })),
           },
         }),
       order ? 'Draf pembelian diperbarui' : 'Pembelian disimpan sebagai draf',
@@ -207,7 +215,7 @@ export function OrderForm({
               width="auto"
               size="small"
               type="outline"
-              onClick={() => setLines((ls) => [...ls, { productId: '', qty: '1', unitCost: '' }])}
+              onClick={() => setLines((ls) => [...ls, { productId: '', qty: '1', unitCost: '', expiresAt: '' }])}
             >
               <Icon name="plus" size="sm" /> Tambah barang
             </Button>
@@ -219,6 +227,7 @@ export function OrderForm({
                 <TableHead>{req('Produk')}</TableHead>
                 <TableHead className="w-28">{req('Jumlah')}</TableHead>
                 <TableHead className="w-40">{req('Harga beli')}</TableHead>
+                <TableHead className="w-44">Kedaluwarsa (boleh kosong)</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
@@ -260,6 +269,17 @@ export function OrderForm({
                       error={errors[`lines.${i}.unitCost`]}
                       value={l.unitCost}
                       onChange={(e) => set(i, { unitCost: e.target.value })}
+                    />
+                  </TableCell>
+                  <TableCell className="max-sm:col-span-full max-sm:block">
+                    <span className="mb-1 block text-xs text-default-secondary sm:hidden">Tanggal kedaluwarsa</span>
+                    <TextField
+                      aria-label={`Tanggal kedaluwarsa baris ${i + 1}`}
+                      size="small"
+                      type="date"
+                      error={errors[`lines.${i}.expiresAt`]}
+                      value={l.expiresAt ?? ''}
+                      onChange={(e) => set(i, { expiresAt: e.target.value })}
                     />
                   </TableCell>
                   <TableCell className="text-right max-sm:order-last max-sm:col-span-full max-sm:block">

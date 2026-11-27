@@ -101,6 +101,8 @@ export const purchaseOrderLines = pos
         .references(() => products.id, { onDelete: 'restrict' }),
       qty: integer('qty').notNull(),
       unitCost: rupiah('unit_cost').notNull(),
+      // UMK-2087: copied onto the stock batch when the purchase is approved.
+      expiresAt: date('expires_at', { mode: 'string' }),
     },
     (t) => [
       index('purchase_order_lines_order_idx').on(t.orderId),

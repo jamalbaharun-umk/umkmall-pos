@@ -372,6 +372,13 @@
       "when": 1795757587729,
       "tag": "0052_summaries_target_tax_set",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795757982646,
+      "tag": "0053_stock_batch_expiry",
+      "breakpoints": true
     }
   ]
 }

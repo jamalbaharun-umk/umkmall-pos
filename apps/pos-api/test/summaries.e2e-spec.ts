@@ -354,15 +354,14 @@ describe('summaries across menus (feature 39)', () => {
         await admin<{ at: Date | null }[]>`
           select tax_set_at as at from pos.sales_settings where tenant_id = ${b.tenantId}`
       )[0]?.at ?? null;
-    // The Aplikasi form always sends the tax: saving only the timezone (tax 0) is not choosing a tax.
-    await setTax(0);
+    // Nothing saved yet: the step is open. Saving 0% ("tidak memungut pajak") is a choice and completes it.
     expect(await taxSetAt()).toBeNull();
     expect(await steps(b)).toMatchObject({ doneCount: 3, complete: false });
-    await setTax(1100);
+    await setTax(0);
     const first = await taxSetAt();
     expect(first).not.toBeNull();
     expect(await steps(b)).toMatchObject({ doneCount: 4, complete: true });
-    // Saved again (another tax, or 0 with the timezone): the first time stays.
+    // Saved again (another tax, or back to 0): the first time stays.
     await setTax(500);
     await setTax(0);
     expect(await taxSetAt()).toEqual(first);

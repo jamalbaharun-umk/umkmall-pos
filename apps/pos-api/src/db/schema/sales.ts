@@ -135,8 +135,8 @@ export const salesSettings = pos
       // The store day (Asia/Jakarta) `last_hold_number` counts in: the first hold number taken on another
       // day is 1 again, so the numbers stay short. Null until the first one is taken.
       holdNumberDay: date('hold_number_day'),
-      // Feature 39: the owner's optional daily sales target (rupiah), and when a tax above 0 was first set (never
-      // moved after; a store that only ever saved 0% stays null).
+      // Feature 39: the owner's optional daily sales target (rupiah), and when the tax was first saved, at any rate
+      // including 0% (never moved after; null until the owner saves it).
       dailyTarget: rupiah('daily_target'),
       taxSetAt: timestamp('tax_set_at', { withTimezone: true }),
     },

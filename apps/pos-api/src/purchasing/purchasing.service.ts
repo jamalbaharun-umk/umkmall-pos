@@ -44,6 +44,8 @@ const Line = z
       .int('Harga beli harus bilangan bulat rupiah')
       .nonnegative('Harga beli tidak boleh negatif')
       .max(1_000_000_000, 'Harga beli maksimal Rp1.000.000.000'),
+    // UMK-2087: optional best-before date of the batch this line becomes.
+    expiresAt: LocalDate.nullable().optional(),
   })
   .strict();
 
@@ -205,6 +207,7 @@ export class PurchasingService {
         sku: products.sku,
         qty: purchaseOrderLines.qty,
         unitCost: purchaseOrderLines.unitCost,
+        expiresAt: purchaseOrderLines.expiresAt,
       })
       .from(purchaseOrderLines)
       .innerJoin(products, eq(products.id, purchaseOrderLines.productId))
@@ -412,6 +415,7 @@ export class PurchasingService {
         productId: l.productId,
         qty: l.qty,
         unitCost: l.unitCost,
+        expiresAt: l.expiresAt,
         source: 'purchase',
         sourceId: id,
         actorId,
@@ -485,9 +489,21 @@ export class PurchasingService {
       tenantId,
       lines.map((l) => l.productId),
     );
-    await tx
-      .insert(purchaseOrderLines)
-      .values(lines.map((l) => ({ ...l, tenantId, orderId })));
+    for (const [i, l] of lines.entries())
+      await this.stock.assertNotExpired(
+        tx,
+        tenantId,
+        l.expiresAt,
+        `lines.${i}.expiresAt`,
+      );
+    await tx.insert(purchaseOrderLines).values(
+      lines.map((l) => ({
+        ...l,
+        expiresAt: l.expiresAt ?? null,
+        tenantId,
+        orderId,
+      })),
+    );
     const total = lines.reduce((sum, l) => sum + l.qty * l.unitCost, 0);
     await tx
       .update(purchaseOrders)

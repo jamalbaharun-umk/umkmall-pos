@@ -1,7 +1,16 @@
 import { check, compact, type FieldErrors } from '../../lib/form-checks'
 
-export type OrderLine = { productId: string; qty: string; unitCost: string }
+/** `expiresAt` is `YYYY-MM-DD` or empty (UMK-2087: the batch does not expire). */
+export type OrderLine = { productId: string; qty: string; unitCost: string; expiresAt?: string }
 export type OpnameLine = { productId: string; countedQty: string; reason: string }
+/** An empty date is fine; a filled one must be a real calendar day. Whether it is before today is the server's call. */
+export function checkExpiry(v: string | undefined): string | undefined {
+  if (!v) return undefined
+  const t = Date.parse(`${v}T00:00:00Z`)
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(t) && new Date(t).toISOString().startsWith(v)
+    ? undefined
+    : 'Tanggal kedaluwarsa tidak valid'
+}
 export const toInt = (s: string) => (/^\d+$/.test(s.trim()) ? Number(s.trim()) : NaN)
 
 // Mirrors pos-api's OrderCreate: supplier required, qty 1–100.000, unit cost Rp0–1.000.000.000, one line per
@@ -18,6 +27,7 @@ export function validateOrder(v: { supplierId: string; lines: OrderLine[] }): Fi
     seen.add(l.productId)
     e[`lines.${i}.qty`] = check.wholeNumber(l.qty, { min: 1, max: 100_000 })
     e[`lines.${i}.unitCost`] = check.wholeNumber(l.unitCost, { max: 1_000_000_000, label: 'Harga beli' })
+    e[`lines.${i}.expiresAt`] = checkExpiry(l.expiresAt)
   })
   const total = v.lines.reduce((n, l) => n + (toInt(l.qty) * toInt(l.unitCost) || 0), 0)
   if (total > 1_000_000_000_000) e.lines = 'Total pembelian maksimal Rp1.000.000.000.000'

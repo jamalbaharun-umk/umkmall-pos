@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { Card } from '@umkmall/ui/compositions'
 import {
   BarChart,
+  Badge,
   Button,
   ChartFrame,
   HeatStrip,
@@ -13,8 +14,18 @@ import {
 } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
 import { ActionRow } from '@/components/action-row'
+import { expiringFooter, expiryText, formatDay } from '@/lib/expiry'
 import { loadProfitLoss } from '../laporan/-api'
-import { loadAging, loadHourly, loadLowStock, loadOverview, loadPaymentMix, loadTopProducts, type Overview } from './api'
+import {
+  loadAging,
+  loadExpiring,
+  loadHourly,
+  loadLowStock,
+  loadOverview,
+  loadPaymentMix,
+  loadTopProducts,
+  type Overview,
+} from './api'
 import { useWidget, type WidgetContext, type WidgetState } from './use-widget'
 import {
   CARD_ROWS,
@@ -300,6 +311,53 @@ export function LowStockCard({ ctx }: { ctx: WidgetContext }) {
           d && !empty ? <p className="text-sm text-default-secondary">{lowStockFooter(d.total, d.rows.length)}</p> : undefined
         }
       />
+    </WidgetCard>
+  )
+}
+
+/** Stock that expires within 30 days or already has (UMK-2087): the product, its earliest date and the units left. */
+export function ExpiringCard({ ctx }: { ctx: WidgetContext }) {
+  const [state, reload] = useWidget(ctx, 'memuat stok segera kedaluwarsa', () => loadExpiring())
+  if (state.status === 'hidden') return null
+  const d = state.status === 'ready' ? state.data : null
+  const empty = d !== null && d.rows.length === 0
+  return (
+    <WidgetCard
+      link={
+        <ReportButton>
+          <Link to="/catalog/products">Buka daftar produk</Link>
+        </ReportButton>
+      }
+    >
+      <ChartFrame
+        title="Segera kedaluwarsa"
+        description="Stok yang kedaluwarsa dalam 30 hari atau sudah lewat."
+        state={stateOf(state, empty)}
+        onRetry={reload}
+        errorText={FAILED}
+        emptyText="Tidak ada stok yang akan kedaluwarsa dalam 30 hari."
+        footer={
+          d && !empty ? (
+            <p className="mt-2 text-sm text-default-secondary">{expiringFooter(d.total, d.rows.length, d.days)}</p>
+          ) : undefined
+        }
+      >
+        <ul className="flex flex-col divide-y divide-border-light">
+          {(d?.rows ?? []).map((r) => (
+            <li key={r.productId} className="flex min-w-0 items-center justify-between gap-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{r.name}</p>
+                <p className="text-xs text-default-secondary">
+                  {formatDay(r.expiresAt)} · {r.qty} {r.unit.toLowerCase()}
+                </p>
+              </div>
+              <Badge color={r.expired ? 'danger' : 'warning'} size="small" className="shrink-0 whitespace-nowrap">
+                {expiryText(r.daysLeft)}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+      </ChartFrame>
     </WidgetCard>
   )
 }

@@ -82,10 +82,13 @@ export const uploadQris = createServerFn({ method: 'POST' })
 export const deleteQris = createServerFn({ method: 'POST' }).handler(() => write('/store/profile/qris', 'DELETE'))
 
 export const saveAppSettings = createServerFn({ method: 'POST' })
-  .validator((d: { taxBps: number; timezone?: string }) => d)
+  .validator((d: { taxBps?: number; timezone?: string }) => d)
   .handler(async ({ data }): Promise<Result> => {
-    const tax = await write('/sales/settings', 'PUT', { taxBps: data.taxBps })
-    if (tax.error) return { error: tax.error, errors: tax.errors && { tax: Object.values(tax.errors)[0] } }
+    // Only an explicit tax choice is sent: a timezone-only save must not count as choosing the tax.
+    if (data.taxBps !== undefined) {
+      const tax = await write('/sales/settings', 'PUT', { taxBps: data.taxBps })
+      if (tax.error) return { error: tax.error, errors: tax.errors && { tax: Object.values(tax.errors)[0] } }
+    }
     if (data.timezone === undefined) return {}
     const tz = await write('/reports/settings', 'PUT', { timezone: data.timezone })
     return tz.error ? { error: tz.error, errors: tz.errors } : {}
