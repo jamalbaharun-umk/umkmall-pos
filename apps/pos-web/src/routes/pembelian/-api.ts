@@ -237,6 +237,13 @@ export const receiveRefund = createServerFn({ method: 'POST' })
   .validator((d: { id: string; key: string; body: { amount: number; destination: RefundDestination; note?: string } }) => d)
   .handler(({ data }) => sendMoney<Refund>(`/purchasing/orders/${enc(data.id)}/refunds`, data.body, data.key))
 
+/** The same void from Kas laci, where the till cashier sees no purchase: the refund names its purchase. */
+export const voidDrawerRefund = createServerFn({ method: 'POST' })
+  .validator((d: { refundId: string; reason: string }) => d)
+  .handler(({ data }) =>
+    sendMoney<Refund>(`/purchasing/refunds/${enc(data.refundId)}/void`, { reason: data.reason }),
+  )
+
 export const voidRefund = createServerFn({ method: 'POST' })
   .validator((d: { id: string; refundId: string; reason: string }) => d)
   .handler(({ data }) =>

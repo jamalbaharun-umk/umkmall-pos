@@ -11,6 +11,7 @@ import {
   returnGoods,
   reverseReturn,
   setDueDate,
+  voidDrawerRefund,
   voidPayment,
   voidRefund,
 } from './-api'
@@ -622,21 +623,24 @@ export function ReverseReturnDialog({
   )
 }
 
+/** Voids a supplier refund; `orderId` null from Kas laci (the refund names its purchase there). */
 export function VoidRefundDialog({
   orderId,
   refund,
   onClose,
   onDone,
 }: {
-  orderId: string
-  refund: Refund | null
+  orderId: string | null
+  refund: Pick<Refund, 'id' | 'amount' | 'destination'> | null
   onClose: () => void
   onDone: () => Promise<void>
 }) {
   async function send(reason: string) {
     if (!refund) return false
     try {
-      const res = await voidRefund({ data: { id: orderId, refundId: refund.id, reason } })
+      const res = orderId
+        ? await voidRefund({ data: { id: orderId, refundId: refund.id, reason } })
+        : await voidDrawerRefund({ data: { refundId: refund.id, reason } })
       if (!res.ok) {
         refused(res, 'membatalkan uang retur', 'refund_void')
         return false

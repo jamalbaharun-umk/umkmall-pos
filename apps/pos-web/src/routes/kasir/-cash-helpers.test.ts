@@ -6,6 +6,7 @@ import {
   drawerPreview,
   manualEntries,
   signedRupiah,
+  voidableRefunds,
   withCode,
   type CashReasons,
 } from './-cash-helpers'
@@ -115,5 +116,18 @@ describe('manualEntries', () => {
       'purchase_payment_reversal',
       'purchase_payment',
     ])
+  })
+
+  it('offers Batalkan only for supplier refunds into this drawer that were not voided yet', () => {
+    const rows = [
+      { kind: 'purchase_refund', refId: 'r1' },
+      { kind: 'purchase_refund', refId: 'r2' },
+      { kind: 'purchase_refund_reversal', refId: 'r2' },
+      { kind: 'purchase_payment', refId: 'p1' },
+      { kind: 'manual_in', refId: 'm1' },
+      { kind: 'purchase_refund', refId: null },
+    ]
+    expect([...voidableRefunds(rows)]).toEqual(['r1'])
+    expect(voidableRefunds([]).size).toBe(0)
   })
 })
