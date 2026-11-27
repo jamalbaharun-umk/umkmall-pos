@@ -125,6 +125,19 @@ describe('PG flow and edge cases', () => {
       .expect(409);
     expect(blocked.body.code).toBe('order_has_live_payment');
 
+    // UMK-2082: the caller saw the bill open, and the payment was recorded paid (the webhook) before its close
+    // arrived. The close is refused as already paid, never read as a void or refund without its reason (422).
+    const e = await s.qr({ orderRef: 'INV-D5e' });
+    h.pg.pay(e.id);
+    await h.deliver(e.id).expect(200);
+    expect((await s.read(e.id)).status).toBe('paid');
+    const late = await s
+      .post(`/payments/${e.id}/cancel`, { actorRef: 'cashier-1' })
+      .expect(409);
+    expect(late.body.code).toBe('already_paid');
+    expect((await s.read(e.id)).status).toBe('paid');
+    expect(h.pg.count('refund', e.id)).toBe(0);
+
     // The PG cannot be reached: nothing is assumed.
     const c = await s.qr({ orderRef: 'INV-D5c' });
     h.pg.cancelsDown = 1;
@@ -133,6 +146,20 @@ describe('PG flow and edge cases', () => {
       .expect(503);
     expect((await s.read(c.id)).status).toBe('pending');
     await s.chargeRaw({ orderRef: 'INV-D5c', attempt: 2 }).expect(409);
+  });
+
+  it('D5 a close that arrives after the bill ended by itself answers it as it is: closed, nothing changed (UMK-2082)', async () => {
+    const s = createStore(h.app);
+    const f = await s.qr({ orderRef: 'INV-D5f' });
+    h.pg.expire(f.id);
+    h.clock.advance(26 * MINUTE); // past expiry (15) + grace (10)
+    await sync(s, f.id);
+    expect((await s.read(f.id)).status).toBe('expired');
+    const ended = await s
+      .post(`/payments/${f.id}/cancel`, { actorRef: 'cashier-1' })
+      .expect(200);
+    expect(ended.body.status).toBe('expired');
+    expect(await statusMoves(f.id)).toEqual(['created', 'pending', 'expired']);
   });
 
   it('D6 a new QR for the same order is refused while the old one waits, allowed once it is closed; money on the old QR is refunded and never pays the new one', async () => {

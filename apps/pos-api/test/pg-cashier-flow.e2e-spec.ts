@@ -1896,6 +1896,29 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
       }
     });
 
+    it('a cancel that found the bill open and the customer paid before its close arrived: already_paid, the sale completed (UMK-2082)', () =>
+      holding(async () => {
+        // The interleaving of the flaky run above, forced: the cancel looked the bill up (pending) and its close
+        // is held; the customer pays and payment-api records it; the close then reaches a `paid` payment.
+        const s = await shop();
+        const saleId = (await sell(s).expect(201)).body.id as string;
+        const closing = hold(isCancel, 'before');
+        const c = post(s.auth, `/sales/${saleId}/payment/cancel`).then(
+          (r) => r,
+        );
+        await closing.held;
+        await onBill(s, saleId, 'pay');
+        expect((await paymentsOf(saleId)).map((p) => p.status)).toEqual([
+          'paid',
+        ]);
+        closing.release();
+        const cancel = await c;
+        expect(cancel.status).toBe(409);
+        expect(cancel.body.code).toBe('already_paid');
+        expect((await settled(s, saleId)).status).toBe('completed');
+        expect(await shift(s.auth)).toMatchObject({ salesCount: 1 });
+      }));
+
     it('two checks, a poll and the job at once on a paid bill complete the sale once', async () => {
       const s = await shop();
       const saleId = (await sell(s).expect(201)).body.id as string;
@@ -3202,10 +3225,15 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
             paidFirst.push(`${c.init.method} ${new URL(c.url).pathname}`);
           if (isCancel(c)) await onBill(s, other, 'pay');
         };
-        await renew(s.auth, other, { attempt: 1 }).expect(409);
+        const refused = await renew(s.auth, other, { attempt: 1 }).expect(409);
+        // UMK-2082: until payment-api answered a close of a paid payment with 422, this path ended at the close
+        // (payment_refused) and never read the paid bill. Now: lookup, close, read of the paid bill.
+        expect(refused.body.code).toBe('already_paid');
+        expect((await saleRow(other)).status).toBe('completed');
         expect(paidFirst).toEqual([
           'GET /payments',
           expect.stringMatching(/^POST \/payments\/.+\/cancel$/),
+          expect.stringMatching(/^GET \/payments\/[0-9a-f-]+$/),
         ]);
         expect(paidFirst.length).toBeLessThanOrEqual(RENEW_INTENT_CALLS);
       } finally {
