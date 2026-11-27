@@ -84,7 +84,7 @@ export function storeLine(e: { direction: StoreDirection; kind: string; amount: 
   return {
     label: e.direction === 'in' ? 'Kas masuk' : 'Kas keluar',
     color: e.direction === 'in' ? ('success' as const) : ('warning' as const),
-    amount: `${e.direction === 'in' ? '+' : '-'}${rupiah(e.amount)}`,
+    amount: e.direction === 'in' ? `+${rupiah(e.amount)}` : rupiah(-e.amount),
     kind: undefined,
   }
 }

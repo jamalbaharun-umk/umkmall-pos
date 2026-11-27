@@ -185,7 +185,7 @@ function SalePage() {
                   )}
                   {soldDiscountLabel(l) && (
                     <span className="block text-xs text-default-secondary">
-                      {soldDiscountLabel(l)} −{rupiah(l.discount ?? 0)}
+                      {soldDiscountLabel(l)} {rupiah(-(l.discount ?? 0))}
                     </span>
                   )}
                   {approvedByLabel(l.approvedBy) && (
@@ -216,7 +216,7 @@ function SalePage() {
           {receiptDiscounts(r).lines > 0 && (
             <>
               <dt className="font-medium">Diskon baris</dt>
-              <dd className="text-right">−{rupiah(receiptDiscounts(r).lines)}</dd>
+              <dd className="text-right">{rupiah(-(receiptDiscounts(r).lines))}</dd>
             </>
           )}
           {(receiptDiscounts(r).order > 0 || receiptDiscounts(r).lines === 0) && (
@@ -233,7 +233,7 @@ function SalePage() {
           {r.voucherDiscount > 0 && (
             <>
               <dt className="font-medium">Diskon voucher</dt>
-              <dd className="text-right">−{rupiah(r.voucherDiscount)}</dd>
+              <dd className="text-right">{rupiah(-r.voucherDiscount)}</dd>
             </>
           )}
           <dt className="font-medium">Pajak</dt>

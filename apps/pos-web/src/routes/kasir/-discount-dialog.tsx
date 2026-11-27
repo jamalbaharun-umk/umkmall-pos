@@ -193,7 +193,7 @@ export function DiscountDialog({
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-default-secondary">{isPrice ? 'Potongan harga' : 'Diskon'}</dt>
-              <dd className="text-default-brand">−{rupiah(off)}</dd>
+              <dd className="text-default-brand">{rupiah(-off)}</dd>
             </div>
             <div className="flex justify-between gap-3 border-t border-default-primary pt-1 font-bold">
               <dt>Harga baru</dt>

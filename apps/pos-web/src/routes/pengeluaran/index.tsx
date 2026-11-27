@@ -88,7 +88,7 @@ function ExpenseList() {
                         <span
                           className={`whitespace-nowrap font-semibold ${r.voidedAt ? 'text-default-secondary line-through' : 'text-default-error'}`}
                         >
-                          −{rupiah(r.amount)}
+                          {rupiah(-r.amount)}
                         </span>
                       </Link>
                     </li>
