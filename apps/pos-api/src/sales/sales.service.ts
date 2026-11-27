@@ -1480,8 +1480,11 @@ export class SalesService {
   async updateSettings(tenantId: string, taxBps: number) {
     await this.db
       .insert(salesSettings)
-      .values({ tenantId, taxBps })
-      .onConflictDoUpdate({ target: salesSettings.tenantId, set: { taxBps } });
+      .values({ tenantId, taxBps, taxSetAt: new Date() })
+      .onConflictDoUpdate({
+        target: salesSettings.tenantId,
+        set: { taxBps, taxSetAt: new Date() },
+      });
     return { taxBps };
   }
 }

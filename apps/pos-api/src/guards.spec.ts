@@ -398,6 +398,7 @@ describe('repo guards', () => {
       path.join('shifts', 'shifts.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('agent', 'ledger.controller.ts'),
+      path.join('summaries', 'summaries.service.ts'),
     ]) {
       const text = files.find((x) => x.f === f)!.text;
       expect(text).toContain('FINAL_SALE_STATUSES');
@@ -422,6 +423,8 @@ describe('repo guards', () => {
       path.join('reports', 'reports.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('shifts', 'shifts.service.ts'),
+      // The summaries above each menu (feature 39): receipts only, by status.
+      path.join('summaries', 'summaries.service.ts'),
       path.join('void', 'void.service.ts'),
     ]);
   });
