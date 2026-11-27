@@ -472,6 +472,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           discount: 0,
           discountPercent: null,
           netTotal: 39_600,
+          approvedBy: null,
         },
         {
           name: 'Teh Botol 350ml',
@@ -488,6 +489,7 @@ describe('units and wholesale pricing (UMK-1985)', () => {
           discount: 0,
           discountPercent: null,
           netTotal: 78_000,
+          approvedBy: null,
         },
       ]);
       // Tax after the discount: (117.600 − 10.000) × 11% = 11.836; total 119.436; rounding 64.
@@ -974,6 +976,8 @@ describe('units and wholesale pricing (UMK-1985)', () => {
         ],
         orderDiscount: 0,
         orderDiscountNeedsApproval: false,
+        listSubtotal: 117_600,
+        totalReduction: 0,
       });
       // The design's hint at 12 loose pcs: "Tambah 36 pcs lagi untuk harga Rp3.200".
       const twelve = await quote([{ productId, qty: 12 }]).expect(200);

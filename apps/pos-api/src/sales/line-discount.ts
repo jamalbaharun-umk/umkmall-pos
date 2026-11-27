@@ -64,3 +64,28 @@ export const withinApproval = (
   lineTotal: number,
   maxBps: number,
 ) => BigInt(discount) * 10000n <= BigInt(lineTotal) * BigInt(maxBps);
+
+/**
+ * Owner ruling on PR 72 (major 1): ONE combined test over the whole sale. Every manual reduction (manual-price cuts,
+ * line discounts, the order discount) is added up and measured against the list subtotal (Σ list price × qty, the
+ * wholesale tier applied). The reductions of lines that carry their own line approval (each above 30% of its line)
+ * are covered by those approvals; when what is left (`uncovered`) is above 30% of the list subtotal the sale must
+ * name an `order` approval, which then covers the WHOLE reduction (`max_bps` of the list subtotal, `max_amount`).
+ * So 30% off a line plus 30% off the order (51% in all) needs a PIN, while one line above 30% with its own approval
+ * (UMK-1990, PR 63) needs nothing more. An order discount above 30% of what it comes off is always above 30% of the
+ * list subtotal too, so this test also gates the order discount.
+ */
+export function combinedOf(a: {
+  listSubtotal: number;
+  reduction: number;
+  coveredByLines: number;
+}) {
+  return {
+    listSubtotal: a.listSubtotal,
+    reduction: a.reduction,
+    needsApproval: needsApproval(
+      a.reduction - a.coveredByLines,
+      a.listSubtotal,
+    ),
+  };
+}

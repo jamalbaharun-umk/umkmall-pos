@@ -1,5 +1,5 @@
 {
-  "id": "cef62fa1-4c76-4a56-accb-73e387db2dfd",
+  "id": "78f37805-eda9-4cbd-a558-027c47d1fdcd",
   "prevId": "ff076b5c-8f36-4520-b0bf-28d33260474c",
   "version": "7",
   "dialect": "postgresql",
@@ -3459,6 +3459,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "max_amount": {
+          "name": "max_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -3565,6 +3571,10 @@
         "discount_approvals_scope_ck": {
           "name": "discount_approvals_scope_ck",
           "value": "\"pos\".\"discount_approvals\".\"scope\" in ('line', 'order') and (\"pos\".\"discount_approvals\".\"scope\" = 'order') = (\"pos\".\"discount_approvals\".\"product_id\" is null)"
+        },
+        "discount_approvals_amount_ck": {
+          "name": "discount_approvals_amount_ck",
+          "value": "(\"pos\".\"discount_approvals\".\"max_amount\" is null or \"pos\".\"discount_approvals\".\"max_amount\" >= 1) and (\"pos\".\"discount_approvals\".\"scope\" = 'line' or \"pos\".\"discount_approvals\".\"max_amount\" is not null)"
         }
       },
       "isRLSEnabled": true

@@ -39,6 +39,7 @@ import {
   salesSettings,
   shifts,
   staff,
+  tenants,
 } from '../db/schema';
 import { priceLines, type ProductPricing } from '../catalog/pricing';
 import { loadPricing } from '../catalog/pricing-store';
@@ -66,6 +67,7 @@ import {
   isSelfApproval,
   lineDiscountOf,
   leavesSomething,
+  combinedOf,
   needsApproval,
   priceCutOf,
   withinApproval,
@@ -239,9 +241,9 @@ function manualPriceOf(
 }
 
 /**
- * Ruling 2026-11-26: the order discount comes off what is left after the line discounts (`base`); above 30% of it
- * it needs an `order` PIN approval. More than the base keeps its old refusal; all of it is refused like 100% of a
- * line (`DISCOUNT_INVALID`).
+ * Ruling 2026-11-26: the order discount comes off what is left after the line discounts (`base`). More than the base
+ * keeps its old refusal; all of it is refused like 100% of a line (`DISCOUNT_INVALID`, owner ruling on PR 72: a Rp0
+ * sale by order discount stays refused). Its PIN gate is the sale's combined test (`combinedOf`).
  */
 function orderDiscountOf(discount: number, base: number) {
   if (discount > base) throw fail('Diskon melebihi subtotal', {}, 'discount');
@@ -251,7 +253,28 @@ function orderDiscountOf(discount: number, base: number) {
       'discount',
       'Diskon 100% tidak diperbolehkan',
     );
-  return { discount, needsApproval: needsApproval(discount, base) };
+  return discount;
+}
+
+/** The combined test of a sale's lines and order discount (`combinedOf`), as the sale and its quote compute it. */
+function saleCombined(
+  lines: {
+    listTotal: number;
+    priceCut: number;
+    discount: number;
+    lineApproval: boolean;
+  }[],
+  orderDiscount: number,
+) {
+  const cut = (l: (typeof lines)[number]) => l.priceCut + l.discount;
+  return combinedOf({
+    listSubtotal: lines.reduce((n, l) => n + l.listTotal, 0),
+    reduction: lines.reduce((n, l) => n + cut(l), 0) + orderDiscount,
+    coveredByLines: lines.reduce(
+      (n, l) => n + (l.lineApproval ? cut(l) : 0),
+      0,
+    ),
+  });
 }
 
 /** A reduction above 30% and the approval the request names for it (`lockApprovals`). */
@@ -267,6 +290,8 @@ type ApprovalWant = {
 };
 
 const NEEDS_PIN = 'Diskon lebih dari 30% perlu PIN admin';
+const TOTAL_NEEDS_PIN =
+  'Total potongan lebih dari 30% dari harga normal perlu PIN admin';
 const PRICE_NEEDS_PIN =
   'Harga manual lebih dari 30% di bawah harga normal perlu PIN admin';
 
@@ -529,13 +554,13 @@ export class SalesService {
       lines.map((l) => ({ ...input.lines[l.index], ...l })),
     );
     const lineDiscount = discounts.reduce((n, d) => n + d.discount, 0);
-    const order = orderDiscountOf(
+    const orderDiscount = orderDiscountOf(
       canOverride ? (input.discount ?? 0) : 0,
       subtotal - lineDiscount,
     );
-    const orderDiscount = order.discount;
-    // Ruling 2026-11-26: every manual reduction above 30% names a PIN approval, the line discount's, a manual
-    // price's and the order discount's, all taken under one lock in this transaction.
+    // Ruling 2026-11-26: every manual reduction above 30% names a PIN approval: a line discount's or a manual
+    // price's above 30% of its line (a line approval), and the sale's combined reduction above 30% of the list
+    // subtotal (an order approval, PR 72 ruling), all taken under one lock in this transaction.
     const wants: ApprovalWant[] = lines.flatMap((l, i): ApprovalWant[] => {
       const line = {
         key: `line:${i}`,
@@ -564,16 +589,25 @@ export class SalesService {
         ];
       return [];
     });
-    if (order.needsApproval)
+    const combined = saleCombined(
+      lines.map((l, i) => ({
+        listTotal: l.listTotal,
+        priceCut: l.priceCut,
+        discount: discounts[i].discount,
+        lineApproval: wants.some((w) => w.key === `line:${i}`),
+      })),
+      orderDiscount,
+    );
+    if (combined.needsApproval)
       wants.push({
         key: 'order',
         scope: 'order',
         productId: null,
-        reduction: orderDiscount,
-        base: subtotal - lineDiscount,
+        reduction: combined.reduction,
+        base: combined.listSubtotal,
         approvalId: input.discountApprovalId,
         field: 'discountApprovalId',
-        message: NEEDS_PIN,
+        message: TOTAL_NEEDS_PIN,
       });
     const approvals = await this.lockApprovals(tx, s, wants);
     const orderApproval = approvals.get('order');
@@ -714,6 +748,8 @@ export class SalesService {
           saleId: sale.id,
           scope: 'order',
           discount: orderDiscount,
+          reduction: combined.reduction,
+          listSubtotal: combined.listSubtotal,
           approvedBy: orderApproval.approverId,
         },
       });
@@ -832,21 +868,30 @@ export class SalesService {
   /**
    * UMK-1990: the PIN approval of every reduction above 30% (a line discount, a manual price, the order discount,
    * ruling 2026-11-26), locked for this transaction. The approval must be this store's, asked by this actor, of the
-   * same scope (a line's for the line's product; the order's has none), unused, unexpired, and cover the reduction;
-   * one approval serves one want. 422 `DISCOUNT_APPROVAL_REQUIRED` otherwise. An approval named where none is needed
+   * same scope (a line's for the line's product; the order's has none), unused, unexpired, and cover the reduction
+   * (its share, `max_bps`, and its rupiah, `max_amount` when set). One approval serves one want: an id named twice
+   * in a sale (one product on a `pcs` and a `dus` line) is refused on the second, before it is read (`used_at` is
+   * set only after this loop). 422 `DISCOUNT_APPROVAL_REQUIRED` otherwise. An approval named where none is needed
    * is left unused.
    */
   private async lockApprovals(tx: Tx, s: PosSession, wants: ApprovalWant[]) {
     const taken = new Map<string, { id: string; approverId: string }>();
+    const named = new Set<string>();
     for (const w of wants) {
       const refuse = (message: string) =>
         codedError(DISCOUNT_APPROVAL_REQUIRED, w.field, message);
       if (!w.approvalId) throw refuse(w.message);
+      if (named.has(w.approvalId.toLowerCase()))
+        throw refuse(
+          'Satu persetujuan hanya untuk satu diskon. Minta PIN admin untuk baris ini.',
+        );
+      named.add(w.approvalId.toLowerCase());
       const [a] = await tx
         .select({
           id: discountApprovals.id,
           approverId: discountApprovals.approverId,
           maxBps: discountApprovals.maxBps,
+          maxAmount: discountApprovals.maxAmount,
         })
         .from(discountApprovals)
         .where(
@@ -867,7 +912,10 @@ export class SalesService {
         throw refuse(
           'Persetujuan diskon tidak berlaku lagi. Minta PIN admin sekali lagi.',
         );
-      if (!withinApproval(w.reduction, w.base, a.maxBps))
+      if (
+        !withinApproval(w.reduction, w.base, a.maxBps) ||
+        (a.maxAmount !== null && w.reduction > a.maxAmount)
+      )
         throw refuse(
           'Diskon lebih besar dari yang disetujui. Minta PIN admin sekali lagi.',
         );
@@ -922,12 +970,14 @@ export class SalesService {
         scope: input.scope,
         productId: product?.id ?? null,
         maxBps: input.maxBps,
+        maxAmount: input.maxAmount ?? null,
         expiresAt: sql`now() + make_interval(secs => ${DISCOUNT_APPROVAL_TTL_SECONDS})`,
       })
       .returning({
         id: discountApprovals.id,
         scope: discountApprovals.scope,
         maxBps: discountApprovals.maxBps,
+        maxAmount: discountApprovals.maxAmount,
         expiresAt: discountApprovals.expiresAt,
       });
     return { ...row, approver: { id: approver.id, name: approver.name } };
@@ -1081,18 +1131,32 @@ export class SalesService {
     const subtotal = lines.reduce((n, l) => n + l.lineTotal, 0);
     if (subtotal > MAX_TOTAL) throw fail('Total terlalu besar', {}, 'lines');
     const lineDiscount = discounts.reduce((n, d) => n + d.discount, 0);
-    // The order discount as the sale takes it (ignored without the permission); above 30% of what is left after
-    // the line discounts the sale must name an `order` approval.
-    const order = orderDiscountOf(
+    // The order discount as the sale takes it (ignored without the permission), and the combined test: when the
+    // whole reduction not covered by line approvals is above 30% of the list subtotal the sale must name an `order`
+    // approval for `totalReduction` (its share of `listSubtotal`, PR 72 ruling).
+    const orderDiscount = orderDiscountOf(
       canOverride ? (input.discount ?? 0) : 0,
       subtotal - lineDiscount,
     );
+    const combined = saleCombined(
+      input.lines.map((_l, i) => ({
+        listTotal: manual[i].listTotal,
+        priceCut: manual[i].priceCut,
+        discount: discounts[i].discount,
+        lineApproval:
+          discounts[i].needsApproval || manual[i].priceNeedsApproval,
+      })),
+      orderDiscount,
+    );
+    const order = { discount: orderDiscount };
     const head = {
       lines,
       subtotal,
       lineDiscount,
-      orderDiscount: order.discount,
-      orderDiscountNeedsApproval: order.needsApproval,
+      orderDiscount,
+      orderDiscountNeedsApproval: combined.needsApproval,
+      listSubtotal: combined.listSubtotal,
+      totalReduction: combined.reduction,
     };
     if (!input.voucherCode && !input.paymentMethodId) return head;
     // UMK-1981: the rest of the sale's arithmetic, as `insert` does it, without taking the voucher or a number.
@@ -1591,6 +1655,35 @@ export class SalesService {
         );
       memberPhone = m?.phone ?? null;
     }
+    // PR 72 review: who approved a reduction above 30% by PIN, by name ("Pemilik" or the staff member's), so the
+    // sale's detail can say why a line or the order was cut that far.
+    const approverIds = [
+      ...new Set(
+        [
+          sale.discountApprovedBy,
+          ...sale.lines.map((l) => l.discountApprovedBy),
+        ]
+          .filter((x): x is string => x !== null)
+          .map((x) => x.toLowerCase()),
+      ),
+    ];
+    const approverNames = new Map<string, string>();
+    if (approverIds.length) {
+      const [owner] = await this.db
+        .select({ userId: tenants.userId })
+        .from(tenants)
+        .where(eq(tenants.id, s.tenantId));
+      const rows = await this.db
+        .select({ id: staff.id, name: staff.name })
+        .from(staff)
+        .where(
+          and(eq(staff.tenantId, s.tenantId), inArray(staff.id, approverIds)),
+        );
+      for (const r of rows) approverNames.set(r.id.toLowerCase(), r.name);
+      if (owner) approverNames.set(owner.userId.toLowerCase(), 'Pemilik');
+    }
+    const approverName = (id: string | null) =>
+      id === null ? null : (approverNames.get(id.toLowerCase()) ?? 'Admin');
     return {
       number: sale.receiptNumber,
       receiptNumber: sale.receiptNumber,
@@ -1613,8 +1706,12 @@ export class SalesService {
         discount: l.discount,
         discountPercent: l.discountPercent,
         netTotal: l.netTotal,
+        // The approver of the line's discount or manual price above 30% (by name); null when none was needed.
+        approvedBy: approverName(l.discountApprovedBy),
       })),
       subtotal: sale.subtotal,
+      // The approver of a total reduction above 30% (the order approval), by name; null when none was needed.
+      discountApprovedBy: approverName(sale.discountApprovedBy),
       // Every manual discount; `lineDiscount` is the lines' part ("Diskon baris"), the rest the order's.
       discount: sale.discount,
       lineDiscount: sale.lineDiscount,

@@ -91,7 +91,12 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
   const approve = (
     s: Shop,
     auth: string,
-    body: { scope?: string; productId?: string; maxBps: number },
+    body: {
+      scope?: string;
+      productId?: string;
+      maxBps: number;
+      maxAmount?: number;
+    },
   ) =>
     post(auth, '/sales/discount-approvals', {
       approverId: s.rina.staffId,
@@ -117,7 +122,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
     )[0].used_at;
 
   describe('the order discount', () => {
-    it('exactly 30% of what is left after the line discounts needs none; Rp1 more needs an order approval; 100% is refused', async () => {
+    it('the combined test: line discount + order discount up to 30% of the list subtotal needs none; Rp1 more needs an order approval; 100% is refused', async () => {
       const s = await shop();
       // 4 × Rp5.000 = 20.000: 30% = 6.000.
       const exact = await sell(s.ayu.auth, {
@@ -139,19 +144,22 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       }).expect(422);
       expect(over.body).toMatchObject({
         code: 'DISCOUNT_APPROVAL_REQUIRED',
-        errors: { discountApprovalId: 'Diskon lebih dari 30% perlu PIN admin' },
+        errors: {
+          discountApprovalId:
+            'Total potongan lebih dari 30% dari harga normal perlu PIN admin',
+        },
       });
-      // A line discount of 2.000 first: the order discount is measured on 18.000, 30% = 5.400.
+      // A line discount of 2.000 first (ruling on PR 72): line + order together up to 6.000, so the order takes 4.000.
       const line = { productId: s.teh, qty: 4, discountAmount: 2000 };
       await sell(s.ayu.auth, {
         lines: [line],
-        discount: 5400,
-        paid: 12_600,
+        discount: 4000,
+        paid: 14_000,
       }).expect(201);
       await sell(s.ayu.auth, {
         lines: [line],
-        discount: 5401,
-        paid: 12_599,
+        discount: 4001,
+        paid: 13_999,
       }).expect(422);
       const all = await sell(s.ayu.auth, {
         lines: [{ productId: s.teh, qty: 4 }],
@@ -180,13 +188,19 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       expect(plain.body).toMatchObject({ discount: 0, total: 5000 });
     });
 
-    it('an order approval lets 50% through once; the sale and the audit record the approver; a line approval does not serve it, nor it a line', async () => {
+    it('an order approval lets 55% in all through once; the sale and the audit record the approver; a line approval does not serve it, nor it a line', async () => {
       const s = await shop(1100);
+      // Line 2.000 + order 9.000 = 11.000 of the list subtotal 20.000: 55%.
       const order = await approve(s, s.ayu.auth, {
         scope: 'order',
-        maxBps: 5000,
+        maxBps: 5500,
+        maxAmount: 11_000,
       }).expect(201);
-      expect(order.body).toMatchObject({ scope: 'order', maxBps: 5000 });
+      expect(order.body).toMatchObject({
+        scope: 'order',
+        maxBps: 5500,
+        maxAmount: 11_000,
+      });
       const lineApproval = await approve(s, s.ayu.auth, {
         productId: s.teh,
         maxBps: 5000,
@@ -229,6 +243,13 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       });
       expect(await usedAt(order.body.id)).not.toBeNull();
       expect(await usedAt(lineApproval.body.id)).toBeNull();
+      // The sale's detail names the approver (Rina is the store's first staff member, "Sari").
+      const receipt = await get(
+        s.ayu.auth,
+        `/sales/${sold.body.id}/receipt`,
+      ).expect(200);
+      expect(receipt.body).toMatchObject({ discountApprovedBy: 'Sari' });
+      expect(receipt.body.lines[0].approvedBy).toBeNull();
       const [audit] = await admin<{ details: Record<string, unknown> }[]>`
         select details from pos.audit_log
         where tenant_id = ${s.tenantId} and event = 'discount_approval' and target_type = 'sale'`;
@@ -236,6 +257,8 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         saleId: sold.body.id,
         scope: 'order',
         discount: 9000,
+        reduction: 11_000,
+        listSubtotal: 20_000,
         approvedBy: s.rina.staffId,
       });
       // Used once.
@@ -253,6 +276,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       const small = await approve(s, s.ayu.auth, {
         scope: 'order',
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       const bigger = await sell(s.ayu.auth, {
         lines: [{ productId: s.teh, qty: 4 }],
@@ -271,6 +295,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         scope: 'order',
         productId: s.teh,
         maxBps: 4000,
+        maxAmount: 8000,
       })
         .expect(422)
         .expect((r) =>
@@ -287,6 +312,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       const self = await approve(s, s.rina.auth, {
         scope: 'order',
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(422);
       expect(self.body.code).toBe('DISCOUNT_SELF_APPROVAL');
       // The owner may confirm their own.
@@ -295,6 +321,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         pin: OWNER_PIN,
         scope: 'order',
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       // A wrong PIN.
       await post(s.ayu.auth, '/sales/discount-approvals', {
@@ -302,6 +329,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         pin: '000000',
         scope: 'order',
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(422);
       // Only holders of sales.price_override ask.
       await approve(s, s.budi.auth, { scope: 'order', maxBps: 4000 }).expect(
@@ -320,6 +348,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       const a1 = await approve(s, s.ayu.auth, {
         scope: 'order',
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       const key = randomUUID();
       const first = await sell(s.ayu.auth, body(a1.body.id), key).expect(201);
@@ -330,6 +359,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         const a = await approve(s, s.ayu.auth, {
           scope: 'order',
           maxBps: 4000,
+          maxAmount: 8000,
         }).expect(201);
         const k = randomUUID();
         const [x, y] = await Promise.all([
@@ -345,6 +375,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       const shared = await approve(s, s.ayu.auth, {
         scope: 'order',
         maxBps: 4000,
+        maxAmount: 8000,
       }).expect(201);
       const results = await Promise.all([
         sell(s.ayu.auth, body(shared.body.id)),
@@ -419,6 +450,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       const order = await approve(s, s.ayu.auth, {
         scope: 'order',
         maxBps: 5000,
+        maxAmount: 10000,
       }).expect(201);
       await sell(s.ayu.auth, {
         lines: [
@@ -458,6 +490,15 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         discountApprovedBy: s.rina.staffId,
       });
       expect(await usedAt(forTeh.body.id)).not.toBeNull();
+      const receipt = await get(
+        s.ayu.auth,
+        `/sales/${sold.body.id}/receipt`,
+      ).expect(200);
+      expect(receipt.body.lines[0]).toMatchObject({
+        manualPrice: true,
+        approvedBy: 'Sari',
+      });
+      expect(receipt.body.discountApprovedBy).toBeNull();
       expect(await usedAt(forKopi.body.id)).toBeNull();
       // 51% is more than approved.
       const small = await approve(s, s.ayu.auth, {
@@ -487,21 +528,32 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
 
   it("the quote answers whether a manual price or the order discount needs a PIN, with the sale's figures", async () => {
     const s = await shop();
-    // Teh 4 × Rp3.000 = 12.000 (40% below 20.000); Kopi 1 × 12.500 with 10% off = 11.250; base 23.250.
+    // Teh 4 × Rp3.000 = 12.000 (8.000, 40% below 20.000: its own line approval covers it); Kopi 1 × 12.500 with
+    // 10% off (1.250). List subtotal 32.500, 30% = 9.750: the uncovered 1.250 + order discount must stay ≤ 9.750.
     const q = await post(s.ayu.auth, '/sales/quote', {
       lines: [
         { productId: s.teh, qty: 4, price: 3000 },
         { productId: s.kopi, qty: 1, discountPercent: 10 },
       ],
-      discount: 6976,
+      discount: 8501,
     }).expect(200);
     expect(q.body).toMatchObject({
       subtotal: 24_500,
       lineDiscount: 1250,
-      orderDiscount: 6976,
-      // 6.976 × 10.000 = 69.760.000 > 23.250 × 3.000 = 69.750.000.
+      orderDiscount: 8501,
+      listSubtotal: 32_500,
+      totalReduction: 8000 + 1250 + 8501,
+      // 1.250 + 8.501 = 9.751 > 9.750.
       orderDiscountNeedsApproval: true,
     });
+    const at = await post(s.ayu.auth, '/sales/quote', {
+      lines: [
+        { productId: s.teh, qty: 4, price: 3000 },
+        { productId: s.kopi, qty: 1, discountPercent: 10 },
+      ],
+      discount: 8500,
+    }).expect(200);
+    expect(at.body.orderDiscountNeedsApproval).toBe(false);
     expect(q.body.lines[0]).toMatchObject({
       unitPrice: 3000,
       lineTotal: 12_000,
@@ -521,14 +573,23 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
         { productId: s.teh, qty: 4, price: 3500 },
         { productId: s.kopi, qty: 1, discountPercent: 10 },
       ],
-      discount: 7425,
+      discount: 2500,
     }).expect(200);
-    // Base 14.000 + 11.250 = 25.250; 30% = 7.575 ≥ 7.425.
+    // Teh 30% below (6.000, no line approval) + Kopi 1.250 + order 2.500 = 9.750 = 30% of 32.500: none needed.
     expect(at30.body).toMatchObject({
       subtotal: 26_500,
+      totalReduction: 9750,
       orderDiscountNeedsApproval: false,
     });
     expect(at30.body.lines[0].priceNeedsApproval).toBe(false);
+    const over30 = await post(s.ayu.auth, '/sales/quote', {
+      lines: [
+        { productId: s.teh, qty: 4, price: 3500 },
+        { productId: s.kopi, qty: 1, discountPercent: 10 },
+      ],
+      discount: 2501,
+    }).expect(200);
+    expect(over30.body.orderDiscountNeedsApproval).toBe(true);
     // Without the permission the price and the order discount are ignored, as the sale does.
     const plain = await post(s.budi.auth, '/sales/quote', {
       lines: [{ productId: s.teh, qty: 4, price: 1 }],
@@ -545,11 +606,280 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
     });
   });
 
+  describe('stacked reductions (owner ruling on PR 72: one combined 30% test)', () => {
+    it('30% off a line plus 30% off the order (51% in all) needs an order approval of the whole reduction; a line above 30% with its own approval needs nothing more', async () => {
+      const s = await shop();
+      // Teh 4 at Rp3.500 (6.000 below 20.000, 30%) and an order discount of 30% of the 14.000 left (4.200):
+      // 10.200 of 20.000 = 51%.
+      const stacked = {
+        lines: [{ productId: s.teh, qty: 4, price: 3500 }],
+        discount: 4200,
+        paid: 9800,
+      };
+      const refused = await sell(s.ayu.auth, stacked).expect(422);
+      expect(refused.body).toMatchObject({
+        code: 'DISCOUNT_APPROVAL_REQUIRED',
+        errors: {
+          discountApprovalId:
+            'Total potongan lebih dari 30% dari harga normal perlu PIN admin',
+        },
+      });
+      // The same with a 30% line discount instead of the manual price.
+      await sell(s.ayu.auth, {
+        lines: [{ productId: s.teh, qty: 4, discountPercent: 30 }],
+        discount: 4200,
+        paid: 9800,
+      }).expect(422);
+      // An order approval of 51% / Rp10.200 lets it through; 50% would not.
+      const small = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 5000,
+        maxAmount: 10_200,
+      }).expect(201);
+      await sell(s.ayu.auth, {
+        ...stacked,
+        discountApprovalId: small.body.id,
+      }).expect(422);
+      const ok = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 5100,
+        maxAmount: 10_200,
+      }).expect(201);
+      const sold = await sell(s.ayu.auth, {
+        ...stacked,
+        discountApprovalId: ok.body.id,
+      }).expect(201);
+      expect(sold.body).toMatchObject({
+        subtotal: 14_000,
+        discount: 4200,
+        total: 9800,
+        discountApprovedBy: s.rina.staffId,
+      });
+      // Teh at 30% (6.000) + Kopi 12.500: list 32.500, 30% = 9.750, so the order may add 3.750 and not 3.751.
+      const mixed = (discount: number) => ({
+        lines: [
+          { productId: s.teh, qty: 4, price: 3500 },
+          { productId: s.kopi, qty: 1 },
+        ],
+        discount,
+        paid: 23_000, // cash: 22.750 rounds up to 22.800
+      });
+      await sell(s.ayu.auth, mixed(3750)).expect(201);
+      await sell(s.ayu.auth, mixed(3751)).expect(422);
+      // PR 63 unchanged: one line 40% off with its own line approval, nothing else, needs no order approval.
+      const line = await approve(s, s.ayu.auth, {
+        productId: s.teh,
+        maxBps: 4000,
+      }).expect(201);
+      await sell(s.ayu.auth, {
+        lines: [
+          {
+            productId: s.teh,
+            qty: 4,
+            discountPercent: 40,
+            discountApprovalId: line.body.id,
+          },
+        ],
+        paid: 12_000,
+      }).expect(201);
+    });
+  });
+
+  describe('binding of an approval (PR 72 review)', () => {
+    it('one line approval cannot serve two lines of one product (pcs and dus) in one sale', async () => {
+      const s = await shop();
+      // Gula Rp5.000 a pcs and Rp50.000 a dus of 10, 100 pcs in stock.
+      const cats = await get(s.auth, '/catalog/categories').expect(200);
+      const gula = await post(s.auth, '/catalog/products', {
+        categoryId: (cats.body.data ?? cats.body)[0].id,
+        name: 'Gula',
+        sellingPrice: 5000,
+        costPrice: 3000,
+        units: [{ name: 'dus', unitQty: 10, price: 50_000 }],
+      }).expect(201);
+      await post(s.auth, '/stock/opening', {
+        productId: gula.body.id,
+        qty: 100,
+      }).expect(201);
+      s.teh = gula.body.id as string;
+      const approval = await approve(s, s.ayu.auth, {
+        productId: s.teh,
+        maxBps: 5000,
+      }).expect(201);
+      const lines = [
+        {
+          productId: s.teh,
+          qty: 4,
+          price: 2500,
+          discountApprovalId: approval.body.id,
+        },
+        {
+          productId: s.teh,
+          qty: 1,
+          unit: 'dus',
+          price: 25_000,
+          discountApprovalId: approval.body.id,
+        },
+      ];
+      const res = await sell(s.ayu.auth, { lines, paid: 35_000 }).expect(422);
+      expect(res.body).toMatchObject({
+        code: 'DISCOUNT_APPROVAL_REQUIRED',
+        errors: {
+          'lines.1.discountApprovalId':
+            'Satu persetujuan hanya untuk satu diskon. Minta PIN admin untuk baris ini.',
+        },
+      });
+      expect(await usedAt(approval.body.id)).toBeNull();
+      expect(await onHand(s, s.teh)).toBe(100);
+      // A second approval for the dus line: both go through.
+      const second = await approve(s, s.ayu.auth, {
+        productId: s.teh,
+        maxBps: 5000,
+      }).expect(201);
+      await sell(s.ayu.auth, {
+        lines: [lines[0], { ...lines[1], discountApprovalId: second.body.id }],
+        paid: 35_000,
+      }).expect(201);
+      expect(await onHand(s, s.teh)).toBe(86);
+    });
+
+    it('an approval covers at most its rupiah: an order approval asked for a small cart does not serve a large one; a line approval with an amount neither; one without (older client) keeps the share alone', async () => {
+      const s = await shop();
+      const order = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 5000,
+        maxAmount: 7000,
+      }).expect(201);
+      // 40 × Rp5.000 = 200.000; 70.000 off is 35%, within 50% but far above Rp7.000.
+      const big = await sell(s.ayu.auth, {
+        lines: [{ productId: s.teh, qty: 40 }],
+        discount: 70_000,
+        discountApprovalId: order.body.id,
+        paid: 130_000,
+      }).expect(422);
+      expect(big.body.errors.discountApprovalId).toBe(
+        'Diskon lebih besar dari yang disetujui. Minta PIN admin sekali lagi.',
+      );
+      // The cart it was asked for: 7.000 of 20.000 (35%).
+      await sell(s.ayu.auth, {
+        lines: [{ productId: s.teh, qty: 4 }],
+        discount: 7000,
+        discountApprovalId: order.body.id,
+        paid: 13_000,
+      }).expect(201);
+      // An order approval without an amount is refused at the route.
+      const none = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 5000,
+      }).expect(422);
+      expect(none.body.errors).toEqual({ maxAmount: 'Wajib diisi' });
+      // A line approval of 50% / Rp10.000 (4 × Rp2.500): 8 at Rp2.500 is 50% but Rp20.000.
+      const line = await approve(s, s.ayu.auth, {
+        productId: s.teh,
+        maxBps: 5000,
+        maxAmount: 10_000,
+      }).expect(201);
+      const eight = (approvalId: string) => ({
+        lines: [
+          {
+            productId: s.teh,
+            qty: 8,
+            price: 2500,
+            discountApprovalId: approvalId,
+          },
+        ],
+        paid: 20_000,
+      });
+      await sell(s.ayu.auth, eight(line.body.id)).expect(422);
+      // Without an amount (a client from before the review) the share alone binds it, as before.
+      const old = await approve(s, s.ayu.auth, {
+        productId: s.teh,
+        maxBps: 5000,
+      }).expect(201);
+      expect(old.body.maxAmount).toBeNull();
+      await sell(s.ayu.auth, eight(old.body.id)).expect(201);
+    });
+
+    it('an expired order approval is refused; a sale that fails after taking it leaves it unused', async () => {
+      const s = await shop();
+      const body = (approvalId: string, paid = 12_000) => ({
+        lines: [{ productId: s.teh, qty: 4 }],
+        discount: 8000,
+        discountApprovalId: approvalId,
+        paid,
+      });
+      const old = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 4000,
+        maxAmount: 8000,
+      }).expect(201);
+      await admin`update pos.discount_approvals set expires_at = now() - interval '1 second' where id = ${old.body.id}`;
+      const expired = await sell(s.ayu.auth, body(old.body.id)).expect(422);
+      expect(expired.body.errors.discountApprovalId).toBe(
+        'Persetujuan diskon tidak berlaku lagi. Minta PIN admin sekali lagi.',
+      );
+      // 30 minutes from asking.
+      const fresh = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 4000,
+        maxAmount: 8000,
+      }).expect(201);
+      const ttl = Date.parse(fresh.body.expiresAt) - Date.now() - 30 * 60_000;
+      expect(Math.abs(ttl)).toBeLessThan(60_000);
+      // Paid too little: refused after the approval was locked; the rollback leaves it unused.
+      const short = await sell(s.ayu.auth, body(fresh.body.id, 11_999)).expect(
+        422,
+      );
+      expect(short.body.errors.paid).toBe(
+        'Uang dibayar kurang dari jumlah yang harus dibayar',
+      );
+      expect(await usedAt(fresh.body.id)).toBeNull();
+      await sell(s.ayu.auth, body(fresh.body.id)).expect(201);
+      expect(await usedAt(fresh.body.id)).not.toBeNull();
+    });
+
+    it('a kasbon sale is gated like a cash sale', async () => {
+      const s = await shop();
+      const kasbon = await post(s.auth, '/payment-methods', {
+        name: 'Kasbon',
+        kind: 'credit',
+      }).expect(201);
+      const member = await post(s.auth, '/members', {
+        name: 'Bu Sari',
+        code: `M${randomUUID().slice(0, 6)}`,
+        phone: '081234567890',
+      }).expect(201);
+      const body = {
+        lines: [{ productId: s.teh, qty: 4 }],
+        discount: 8000,
+        paymentMethodId: kasbon.body.id,
+        memberId: member.body.id,
+        paid: 0,
+      };
+      const refused = await sell(s.ayu.auth, body).expect(422);
+      expect(refused.body.code).toBe('DISCOUNT_APPROVAL_REQUIRED');
+      const order = await approve(s, s.ayu.auth, {
+        scope: 'order',
+        maxBps: 4000,
+        maxAmount: 8000,
+      }).expect(201);
+      const sold = await sell(s.ayu.auth, {
+        ...body,
+        discountApprovalId: order.body.id,
+      }).expect(201);
+      expect(sold.body).toMatchObject({
+        total: 12_000,
+        discountApprovedBy: s.rina.staffId,
+      });
+    });
+  });
+
   it("cross-tenant: store B cannot use store A's order or price approval, nor approve with A's admin", async () => {
     const a = await shop();
     const order = await approve(a, a.ayu.auth, {
       scope: 'order',
       maxBps: 5000,
+      maxAmount: 10000,
     }).expect(201);
     const price = await approve(a, a.ayu.auth, {
       productId: a.teh,
@@ -580,6 +910,7 @@ describe('the 30% gate on the order discount and a manual price (UMK-1990)', () 
       pin: ADMIN_PIN,
       scope: 'order',
       maxBps: 5000,
+      maxAmount: 10000,
     }).expect(422);
     expect(await usedAt(order.body.id)).toBeNull();
     expect(await usedAt(price.body.id)).toBeNull();

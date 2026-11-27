@@ -157,9 +157,18 @@ export const DiscountApprovalInput = z
       .int('Harus bilangan bulat')
       .min(3001, 'Diskon sampai 30% tidak perlu persetujuan')
       .max(9999, 'Diskon 100% tidak diperbolehkan'),
+    // PR 72 review: the largest reduction approved, in rupiah (what the till showed the approver). Required for an
+    // order approval; a line approval without it (an older client) is bound to its share alone.
+    maxAmount: rupiah.positive('Harus lebih dari 0').optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
+    if (v.scope === 'order' && v.maxAmount === undefined)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['maxAmount'],
+        message: 'Wajib diisi',
+      });
     if (v.scope === 'line' && v.productId === undefined)
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -437,6 +437,10 @@ export const discountApprovals = pos
       }),
       // The largest reduction approved, in basis points of the line's total (of the order's, for `order`).
       maxBps: integer('max_bps').notNull(),
+      // The largest reduction approved, in rupiah (PR 72 review): the approval covers at most this much off, so one
+      // asked for a small cart cannot take a large one. Required for `order`; null only on a line approval from a
+      // client that sends none (bound to the share alone, as before).
+      maxAmount: rupiah('max_amount'),
       expiresAt: ts('expires_at').notNull(),
       usedAt: ts('used_at'),
       saleId: uuid('sale_id'),
@@ -455,6 +459,10 @@ export const discountApprovals = pos
       check(
         'discount_approvals_scope_ck',
         sql`${t.scope} in ('line', 'order') and (${t.scope} = 'order') = (${t.productId} is null)`,
+      ),
+      check(
+        'discount_approvals_amount_ck',
+        sql`(${t.maxAmount} is null or ${t.maxAmount} >= 1) and (${t.scope} = 'line' or ${t.maxAmount} is not null)`,
       ),
     ],
   )
