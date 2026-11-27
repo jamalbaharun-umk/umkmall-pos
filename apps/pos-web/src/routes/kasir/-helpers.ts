@@ -1,5 +1,6 @@
 // UMK-1985: pure logic of the cashier's units and wholesale prices. The server picks every unit price and tier
 // (POST /sales/quote); this only builds the request, matches the answer to the cart's lines and words the hints.
+import { rupiah } from '../../lib/rupiah'
 
 export type SaleUnit = { id?: string; name: string; unitQty: number; price: number }
 export type UnitProduct = {
@@ -159,7 +160,7 @@ export function priceEntries(cart: CartEntry[], quote: Quote | null | undefined)
 
 export const subtotalOf = (priced: PricedEntry[]) => priced.reduce((n, l) => n + l.lineTotal, 0)
 
-const rp = (n: number) => `Rp${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
+const rp = rupiah
 
 /** "Tambah 36 pcs lagi untuk harga Rp3.200 per pcs." */
 export const nextTierHint = (unitName: string, t: NextTier) =>

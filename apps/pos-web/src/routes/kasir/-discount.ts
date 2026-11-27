@@ -2,6 +2,7 @@
 // and every total it charges; this mirrors its rules so the cart and the pay step show the same figures before the
 // sale, and refuses what pos-api would refuse without a round trip.
 import type { ErrorDescription } from '@/lib/describe-error'
+import { rupiah } from '../../lib/rupiah'
 import { taxOf } from './-money'
 
 export type DiscountKind = 'percent' | 'amount'
@@ -16,7 +17,7 @@ export type LineDiscount = {
 /** Above this share of the line (30%) pos-api asks for a PIN approval. */
 export const APPROVAL_BPS = 3000
 
-const rp = (n: number) => `Rp${String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
+const rp = rupiah
 
 /** The rupiah off a line of `lineTotal`: an amount as given, a percent rounded half up (pos-api's rule). */
 export const discountOf = (lineTotal: number, d: Pick<LineDiscount, 'kind' | 'value'>) =>

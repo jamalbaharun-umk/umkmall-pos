@@ -1,5 +1,6 @@
 import { Button, Skeleton } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
+import { isNotFoundError } from '../lib/not-found'
 import { Link, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
 import { ChevronRight, Inbox } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -98,6 +99,17 @@ export function PageError({ error }: ErrorComponentProps) {
         </Panel>
       </div>
     )
+  // A 404 does not get better by retrying either: offer the way back instead.
+  if (isNotFoundError(error))
+    return (
+      <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-4 py-16 text-center">
+        <p className="text-lg font-semibold text-default-primary">Data tidak ditemukan</p>
+        <p className="text-sm text-default-secondary">Datanya tidak ada atau sudah dihapus.</p>
+        <Button type="outline" color="primary" size="medium" width="auto" onClick={() => router.history.back()}>
+          Kembali
+        </Button>
+      </div>
+    )
   return (
     <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-4 py-16 text-center">
       <p className="text-lg font-semibold text-default-primary">Halaman belum bisa dibuka</p>
@@ -111,7 +123,7 @@ export function PageError({ error }: ErrorComponentProps) {
   )
 }
 
-export const rupiah = (n: number) => `Rp${n.toLocaleString('id-ID')}`
+export { rupiah } from '../lib/rupiah'
 
 export const dateTime = (iso: string) =>
   new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
