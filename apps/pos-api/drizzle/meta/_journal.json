@@ -365,6 +365,13 @@
       "when": 1795749462794,
       "tag": "0051_discount_gate_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795757982646,
+      "tag": "0053_stock_batch_expiry",
+      "breakpoints": true
     }
   ]
 }

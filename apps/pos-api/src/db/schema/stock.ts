@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  date,
   index,
   integer,
   text,
@@ -50,6 +51,8 @@ export const stockBatches = pos
       receivedAt: timestamp('received_at', { withTimezone: true })
         .notNull()
         .defaultNow(),
+      // UMK-2087: optional best-before date (a store calendar day); null for stock that does not expire.
+      expiresAt: date('expires_at', { mode: 'string' }),
       source: text('source', { enum: STOCK_SOURCES }).notNull(),
       sourceId: uuid('source_id'),
       createdAt: createdAt(),

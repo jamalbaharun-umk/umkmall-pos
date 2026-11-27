@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { Uuid } from '../catalog/catalog.schemas';
-import { validate } from '../common/validation';
+import { LocalDate, validate } from '../common/validation';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
@@ -21,6 +21,8 @@ const OpeningInput = z
     productId: Uuid,
     qty: z.number().int().positive().max(1_000_000),
     unitCost: z.number().int().nonnegative().max(1_000_000_000_000).optional(),
+    // UMK-2087: optional best-before date; the service refuses one before today.
+    expiresAt: LocalDate.optional(),
   })
   .strict();
 

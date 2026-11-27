@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { storeToday } from '../common/store-day';
 import { codedError, fieldError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -72,6 +73,27 @@ export class StockService {
     return p;
   }
 
+  /**
+   * UMK-2087: 422 on `field` when `expiresAt` is before today (the store's calendar day, the day the stock is
+   * received). Today itself is allowed: it expires at the end of the day.
+   */
+  async assertNotExpired(
+    tx: Tx | Db,
+    tenantId: string,
+    expiresAt: string | null | undefined,
+    field = 'expiresAt',
+  ) {
+    if (!expiresAt) return;
+    const [r] = await tx.execute<{ before: boolean }>(
+      sql`select (${expiresAt}::date < ${storeToday(tenantId)}) as before`,
+    );
+    if (r.before)
+      throw fieldError(
+        field,
+        'Tanggal kedaluwarsa tidak boleh sebelum tanggal penerimaan',
+      );
+  }
+
   /** A new batch plus its ledger row. Source `adjustment` records reason `opname` unless told otherwise. */
   async receive(
     tx: Tx,
@@ -84,12 +106,15 @@ export class StockService {
       sourceId?: string | null;
       actorId: string;
       reason?: StockReason;
+      /** Optional best-before date, `YYYY-MM-DD` (UMK-2087). */
+      expiresAt?: string | null;
     },
   ) {
     positiveInt(input.qty, 'Jumlah');
     if (!Number.isSafeInteger(input.unitCost) || input.unitCost < 0)
       throw new UnprocessableEntityException('Harga modal tidak valid');
     await this.tracked(tx, input.tenantId, input.productId);
+    await this.assertNotExpired(tx, input.tenantId, input.expiresAt);
     const [batch] = await tx
       .insert(stockBatches)
       .values({
@@ -98,6 +123,7 @@ export class StockService {
         qtyInitial: input.qty,
         qtyRemaining: input.qty,
         unitCost: input.unitCost,
+        expiresAt: input.expiresAt ?? null,
         source: input.source,
         sourceId: input.sourceId ?? null,
       })
@@ -466,6 +492,7 @@ export class StockService {
         unitCost: stockBatches.unitCost,
         source: stockBatches.source,
         receivedAt: stockBatches.receivedAt,
+        expiresAt: stockBatches.expiresAt,
       })
       .from(stockBatches)
       .where(
@@ -505,7 +532,12 @@ export class StockService {
   async opening(
     tenantId: string,
     actorId: string,
-    input: { productId: string; qty: number; unitCost?: number },
+    input: {
+      productId: string;
+      qty: number;
+      unitCost?: number;
+      expiresAt?: string;
+    },
   ) {
     return this.db.transaction(async (tx) => {
       const p = await this.tracked(tx, tenantId, input.productId);
@@ -534,6 +566,7 @@ export class StockService {
         unitCost: input.unitCost ?? p.costPrice,
         source: 'opening',
         actorId,
+        expiresAt: input.expiresAt,
       });
     });
   }
