@@ -8,9 +8,11 @@ import {
   type Run,
   type Weight,
 } from './fonts';
+import { truncate } from './table-layout';
 
 // The pdfkit side of the font fallback (UMK-2074): registers a face on first use, draws a string that spans
-// several faces, and prepares chart labels for svg-to-pdfkit. The choice of face is `fonts.ts`.
+// several faces on one baseline, truncates it to a width, and takes chart labels that need another face out of the
+// SVG so that pdfkit draws them (UMK-2117). The choice of face is `fonts.ts`.
 //
 // Limitations: each run is shaped on its own by fontkit (Arabic joins and mirrors inside a run). A single-line
 // string whose first non-Latin run is Arabic is drawn with its runs in reverse order, which is right for plain
@@ -26,9 +28,6 @@ const PRIMARY_NAMES: Record<Weight, string> = {
   700: 'Bold',
 };
 
-/** The font-family a chart `<tspan>` carries so that the `fontCallback` can find its face again. */
-const FAMILY_PREFIX = 'uf-';
-
 const unescapeText = (s: string) =>
   s
     .replace(/&lt;/g, '<')
@@ -36,8 +35,19 @@ const unescapeText = (s: string) =>
     .replace(/&quot;/g, '"')
     .replace(/&#x27;|&#39;/g, "'")
     .replace(/&amp;/g, '&');
-const escapeText = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * The runs of a one-line string from left to right. A right-to-left string is drawn last run first; a left-to-right
+ * run inside it keeps its letters in order but its edge spaces change sides, so `محفظة QRIS` reads `QRIS محفظة`.
+ */
+export function visualOrder(runs: Run[]): Run[] {
+  if (!isRtl(runs)) return runs;
+  return [...runs].reverse().map((r) => {
+    if (r.rtl) return r;
+    const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(r.text) as RegExpExecArray;
+    return { ...r, text: `${m[3]}${m[2]}${m[1]}` };
+  });
+}
 
 export class PdfFonts {
   private readonly names = new Map<string, string>();
@@ -94,10 +104,78 @@ export class PdfFonts {
     return this.measure(splitRuns(text), weight);
   }
 
+  /** Cap height and descent (positive, pt) of the primary face at the current size: one baseline for a row. */
+  metrics(weight: Weight): {
+    ascent: number;
+    capHeight: number;
+    descent: number;
+  } {
+    this.use(PRIMARY, weight);
+    const f = (
+      this.doc as unknown as {
+        _font: { ascender: number; descender: number; capHeight: number };
+        _fontSize: number;
+      }
+    )._font;
+    const size = (this.doc as unknown as { _fontSize: number })._fontSize;
+    return {
+      ascent: (f.ascender / 1000) * size,
+      capHeight: ((f.capHeight || f.ascender * 0.7) / 1000) * size,
+      descent: (Math.abs(f.descender) / 1000) * size,
+    };
+  }
+
+  /** `text`, cut to whole characters with an ellipsis when it is wider than `width` (measured with every face). */
+  fit(text: string, width: number, weight: Weight): string {
+    return truncate(text, width, (t) => this.widthOfString(t, weight));
+  }
+
   /**
-   * `doc.text(text, x, y, opts)` for text that may need other faces. Latin text takes the very same pdfkit call
-   * as before. A one-line string (`lineBreak: false`) is laid out here, with `align` and `ellipsis`; a wrapping one
-   * is drawn as continued chunks, one font each.
+   * One line of text at an alphabetic `baseline`: every run, whatever its face, sits on the same baseline (each
+   * Noto face has its own ascent, so drawing runs by their top puts Arabic low and Devanagari high). Never wraps:
+   * with a `width` it is truncated with an ellipsis (unless `truncate` is false) and aligned in it. Leaves the
+   * cursor where it was.
+   */
+  line(
+    text: string,
+    x: number,
+    baseline: number,
+    weight: Weight,
+    opts: {
+      width?: number;
+      align?: 'left' | 'right' | 'center';
+      truncate?: boolean;
+    } = {},
+  ): number {
+    const d = this.doc;
+    const { x: x0, y: y0 } = d;
+    const shown =
+      opts.width !== undefined && opts.truncate !== false
+        ? this.fit(text, opts.width, weight)
+        : text;
+    const runs = splitRuns(shown);
+    const total = this.measure(runs, weight);
+    const room = (opts.width ?? total) - total;
+    let cx =
+      x +
+      (opts.align === 'right' ? room : opts.align === 'center' ? room / 2 : 0);
+    for (const r of visualOrder(runs)) {
+      this.use(r.face, weight);
+      d.text(r.text, cx, baseline, {
+        lineBreak: false,
+        baseline: 'alphabetic',
+      });
+      cx += d.widthOfString(r.text);
+    }
+    d.x = x0;
+    d.y = y0;
+    return total;
+  }
+
+  /**
+   * `doc.text(text, x, y, opts)` for text that may need other faces. A one-line string (`lineBreak: false`) is
+   * drawn by `line` on the primary face's baseline, truncated with an ellipsis when `ellipsis` is set; a wrapping
+   * one is drawn as continued chunks, one font each. The cursor moves to the next line, as pdfkit's does.
    */
   text(
     text: string,
@@ -107,77 +185,79 @@ export class PdfFonts {
     weight: Weight,
   ): void {
     const d = this.doc;
+    if (opts.lineBreak === false) {
+      const x0 = x ?? d.x;
+      const y0 = y ?? d.y;
+      const { ascent } = this.metrics(weight);
+      this.line(text, x0, y0 + ascent, weight, {
+        width: opts.width,
+        align: opts.align === 'justify' ? 'left' : opts.align,
+        truncate: opts.ellipsis !== undefined && opts.ellipsis !== false,
+      });
+      this.use(PRIMARY, weight);
+      d.x = x0;
+      d.y = y0 + d.currentLineHeight(true);
+      return;
+    }
     const runs = splitRuns(text);
     if (runs.length <= 1) {
       this.use(runs[0]?.face ?? PRIMARY, weight);
       d.text(runs[0]?.text ?? text, x, y, opts);
       return;
     }
-    if (opts.lineBreak !== false) {
-      runs.forEach((r, i) => {
-        this.use(r.face, weight);
-        d.text(r.text, i === 0 ? x : undefined, i === 0 ? y : undefined, {
-          ...opts,
-          continued: i < runs.length - 1,
-        });
-      });
-      return;
-    }
-    const x0 = x ?? d.x;
-    const y0 = y ?? d.y;
-    let shown = runs;
-    let total = this.measure(shown, weight);
-    if (opts.width !== undefined && total > opts.width && opts.ellipsis) {
-      const cps = [...text.normalize('NFC')];
-      const fit = (n: number) => splitRuns(cps.slice(0, n).join('') + '…');
-      let lo = 0;
-      let hi = cps.length;
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (this.measure(fit(mid), weight) <= opts.width) lo = mid;
-        else hi = mid - 1;
-      }
-      shown = fit(lo);
-      total = this.measure(shown, weight);
-    }
-    const room = (opts.width ?? total) - total;
-    let cx =
-      x0 +
-      (opts.align === 'right' ? room : opts.align === 'center' ? room / 2 : 0);
-    for (const r of isRtl(shown) ? [...shown].reverse() : shown) {
+    runs.forEach((r, i) => {
       this.use(r.face, weight);
-      d.text(r.text, cx, y0, { lineBreak: false });
-      cx += d.widthOfString(r.text);
-    }
-    d.x = x0;
-    d.y = y0 + d.currentLineHeight(true);
+      d.text(r.text, i === 0 ? x : undefined, i === 0 ? y : undefined, {
+        ...opts,
+        continued: i < runs.length - 1,
+      });
+    });
   }
 
   /**
-   * The chart's SVG with each `<text>` that needs another face cut into `<tspan font-family="uf-<face>">`, one per
-   * run. Text a single primary run can draw is left byte for byte as it was.
+   * A chart's SVG split in two: the SVG with every `<text>` that needs a face other than the primary taken out,
+   * and those labels, to be drawn by `line` over the picture. svg-to-pdfkit lays text out glyph by glyph, which
+   * breaks Arabic joining and drops Thai marks (UMK-2117); pdfkit's own text path shapes them as the table does.
+   * Latin labels stay in the SVG byte for byte.
    */
-  svg(svg: string): string {
-    return svg.replace(
+  chartLabels(svg: string): { svg: string; labels: ChartLabel[] } {
+    const labels: ChartLabel[] = [];
+    const out = svg.replace(
       /<text\b([^>]*)>((?:[^<]|<!-- -->)*)<\/text>/g,
       (all, attrs: string, body: string) => {
-        const runs = splitRuns(unescapeText(body.replace(/<!-- -->/g, '')));
-        if (isPlain(runs)) return all;
-        const spans = runs
-          .map(
-            (r) =>
-              `<tspan font-family="${FAMILY_PREFIX}${r.face}">${escapeText(r.text)}</tspan>`,
-          )
-          .join('');
-        return `<text${attrs}>${spans}</text>`;
+        const text = unescapeText(body.replace(/<!-- -->/g, ''));
+        if (isPlain(splitRuns(text))) return all;
+        const attr = (name: string) =>
+          new RegExp(`\\s${name}="([^"]*)"`).exec(attrs)?.[1];
+        const anchor = attr('text-anchor');
+        labels.push({
+          text,
+          x: Number(attr('x') ?? 0),
+          y: Number(attr('y') ?? 0),
+          anchor: anchor === 'end' || anchor === 'middle' ? anchor : 'start',
+          size: Number(attr('font-size') ?? 12),
+          weight: Number(attr('font-weight') ?? 400) >= 600 ? 600 : 400,
+          fill: attr('fill') ?? '#000000',
+        });
+        return '';
       },
     );
+    return { svg: out, labels };
   }
 
-  /** svg-to-pdfkit's `fontCallback`: the face a `<tspan>` named, else the body font. */
-  readonly fontCallback = (family: string, bold: boolean): string => {
-    const weight: Weight = bold ? 600 : 400;
-    const m = new RegExp(`${FAMILY_PREFIX}([a-z0-9-]+)`).exec(family ?? '');
-    return this.nameFor(m ? m[1] : PRIMARY, weight);
-  };
+  /** svg-to-pdfkit's `fontCallback`: the labels left in the SVG are primary text, drawn with the body face. */
+  readonly fontCallback = (_family: string, bold: boolean): string =>
+    PRIMARY_NAMES[bold ? 600 : 400];
+}
+
+export interface ChartLabel {
+  text: string;
+  /** SVG user units (CSS px) of the chart. */
+  x: number;
+  /** The alphabetic baseline, in SVG user units. */
+  y: number;
+  anchor: 'start' | 'middle' | 'end';
+  size: number;
+  weight: Weight;
+  fill: string;
 }

@@ -127,21 +127,36 @@ describe('PdfFonts', () => {
     spy.mockRestore();
   });
 
-  it('cuts chart labels into per-face tspans and leaves Latin labels untouched', () => {
+  it('takes chart labels that need another face out of the SVG for pdfkit, and leaves Latin labels untouched (UMK-2117)', () => {
     const fonts = new PdfFonts(doc() as never, () => 'primary.woff');
     const latin = '<text x="1" y="2">Es &amp; Teh</text>';
-    expect(fonts.svg(latin)).toBe(latin);
-    const out = fonts.svg('<text x="1">Toko 北京 &lt;b&gt;</text><rect/>');
-    expect(out).toContain('<tspan font-family="uf-primary">Toko </tspan>');
-    expect(out).toMatch(
-      /<tspan font-family="uf-noto-sans-sc-\d+">北京<\/tspan>/,
+    expect(fonts.chartLabels(latin)).toEqual({ svg: latin, labels: [] });
+    const out = fonts.chartLabels(
+      '<g><text x="12" y="20.2" fill="#61768c" font-size="12">قهوة عربية</text><rect/>' +
+        '<text x="746" y="52.2" text-anchor="end" fill="#042648" font-size="11" font-weight="600">Toko 北京 &lt;b&gt;</text></g>',
     );
-    expect(out).toContain('<tspan font-family="uf-primary"> &lt;b&gt;</tspan>');
-    expect(out.endsWith('<rect/>')).toBe(true);
-    expect(fonts.fontCallback('uf-primary', true)).toBe('Semi');
+    expect(out.svg).toBe('<g><rect/></g>');
+    expect(out.labels).toEqual([
+      {
+        text: 'قهوة عربية',
+        x: 12,
+        y: 20.2,
+        anchor: 'start',
+        size: 12,
+        weight: 400,
+        fill: '#61768c',
+      },
+      {
+        text: 'Toko 北京 <b>',
+        x: 746,
+        y: 52.2,
+        anchor: 'end',
+        size: 11,
+        weight: 600,
+        fill: '#042648',
+      },
+    ]);
+    expect(fonts.fontCallback('sans-serif', true)).toBe('Semi');
     expect(fonts.fontCallback('sans-serif', false)).toBe('Body');
-    expect(fonts.fontCallback('uf-noto-sans-cyrillic', false)).toBe(
-      'noto-sans-cyrillic-400',
-    );
   });
 });
