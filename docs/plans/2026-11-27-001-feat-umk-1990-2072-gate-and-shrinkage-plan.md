@@ -90,3 +90,30 @@ gross profit and net profit like expenses. Surpluses add nothing. Gross profit s
 - `apps/pos-web/src/routes/kasir/` (`-discount.ts` + test, `-discount-dialog.tsx`, `-discount-api.ts`, `index.tsx`),
   `apps/pos-web/src/routes/laporan/` (`untung-rugi.tsx`, `-api.ts`).
 - Tests: `apps/pos-api/test/discount-gate.e2e-spec.ts`, `apps/pos-api/test/shrinkage.e2e-spec.ts`.
+
+## PR 72 review and owner rulings (2026-11-27)
+
+- **One combined 30% test (major 1, owner ruling).** Every manual reduction of a sale (manual-price cuts, line
+  discounts, the order discount) is added up and measured against the list subtotal (Σ list price × qty, the
+  wholesale tier applied). Lines above 30% of their own line still need their line approval, which covers that
+  line's reduction. When the rest (the reduction not covered by line approvals) is above 30% of the list subtotal,
+  the sale names an `order` approval, and that approval covers the WHOLE reduction (`max_bps` of the list subtotal
+  and `max_amount` in rupiah). So 30% + 30% (51%) needs a PIN; one line above 30% with its own approval (PR 63) needs
+  nothing more. The order discount's own gate is gone: an order discount above 30% of what it comes off is always
+  above 30% of the list subtotal. The quote answers `listSubtotal`, `totalReduction` and
+  `orderDiscountNeedsApproval` (the combined test). The cashier screen has no order discount, and lines each within
+  30% (or approved) can never pass 30% together, so the screen never needs an order approval.
+- **A Rp0 sale by order discount stays refused** (owner ruling).
+- **One approval per want (major 2).** An approval id named twice in one sale is refused on the second
+  (`DISCOUNT_APPROVAL_REQUIRED`, "Satu persetujuan hanya untuk satu diskon"), before it is read. The earlier
+  `taken` check already refused it, with the generic "tidak berlaku lagi" message; the test pins the behaviour.
+- **An approval binds its rupiah (major 3).** `discount_approvals.max_amount` (migration 0051): required for an order
+  approval, optional for a line approval (older clients: share alone, as before); the cashier screen sends it. A
+  reduction above it is refused like one above `max_bps`.
+- **Shrinkage nets the surplus (major 4, owner ruling).** "Susut stok" = max(0, cost of missing units − cost of
+  surplus units) over the approved opnames of the period.
+- **Minors:** the agent's `profit_loss` description names shrinkage; the sale's receipt answer names the approver
+  (`approvedBy` per line, `discountApprovedBy` for the order approval) and the sale detail (Riwayat) shows
+  "Disetujui PIN: <nama>"; tests for order-approval expiry, a failed sale leaving the approval unused, a kasbon
+  and a PG sale gated (a cancelled PG sale's approval stays used); a comment says only an approved opname writes
+  reason `opname`.
