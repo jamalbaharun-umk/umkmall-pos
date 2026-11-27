@@ -3,6 +3,7 @@ import { Badge, Card, Table, TableBody, TableCell, TableHead, TableHeader, Table
 import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { ListFooter } from '../../pelanggan/-ui'
 import { loadShifts } from '../-shift-api'
+import { shiftCashier } from '../-shift-helpers'
 
 const PER_PAGE = 20
 
@@ -48,7 +49,7 @@ function ShiftsPage() {
               {data.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell>{formatDate(s.openedAt)}</TableCell>
-                  <TableCell>{s.actorKind === 'owner' ? 'Pemilik' : 'Staf'}</TableCell>
+                  <TableCell>{shiftCashier(s)}</TableCell>
                   <TableCell className="text-right">{rupiah(s.openingCash)}</TableCell>
                   <TableCell className="text-right">{rupiah(s.cashIn)}</TableCell>
                   <TableCell className="text-right">{rupiah(s.cashOut)}</TableCell>

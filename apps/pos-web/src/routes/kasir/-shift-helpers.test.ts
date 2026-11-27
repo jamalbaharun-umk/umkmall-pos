@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cashRoute,
+  shiftCashier,
   parseWaitingSales,
   sentence,
   waitingSearch,
@@ -244,5 +245,17 @@ describe('sentence (PR 40 review)', () => {
     expect(sentence('Masih ada penjualan menunggu #3')).toBe('Masih ada penjualan menunggu #3.')
     expect(sentence('Masih ada penjualan menunggu #3.')).toBe('Masih ada penjualan menunggu #3.')
     expect(sentence('Masih ada penjualan menunggu.. ')).toBe('Masih ada penjualan menunggu.')
+  })
+})
+
+describe('shiftCashier (UMK-2088)', () => {
+  it("names the cashier from the row, not just 'Staf'", () => {
+    expect(shiftCashier({ actorKind: 'cashier', actorName: 'Budi' })).toBe('Budi')
+    expect(shiftCashier({ actorKind: 'owner', actorName: 'Pemilik' })).toBe('Pemilik')
+  })
+
+  it('falls back to the kind when no name came', () => {
+    expect(shiftCashier({ actorKind: 'cashier' })).toBe('Staf')
+    expect(shiftCashier({ actorKind: 'owner', actorName: ' ' })).toBe('Pemilik')
   })
 })
