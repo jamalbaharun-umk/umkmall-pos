@@ -226,6 +226,14 @@ describe('purchase debt helpers (UMK-1970)', () => {
     const voidTodo = refusalTodo('DRAWER_INSUFFICIENT', { drawerCash: 4_000 }, rp, 'refund_void')!
     expect(voidTodo).toContain('Rp4.000')
     expect(voidTodo).not.toMatch(/Isi paling banyak|Di luar laci/)
+    // ...the store cash it would leave holds too little (never below zero), or the drawer was another cashier's.
+    const storeTodo = refusalTodo('STORE_CASH_INSUFFICIENT', { available: 2_500 }, rp, 'refund_void')!
+    expect(storeTodo).toContain('Kas toko sekarang berisi Rp2.500')
+    expect(storeTodo).not.toMatch(/Isi paling banyak|Di luar laci/)
+    expect(refusalTodo('STORE_CASH_INSUFFICIENT', {}, rp, 'refund_void')).toContain('Rp0')
+    expect(refusalTodo('DRAWER_REFUND_NOT_YOURS', {}, rp, 'refund_void')).toBe(
+      'Uang ini masuk laci kasir lain. Minta kasir shift itu, admin, atau pemilik untuk membatalkannya.',
+    )
     // Undo and payment void: the refunds to void first.
     expect(refusalTodo('RETURN_REFUNDED', { refunded: 10_000 }, rp, 'return_undo')).toContain('Rp10.000')
     expect(refusalTodo('REFUND_RECEIVED', { refunded: 10_000 }, rp, 'payment_void')).toContain('Rp10.000')
