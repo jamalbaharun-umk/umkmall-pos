@@ -11,7 +11,6 @@ import { ExpensesService } from '../../expenses/expenses.service';
 import { ReportsService } from '../reports.service';
 import type { BarsVisual } from '../visuals/types';
 import {
-  addDays,
   bucketEnd,
   comparisonEnd,
   bucketLabel,
