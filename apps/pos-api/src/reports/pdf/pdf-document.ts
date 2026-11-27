@@ -4,11 +4,15 @@ import type { Visual } from '../visuals/types';
 import { visualIsEmpty } from '../visuals/types';
 import { renderChart } from './chart-render';
 import { int, rp } from './format';
+import { PdfFonts } from './pdf-fonts';
+import type { Weight } from './fonts';
 
 // A4 report layout on pdfkit (UMK-1924 design features 37 and 38, owner ruling 2026-11-26: the PDF is made on the
 // server). Pure Node, no browser. The charts are the screen's own components (`chart-render.ts`).
 
-const font = (weight: 400 | 600 | 700): string =>
+// Be Vietnam Pro latin is the face of the report; a name in another script is drawn with a Noto Sans face for it
+// (`fonts.ts`, `pdf-fonts.ts`, UMK-2074).
+const font = (weight: Weight): string =>
   require.resolve(
     `@fontsource/be-vietnam-pro/files/be-vietnam-pro-latin-${weight}-normal.woff`,
   );
@@ -55,6 +59,7 @@ export interface PdfMeta {
 
 export class PdfBuilder {
   private readonly doc: PDFKit.PDFDocument;
+  private readonly fonts: PdfFonts;
   private readonly chunks: Buffer[] = [];
   private readonly left: number;
   private readonly width: number;
@@ -84,9 +89,7 @@ export class PdfBuilder {
     });
     this.left = 40;
     this.width = this.doc.page.width - 80;
-    this.doc.registerFont('Body', font(400));
-    this.doc.registerFont('Semi', font(600));
-    this.doc.registerFont('Bold', font(700));
+    this.fonts = new PdfFonts(this.doc, font);
     this.doc.on('data', (c: Buffer) => this.chunks.push(c));
     this.doc.font('Body').fontSize(9).fillColor(INK);
     this.titleBlock();
@@ -111,36 +114,38 @@ export class PdfBuilder {
 
   private titleBlock(): void {
     const d = this.doc;
-    d.font('Bold')
-      .fontSize(16)
-      .fillColor(INK)
-      .text(this.meta.title, this.left, d.y, { width: this.width });
-    d.font('Body')
-      .fontSize(9.5)
-      .fillColor(MUTED)
-      .text(this.meta.period, { width: this.width });
+    d.font('Bold').fontSize(16).fillColor(INK);
+    this.fonts.text(
+      this.meta.title,
+      this.left,
+      d.y,
+      { width: this.width },
+      700,
+    );
+    d.font('Body').fontSize(9.5).fillColor(MUTED);
+    this.fonts.text(
+      this.meta.period,
+      undefined,
+      undefined,
+      { width: this.width },
+      400,
+    );
     d.moveDown(0.8).fillColor(INK);
   }
 
   heading(text: string): void {
     this.ensure(40);
     this.doc.moveDown(0.6);
-    this.doc
-      .font('Bold')
-      .fontSize(11)
-      .fillColor(INK)
-      .text(text, this.left, this.y, { width: this.width });
+    this.doc.font('Bold').fontSize(11).fillColor(INK);
+    this.fonts.text(text, this.left, this.y, { width: this.width }, 700);
     this.doc.moveDown(0.3);
     this.doc.font('Body').fontSize(9);
   }
 
   note(text: string): void {
     this.ensure(24);
-    this.doc
-      .font('Body')
-      .fontSize(8)
-      .fillColor(MUTED)
-      .text(text, this.left, this.y, { width: this.width });
+    this.doc.font('Body').fontSize(8).fillColor(MUTED);
+    this.fonts.text(text, this.left, this.y, { width: this.width }, 400);
     this.doc.fillColor(INK).moveDown(0.4);
   }
 
@@ -154,22 +159,13 @@ export class PdfBuilder {
       items.slice(i, i + 2).forEach((it, k) => {
         const x = this.left + k * (col + 16);
         d.roundedRect(x, top, col, 30, 5).fill(WASH);
-        d.fillColor(MUTED)
-          .font('Body')
-          .fontSize(7.5)
-          .text(it.label, x + 8, top + 5, {
-            width: col - 16,
-            lineBreak: false,
-            ellipsis: true,
-          });
+        const one = { width: col - 16, lineBreak: false, ellipsis: true };
+        d.fillColor(MUTED).font('Body').fontSize(7.5);
+        this.fonts.text(it.label, x + 8, top + 5, one, 400);
         d.fillColor(it.strong ? BRAND : INK)
           .font('Bold')
-          .fontSize(it.strong ? 12 : 10.5)
-          .text(it.value, x + 8, top + 15, {
-            width: col - 16,
-            lineBreak: false,
-            ellipsis: true,
-          });
+          .fontSize(it.strong ? 12 : 10.5);
+        this.fonts.text(it.value, x + 8, top + 15, one, 700);
       });
       d.y = top + 36;
     }
@@ -215,12 +211,11 @@ export class PdfBuilder {
     }
     this.ensure(need);
     const top = this.y;
-    SVGtoPDF(d, r.svg, this.left, top, {
+    SVGtoPDF(d, this.fonts.svg(r.svg), this.left, top, {
       width: w,
       height: r.height * 0.75,
       preserveAspectRatio: 'xMinYMin meet',
-      fontCallback: (_family: string, bold: boolean) =>
-        bold ? 'Semi' : 'Body',
+      fontCallback: this.fonts.fontCallback,
       assumePt: false,
       // A chart never reads a file or the network: an <image> in it resolves to nothing.
       imageCallback: () => '',
@@ -247,23 +242,32 @@ export class PdfBuilder {
         const top = this.y;
         const lw = Math.min(this.width, 560);
         d.roundedRect(this.left, top + 1.5, 8, 8, 2).fill(e.color);
-        d.fillColor(INK).text(e.label, this.left + 14, top, {
-          width: lw * 0.5,
-          lineBreak: false,
-          ellipsis: true,
-        });
+        d.fillColor(INK);
+        this.fonts.text(
+          e.label,
+          this.left + 14,
+          top,
+          { width: lw * 0.5, lineBreak: false, ellipsis: true },
+          400,
+        );
         if (e.value)
-          d.text(e.value, this.left + lw * 0.5, top, {
-            width: lw * 0.34,
-            align: 'right',
-            lineBreak: false,
-          });
-        if (e.percent)
-          d.fillColor(MUTED).text(e.percent, this.left + lw * 0.86, top, {
-            width: lw * 0.14,
-            align: 'right',
-            lineBreak: false,
-          });
+          this.fonts.text(
+            e.value,
+            this.left + lw * 0.5,
+            top,
+            { width: lw * 0.34, align: 'right', lineBreak: false },
+            400,
+          );
+        if (e.percent) {
+          d.fillColor(MUTED);
+          this.fonts.text(
+            e.percent,
+            this.left + lw * 0.86,
+            top,
+            { width: lw * 0.14, align: 'right', lineBreak: false },
+            400,
+          );
+        }
         d.y = top + 12;
       }
       return;
@@ -272,9 +276,10 @@ export class PdfBuilder {
     const top = this.y;
     let x = this.left;
     for (const e of entries) {
-      const w = d.widthOfString(e.label) + 22;
+      const w = this.fonts.widthOfString(e.label, 400) + 22;
       d.roundedRect(x, top + 1.5, 8, 8, 2).fill(e.color);
-      d.fillColor(INK).text(e.label, x + 12, top, { lineBreak: false });
+      d.fillColor(INK);
+      this.fonts.text(e.label, x + 12, top, { lineBreak: false }, 400);
       x += w;
     }
     d.y = top + 14;
@@ -296,27 +301,37 @@ export class PdfBuilder {
       d.font(bold ? 'Semi' : 'Body')
         .fontSize(7.5)
         .fillColor(INK);
-      d.text(text, x + 4, y + 4, {
-        width: widths[i] - 8,
-        align: spec.columns[i].align ?? 'left',
-        lineBreak: false,
-        ellipsis: true,
-      });
+      this.fonts.text(
+        text,
+        x + 4,
+        y + 4,
+        {
+          width: widths[i] - 8,
+          align: spec.columns[i].align ?? 'left',
+          lineBreak: false,
+          ellipsis: true,
+        },
+        bold ? 600 : 400,
+      );
     };
     const head = () => {
       const top = this.y;
       d.rect(this.left, top, this.width, rowH).fill(WASH);
       let x = this.left;
       spec.columns.forEach((c, i) => {
-        d.font('Semi')
-          .fontSize(7.5)
-          .fillColor(MUTED)
-          .text(c.label, x + 4, top + 4, {
+        d.font('Semi').fontSize(7.5).fillColor(MUTED);
+        this.fonts.text(
+          c.label,
+          x + 4,
+          top + 4,
+          {
             width: widths[i] - 8,
             align: c.align ?? 'left',
             lineBreak: false,
             ellipsis: true,
-          });
+          },
+          600,
+        );
         x += widths[i];
       });
       d.y = top + rowH;
@@ -356,27 +371,35 @@ export class PdfBuilder {
       d.switchToPage(range.start + i);
       // The header and footer sit in the margins: lift the bottom margin so writing there adds no page.
       d.page.margins.bottom = 0;
-      d.font('Bold')
-        .fontSize(10)
-        .fillColor(INK)
-        .text(this.meta.storeName, this.left, 28, {
-          width: this.width * 0.6,
-          lineBreak: false,
-          ellipsis: true,
-        });
+      d.font('Bold').fontSize(10).fillColor(INK);
+      this.fonts.text(
+        this.meta.storeName,
+        this.left,
+        28,
+        { width: this.width * 0.6, lineBreak: false, ellipsis: true },
+        700,
+      );
       d.font('Body').fontSize(7.5).fillColor(MUTED);
       if (this.meta.storeAddress)
-        d.text(this.meta.storeAddress, this.left, 42, {
-          width: this.width * 0.6,
+        this.fonts.text(
+          this.meta.storeAddress,
+          this.left,
+          42,
+          { width: this.width * 0.6, lineBreak: false, ellipsis: true },
+          400,
+        );
+      this.fonts.text(
+        this.meta.title,
+        this.left + this.width * 0.55,
+        31,
+        {
+          width: this.width * 0.45,
+          align: 'right',
           lineBreak: false,
           ellipsis: true,
-        });
-      d.text(this.meta.title, this.left + this.width * 0.55, 31, {
-        width: this.width * 0.45,
-        align: 'right',
-        lineBreak: false,
-        ellipsis: true,
-      });
+        },
+        400,
+      );
       d.moveTo(this.left, 58)
         .lineTo(w - this.left, 58)
         .lineWidth(0.6)
@@ -387,11 +410,12 @@ export class PdfBuilder {
         .lineWidth(0.6)
         .stroke(LINE);
       d.font('Body').fontSize(7.5).fillColor(MUTED);
-      d.text(
+      this.fonts.text(
         `Dicetak ${this.meta.generatedAt} oleh ${this.meta.actorName} · UMKMall POS`,
         this.left,
         fy,
         { width: this.width * 0.75, lineBreak: false, ellipsis: true },
+        400,
       );
       d.text(
         `Halaman ${i + 1} dari ${range.count}`,
