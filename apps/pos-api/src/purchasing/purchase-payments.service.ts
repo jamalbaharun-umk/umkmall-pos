@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -17,25 +18,39 @@ import { type Db, InjectDb } from '../db/db.module';
 import {
   AGENT_LABEL,
   PURCHASE_PAYMENT_SOURCES,
+  PURCHASE_REFUND_DESTINATIONS,
   PURCHASE_RETURN_REASON_LABELS,
   PURCHASE_RETURN_REASONS,
   purchaseOrderLines,
   purchaseOrders,
   purchasePayments,
+  purchaseRefunds,
   purchaseReturnLines,
+  purchaseReturnReversals,
   purchaseReturns,
   staff,
   stockBatches,
   suppliers,
 } from '../db/schema';
-import { recordShiftCash, recordShiftCashInShift } from '../shifts/cash-ledger';
+import {
+  assertPersonAtTill,
+  recordShiftCash,
+  recordShiftCashInShift,
+} from '../shifts/cash-ledger';
 import { ShiftsService } from '../shifts/shifts.service';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import { StockService, type Tx } from '../stock/stock.service';
 import { recordStoreCash } from '../store-cash/store-cash-ledger';
 import type { PosSession } from '../tenancy/session';
-import { debtFromRow, paidSql, returnedSql } from './debt';
+import {
+  creditOf,
+  debtFromRow,
+  paidSql,
+  refundedSql,
+  refundsDue,
+  returnedSql,
+} from './debt';
 
 export const PaymentInput = z
   .object({
@@ -51,6 +66,17 @@ export type PaymentInput = z.infer<typeof PaymentInput>;
 export const VoidInput = z
   .object({ reason: z.string().trim().min(1).max(200) })
   .strict();
+
+export const RefundInput = z
+  .object({
+    amount: Rupiah.positive('Harus lebih dari 0'),
+    destination: z.enum(PURCHASE_REFUND_DESTINATIONS, {
+      errorMap: () => ({ message: 'Pilih Laci kasir atau Kas toko' }),
+    }),
+    note: z.string().trim().max(200).optional(),
+  })
+  .strict();
+export type RefundInput = z.infer<typeof RefundInput>;
 
 export const ReturnInput = z
   .object({
@@ -95,6 +121,8 @@ const hashOf = (parts: unknown[]) =>
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk catatan lain';
 const NO_SHIFT =
   'Belum ada shift buka. Buka shift untuk membayar dari laci, atau pilih Di luar laci.';
+const NO_SHIFT_REFUND =
+  'Belum ada shift buka. Buka shift untuk menerima uang ke laci, atau pilih Kas toko.';
 
 /** "PB-0012": the store's n-th purchase. */
 export const purchaseNumber = (n: number | null) =>
@@ -108,13 +136,17 @@ const actorName = (kind: unknown, name: unknown) =>
 type Key = { id: string; hash: string; actorId: string };
 
 /**
- * Supplier payments and purchase returns (UMK-1970, design feature 29). This file is the only writer of
- * `pos.purchase_payments`, `pos.purchase_returns`, `pos.purchase_return_lines` and of the cash ledger kinds
- * `purchase_payment`, `purchase_payment_reversal` (shift) and `purchase_payment_void` (store), guard in
- * src/guards.spec.ts. Every write locks the purchase row first (then its shift, then stock batches), so two
- * payments of one purchase are judged one after the other against the debt. Refusals carry a `code`:
- * `PURCHASE_OVERPAY` (with `remaining`), `PURCHASE_NOT_APPROVED`, `SHIFT_REQUIRED`, `DRAWER_INSUFFICIENT`
- * (with `drawerCash`), `RETURN_EXCEEDS_BATCH` (with `available`), `IDEMPOTENCY_KEY_REUSED`.
+ * Supplier payments, purchase returns, their undoing and the money a supplier hands back (UMK-1970, design feature
+ * 29). This file is the only writer of `pos.purchase_payments`, `pos.purchase_returns`, `pos.purchase_return_lines`,
+ * `pos.purchase_return_reversals`, `pos.purchase_refunds` and of the cash ledger kinds `purchase_payment`,
+ * `purchase_payment_reversal`, `purchase_refund`, `purchase_refund_reversal` (shift) and `purchase_payment_void`,
+ * `purchase_refund`, `purchase_refund_void` (store), guard in src/guards.spec.ts. Every write locks the purchase row
+ * first (then its shift, then stock batches), so two writes of one purchase are judged one after the other. Under
+ * that lock every write keeps live refunds <= the credit (what payments and returns put above the total).
+ * Refusals carry a `code`: `PURCHASE_OVERPAY` (with `remaining`), `PURCHASE_NOT_APPROVED`, `SHIFT_REQUIRED`,
+ * `DRAWER_INSUFFICIENT` (with `drawerCash`), `RETURN_EXCEEDS_BATCH` (with `available`), `IDEMPOTENCY_KEY_REUSED`,
+ * `REFUND_EXCEEDS_DUE` (with `refundDue`), `REFUND_RECEIVED` and `RETURN_REFUNDED` (with `refunded`),
+ * `RETURN_UNDO_BATCH_FULL`.
  */
 @Injectable()
 export class PurchasePaymentsService {
@@ -143,6 +175,7 @@ export class PurchasePaymentsService {
         supplierName: suppliers.name,
         paid: paidSql,
         returned: returnedSql,
+        refunded: refundedSql,
       })
       .from(purchaseOrders)
       .innerJoin(suppliers, eq(suppliers.id, purchaseOrders.supplierId))
@@ -151,6 +184,25 @@ export class PurchasePaymentsService {
       );
     const debt = debtFromRow({ ...row, dueInDays: null });
     return { ...row, debt };
+  }
+
+  /** 422 when the refunds received would be above the credit a void or an undo leaves (`paid`, `returned` after). */
+  private assertRefundsCovered(
+    order: { total: number; debt: { refunded: number } },
+    paid: number,
+    returned: number,
+    code: 'REFUND_RECEIVED' | 'RETURN_REFUNDED',
+  ) {
+    const refunded = order.debt.refunded;
+    if (refunded <= creditOf(order.total, paid, returned)) return;
+    throw codedError(
+      code,
+      '_',
+      code === 'REFUND_RECEIVED'
+        ? `Pemasok sudah mengembalikan ${formatRupiah(refunded)} yang bergantung pada pembayaran ini. Batalkan dulu uang retur yang diterima.`
+        : `Pemasok sudah mengembalikan ${formatRupiah(refunded)} untuk retur. Batalkan dulu uang retur yang diterima, lalu batalkan returnya.`,
+      { refunded },
+    );
   }
 
   private assertApproved(status: string, what: string) {
@@ -193,6 +245,23 @@ export class PurchasePaymentsService {
     return prior ?? null;
   }
 
+  private async refundByKey(db: Db | Tx, tenantId: string, key: string) {
+    const [prior] = await db
+      .select({
+        id: purchaseRefunds.id,
+        hash: purchaseRefunds.requestHash,
+        actorId: purchaseRefunds.actorId,
+      })
+      .from(purchaseRefunds)
+      .where(
+        and(
+          eq(purchaseRefunds.tenantId, tenantId),
+          eq(purchaseRefunds.idempotencyKey, key),
+        ),
+      );
+    return prior ?? null;
+  }
+
   private async returnByKey(db: Db | Tx, tenantId: string, key: string) {
     const [prior] = await db
       .select({
@@ -216,13 +285,6 @@ export class PurchasePaymentsService {
    * permission that holds a drawer (`sales.create`); one `purchase_payment` cash-out entry. Not an expense.
    */
   async pay(s: PosSession, orderId: string, key: string, input: PaymentInput) {
-    if (input.source === 'drawer' && !hasPermission(s, 'sales.create'))
-      throw new ForbiddenException({
-        message: 'Membayar dari laci butuh izin kasir. Pilih Di luar laci.',
-        error: 'Forbidden',
-        statusCode: 403,
-        code: 'DRAWER_PERMISSION',
-      });
     const hash = hashOf([
       'payment',
       orderId,
@@ -241,6 +303,14 @@ export class PurchasePaymentsService {
         const order = await this.lockOrder(tx, s.tenantId, orderId);
         const prior = await this.paymentByKey(tx, s.tenantId, key);
         if (prior) return replay(prior);
+        // After both replay checks: a retry of a recorded payment answers it, whatever the actor holds now.
+        if (input.source === 'drawer' && !hasPermission(s, 'sales.create'))
+          throw new ForbiddenException({
+            message: 'Membayar dari laci butuh izin kasir. Pilih Di luar laci.',
+            error: 'Forbidden',
+            statusCode: 403,
+            code: 'DRAWER_PERMISSION',
+          });
         this.assertApproved(order.status, 'dibayar');
         const remaining = order.debt.remaining ?? 0;
         if (input.amount > remaining)
@@ -319,7 +389,7 @@ export class PurchasePaymentsService {
   ) {
     await this.db.transaction(async (tx) => {
       // Lock order: the purchase row, the payment row, then its shift.
-      await this.lockOrder(tx, s.tenantId, orderId);
+      const order = await this.lockOrder(tx, s.tenantId, orderId);
       const [row] = await tx
         .select({
           source: purchasePayments.source,
@@ -338,6 +408,13 @@ export class PurchasePaymentsService {
         .for('update');
       if (!row) throw new NotFoundException();
       if (row.voidedAt) return;
+      // Money the supplier handed back because of this payment cannot stay recorded once the payment is gone.
+      this.assertRefundsCovered(
+        order,
+        order.debt.paid - row.amount,
+        order.debt.returned,
+        'REFUND_RECEIVED',
+      );
       const drawerReversed =
         row.source === 'drawer' && row.shiftId
           ? await recordShiftCashInShift(tx, s, row.shiftId, {
@@ -378,7 +455,7 @@ export class PurchasePaymentsService {
    * Sends goods of an approved purchase back to its supplier. Each line leaves the stock batch it was received as
    * (StockService, under the batch's row lock), at most what is left in it (`RETURN_EXCEEDS_BATCH`), at that
    * batch's cost; the debt goes down by Σ qty × cost. Worth more than the debt: allowed, the debt stops at 0 and
-   * the difference is kept as money the supplier owes back (`refundDue`, outside the system). Append-only.
+   * the difference is money the supplier owes back (`refundDue`, outside the system, computed on read). Append-only.
    */
   async createReturn(
     s: PosSession,
@@ -472,7 +549,6 @@ export class PurchasePaymentsService {
             'lines',
             'Barang dengan harga beli Rp0 tidak mengurangi hutang; tidak ada yang dicatat',
           );
-        const refundDue = Math.max(0, total - (order.debt.remaining ?? 0));
         // Claims the key: a concurrent duplicate fails here and its stock draw rolls back.
         await tx.insert(purchaseReturns).values({
           id: newId,
@@ -481,7 +557,6 @@ export class PurchasePaymentsService {
           reason: input.reason,
           note: input.note || null,
           total,
-          refundDue,
           actorId: s.actorId,
           actorKind: s.kind,
           idempotencyKey: key,
@@ -501,6 +576,304 @@ export class PurchasePaymentsService {
       id = replay(prior);
     }
     return this.returnRow(s.tenantId, orderId, id);
+  }
+
+  /**
+   * Undoes a return (append-only: one `purchase_return_reversals` row, the return stays). Each line's units go back
+   * into the batch they left, at that batch's cost, and the debt rises by the return's total; stock sold since does
+   * not matter. Refused while the money the supplier already handed back would be above the credit left
+   * (`RETURN_REFUNDED`). A repeat answers the first reversal and changes nothing.
+   */
+  async reverseReturn(
+    s: PosSession,
+    orderId: string,
+    returnId: string,
+    reason: string,
+  ) {
+    try {
+      await this.db.transaction(async (tx) => {
+        // Lock order: the purchase row, then the batches (in product-id order, as a sale takes them).
+        const order = await this.lockOrder(tx, s.tenantId, orderId);
+        const [ret] = await tx
+          .select({ total: purchaseReturns.total })
+          .from(purchaseReturns)
+          .where(
+            and(
+              eq(purchaseReturns.tenantId, s.tenantId),
+              eq(purchaseReturns.orderId, orderId),
+              eq(purchaseReturns.id, returnId),
+            ),
+          );
+        if (!ret) throw new NotFoundException();
+        const [done] = await tx
+          .select({ id: purchaseReturnReversals.id })
+          .from(purchaseReturnReversals)
+          .where(
+            and(
+              eq(purchaseReturnReversals.tenantId, s.tenantId),
+              eq(purchaseReturnReversals.returnId, returnId),
+            ),
+          );
+        if (done) return;
+        this.assertApproved(order.status, 'dibatalkan returnya');
+        this.assertRefundsCovered(
+          order,
+          order.debt.paid,
+          order.debt.returned - ret.total,
+          'RETURN_REFUNDED',
+        );
+        const reversalId = randomUUID();
+        const lines = await tx
+          .select({
+            batchId: purchaseReturnLines.batchId,
+            qty: purchaseReturnLines.qty,
+          })
+          .from(purchaseReturnLines)
+          .where(
+            and(
+              eq(purchaseReturnLines.tenantId, s.tenantId),
+              eq(purchaseReturnLines.returnId, returnId),
+            ),
+          )
+          .orderBy(asc(purchaseReturnLines.productId));
+        for (const l of lines)
+          await this.stock.undoReturnToSupplier(tx, {
+            tenantId: s.tenantId,
+            batchId: l.batchId,
+            qty: l.qty,
+            refId: reversalId,
+            actorId: s.actorId,
+          });
+        await tx.insert(purchaseReturnReversals).values({
+          id: reversalId,
+          tenantId: s.tenantId,
+          returnId,
+          reason,
+          actorId: s.actorId,
+          actorKind: s.kind,
+        });
+      });
+    } catch (e) {
+      // A concurrent undo of the same return committed first: its reversal is the answer.
+      if (!isUniqueViolation(e)) throw e;
+    }
+    return this.returnRow(s.tenantId, orderId, returnId);
+  }
+
+  /**
+   * Records money the supplier hands back after a return (or an overpayment): at most what is still due back
+   * (`REFUND_EXCEEDS_DUE`), partial allowed. Into the drawer: a person at the till, `sales.create` and the actor's own
+   * open shift; one `purchase_refund` cash-in entry. Into the store cash: one `purchase_refund` store entry. Not income.
+   */
+  async refund(
+    s: PosSession,
+    orderId: string,
+    key: string,
+    input: RefundInput,
+  ) {
+    // Cash recorded by hand into a drawer is for a person at the till, checked before any query.
+    if (input.destination === 'drawer') assertPersonAtTill(s.kind);
+    const hash = hashOf([
+      'refund',
+      orderId,
+      input.amount,
+      input.destination,
+      input.note || null,
+    ]);
+    const replay = this.replayer(s, hash);
+    const done = await this.refundByKey(this.db, s.tenantId, key);
+    if (done) return this.refundRow(s.tenantId, orderId, replay(done));
+    let id: string;
+    try {
+      id = await this.db.transaction(async (tx) => {
+        const order = await this.lockOrder(tx, s.tenantId, orderId);
+        const prior = await this.refundByKey(tx, s.tenantId, key);
+        if (prior) return replay(prior);
+        if (input.destination === 'drawer' && !hasPermission(s, 'sales.create'))
+          throw new ForbiddenException({
+            message: 'Menerima uang ke laci butuh izin kasir. Pilih Kas toko.',
+            error: 'Forbidden',
+            statusCode: 403,
+            code: 'DRAWER_PERMISSION',
+          });
+        this.assertApproved(order.status, 'menerima uang retur');
+        const due = order.debt.refundDue;
+        if (input.amount > due)
+          throw codedError(
+            'REFUND_EXCEEDS_DUE',
+            'amount',
+            due === 0
+              ? 'Tidak ada uang yang masih harus dikembalikan pemasok untuk pembelian ini'
+              : `Jumlah ${formatRupiah(input.amount)} melebihi uang yang masih harus dikembalikan pemasok (${formatRupiah(due)})`,
+            { refundDue: due },
+          );
+        const newId = randomUUID();
+        const note = `${purchaseNumber(order.number)} · ${order.supplierName}`;
+        let shiftId: string | null = null;
+        if (input.destination === 'drawer')
+          shiftId = await recordShiftCash(
+            tx,
+            s,
+            {
+              direction: 'in',
+              kind: 'purchase_refund',
+              amount: input.amount,
+              refId: newId,
+              note,
+            },
+            NO_SHIFT_REFUND,
+          );
+        else
+          await recordStoreCash(tx, s, {
+            direction: 'in',
+            kind: 'purchase_refund',
+            amount: input.amount,
+            refId: newId,
+            note,
+          });
+        // Claims the key: a concurrent duplicate fails here and rolls its ledger entry back.
+        await tx.insert(purchaseRefunds).values({
+          id: newId,
+          tenantId: s.tenantId,
+          orderId,
+          amount: input.amount,
+          destination: input.destination,
+          note: input.note || null,
+          shiftId,
+          actorId: s.actorId,
+          actorKind: s.kind,
+          idempotencyKey: key,
+          requestHash: hash,
+        });
+        return newId;
+      });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+      const prior = await this.refundByKey(this.db, s.tenantId, key);
+      if (!prior) throw e;
+      id = replay(prior);
+    }
+    return this.refundRow(s.tenantId, orderId, id);
+  }
+
+  /**
+   * The correction of a refund, as of a payment: the row stays, marked voided, and what is due back grows again. A
+   * drawer refund whose shift is still open gets one cash-out entry in that shift (`DRAWER_INSUFFICIENT` when the
+   * drawer no longer holds it); otherwise the cash leaves the store cash. Repeating changes nothing.
+   */
+  async voidRefund(
+    s: PosSession,
+    orderId: string,
+    refundId: string,
+    reason: string,
+  ) {
+    await this.db.transaction(async (tx) => {
+      // Lock order: the purchase row, the refund row, then its shift.
+      await this.lockOrder(tx, s.tenantId, orderId);
+      const [row] = await tx
+        .select({
+          destination: purchaseRefunds.destination,
+          amount: purchaseRefunds.amount,
+          shiftId: purchaseRefunds.shiftId,
+          voidedAt: purchaseRefunds.voidedAt,
+        })
+        .from(purchaseRefunds)
+        .where(
+          and(
+            eq(purchaseRefunds.tenantId, s.tenantId),
+            eq(purchaseRefunds.orderId, orderId),
+            eq(purchaseRefunds.id, refundId),
+          ),
+        )
+        .for('update');
+      if (!row) throw new NotFoundException();
+      if (row.voidedAt) return;
+      let drawerReversed: boolean | null = null;
+      if (row.destination === 'drawer' && row.shiftId) {
+        drawerReversed = await recordShiftCashInShift(tx, s, row.shiftId, {
+          direction: 'out',
+          kind: 'purchase_refund_reversal',
+          amount: row.amount,
+          refId: refundId,
+        });
+        if (drawerReversed) {
+          // Under the shift's lock: the drawer must still hold the cash it takes back.
+          const after = await this.shifts.expectedCashOf(
+            tx,
+            s.tenantId,
+            row.shiftId,
+          );
+          if (after < 0)
+            throw codedError(
+              'DRAWER_INSUFFICIENT',
+              '_',
+              `Uang di laci (${formatRupiah(Math.max(after + row.amount, 0))}) kurang dari jumlah yang dibatalkan.`,
+              { drawerCash: Math.max(after + row.amount, 0) },
+            );
+        }
+      }
+      if (drawerReversed !== true)
+        await recordStoreCash(tx, s, {
+          direction: 'out',
+          kind: 'purchase_refund_void',
+          amount: row.amount,
+          refId: refundId,
+          note: reason,
+        });
+      await tx
+        .update(purchaseRefunds)
+        .set({
+          voidedAt: new Date(),
+          voidedById: s.actorId,
+          voidedByKind: s.kind,
+          voidReason: reason,
+          drawerReversed,
+        })
+        .where(
+          and(
+            eq(purchaseRefunds.tenantId, s.tenantId),
+            eq(purchaseRefunds.id, refundId),
+          ),
+        );
+    });
+    return this.refundRow(s.tenantId, orderId, refundId);
+  }
+
+  /** The purchase's refunds, oldest first, voided ones included. */
+  async refunds(tenantId: string, orderId: string, refundId?: string) {
+    const r = purchaseRefunds;
+    return this.db
+      .select({
+        id: r.id,
+        amount: r.amount,
+        destination: r.destination,
+        note: r.note,
+        shiftId: r.shiftId,
+        actorName: actorName(r.actorKind, staff.name),
+        createdAt: r.createdAt,
+        voidedAt: r.voidedAt,
+        voidReason: r.voidReason,
+        drawerReversed: r.drawerReversed,
+      })
+      .from(r)
+      .leftJoin(
+        staff,
+        and(eq(staff.tenantId, r.tenantId), eq(staff.id, r.actorId)),
+      )
+      .where(
+        and(
+          eq(r.tenantId, tenantId),
+          eq(r.orderId, orderId),
+          refundId ? eq(r.id, refundId) : undefined,
+        ),
+      )
+      .orderBy(asc(r.createdAt), asc(r.id));
+  }
+
+  private async refundRow(tenantId: string, orderId: string, id: string) {
+    const [row] = await this.refunds(tenantId, orderId, id);
+    if (!row) throw new NotFoundException();
+    return row;
   }
 
   private paymentColumns() {
@@ -549,30 +922,51 @@ export class PurchasePaymentsService {
   /** The purchase's returns, oldest first, each with its lines. */
   async returns(tenantId: string, orderId: string, returnId?: string) {
     const r = purchaseReturns;
+    const rr = purchaseReturnReversals;
+    const reverser = alias(staff, 'reverser');
     const heads = await this.db
       .select({
         id: r.id,
         reason: r.reason,
         note: r.note,
         total: r.total,
-        refundDue: r.refundDue,
         actorName: actorName(r.actorKind, staff.name),
         createdAt: r.createdAt,
+        // Undone (UMK-1970 addition): when, why, by whom; null while the return stands.
+        reversedAt: rr.createdAt,
+        reverseReason: rr.reason,
+        reversedByName: sql<string | null>`case when ${rr.id} is null then null
+          else ${actorName(rr.actorKind, reverser.name)} end`,
       })
       .from(r)
       .leftJoin(
         staff,
         and(eq(staff.tenantId, r.tenantId), eq(staff.id, r.actorId)),
       )
-      .where(
-        and(
-          eq(r.tenantId, tenantId),
-          eq(r.orderId, orderId),
-          returnId ? eq(r.id, returnId) : undefined,
-        ),
+      .leftJoin(rr, and(eq(rr.tenantId, r.tenantId), eq(rr.returnId, r.id)))
+      .leftJoin(
+        reverser,
+        and(eq(reverser.tenantId, rr.tenantId), eq(reverser.id, rr.actorId)),
       )
+      .where(and(eq(r.tenantId, tenantId), eq(r.orderId, orderId)))
       .orderBy(asc(r.createdAt), asc(r.id));
     if (heads.length === 0) return [];
+    // Every return of the purchase is read: what is due back depends on the ones before and on today's payments.
+    const [order] = await this.db
+      .select({ total: purchaseOrders.total, paid: paidSql })
+      .from(purchaseOrders)
+      .where(
+        and(
+          eq(purchaseOrders.tenantId, tenantId),
+          eq(purchaseOrders.id, orderId),
+        ),
+      );
+    const due = refundsDue(
+      order?.total ?? 0,
+      Number(order?.paid ?? 0),
+      // An undone return puts nothing above the total.
+      heads.map((h) => (h.reversedAt ? 0 : h.total)),
+    );
     const l = purchaseReturnLines;
     const lines = await this.db
       .select({
@@ -592,18 +986,22 @@ export class PurchasePaymentsService {
           ),
         ),
       );
-    return heads.map((h) => ({
-      ...h,
-      reasonLabel: PURCHASE_RETURN_REASON_LABELS[h.reason],
-      lines: lines
-        .filter((x) => x.returnId === h.id)
-        .map((x) => ({
-          orderLineId: x.orderLineId,
-          productId: x.productId,
-          qty: x.qty,
-          unitCost: x.unitCost,
-        })),
-    }));
+    return heads
+      .map((h, i) => ({ h, refundDue: due[i] }))
+      .filter(({ h }) => !returnId || h.id === returnId)
+      .map(({ h, refundDue }) => ({
+        ...h,
+        refundDue,
+        reasonLabel: PURCHASE_RETURN_REASON_LABELS[h.reason],
+        lines: lines
+          .filter((x) => x.returnId === h.id)
+          .map((x) => ({
+            orderLineId: x.orderLineId,
+            productId: x.productId,
+            qty: x.qty,
+            unitCost: x.unitCost,
+          })),
+      }));
   }
 
   private async returnRow(tenantId: string, orderId: string, id: string) {
@@ -612,13 +1010,16 @@ export class PurchasePaymentsService {
     return row;
   }
 
-  /** Per purchase line: units returned so far and what is left in its stock batch (the most a return may take). */
+  /** Per purchase line: units returned so far (undone returns left out) and what is left in its stock batch (the most a return may take). */
   async lineStock(tenantId: string, orderId: string) {
     const rows = await this.db.execute(sql`
       select l.id as line_id,
              coalesce(b.qty_remaining, 0) as returnable,
              coalesce((select sum(rl.qty) from pos.purchase_return_lines rl
-                        where rl.tenant_id = l.tenant_id and rl.order_line_id = l.id), 0) as returned_qty
+                        where rl.tenant_id = l.tenant_id and rl.order_line_id = l.id
+                          and not exists (select 1 from pos.purchase_return_reversals rr
+                                           where rr.tenant_id = rl.tenant_id and rr.return_id = rl.return_id)), 0)
+               as returned_qty
         from pos.purchase_order_lines l
         left join pos.stock_batches b
           on b.tenant_id = l.tenant_id and b.source = 'purchase' and b.source_id = l.order_id

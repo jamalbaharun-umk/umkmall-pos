@@ -2,7 +2,7 @@ import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { searchPath } from '@/lib/product-search'
-import type { Payment, PaymentStatus, PaySource, Return } from './-debt'
+import type { Payment, PaymentStatus, PaySource, Refund, RefundDestination, Return } from './-debt'
 
 // Server functions for the U6 screens (pemasok, pembelian, stok opname). pos-api validates and computes
 // every total; these only relay. Mutations return a Result instead of throwing, for forms.
@@ -26,6 +26,9 @@ export type OrderSummary = {
   /** Still owed; null for a draft or cancelled purchase. */
   remaining?: number | null
   credit?: number
+  /** Of the credit, what the supplier handed back, and what is still to come back (UMK-1970 additions). */
+  refunded?: number
+  refundDue?: number
   paymentStatus: PaymentStatus | null
   overdueDays: number | null
 }
@@ -47,6 +50,7 @@ export type Order = OrderSummary & {
   }[]
   payments?: Payment[]
   returns?: Return[]
+  refunds?: Refund[]
 }
 export type OpnameSummary = { id: string; status: 'draft' | 'approved'; note: string | null; createdAt: string }
 export type Opname = OpnameSummary & {
@@ -169,6 +173,8 @@ export type MoneyResult<T> =
       remaining?: number
       drawerCash?: number
       available?: number
+      refundDue?: number
+      refunded?: number
     }
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) ? v : undefined)
@@ -195,6 +201,8 @@ async function sendMoney<T>(path: string, body: unknown, key?: string): Promise<
     remaining: num(err.remaining),
     drawerCash: num(err.drawerCash),
     available: num(err.available),
+    refundDue: num(err.refundDue),
+    refunded: num(err.refunded),
   }
 }
 
@@ -216,6 +224,26 @@ export const returnGoods = createServerFn({ method: 'POST' })
     (d: { id: string; key: string; body: { reason: string; note?: string; lines: { lineId: string; qty: number }[] } }) => d,
   )
   .handler(({ data }) => sendMoney<Return>(`/purchasing/orders/${enc(data.id)}/returns`, data.body, data.key))
+
+export const reverseReturn = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; returnId: string; reason: string }) => d)
+  .handler(({ data }) =>
+    sendMoney<Return>(`/purchasing/orders/${enc(data.id)}/returns/${enc(data.returnId)}/reverse`, {
+      reason: data.reason,
+    }),
+  )
+
+export const receiveRefund = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; key: string; body: { amount: number; destination: RefundDestination; note?: string } }) => d)
+  .handler(({ data }) => sendMoney<Refund>(`/purchasing/orders/${enc(data.id)}/refunds`, data.body, data.key))
+
+export const voidRefund = createServerFn({ method: 'POST' })
+  .validator((d: { id: string; refundId: string; reason: string }) => d)
+  .handler(({ data }) =>
+    sendMoney<Refund>(`/purchasing/orders/${enc(data.id)}/refunds/${enc(data.refundId)}/void`, {
+      reason: data.reason,
+    }),
+  )
 
 export const setDueDate = createServerFn({ method: 'POST' })
   .validator((d: { id: string; dueDate: string | null }) => d)

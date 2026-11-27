@@ -85,7 +85,7 @@ function CashDrawerPage() {
             {rows.length === 0 ? (
               <Empty
                 title="Belum ada uang masuk atau keluar manual"
-                hint="Tambah modal laci, setor ke bank, atau setoran penagih yang Anda terima akan muncul di sini."
+                hint="Tambah modal laci, setor ke bank, setoran penagih yang Anda terima, dan bayar pemasok dari laci akan muncul di sini."
               />
             ) : (
               <>

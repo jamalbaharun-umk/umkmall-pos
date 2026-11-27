@@ -101,4 +101,19 @@ describe('manualEntries', () => {
     ]
     expect(manualEntries(rows).map((r) => r.kind)).toEqual(['collector_deposit', 'manual_in'])
   })
+  it('also lists supplier payments and supplier refunds through the drawer, and their reversals (UMK-2083)', () => {
+    const rows = [
+      { kind: 'purchase_payment', createdAt: '2026-11-25T01:00:00Z' },
+      { kind: 'purchase_payment_reversal', createdAt: '2026-11-25T02:00:00Z' },
+      { kind: 'purchase_refund', createdAt: '2026-11-25T03:00:00Z' },
+      { kind: 'purchase_refund_reversal', createdAt: '2026-11-25T04:00:00Z' },
+      { kind: 'expense', createdAt: '2026-11-25T05:00:00Z' },
+    ]
+    expect(manualEntries(rows).map((r) => r.kind)).toEqual([
+      'purchase_refund_reversal',
+      'purchase_refund',
+      'purchase_payment_reversal',
+      'purchase_payment',
+    ])
+  })
 })

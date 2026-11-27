@@ -255,6 +255,32 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       { reason: 'rusak', lines: [{ lineId: po.body.lines[0].id, qty: 1 }] },
       randomUUID(),
     ).expect(201);
+    // A second return undone (purchase_return_reversals); then paid in full and one more unit sent back, money due
+    // back that the supplier partly hands back into the store cash (purchase_refunds).
+    const undone = await post(
+      `/purchasing/orders/${po.body.id}/returns`,
+      { reason: 'rusak', lines: [{ lineId: po.body.lines[0].id, qty: 1 }] },
+      randomUUID(),
+    ).expect(201);
+    await post(
+      `/purchasing/orders/${po.body.id}/returns/${undone.body.id}/reverse`,
+      { reason: 'Salah catat' },
+    ).expect(200);
+    await post(
+      `/purchasing/orders/${po.body.id}/payments`,
+      { amount: 7100, source: 'outside' },
+      randomUUID(),
+    ).expect(201);
+    await post(
+      `/purchasing/orders/${po.body.id}/returns`,
+      { reason: 'rusak', lines: [{ lineId: po.body.lines[0].id, qty: 1 }] },
+      randomUUID(),
+    ).expect(201);
+    await post(
+      `/purchasing/orders/${po.body.id}/refunds`,
+      { amount: 500, destination: 'store_cash' },
+      randomUUID(),
+    ).expect(201);
 
     // A void PIN and a voided cash sale (UMK-1962): void_pins, sale_voids, sale_void_returns.
     await http()

@@ -8,6 +8,8 @@ import {
   noMatchText,
   parseAmount,
   payAmountError,
+  refundAmountError,
+  refundNotice,
   refusalTodo,
   returnPreview,
   returnSummary,
@@ -78,11 +80,11 @@ describe('purchase debt helpers (UMK-1970)', () => {
       'Stok berkurang 10 pcs. Hutang berkurang Rp28.000 (Rp2.800 × 10). Sisa hutang jadi Rp1.372.000.',
     )
     expect(returnPreview(lines, { a: 41 }, 1_400_000).overBatch).toBe(true)
-    // After it was paid in full: the debt stays 0, the money comes back outside the system.
+    // After it was paid in full: the debt stays 0, the supplier owes the money back.
     const paid = returnPreview(lines, { a: 2 }, 0)
     expect(paid).toMatchObject({ total: 5_600, remainingAfter: 0, refundDue: 5_600 })
     expect(returnSummary(paid, null, rp)).toBe(
-      'Stok berkurang 2 pcs. Hutang berkurang Rp0. Sisa hutang jadi Rp0. Rp5.600 kembali dari pemasok di luar sistem (dicatat sebagai catatan).',
+      'Stok berkurang 2 pcs. Hutang berkurang Rp0. Sisa hutang jadi Rp0. Rp5.600 harus dikembalikan pemasok; catat lewat Terima uang retur.',
     )
   })
 
@@ -93,6 +95,12 @@ describe('purchase debt helpers (UMK-1970)', () => {
       'Isi paling banyak Rp300.000, atau pilih Di luar laci.',
     )
     expect(refusalTodo('RETURN_EXCEEDS_BATCH', { available: 2 }, rp)).toBe('Kurangi jumlahnya menjadi paling banyak 2.')
+    expect(refusalTodo('REFUND_EXCEEDS_DUE', { refundDue: 20_000 }, rp)).toBe('Isi paling banyak Rp20.000.')
+    expect(refusalTodo('REFUND_EXCEEDS_DUE', { refundDue: 0 }, rp)).toContain('Tidak ada lagi')
+    expect(refusalTodo('RETURN_REFUNDED', { refunded: 10_000 }, rp)).toBe(
+      'Batalkan dulu uang retur yang diterima (Rp10.000) di riwayat, lalu coba lagi.',
+    )
+    expect(refusalTodo('REFUND_RECEIVED', { refunded: 10_000 }, rp)).toContain('Rp10.000')
     expect(refusalTodo('OTHER', {}, rp)).toBeUndefined()
   })
 
@@ -138,8 +146,67 @@ describe('purchase debt helpers (UMK-1970)', () => {
       ['Retur', '10 Indomie Goreng · Barang rusak', -28_000],
     ])
     expect(rows[1].voided).toBe(true)
+    expect(rows[1].undo).toEqual({ type: 'payment', id: 'p1' })
+    expect(rows[2].plus).toBe(true)
+    expect(rows[3].undo).toEqual({ type: 'return', id: 'r1' })
     expect(signedRupiah(-1_000_000, rp)).toBe('−Rp1.000.000')
     expect(signedRupiah(50_000, rp, true)).toBe('+Rp50.000')
+  })
+
+  it('history: an undone return keeps its row plus a reversal; refunds and their voids say where the money went', () => {
+    const rows = historyRows(
+      { approvedAt: null, total: 150_000, lines: [{ id: 'l1', productName: 'Mentega', qty: 10 }] },
+      [],
+      [
+        {
+          id: 'r1',
+          reason: 'rusak',
+          reasonLabel: 'Barang rusak',
+          note: null,
+          total: 30_000,
+          refundDue: 30_000,
+          actorName: 'Pemilik',
+          createdAt: '2026-11-26T01:00:00Z',
+          reversedAt: '2026-11-26T05:00:00Z',
+          reverseReason: 'Salah catat',
+          reversedByName: 'Pemilik',
+          lines: [{ orderLineId: 'l1', qty: 2, unitCost: 15_000 }],
+        },
+      ],
+      rp,
+      [
+        {
+          id: 'f1',
+          amount: 10_000,
+          destination: 'drawer',
+          note: null,
+          actorName: 'Pemilik',
+          createdAt: '2026-11-26T02:00:00Z',
+          voidedAt: '2026-11-26T03:00:00Z',
+          voidReason: 'Salah jumlah',
+          drawerReversed: false,
+        },
+      ],
+    )
+    expect(rows.map((r) => [r.kind, r.detail, r.amount, !!r.voided])).toEqual([
+      ['Retur', '2 Mentega · Barang rusak · Rp30.000 harus dikembalikan pemasok', -30_000, true],
+      ['Uang retur diterima', 'masuk laci kasir', 10_000, true],
+      ['Uang retur dibatalkan', 'Salah jumlah · uang keluar dari kas toko', 10_000, false],
+      ['Retur dibatalkan', 'Salah catat · barang kembali ke stok', 30_000, false],
+    ])
+    expect(rows[1].undo).toEqual({ type: 'refund', id: 'f1' })
+    expect(rows[3].plus).toBe(true)
+  })
+
+  it('caps money back at what is due and explains where it goes', () => {
+    expect(refundAmountError(0, 30_000)).toBe('Harus lebih dari 0')
+    expect(refundAmountError(30_001, 30_000)).toContain('melebihi')
+    expect(refundAmountError(30_000, 30_000)).toBeUndefined()
+    expect(refundNotice('store_cash', 10_000, null, rp).tone).toBe('info')
+    expect(refundNotice('drawer', 10_000, null, rp)).toMatchObject({ tone: 'warning' })
+    expect(refundNotice('drawer', 10_000, 100_000, rp).text).toBe(
+      'Laci bertambah Rp10.000 (jadi Rp110.000). Butuh shift terbuka.',
+    )
   })
 
   it('reads typed amounts as integer rupiah', () => {

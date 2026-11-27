@@ -39,6 +39,8 @@ export const STORE_CASH_DIRECTIONS = ['in', 'out', 'transfer'] as const;
  * - receivable_reversal_closed_shift (out): ref_id = the reversal row in pos.receivable_payments (UMK-1971), the cash
  *   of a corrected instalment whose shift is already closed (owner ruling 2026-11-26): the closed shift and today's
  *   drawer never change, the store's cash gives it back, as expense_void does the other way. Not a collector's.
+ * - purchase_refund (in): ref_id = pos.purchase_refunds.id, money a supplier handed back, into the store cash.
+ *   purchase_refund_void (out): the same id, that refund voided (or a drawer refund voided after its shift closed).
  */
 export const STORE_CASH_KINDS = [
   'receivable_payment',
@@ -47,6 +49,8 @@ export const STORE_CASH_KINDS = [
   'purchase_payment_void',
   'receivable_reversal',
   'receivable_reversal_closed_shift',
+  'purchase_refund',
+  'purchase_refund_void',
 ] as const;
 
 export const storeCashEntries = pos

@@ -125,7 +125,7 @@ Screenshots: `.evidence/m2-browser/01-*.png` for each step marked 📷.
 8. **Purchase (stock in).** `/pembelian/baru`: supplier CV Sumber Pangan. Lines: Teh Botol 48 × 3000, Beras 5kg
    10 × 60000, Gula 1kg 20 × 13000, Kerupuk 10 × 2000 → **Simpan sebagai draf**.
    - [ ] The draft total is **Rp1.024.000**. 📷
-   - [ ] Open it → **Setujui dan tambah stok** → **Setujui**. The status is approved and the purchase is locked.
+   - [ ] Open it → **Setujui, tambah stok** → **Setujui**. The status is approved and the purchase is locked.
    - [ ] `/catalog/products` stock: Teh 48, Beras 10, Gula 20, Kerupuk 10.
 9. **Payment methods.** `/metode-pembayaran`: add `Debit BCA` (Debit) and `Kasbon` (Kasbon (kredit)).
    - [ ] Three methods are listed: Tunai, Debit BCA, Kasbon.
