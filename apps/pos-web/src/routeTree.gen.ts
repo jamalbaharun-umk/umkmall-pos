@@ -21,6 +21,7 @@ import { Route as KasirMasukRouteImport } from './routes/kasir/masuk'
 import { Route as KasirTutupRouteImport } from './routes/kasir/tutup'
 import { Route as LaporanIndexRouteImport } from './routes/laporan/index'
 import { Route as LaporanJenisRouteImport } from './routes/laporan/$jenis'
+import { Route as LaporanPenjualanPengeluaranRouteImport } from './routes/laporan/penjualan-pengeluaran'
 import { Route as LaporanUntungRugiRouteImport } from './routes/laporan/untung-rugi'
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
 import { Route as MasukUlangRouteImport } from './routes/masuk/ulang'
@@ -61,6 +62,7 @@ import { Route as LaporanCsvJenisRouteImport } from './routes/laporan/csv.$jenis
 import { Route as LaporanCsvKasbonRouteImport } from './routes/laporan/csv.kasbon'
 import { Route as LaporanKasbonIndexRouteImport } from './routes/laporan/kasbon.index'
 import { Route as LaporanKasbonMemberIdRouteImport } from './routes/laporan/kasbon.$memberId'
+import { Route as LaporanPdfJenisRouteImport } from './routes/laporan/pdf.$jenis'
 import { Route as PembelianIdUbahRouteImport } from './routes/pembelian/$id_.ubah'
 import { Route as StafPeranIndexRouteImport } from './routes/staf/peran/index'
 import { Route as StafPeranIdRouteImport } from './routes/staf/peran/$id'
@@ -129,6 +131,12 @@ const LaporanJenisRoute = LaporanJenisRouteImport.update({
   path: '/laporan/$jenis',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LaporanPenjualanPengeluaranRoute =
+  LaporanPenjualanPengeluaranRouteImport.update({
+    id: '/laporan/penjualan-pengeluaran',
+    path: '/laporan/penjualan-pengeluaran',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const LaporanUntungRugiRoute = LaporanUntungRugiRouteImport.update({
   id: '/laporan/untung-rugi',
   path: '/laporan/untung-rugi',
@@ -330,6 +338,11 @@ const LaporanKasbonMemberIdRoute = LaporanKasbonMemberIdRouteImport.update({
   path: '/laporan/kasbon/$memberId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LaporanPdfJenisRoute = LaporanPdfJenisRouteImport.update({
+  id: '/laporan/pdf/$jenis',
+  path: '/laporan/pdf/$jenis',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PembelianIdUbahRoute = PembelianIdUbahRouteImport.update({
   id: '/pembelian/$id_/ubah',
   path: '/pembelian/$id/ubah',
@@ -376,6 +389,7 @@ export interface FileRoutesByFullPath {
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
+  '/laporan/penjualan-pengeluaran': typeof LaporanPenjualanPengeluaranRoute
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/ulang': typeof MasukUlangRoute
@@ -416,6 +430,7 @@ export interface FileRoutesByFullPath {
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/laporan/csv/kasbon': typeof LaporanCsvKasbonRoute
   '/laporan/kasbon/$memberId': typeof LaporanKasbonMemberIdRoute
+  '/laporan/pdf/$jenis': typeof LaporanPdfJenisRoute
   '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
@@ -437,6 +452,7 @@ export interface FileRoutesByTo {
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
+  '/laporan/penjualan-pengeluaran': typeof LaporanPenjualanPengeluaranRoute
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/ulang': typeof MasukUlangRoute
@@ -477,6 +493,7 @@ export interface FileRoutesByTo {
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/laporan/csv/kasbon': typeof LaporanCsvKasbonRoute
   '/laporan/kasbon/$memberId': typeof LaporanKasbonMemberIdRoute
+  '/laporan/pdf/$jenis': typeof LaporanPdfJenisRoute
   '/pembelian/$id/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
@@ -499,6 +516,7 @@ export interface FileRoutesById {
   '/kasir/masuk': typeof KasirMasukRoute
   '/kasir/tutup': typeof KasirTutupRoute
   '/laporan/$jenis': typeof LaporanJenisRoute
+  '/laporan/penjualan-pengeluaran': typeof LaporanPenjualanPengeluaranRoute
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/ulang': typeof MasukUlangRoute
@@ -539,6 +557,7 @@ export interface FileRoutesById {
   '/laporan/csv/$jenis': typeof LaporanCsvJenisRoute
   '/laporan/csv/kasbon': typeof LaporanCsvKasbonRoute
   '/laporan/kasbon/$memberId': typeof LaporanKasbonMemberIdRoute
+  '/laporan/pdf/$jenis': typeof LaporanPdfJenisRoute
   '/pembelian/$id_/ubah': typeof PembelianIdUbahRoute
   '/staf/peran/$id': typeof StafPeranIdRoute
   '/staf/peran/baru': typeof StafPeranBaruRoute
@@ -562,6 +581,7 @@ export interface FileRouteTypes {
     | '/kasir/masuk'
     | '/kasir/tutup'
     | '/laporan/$jenis'
+    | '/laporan/penjualan-pengeluaran'
     | '/laporan/untung-rugi'
     | '/masuk/dev'
     | '/masuk/ulang'
@@ -602,6 +622,7 @@ export interface FileRouteTypes {
     | '/laporan/csv/$jenis'
     | '/laporan/csv/kasbon'
     | '/laporan/kasbon/$memberId'
+    | '/laporan/pdf/$jenis'
     | '/pembelian/$id/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
@@ -623,6 +644,7 @@ export interface FileRouteTypes {
     | '/kasir/masuk'
     | '/kasir/tutup'
     | '/laporan/$jenis'
+    | '/laporan/penjualan-pengeluaran'
     | '/laporan/untung-rugi'
     | '/masuk/dev'
     | '/masuk/ulang'
@@ -663,6 +685,7 @@ export interface FileRouteTypes {
     | '/laporan/csv/$jenis'
     | '/laporan/csv/kasbon'
     | '/laporan/kasbon/$memberId'
+    | '/laporan/pdf/$jenis'
     | '/pembelian/$id/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
@@ -684,6 +707,7 @@ export interface FileRouteTypes {
     | '/kasir/masuk'
     | '/kasir/tutup'
     | '/laporan/$jenis'
+    | '/laporan/penjualan-pengeluaran'
     | '/laporan/untung-rugi'
     | '/masuk/dev'
     | '/masuk/ulang'
@@ -724,6 +748,7 @@ export interface FileRouteTypes {
     | '/laporan/csv/$jenis'
     | '/laporan/csv/kasbon'
     | '/laporan/kasbon/$memberId'
+    | '/laporan/pdf/$jenis'
     | '/pembelian/$id_/ubah'
     | '/staf/peran/$id'
     | '/staf/peran/baru'
@@ -746,6 +771,7 @@ export interface RootRouteChildren {
   KasirMasukRoute: typeof KasirMasukRoute
   KasirTutupRoute: typeof KasirTutupRoute
   LaporanJenisRoute: typeof LaporanJenisRoute
+  LaporanPenjualanPengeluaranRoute: typeof LaporanPenjualanPengeluaranRoute
   LaporanUntungRugiRoute: typeof LaporanUntungRugiRoute
   MasukDevRoute: typeof MasukDevRoute
   MasukUlangRoute: typeof MasukUlangRoute
@@ -786,6 +812,7 @@ export interface RootRouteChildren {
   LaporanCsvJenisRoute: typeof LaporanCsvJenisRoute
   LaporanCsvKasbonRoute: typeof LaporanCsvKasbonRoute
   LaporanKasbonMemberIdRoute: typeof LaporanKasbonMemberIdRoute
+  LaporanPdfJenisRoute: typeof LaporanPdfJenisRoute
   PembelianIdUbahRoute: typeof PembelianIdUbahRoute
   StafPeranIdRoute: typeof StafPeranIdRoute
   StafPeranBaruRoute: typeof StafPeranBaruRoute
@@ -883,6 +910,13 @@ declare module '@tanstack/react-router' {
       path: '/laporan/$jenis'
       fullPath: '/laporan/$jenis'
       preLoaderRoute: typeof LaporanJenisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/laporan/penjualan-pengeluaran': {
+      id: '/laporan/penjualan-pengeluaran'
+      path: '/laporan/penjualan-pengeluaran'
+      fullPath: '/laporan/penjualan-pengeluaran'
+      preLoaderRoute: typeof LaporanPenjualanPengeluaranRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/laporan/untung-rugi': {
@@ -1165,6 +1199,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaporanKasbonMemberIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/laporan/pdf/$jenis': {
+      id: '/laporan/pdf/$jenis'
+      path: '/laporan/pdf/$jenis'
+      fullPath: '/laporan/pdf/$jenis'
+      preLoaderRoute: typeof LaporanPdfJenisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pembelian/$id_/ubah': {
       id: '/pembelian/$id_/ubah'
       path: '/pembelian/$id/ubah'
@@ -1226,6 +1267,7 @@ const rootRouteChildren: RootRouteChildren = {
   KasirMasukRoute: KasirMasukRoute,
   KasirTutupRoute: KasirTutupRoute,
   LaporanJenisRoute: LaporanJenisRoute,
+  LaporanPenjualanPengeluaranRoute: LaporanPenjualanPengeluaranRoute,
   LaporanUntungRugiRoute: LaporanUntungRugiRoute,
   MasukDevRoute: MasukDevRoute,
   MasukUlangRoute: MasukUlangRoute,
@@ -1266,6 +1308,7 @@ const rootRouteChildren: RootRouteChildren = {
   LaporanCsvJenisRoute: LaporanCsvJenisRoute,
   LaporanCsvKasbonRoute: LaporanCsvKasbonRoute,
   LaporanKasbonMemberIdRoute: LaporanKasbonMemberIdRoute,
+  LaporanPdfJenisRoute: LaporanPdfJenisRoute,
   PembelianIdUbahRoute: PembelianIdUbahRoute,
   StafPeranIdRoute: StafPeranIdRoute,
   StafPeranBaruRoute: StafPeranBaruRoute,
