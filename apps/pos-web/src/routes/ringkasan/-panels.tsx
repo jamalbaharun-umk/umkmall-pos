@@ -156,7 +156,7 @@ export function SalesHistorySummary() {
         <>
           <Tiles>
             <StatTile label="Struk hari ini" value={d.today.count.toLocaleString('id-ID')} />
-            <StatTile label="Total hari ini (jumlah dibayar pelanggan)" value={rp(d.today.total)} />
+            <StatTile label="Dibayar hari ini" value={rp(d.today.total)} hint="Jumlah dibayar pelanggan, termasuk pajak" />
           </Tiles>
           <Grid>
             <BarChart
@@ -170,7 +170,8 @@ export function SalesHistorySummary() {
             />
             <SegmentedBar
               boxed
-              title="Cara bayar hari ini (jumlah dibayar pelanggan)"
+              title="Cara bayar hari ini"
+              description="Jumlah dibayar pelanggan, termasuk pajak"
               unit="rupiah"
               parts={d.methods.map((m) => ({ label: m.name, value: m.amount }))}
               state={state(d.methods.length === 0)}

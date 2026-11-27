@@ -187,6 +187,7 @@ export class ReportPdfService {
             label: c.label,
             weight: c.weight,
             align: c.as === 'text' ? 'left' : 'right',
+            kind: c.as !== 'text' ? 'number' : c.code ? 'code' : 'text',
           })),
           rows: shown.map((x) => def.columns.map((c) => fmt(c.as, x[c.key]))),
         });
@@ -315,7 +316,7 @@ export class ReportPdfService {
             { label: 'Kasbon', weight: 1.7, align: 'right' },
             { label: 'Dibayar', weight: 1.7, align: 'right' },
             { label: 'Sisa', weight: 1.7, align: 'right' },
-            { label: 'Jatuh tempo', weight: 1.6 },
+            { label: 'Jatuh tempo', weight: 1.6, kind: 'code' },
             { label: 'Status', weight: 2.2 },
           ],
           rows: shown.map((r) => [
@@ -387,6 +388,7 @@ export class ReportPdfService {
                     ? 'Bulan'
                     : 'Tahun',
               weight: 3,
+              kind: 'code',
             },
             { label: 'Penjualan', weight: 2.2, align: 'right' },
             { label: 'Pengeluaran', weight: 2.2, align: 'right' },

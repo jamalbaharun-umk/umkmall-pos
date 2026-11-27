@@ -7,7 +7,10 @@ export interface Col {
   label: string;
   /** `rp` rupiah, `int` a count, `diff` a drawer difference, `text` as is. */
   as: 'rp' | 'int' | 'diff' | 'text';
+  /** Relative share of the spare room in the PDF table. */
   weight: number;
+  /** A text column holding a code or a date: sized to its values in the PDF, not to the name width (UMK-2117). */
+  code?: true;
 }
 export interface TotalDef {
   key: string;
@@ -42,9 +45,9 @@ export const REPORT_DEFS: Record<ReportKind, ReportDef> = {
     landscape: true,
     columns: [
       { key: 'number', label: 'No. struk', as: 'int', weight: 1 },
-      { key: 'time', label: 'Waktu', as: 'text', weight: 1.7 },
+      { key: 'time', label: 'Waktu', as: 'text', weight: 1.7, code: true },
       { key: 'cashier', label: 'Kasir', as: 'text', weight: 1.5 },
-      { key: 'sku', label: 'SKU', as: 'text', weight: 1.3 },
+      { key: 'sku', label: 'SKU', as: 'text', weight: 1.3, code: true },
       { key: 'name', label: 'Produk', as: 'text', weight: 3 },
       { key: 'qty', label: 'Qty', as: 'int', weight: 0.8 },
       { key: 'unitPrice', label: 'Harga', as: 'rp', weight: 1.5 },
@@ -59,7 +62,7 @@ export const REPORT_DEFS: Record<ReportKind, ReportDef> = {
     slug: 'produk',
     landscape: false,
     columns: [
-      { key: 'sku', label: 'SKU', as: 'text', weight: 1.5 },
+      { key: 'sku', label: 'SKU', as: 'text', weight: 1.5, code: true },
       { key: 'name', label: 'Produk', as: 'text', weight: 3.5 },
       { key: 'qty', label: 'Terjual', as: 'int', weight: 1 },
       { key: 'sales', label: 'Penjualan', as: 'rp', weight: 1.7 },
@@ -74,8 +77,8 @@ export const REPORT_DEFS: Record<ReportKind, ReportDef> = {
     landscape: true,
     columns: [
       { key: 'cashier', label: 'Kasir', as: 'text', weight: 1.6 },
-      { key: 'openedAt', label: 'Buka', as: 'text', weight: 1.8 },
-      { key: 'closedAt', label: 'Tutup', as: 'text', weight: 1.8 },
+      { key: 'openedAt', label: 'Buka', as: 'text', weight: 1.8, code: true },
+      { key: 'closedAt', label: 'Tutup', as: 'text', weight: 1.8, code: true },
       { key: 'salesCount', label: 'Transaksi', as: 'int', weight: 1 },
       { key: 'revenue', label: 'Pendapatan', as: 'rp', weight: 1.7 },
       { key: 'grossProfit', label: 'Laba kotor', as: 'rp', weight: 1.6 },
@@ -99,9 +102,9 @@ export const REPORT_DEFS: Record<ReportKind, ReportDef> = {
     slug: 'pembelian',
     landscape: false,
     columns: [
-      { key: 'date', label: 'Tanggal', as: 'text', weight: 1.5 },
+      { key: 'date', label: 'Tanggal', as: 'text', weight: 1.5, code: true },
       { key: 'supplier', label: 'Pemasok', as: 'text', weight: 2.2 },
-      { key: 'sku', label: 'SKU', as: 'text', weight: 1.4 },
+      { key: 'sku', label: 'SKU', as: 'text', weight: 1.4, code: true },
       { key: 'name', label: 'Produk', as: 'text', weight: 2.6 },
       { key: 'qty', label: 'Qty', as: 'int', weight: 0.8 },
       { key: 'unitCost', label: 'Harga beli', as: 'rp', weight: 1.5 },
