@@ -183,6 +183,7 @@ for the caller). **The outbox dispatcher is not built** (it needs pos-api's endp
   same switch decides between `cancelled` and 503 `gateway_unavailable`.
 - Void and refund body: `{ reasonCode, note?, actorRef, approvedBy }`. `reasonCode` is one of `wrong_item_or_qty`,
   `wrong_payment_method`, `customer_cancelled`, `duplicate_transaction`, `goods_returned`, `other` (`note` required).
+- A close-only call (`POST /payments/:id/cancel` with neither `reasonCode` nor `approvedBy`) on a payment that is not open answers 200 with that payment, except `paid`, which answers 409 `already_paid`. Callers read the returned `status`; a 200 does not mean "closed" (UMK-2082).
 - Refund: `paid` → `refund_pending` (committed) → adapter → `refunded`, stays `refund_pending`, or `refund_failed`
   with `needs_review`. A `refund_failed` payment can be refunded again.
 - `POST /payments/:id/refund/manual` `{ note, actorRef, approvedBy }`: `refund_failed` → `refunded` (the owner
