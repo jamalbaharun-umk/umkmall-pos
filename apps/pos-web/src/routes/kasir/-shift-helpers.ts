@@ -18,6 +18,10 @@ export type CashTotals = {
   purchasePaymentReversals?: number
   /** Cash of corrected kasbon instalments taken back out of the drawer (part of cashOut, UMK-1971). */
   receivableReversals?: number
+  /** Money suppliers handed back after a return, into the drawer (part of cashIn, UMK-1970). */
+  purchaseRefunds?: number
+  /** Those refunds voided while the shift was open (part of cashOut). */
+  purchaseRefundReversals?: number
 }
 
 export const NO_CASH: CashTotals = {
@@ -30,6 +34,8 @@ export const NO_CASH: CashTotals = {
   purchasePayments: 0,
   purchasePaymentReversals: 0,
   receivableReversals: 0,
+  purchaseRefunds: 0,
+  purchaseRefundReversals: 0,
 }
 
 export type DrawerRow = { key: string; label: string; amount: number; sign: '+' | '-' | ''; strong?: boolean }
@@ -51,8 +57,10 @@ export function drawerRows(
   const supplierPaid = c.purchasePayments ?? 0
   const supplierBack = c.purchasePaymentReversals ?? 0
   const kasbonOut = c.receivableReversals ?? 0
-  const otherIn = c.cashIn - c.receivablePayments - c.expenseReversals - supplierBack
-  const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid - kasbonOut
+  const refundIn = c.purchaseRefunds ?? 0
+  const refundOut = c.purchaseRefundReversals ?? 0
+  const otherIn = c.cashIn - c.receivablePayments - c.expenseReversals - supplierBack - refundIn
+  const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid - kasbonOut - refundOut
   const rows: DrawerRow[] = [
     { key: 'opening', label: 'Uang awal di laci', amount: s.openingCash, sign: '' },
     {
@@ -65,9 +73,11 @@ export function drawerRows(
     { key: 'receivables', label: 'Kasbon dibayar tunai', amount: c.receivablePayments, sign: '+' },
     { key: 'reversals', label: 'Pengeluaran dibatalkan (uang kembali ke laci)', amount: c.expenseReversals, sign: '+' },
     { key: 'supplier-back', label: 'Bayar pemasok dibatalkan (uang kembali ke laci)', amount: supplierBack, sign: '+' },
+    { key: 'supplier-refund', label: 'Uang retur dari pemasok', amount: refundIn, sign: '+' },
     { key: 'in-other', label: 'Kas masuk lain', amount: otherIn, sign: '+' },
     { key: 'expenses', label: 'Pengeluaran dari laci', amount: c.expenses, sign: '-' },
     { key: 'supplier', label: 'Bayar pemasok dari laci', amount: supplierPaid, sign: '-' },
+    { key: 'supplier-refund-back', label: 'Uang retur dari pemasok dibatalkan', amount: refundOut, sign: '-' },
     { key: 'voids', label: 'Uang dikembalikan (batalkan struk)', amount: c.voidRefunds, sign: '-' },
     { key: 'kasbon-corrections', label: 'Koreksi kasbon tunai (uang keluar)', amount: kasbonOut, sign: '-' },
     { key: 'out-other', label: 'Kas keluar lain', amount: otherOut, sign: '-' },
@@ -104,6 +114,8 @@ const KIND_LABELS: Record<string, string> = {
   purchase_payment: 'Bayar pemasok dari laci',
   purchase_payment_reversal: 'Bayar pemasok dibatalkan',
   receivable_reversal: 'Koreksi kasbon (uang dikeluarkan)',
+  purchase_refund: 'Uang retur dari pemasok',
+  purchase_refund_reversal: 'Uang retur dari pemasok dibatalkan',
 }
 
 /** The reason of a cash in/out entry in words; an unknown kind (a newer server) is shown as what it is. */
@@ -233,6 +245,8 @@ const STORE_KIND_LABELS: Record<string, string> = {
   purchase_payment_void: 'Bayar pemasok dari laci dibatalkan setelah shift ditutup',
   receivable_reversal: 'Koreksi kasbon yang dikumpulkan di luar shift',
   receivable_reversal_closed_shift: 'Koreksi kasbon dari shift yang sudah ditutup',
+  purchase_refund: 'Uang retur dari pemasok',
+  purchase_refund_void: 'Uang retur dari pemasok dibatalkan',
 }
 export const storeKindLabel = (kind: string) => STORE_KIND_LABELS[kind] ?? 'Kas toko lain'
 

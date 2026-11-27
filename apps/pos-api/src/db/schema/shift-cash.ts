@@ -38,6 +38,8 @@ export const CASH_DIRECTIONS = ['in', 'out'] as const;
  *   corrected kasbon instalment taken out of the drawer of the instalment's own shift, while it is open (a closed
  *   shift's goes out of the store cash, receivable_reversal_closed_shift). Written only by
  *   src/receivables/receivable-corrections.service.ts.
+ * - purchase_refund (in): ref_id = pos.purchase_refunds.id, money a supplier handed back after a return, into the
+ *   drawer. purchase_refund_reversal (out): the same id, that refund voided while its shift was open. Same writer.
  */
 export const CASH_ENTRY_KINDS = [
   'receivable_payment',
@@ -50,6 +52,8 @@ export const CASH_ENTRY_KINDS = [
   'purchase_payment',
   'purchase_payment_reversal',
   'receivable_reversal',
+  'purchase_refund',
+  'purchase_refund_reversal',
 ] as const;
 
 export const shiftCashEntries = pos

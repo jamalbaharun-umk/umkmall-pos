@@ -127,6 +127,33 @@ describe('purchase payments and returns (UMK-1970)', () => {
     (await get(s.auth, `/stock/products/${productId}`).expect(200)).body
       .onHand as number;
 
+  /** Resolves once `n` backends of this database wait for a lock: the requests are in flight. */
+  async function untilWaiting(n: number) {
+    for (let i = 0; i < 400; i++) {
+      const [{ waiting }] = await admin<{ waiting: number }[]>`
+        select count(*)::int as waiting from pg_locks l
+        join pg_stat_activity a on a.pid = l.pid
+        where not l.granted and a.datname = current_database()`;
+      if (waiting >= n) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`fewer than ${n} requests reached the lock`);
+  }
+
+  /** Holds a row lock while the requests queue behind it, then lets them race; returns their answers. */
+  async function racing(
+    lockSql: (sql: postgres.TransactionSql) => Promise<unknown>,
+    start: () => Promise<request.Response>[],
+  ) {
+    const sent: Promise<request.Response>[] = [];
+    await locker.begin(async (sql) => {
+      await lockSql(sql);
+      sent.push(...start());
+      await untilWaiting(sent.length);
+    });
+    return Promise.all(sent);
+  }
+
   /** The store's today (store timezone, default Asia/Jakarta) moved by `days`, as YYYY-MM-DD. */
   async function storeDay(days: number) {
     const [r] = await admin<{ d: string }[]>`
@@ -239,6 +266,10 @@ describe('purchase payments and returns (UMK-1970)', () => {
         refundDue: 0,
         actorName: 'Pemilik',
         createdAt: expect.any(String),
+        reversedAt: null,
+        reverseReason: null,
+        reversedByName: null,
+        countedSince: false,
         lines: [
           {
             orderLineId: line.id,
@@ -395,8 +426,9 @@ describe('purchase payments and returns (UMK-1970)', () => {
       const soon = await order(s, line(10), { dueDate: await storeDay(4) });
       // Due today: not late yet, in the window.
       await order(s, line(1), { dueDate: await storeDay(0) });
-      // Due in 8 days: outside the window. No due date: never late.
-      await order(s, line(2), { dueDate: await storeDay(8) });
+      // The window is 7 days counting today: due in 6 days is in, due in 7 days is out. No due date: never late.
+      await order(s, line(4), { dueDate: await storeDay(6) });
+      await order(s, line(2), { dueDate: await storeDay(7) });
       const none = await order(s, line(3));
       // Paid in full and past due: not late, nothing owed.
       const paidLate = await order(s, line(1), { dueDate: await storeDay(-9) });
@@ -428,14 +460,14 @@ describe('purchase payments and returns (UMK-1970)', () => {
 
       const list = await get(s.auth, '/purchasing/orders').expect(200);
       expect(list.body.summary).toEqual({
-        total: 30_000 + 100_000 + 10_000 + 20_000 + 30_000,
+        total: 30_000 + 100_000 + 10_000 + 40_000 + 20_000 + 30_000,
         overdue: 30_000,
-        dueSoon: 100_000 + 10_000,
-        openCount: 5,
+        dueSoon: 100_000 + 10_000 + 40_000,
+        openCount: 6,
         overdueCount: 1,
       });
       const rows = list.body.data as Record<string, unknown>[];
-      expect(rows).toHaveLength(7);
+      expect(rows).toHaveLength(8);
       expect(rows.find((r) => r.id === late.id)).toMatchObject({
         code: expect.stringMatching(/^PB-000\d$/),
         total: 60_000,
@@ -453,6 +485,7 @@ describe('purchase payments and returns (UMK-1970)', () => {
         'PB-0005',
         'PB-0006',
         'PB-0007',
+        'PB-0008',
       ]);
     });
 
@@ -589,19 +622,6 @@ describe('purchase payments and returns (UMK-1970)', () => {
         (await detail(s, o.id)).lines.find((l) => l.id === line.id),
       ).toMatchObject({ returnedQty: 3 });
     });
-
-    /** Resolves once `n` backends of this database wait for a lock: the requests are in flight. */
-    async function untilWaiting(n: number) {
-      for (let i = 0; i < 400; i++) {
-        const [{ waiting }] = await admin<{ waiting: number }[]>`
-          select count(*)::int as waiting from pg_locks l
-          join pg_stat_activity a on a.pid = l.pid
-          where not l.granted and a.datname = current_database()`;
-        if (waiting >= n) return;
-        await new Promise((r) => setTimeout(r, 25));
-      }
-      throw new Error(`fewer than ${n} requests reached the lock`);
-    }
 
     it('two payments of the whole debt at once: one is recorded, the other is PURCHASE_OVERPAY', async () => {
       const s = await createStore();
@@ -775,6 +795,805 @@ describe('purchase payments and returns (UMK-1970)', () => {
     });
   });
 
+  describe('review follow-ups (PR 62)', () => {
+    it('the same key sent twice at once records one payment and answers it to both', async () => {
+      const s = await createStore();
+      const p = await product(s, 'Terigu', 10_000);
+      const o = await order(s, [{ productId: p, qty: 10, unitCost: 10_000 }]);
+      const key = randomUUID();
+      const body = { amount: 40_000, source: 'outside' };
+      const [a, b] = await racing(
+        (sql) =>
+          sql`select id from pos.purchase_orders where id = ${o.id} for update`,
+        () => [
+          pay(s.auth, o.id, body, key).then((r) => r),
+          pay(s.auth, o.id, body, key).then((r) => r),
+        ],
+      );
+      expect([a.status, b.status]).toEqual([201, 201]);
+      expect(a.body).toEqual(b.body);
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from pos.purchase_payments where tenant_id = ${s.tenantId}`;
+      expect(n).toBe(1);
+      expect(await detail(s, o.id)).toMatchObject({
+        paid: 40_000,
+        remaining: 60_000,
+      });
+    });
+
+    it('two drawer payments that together overdraw the drawer: one is recorded, the other is DRAWER_INSUFFICIENT', async () => {
+      const s = await createStore();
+      const p = await product(s, 'Garam', 5_000);
+      const o1 = await order(s, [{ productId: p, qty: 100, unitCost: 5_000 }]);
+      const o2 = await order(s, [{ productId: p, qty: 100, unitCost: 5_000 }]);
+      const shift = await openShift(s, 300_000);
+      // Two purchases, so the payments meet only at the shift's row lock.
+      const [a, b] = await racing(
+        (sql) =>
+          sql`select id from pos.shifts where id = ${shift.body.id} for update`,
+        () => [
+          pay(s.auth, o1.id, { amount: 200_000, source: 'drawer' }).then(
+            (r) => r,
+          ),
+          pay(s.auth, o2.id, { amount: 200_000, source: 'drawer' }).then(
+            (r) => r,
+          ),
+        ],
+      );
+      expect([a.status, b.status].sort()).toEqual([201, 422]);
+      expect((a.status === 422 ? a : b).body).toMatchObject({
+        code: 'DRAWER_INSUFFICIENT',
+        drawerCash: 100_000,
+      });
+      expect(await current(s.auth)).toMatchObject({
+        expectedCash: 100_000,
+        purchasePayments: 200_000,
+      });
+    });
+
+    it('voiding a payment after a return recomputes the money due back from the supplier', async () => {
+      const s = await createStore();
+      const p = await product(s, 'Mentega', 15_000);
+      const o = await order(s, [{ productId: p, qty: 10, unitCost: 15_000 }]);
+      const paid = await pay(s.auth, o.id, {
+        amount: 150_000,
+        source: 'outside',
+      }).expect(201);
+      const back = await giveBack(s.auth, o.id, {
+        reason: 'rusak',
+        lines: [{ lineId: o.lines[0].id, qty: 2 }],
+      }).expect(201);
+      expect(back.body).toMatchObject({ total: 30_000, refundDue: 30_000 });
+      expect(await detail(s, o.id)).toMatchObject({
+        remaining: 0,
+        credit: 30_000,
+        paymentStatus: 'lunas',
+      });
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paid.body.id}/void`,
+        { reason: 'Transfer gagal' },
+      ).expect(200);
+      const after = await detail(s, o.id);
+      expect(after).toMatchObject({
+        paid: 0,
+        returned: 30_000,
+        remaining: 120_000,
+        credit: 0,
+        paymentStatus: 'belum_bayar',
+      });
+      expect(after.returns).toMatchObject([
+        { id: back.body.id, total: 30_000, refundDue: 0 },
+      ]);
+      // Paid in full again: the next return sits wholly above the total.
+      await pay(s.auth, o.id, { amount: 120_000, source: 'outside' }).expect(
+        201,
+      );
+      await giveBack(s.auth, o.id, {
+        reason: 'rusak',
+        lines: [{ lineId: o.lines[0].id, qty: 1 }],
+      }).expect(201);
+      expect(
+        ((await detail(s, o.id)).returns as { refundDue: number }[]).map(
+          (r) => r.refundDue,
+        ),
+      ).toEqual([0, 15_000]);
+    });
+
+    it('a retry of a drawer payment is answered even after the actor lost the drawer permission', async () => {
+      const s = await createStore();
+      const { o } = await designOrder(s);
+      const buyer = await createCashier(app, s, [
+        'purchasing.manage',
+        'sales.create',
+      ]);
+      await post(buyer.auth, '/shifts/open', { openingCash: 500_000 }).expect(
+        201,
+      );
+      const key = randomUUID();
+      const body = { amount: 100_000, source: 'drawer' };
+      const first = await pay(buyer.auth, o.id, body, key).expect(201);
+      await http()
+        .patch(`/roles/${buyer.roleId}`)
+        .set('Authorization', s.auth)
+        .send({ permissions: ['purchasing.manage'] })
+        .expect(200);
+      const again = await pay(buyer.auth, o.id, body, key).expect(201);
+      expect(again.body).toEqual(first.body);
+      const fresh = await pay(buyer.auth, o.id, body).expect(403);
+      expect(fresh.body).toMatchObject({ code: 'DRAWER_PERMISSION' });
+    });
+
+    it('the shift report and the agent ledger show supplier payments (voided ones as a reversal / left out)', async () => {
+      const s = await createStore();
+      const { o } = await designOrder(s);
+      await openShift(s, 500_000);
+      const drawer = await pay(s.auth, o.id, {
+        amount: 200_000,
+        source: 'drawer',
+      }).expect(201);
+      const outside = await pay(s.auth, o.id, {
+        amount: 50_000,
+        source: 'outside',
+        note: 'transfer',
+      }).expect(201);
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${drawer.body.id}/void`,
+        { reason: 'Salah' },
+      ).expect(200);
+      await pay(s.auth, o.id, { amount: 70_000, source: 'drawer' }).expect(201);
+      const today = await storeDay(0);
+      const report = await get(
+        s.auth,
+        `/reports/shifts?from=${today}&to=${today}`,
+      ).expect(200);
+      expect(report.body.rows).toHaveLength(1);
+      expect(report.body.rows[0]).toMatchObject({
+        purchasePayments: 270_000,
+        purchasePaymentReversals: 200_000,
+        cashOut: 270_000,
+        cashIn: 200_000,
+        expectedCash: null,
+      });
+      const ledger = await get(
+        s.auth,
+        `/agent/ledger?from=${today}&to=${today}`,
+      ).expect(200);
+      const supplier = (
+        ledger.body.entries as { id: string; kind: string }[]
+      ).filter((e) => e.kind === 'supplier_payment');
+      expect(supplier).toHaveLength(2);
+      expect(supplier).toContainEqual(
+        expect.objectContaining({
+          id: `purchase_payment:${outside.body.id}`,
+          direction: 'out',
+          category: 'bayar_pemasok',
+          amount: 50_000,
+          method: null,
+          note: 'transfer',
+        }),
+      );
+      expect(supplier).toContainEqual(
+        expect.objectContaining({ amount: 70_000, method: 'Tunai' }),
+      );
+      expect(ledger.body.totals.out).toBe(120_000);
+    });
+  });
+
+  describe('undoing a return and money back from the supplier (feature 29 additions)', () => {
+    const refund = (
+      auth: string,
+      id: string,
+      body: object,
+      key: string = randomUUID(),
+    ) =>
+      http()
+        .post(`/purchasing/orders/${id}/refunds`)
+        .set('Authorization', auth)
+        .set('Idempotency-Key', key)
+        .send(body);
+    const reverse = (
+      auth: string,
+      id: string,
+      returnId: string,
+      reason = 'Salah catat',
+    ) =>
+      post(auth, `/purchasing/orders/${id}/returns/${returnId}/reverse`, {
+        reason,
+      });
+    const voidRefund = (auth: string, id: string, refundId: string) =>
+      post(auth, `/purchasing/orders/${id}/refunds/${refundId}/void`, {
+        reason: 'Salah catat',
+      });
+    const batchOf = async (orderId: string) => {
+      const [b] = await admin<{ qty_remaining: number }[]>`
+        select qty_remaining from pos.stock_batches where source = 'purchase' and source_id = ${orderId}`;
+      return b.qty_remaining;
+    };
+    const storeCash = async (s: Store) =>
+      (await get(s.auth, '/store-cash').expect(200)).body.summary
+        .balance as number;
+    const figures = async (s: Store, id: string) =>
+      (await detail(s, id)) as Awaited<ReturnType<typeof detail>> & {
+        refunded: number;
+        refundDue: number;
+        refunds: Record<string, unknown>[];
+      };
+
+    /** Rp150.000 paid in full, 2 of 10 back: Rp30.000 due back from the supplier. */
+    async function overpaid(s: Store) {
+      const p = await product(s, 'Mentega', 15_000);
+      const o = await order(s, [{ productId: p, qty: 10, unitCost: 15_000 }]);
+      const paid = await pay(s.auth, o.id, {
+        amount: 150_000,
+        source: 'outside',
+      }).expect(201);
+      const back = await giveBack(s.auth, o.id, {
+        reason: 'rusak',
+        lines: [{ lineId: o.lines[0].id, qty: 2 }],
+      }).expect(201);
+      return {
+        o,
+        p,
+        paymentId: paid.body.id as string,
+        returnId: back.body.id as string,
+      };
+    }
+
+    it('undoing a return puts its units back into the same batch, even after stock left it since, and the debt back up', async () => {
+      const s = await createStore();
+      const p = await product(s, 'Gula', 10_000);
+      const o = await order(s, [{ productId: p, qty: 10, unitCost: 10_000 }]);
+      await pay(s.auth, o.id, { amount: 40_000, source: 'outside' }).expect(
+        201,
+      );
+      const back = await giveBack(s.auth, o.id, {
+        reason: 'salah_kirim',
+        lines: [{ lineId: o.lines[0].id, qty: 3 }],
+      }).expect(201);
+      expect(await detail(s, o.id)).toMatchObject({
+        returned: 30_000,
+        remaining: 30_000,
+      });
+      // 5 more units leave the batch after the return (counted 2 of 7).
+      const op = await post(s.auth, '/stock-opnames', {
+        lines: [{ productId: p, countedQty: 2 }],
+      }).expect(201);
+      await post(s.auth, `/stock-opnames/${op.body.id}/approve`).expect(200);
+      expect(await batchOf(o.id)).toBe(2);
+      // The screen warns before the undo: a count of this product came after the return.
+      expect((await detail(s, o.id)).returns[0]).toMatchObject({
+        countedSince: true,
+      });
+
+      const undone = await reverse(s.auth, o.id, back.body.id).expect(200);
+      expect(undone.body).toMatchObject({
+        id: back.body.id,
+        total: 30_000,
+        refundDue: 0,
+        reversedAt: expect.any(String),
+        reverseReason: 'Salah catat',
+        reversedByName: 'Pemilik',
+      });
+      expect(await batchOf(o.id)).toBe(5);
+      expect(await onHand(s, p)).toBe(5);
+      expect(
+        await admin`select delta, reason from pos.stock_movements
+                     where tenant_id = ${s.tenantId} and reason = 'purchase_return_reversal'`,
+      ).toEqual([{ delta: 3, reason: 'purchase_return_reversal' }]);
+      const after = await detail(s, o.id);
+      expect(after).toMatchObject({
+        returned: 0,
+        remaining: 60_000,
+        paymentStatus: 'sebagian',
+      });
+      expect(after.lines[0]).toMatchObject({ returnedQty: 0, returnable: 5 });
+      // The return stays in the history, marked undone.
+      expect(after.returns).toHaveLength(1);
+
+      // A repeat (another reason) answers the first reversal and changes nothing.
+      const again = await reverse(s.auth, o.id, back.body.id, 'Lagi').expect(
+        200,
+      );
+      expect(again.body).toEqual(undone.body);
+      expect(await batchOf(o.id)).toBe(5);
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from pos.purchase_return_reversals where tenant_id = ${s.tenantId}`;
+      expect(n).toBe(1);
+      expect(
+        (await get(s.auth, '/purchasing/orders').expect(200)).body.summary
+          .total,
+      ).toBe(60_000);
+      // A reason is required.
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/returns/${back.body.id}/reverse`,
+        {},
+      ).expect(422);
+    });
+
+    it('money back into the drawer or the store cash: partial, never above what is due back, idempotent', async () => {
+      const s = await createStore();
+      const { o } = await overpaid(s);
+      expect(await figures(s, o.id)).toMatchObject({
+        remaining: 0,
+        credit: 30_000,
+        refunded: 0,
+        refundDue: 30_000,
+        refunds: [],
+      });
+      const noShift = await refund(s.auth, o.id, {
+        amount: 10_000,
+        destination: 'drawer',
+      }).expect(422);
+      expect(noShift.body).toMatchObject({ code: 'SHIFT_REQUIRED' });
+
+      await openShift(s, 100_000);
+      const key = randomUUID();
+      const first = await refund(
+        s.auth,
+        o.id,
+        { amount: 10_000, destination: 'drawer', note: 'tunai dari sales' },
+        key,
+      ).expect(201);
+      expect(first.body).toEqual({
+        id: expect.any(String),
+        amount: 10_000,
+        destination: 'drawer',
+        note: 'tunai dari sales',
+        shiftId: expect.any(String),
+        actorName: 'Pemilik',
+        createdAt: expect.any(String),
+        voidedAt: null,
+        voidReason: null,
+        drawerReversed: null,
+      });
+      expect(await current(s.auth)).toMatchObject({
+        expectedCash: 110_000,
+        purchaseRefunds: 10_000,
+      });
+      expect(await figures(s, o.id)).toMatchObject({
+        remaining: 0,
+        refunded: 10_000,
+        refundDue: 20_000,
+      });
+      // A retry answers the first; another body under the key is refused.
+      const replay = await refund(
+        s.auth,
+        o.id,
+        { amount: 10_000, destination: 'drawer', note: 'tunai dari sales' },
+        key,
+      ).expect(201);
+      expect(replay.body).toEqual(first.body);
+      const reused = await refund(
+        s.auth,
+        o.id,
+        { amount: 5_000, destination: 'drawer' },
+        key,
+      ).expect(422);
+      expect(reused.body).toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+
+      const over = await refund(s.auth, o.id, {
+        amount: 25_000,
+        destination: 'store_cash',
+      }).expect(422);
+      expect(over.body).toMatchObject({
+        code: 'REFUND_EXCEEDS_DUE',
+        refundDue: 20_000,
+        errors: { amount: expect.any(String) },
+      });
+      await refund(s.auth, o.id, {
+        amount: 20_000,
+        destination: 'store_cash',
+      }).expect(201);
+      expect(await storeCash(s)).toBe(20_000);
+      expect(await figures(s, o.id)).toMatchObject({
+        refunded: 30_000,
+        refundDue: 0,
+        remaining: 0,
+      });
+      const none = await refund(s.auth, o.id, {
+        amount: 1,
+        destination: 'store_cash',
+      }).expect(422);
+      expect(none.body).toMatchObject({
+        code: 'REFUND_EXCEEDS_DUE',
+        refundDue: 0,
+      });
+      await refund(s.auth, o.id, { amount: 0, destination: 'drawer' }).expect(
+        422,
+      );
+      await refund(s.auth, o.id, { amount: 1_000, destination: 'bank' }).expect(
+        422,
+      );
+
+      const today = await storeDay(0);
+      const report = await get(
+        s.auth,
+        `/reports/shifts?from=${today}&to=${today}`,
+      ).expect(200);
+      expect(report.body.rows[0]).toMatchObject({
+        purchaseRefunds: 10_000,
+        purchaseRefundReversals: 0,
+        cashIn: 10_000,
+      });
+      const ledger = await get(
+        s.auth,
+        `/agent/ledger?from=${today}&to=${today}`,
+      ).expect(200);
+      const back = (
+        ledger.body.entries as { kind: string; amount: number }[]
+      ).filter((e) => e.kind === 'supplier_refund');
+      expect(back.map((e) => e.amount).sort()).toEqual([10_000, 20_000]);
+      expect(back[0]).toMatchObject({
+        direction: 'in',
+        category: 'retur_pemasok',
+        method: 'Tunai',
+      });
+    });
+
+    it('a refund is voided like a payment: out of its open drawer, else out of the store cash; repeating changes nothing', async () => {
+      const s = await createStore();
+      const { o } = await overpaid(s);
+      const shift = await openShift(s, 0);
+      const drawer = await refund(s.auth, o.id, {
+        amount: 10_000,
+        destination: 'drawer',
+      }).expect(201);
+      const store = await refund(s.auth, o.id, {
+        amount: 5_000,
+        destination: 'store_cash',
+      }).expect(201);
+
+      // The drawer no longer holds the 10.000 (a supplier paid from it): the void is refused.
+      const q = await product(s, 'Kopi', 10_000);
+      const o2 = await order(s, [{ productId: q, qty: 1, unitCost: 10_000 }]);
+      const out = await pay(s.auth, o2.id, {
+        amount: 10_000,
+        source: 'drawer',
+      }).expect(201);
+      const short = await voidRefund(s.auth, o.id, drawer.body.id).expect(422);
+      expect(short.body).toMatchObject({
+        code: 'DRAWER_INSUFFICIENT',
+        drawerCash: 0,
+      });
+      await post(
+        s.auth,
+        `/purchasing/orders/${o2.id}/payments/${out.body.id}/void`,
+        { reason: 'Salah' },
+      ).expect(200);
+
+      const voided = await voidRefund(s.auth, o.id, drawer.body.id).expect(200);
+      expect(voided.body).toMatchObject({
+        id: drawer.body.id,
+        voidReason: 'Salah catat',
+        voidedAt: expect.any(String),
+        drawerReversed: true,
+      });
+      expect(await current(s.auth)).toMatchObject({
+        expectedCash: 0,
+        purchaseRefunds: 10_000,
+        purchaseRefundReversals: 10_000,
+      });
+      const again = await voidRefund(s.auth, o.id, drawer.body.id).expect(200);
+      expect(again.body).toEqual(voided.body);
+
+      await voidRefund(s.auth, o.id, store.body.id).expect(200);
+      expect(await storeCash(s)).toBe(0);
+      expect(await figures(s, o.id)).toMatchObject({
+        refunded: 0,
+        refundDue: 30_000,
+      });
+
+      // A drawer refund whose shift closed: the shift stays as it was, the cash leaves the store cash.
+      const late = await refund(s.auth, o.id, {
+        amount: 7_000,
+        destination: 'drawer',
+      }).expect(201);
+      await post(s.auth, '/shifts/current/close', {
+        countedCash: 7_000,
+      }).expect(200);
+      const before =
+        await admin`select * from pos.shifts where id = ${shift.body.id}`;
+      const closed = await voidRefund(s.auth, o.id, late.body.id).expect(200);
+      expect(closed.body).toMatchObject({ drawerReversed: false });
+      expect(
+        await admin`select * from pos.shifts where id = ${shift.body.id}`,
+      ).toEqual(before);
+      expect(await storeCash(s)).toBe(-7_000);
+      expect((await figures(s, o.id)).refunds).toHaveLength(3);
+    });
+
+    it('what the supplier handed back blocks undoing the return and voiding the payment it came from', async () => {
+      const s = await createStore();
+      const { o, paymentId, returnId } = await overpaid(s);
+      const got = await refund(s.auth, o.id, {
+        amount: 10_000,
+        destination: 'store_cash',
+      }).expect(201);
+      const undo = await reverse(s.auth, o.id, returnId).expect(422);
+      expect(undo.body).toMatchObject({
+        code: 'RETURN_REFUNDED',
+        refunded: 10_000,
+      });
+      const unpay = await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paymentId}/void`,
+        { reason: 'Transfer gagal' },
+      ).expect(422);
+      expect(unpay.body).toMatchObject({
+        code: 'REFUND_RECEIVED',
+        refunded: 10_000,
+      });
+      expect(await figures(s, o.id)).toMatchObject({
+        paid: 150_000,
+        returned: 30_000,
+        refunded: 10_000,
+        refundDue: 20_000,
+      });
+      // The refund voided first: both go through.
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      await reverse(s.auth, o.id, returnId).expect(200);
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paymentId}/void`,
+        { reason: 'Transfer gagal' },
+      ).expect(200);
+      expect(await figures(s, o.id)).toMatchObject({
+        paid: 0,
+        returned: 0,
+        refunded: 0,
+        remaining: 150_000,
+        refundDue: 0,
+      });
+    });
+
+    const auditRows = (tenantId: string) =>
+      admin<
+        {
+          event: string;
+          target_label: string;
+          details: Record<string, unknown>;
+        }[]
+      >`
+        select event, target_label, details from pos.audit_log
+         where tenant_id = ${tenantId} and event like 'purchase_%' order by seq`;
+
+    it('every supplier money change writes one audit row in its transaction; a refused or repeated one writes none', async () => {
+      const s = await createStore();
+      const { o, paymentId, returnId } = await overpaid(s);
+      await openShift(s, 100_000);
+
+      // Refused first: nothing logged.
+      await refund(s.auth, o.id, {
+        amount: 99_000,
+        destination: 'drawer',
+      }).expect(422);
+      await reverse(s.auth, o.id, returnId).expect(200);
+      expect(await auditRows(s.tenantId)).toEqual([
+        {
+          event: 'purchase_return_undo',
+          target_label: 'PB-0001',
+          details: {
+            orderId: o.id,
+            returnId,
+            reversalId: expect.any(String),
+            total: 30_000,
+            units: 2,
+          },
+        },
+      ]);
+      // A repeated undo writes no second row.
+      await reverse(s.auth, o.id, returnId).expect(200);
+      expect(await auditRows(s.tenantId)).toHaveLength(1);
+
+      // Paid in full again and one more back: money due back, received into the drawer.
+      await giveBack(s.auth, o.id, {
+        reason: 'rusak',
+        lines: [{ lineId: o.lines[0].id, qty: 1 }],
+      }).expect(201);
+      const key = randomUUID();
+      const got = await refund(
+        s.auth,
+        o.id,
+        {
+          amount: 15_000,
+          destination: 'drawer',
+          note: 'diantar sales Budi 081234567890',
+        },
+        key,
+      ).expect(201);
+      // A replay writes no second row.
+      await refund(
+        s.auth,
+        o.id,
+        {
+          amount: 15_000,
+          destination: 'drawer',
+          note: 'diantar sales Budi 081234567890',
+        },
+        key,
+      ).expect(201);
+      // Refused void of the payment (the refund depends on it): nothing logged.
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paymentId}/void`,
+        { reason: 'Salah transfer' },
+      ).expect(422);
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      await post(
+        s.auth,
+        `/purchasing/orders/${o.id}/payments/${paymentId}/void`,
+        { reason: 'Salah transfer' },
+      ).expect(200);
+
+      const rows = await auditRows(s.tenantId);
+      expect(rows.map((r) => r.event)).toEqual([
+        'purchase_return_undo',
+        'purchase_refund',
+        'purchase_refund_void',
+        'purchase_payment_void',
+      ]);
+      expect(rows[1].details).toEqual({
+        orderId: o.id,
+        refundId: got.body.id,
+        amount: 15_000,
+        destination: 'drawer',
+        shiftId: expect.any(String),
+      });
+      expect(rows[2].details).toMatchObject({
+        refundId: got.body.id,
+        amount: 15_000,
+        drawerReversed: true,
+      });
+      expect(rows[3].details).toEqual({
+        orderId: o.id,
+        paymentId,
+        amount: 150_000,
+        source: 'outside',
+        shiftId: null,
+        drawerReversed: null,
+      });
+      // Ids and amounts only: no note, no reason text, no phone number.
+      const text = JSON.stringify(rows);
+      for (const word of ['diantar', '0812', 'Salah', 'note', 'reason'])
+        expect(text).not.toContain(word);
+    });
+
+    it('the same refund key sent twice at once: one refund; on two purchases the loser meets the unique key and is refused', async () => {
+      const s = await createStore();
+      const one = await overpaid(s);
+      const key = randomUUID();
+      const body = { amount: 10_000, destination: 'store_cash' };
+      // Same purchase: the second waits for the purchase lock, then finds the first under its key and answers it.
+      const [a, b] = await racing(
+        (sql) =>
+          sql`select id from pos.purchase_orders where id = ${one.o.id} for update`,
+        () => [
+          refund(s.auth, one.o.id, body, key).then((r) => r),
+          refund(s.auth, one.o.id, body, key).then((r) => r),
+        ],
+      );
+      expect([a.status, b.status]).toEqual([201, 201]);
+      expect(a.body).toEqual(b.body);
+
+      // Two purchases, one new key: no shared row lock, so both pass every check and the second insert hits the
+      // unique key (the unique-violation path), reads the winner and refuses the other body.
+      const two = await overpaid(s);
+      const three = await overpaid(s);
+      const shared = randomUUID();
+      const [c, d] = await racing(
+        (sql) =>
+          sql`select id from pos.purchase_orders where id in (${two.o.id}, ${three.o.id}) for update`,
+        () => [
+          refund(s.auth, two.o.id, body, shared).then((r) => r),
+          refund(s.auth, three.o.id, body, shared).then((r) => r),
+        ],
+      );
+      expect([c.status, d.status].sort()).toEqual([201, 422]);
+      expect((c.status === 422 ? c : d).body).toMatchObject({
+        code: 'IDEMPOTENCY_KEY_REUSED',
+      });
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from pos.purchase_refunds where tenant_id = ${s.tenantId}`;
+      expect(n).toBe(2);
+      // The loser's store cash entry and audit row rolled back with it.
+      expect(await storeCash(s)).toBe(20_000);
+      expect(await auditRows(s.tenantId)).toHaveLength(2);
+    });
+
+    it('the shift report after a drawer refund voided once its shift closed: the shift keeps the refund, the store cash gives it back', async () => {
+      const s = await createStore();
+      const { o } = await overpaid(s);
+      await openShift(s, 50_000);
+      const got = await refund(s.auth, o.id, {
+        amount: 12_000,
+        destination: 'drawer',
+      }).expect(201);
+      await post(s.auth, '/shifts/current/close', {
+        countedCash: 62_000,
+      }).expect(200);
+      const today = await storeDay(0);
+      const shiftRow = async () =>
+        (
+          await get(s.auth, `/reports/shifts?from=${today}&to=${today}`).expect(
+            200,
+          )
+        ).body.rows[0] as Record<string, unknown>;
+      const before = await shiftRow();
+      expect(before).toMatchObject({
+        purchaseRefunds: 12_000,
+        purchaseRefundReversals: 0,
+        cashIn: 12_000,
+        expectedCash: 62_000,
+        countedCash: 62_000,
+        difference: 0,
+      });
+      await voidRefund(s.auth, o.id, got.body.id).expect(200);
+      // The closed shift's row is exactly as it was; the cash left the store cash instead.
+      expect(await shiftRow()).toEqual(before);
+      expect(await storeCash(s)).toBe(-12_000);
+      expect(
+        await admin`select direction, kind, amount from pos.store_cash_entries where tenant_id = ${s.tenantId}`,
+      ).toEqual([
+        { direction: 'out', kind: 'purchase_refund_void', amount: '12000' },
+      ]);
+      expect(await figures(s, o.id)).toMatchObject({
+        refunded: 0,
+        refundDue: 30_000,
+      });
+    });
+
+    it('races: two refunds of the whole amount, an undo against a refund, two undos of one return', async () => {
+      const s = await createStore();
+      const lockOrder = (id: string) => (sql: postgres.TransactionSql) =>
+        sql`select id from pos.purchase_orders where id = ${id} for update`;
+
+      const one = await overpaid(s);
+      const [a, b] = await racing(lockOrder(one.o.id), () => [
+        refund(s.auth, one.o.id, {
+          amount: 30_000,
+          destination: 'store_cash',
+        }).then((r) => r),
+        refund(s.auth, one.o.id, {
+          amount: 30_000,
+          destination: 'store_cash',
+        }).then((r) => r),
+      ]);
+      expect([a.status, b.status].sort()).toEqual([201, 422]);
+      expect((a.status === 422 ? a : b).body).toMatchObject({
+        code: 'REFUND_EXCEEDS_DUE',
+        refundDue: 0,
+      });
+      expect(await figures(s, one.o.id)).toMatchObject({ refunded: 30_000 });
+
+      const two = await overpaid(s);
+      const [c, d] = await racing(lockOrder(two.o.id), () => [
+        reverse(s.auth, two.o.id, two.returnId).then((r) => r),
+        refund(s.auth, two.o.id, {
+          amount: 30_000,
+          destination: 'store_cash',
+        }).then((r) => r),
+      ]);
+      // Whichever came first, the other is refused: refunds never exceed what is due back.
+      expect([c.status, d.status].filter((x) => x === 422)).toHaveLength(1);
+      const f = await figures(s, two.o.id);
+      expect(f.refunded).toBeLessThanOrEqual(f.credit);
+
+      const three = await overpaid(s);
+      const before = await batchOf(three.o.id);
+      const [e, g] = await racing(lockOrder(three.o.id), () => [
+        reverse(s.auth, three.o.id, three.returnId).then((r) => r),
+        reverse(s.auth, three.o.id, three.returnId).then((r) => r),
+      ]);
+      expect([e.status, g.status]).toEqual([200, 200]);
+      expect(e.body).toEqual(g.body);
+      expect(await batchOf(three.o.id)).toBe(before + 2);
+    });
+  });
+
   describe('tenancy and permissions', () => {
     it("another store gets 404 on this store's purchase, payment and lines for every new route", async () => {
       const a = await createStore();
@@ -828,6 +1647,60 @@ describe('purchase payments and returns (UMK-1970)', () => {
       expect(await onHand(a, line.productId)).toBe(40);
     });
 
+    it("another store gets 404 on undoing this store's return and on its refunds (feature 29 additions)", async () => {
+      const a = await createStore();
+      const b = await createStore();
+      const p = await product(a, 'Mentega', 15_000);
+      const o = await order(a, [{ productId: p, qty: 10, unitCost: 15_000 }]);
+      await pay(a.auth, o.id, { amount: 150_000, source: 'outside' }).expect(
+        201,
+      );
+      const back = await giveBack(a.auth, o.id, {
+        reason: 'rusak',
+        lines: [{ lineId: o.lines[0].id, qty: 2 }],
+      }).expect(201);
+      const got = await http()
+        .post(`/purchasing/orders/${o.id}/refunds`)
+        .set('Authorization', a.auth)
+        .set('Idempotency-Key', randomUUID())
+        .send({ amount: 5_000, destination: 'store_cash' })
+        .expect(201);
+      const own = await designOrder(b);
+      const send = (auth: string, url: string, body: object) =>
+        http()
+          .post(url)
+          .set('Authorization', auth)
+          .set('Idempotency-Key', randomUUID())
+          .send(body);
+      for (const id of [o.id, own.o.id]) {
+        await send(
+          b.auth,
+          `/purchasing/orders/${id}/returns/${back.body.id}/reverse`,
+          {
+            reason: 'x',
+          },
+        ).expect(404);
+        await send(
+          b.auth,
+          `/purchasing/orders/${id}/refunds/${got.body.id}/void`,
+          {
+            reason: 'x',
+          },
+        ).expect(404);
+      }
+      await send(b.auth, `/purchasing/orders/${o.id}/refunds`, {
+        amount: 1_000,
+        destination: 'store_cash',
+      }).expect(404);
+      // A is untouched.
+      expect(await detail(a, o.id)).toMatchObject({ returned: 30_000 });
+      expect(
+        (await get(a.auth, `/purchasing/orders/${o.id}`).expect(200)).body
+          .refunds,
+      ).toMatchObject([{ id: got.body.id, voidedAt: null }]);
+      expect(await onHand(a, p)).toBe(8);
+    });
+
     it('paying, returning and voiding need purchasing.manage (403); a cashier sees no purchase money', async () => {
       const s = await createStore();
       const { o, line } = await designOrder(s);
@@ -848,6 +1721,22 @@ describe('purchase payments and returns (UMK-1970)', () => {
         `/purchasing/orders/${o.id}/payments/${paid.body.id}/void`,
         { reason: 'x' },
       ).expect(403);
+      await post(
+        kasir.auth,
+        `/purchasing/orders/${o.id}/returns/${paid.body.id}/reverse`,
+        { reason: 'x' },
+      ).expect(403);
+      await http()
+        .post(`/purchasing/orders/${o.id}/refunds`)
+        .set('Authorization', kasir.auth)
+        .set('Idempotency-Key', randomUUID())
+        .send({ amount: 1_000, destination: 'drawer' })
+        .expect(403);
+      await post(
+        kasir.auth,
+        `/purchasing/orders/${o.id}/refunds/${paid.body.id}/void`,
+        { reason: 'x' },
+      ).expect(403);
       const seen = await get(kasir.auth, `/purchasing/orders/${o.id}`).expect(
         200,
       );
@@ -858,8 +1747,11 @@ describe('purchase payments and returns (UMK-1970)', () => {
         'returned',
         'remaining',
         'credit',
+        'refunded',
+        'refundDue',
         'payments',
         'returns',
+        'refunds',
       ])
         expect(seen.body).not.toHaveProperty(k);
       const list = await get(kasir.auth, '/purchasing/orders').expect(200);

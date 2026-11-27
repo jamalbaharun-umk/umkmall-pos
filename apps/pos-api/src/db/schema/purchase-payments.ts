@@ -20,7 +20,8 @@ import { tenants } from './tenants';
 // UMK-1970 (design feature 29): what is paid to a supplier for an approved purchase, and the goods sent back.
 // The purchase's debt = total − Σ returns − Σ live payments, floored at 0; its payment status follows from it.
 // Written only by src/purchasing/purchase-payments.service.ts, under the purchase's row lock. Never updated
-// except a payment's void columns, never deleted (a payment is corrected by voiding it: a reversal line).
+// except a payment's or a refund's void columns, never deleted (a payment is corrected by voiding it: a reversal
+// line; a return by undoing it: a `purchase_return_reversals` row).
 
 const tenantId = () =>
   uuid('tenant_id')
@@ -107,10 +108,9 @@ export const purchaseReturns = pos
         .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
       reason: text('reason', { enum: PURCHASE_RETURN_REASONS }).notNull(),
       note: text('note'),
-      // Σ qty × batch cost of the lines: what the debt goes down by.
+      // Σ qty × batch cost of the lines: what the debt goes down by. The part above the debt (money the supplier
+      // owes back, outside the system) is not stored: it moves when a payment is voided, so it is computed on read.
       total: rupiah('total').notNull(),
-      // The part of `total` above the debt at the time: money the supplier owes back, outside the system.
-      refundDue: rupiah('refund_due').notNull().default(0),
       actorId: uuid('actor_id').notNull(),
       actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
       idempotencyKey: text('idempotency_key').notNull(),
@@ -123,10 +123,7 @@ export const purchaseReturns = pos
         t.tenantId,
         t.idempotencyKey,
       ),
-      check(
-        'purchase_returns_ck',
-        sql`${t.total} > 0 and ${t.refundDue} >= 0 and ${t.refundDue} <= ${t.total}`,
-      ),
+      check('purchase_returns_ck', sql`${t.total} > 0`),
     ],
   )
   .enableRLS();
@@ -158,6 +155,90 @@ export const purchaseReturnLines = pos
       check(
         'purchase_return_lines_ck',
         sql`${t.qty} > 0 and ${t.unitCost} >= 0`,
+      ),
+    ],
+  )
+  .enableRLS();
+
+// A return undone (UMK-1970 addition): its units went back into the batches they left and the debt rose by its total.
+// One row per return, append-only; the return and its lines stay as they were.
+export const purchaseReturnReversals = pos
+  .table(
+    'purchase_return_reversals',
+    {
+      id: id(),
+      tenantId: tenantId(),
+      returnId: uuid('return_id')
+        .notNull()
+        .references(() => purchaseReturns.id, { onDelete: 'restrict' }),
+      reason: text('reason').notNull(),
+      actorId: uuid('actor_id').notNull(),
+      actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      uniqueIndex('purchase_return_reversals_return_uq').on(
+        t.tenantId,
+        t.returnId,
+      ),
+      check(
+        'purchase_return_reversals_ck',
+        sql`length(${t.reason}) between 1 and 200`,
+      ),
+    ],
+  )
+  .enableRLS();
+
+/** `drawer`: into the actor's open shift (a `purchase_refund` ledger entry); `store_cash`: into the store cash. */
+export const PURCHASE_REFUND_DESTINATIONS = ['drawer', 'store_cash'] as const;
+export type PurchaseRefundDestination =
+  (typeof PURCHASE_REFUND_DESTINATIONS)[number];
+
+// Money the supplier handed back (UMK-1970 addition): what payments and returns put above the purchase's total.
+// Live refunds never exceed that credit (held under the purchase's row lock). Corrected by voiding, like a payment.
+export const purchaseRefunds = pos
+  .table(
+    'purchase_refunds',
+    {
+      id: id(),
+      tenantId: tenantId(),
+      orderId: uuid('order_id')
+        .notNull()
+        .references(() => purchaseOrders.id, { onDelete: 'restrict' }),
+      amount: rupiah('amount').notNull(),
+      destination: text('destination', {
+        enum: PURCHASE_REFUND_DESTINATIONS,
+      }).notNull(),
+      note: text('note'),
+      // The drawer the cash went into (destination `drawer` only).
+      shiftId: uuid('shift_id'),
+      actorId: uuid('actor_id').notNull(),
+      actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
+      idempotencyKey: text('idempotency_key').notNull(),
+      requestHash: text('request_hash').notNull(),
+      createdAt: createdAt(),
+      voidedAt: timestamp('voided_at', { withTimezone: true }),
+      voidedById: uuid('voided_by_id'),
+      voidedByKind: text('voided_by_kind', { enum: ACTOR_KINDS }),
+      voidReason: text('void_reason'),
+      // A voided drawer refund: true = its cash left its (still open) shift, false = it left the store cash (the
+      // shift had closed); null for a store cash refund or one not voided.
+      drawerReversed: boolean('drawer_reversed'),
+    },
+    (t) => [
+      index('purchase_refunds_order_idx').on(t.tenantId, t.orderId),
+      uniqueIndex('purchase_refunds_tenant_key_uq').on(
+        t.tenantId,
+        t.idempotencyKey,
+      ),
+      foreignKey({
+        columns: [t.tenantId, t.shiftId],
+        foreignColumns: [shifts.tenantId, shifts.id],
+      }).onDelete('restrict'),
+      check(
+        'purchase_refunds_ck',
+        sql`${t.amount} > 0 and ${t.destination} in ('drawer', 'store_cash')
+          and (${t.destination} = 'drawer') = (${t.shiftId} is not null)`,
       ),
     ],
   )

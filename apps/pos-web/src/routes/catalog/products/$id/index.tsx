@@ -24,6 +24,7 @@ const REASON: Record<string, string> = {
   purchase: 'Pembelian',
   opname: 'Stok opname',
   purchase_return: 'Retur ke pemasok',
+  purchase_return_reversal: 'Retur ke pemasok dibatalkan',
 }
 const SOURCE: Record<string, string> = { opening: 'Stok awal', purchase: 'Pembelian', adjustment: 'Penyesuaian' }
 

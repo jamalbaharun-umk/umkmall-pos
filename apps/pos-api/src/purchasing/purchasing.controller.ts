@@ -22,6 +22,7 @@ import type { PosSession } from '../tenancy/session';
 import {
   PaymentInput,
   PurchasePaymentsService,
+  RefundInput,
   ReturnInput,
   VoidInput,
 } from './purchase-payments.service';
@@ -36,7 +37,15 @@ const seesCost = (s: PosSession) =>
   hasPermission(s, 'purchasing.manage') || hasPermission(s, 'reports.view');
 
 /** The money of a purchase (UMK-1970) is cost too: hidden with the total, the status and due date stay. */
-const MONEY = ['total', 'paid', 'returned', 'remaining', 'credit'] as const;
+const MONEY = [
+  'total',
+  'paid',
+  'returned',
+  'remaining',
+  'credit',
+  'refunded',
+  'refundDue',
+] as const;
 const withoutMoney = <T extends object>(r: T) =>
   ({
     ...r,
@@ -102,6 +111,7 @@ export class PurchasingController {
       lines: order.lines.map((l) => ({ ...l, unitCost: undefined })),
       payments: undefined,
       returns: undefined,
+      refunds: undefined,
     };
   }
 
@@ -158,6 +168,64 @@ export class PurchasingController {
       orderId,
       keyOf(key),
       validate(ReturnInput, body),
+    );
+  }
+
+  /** Undo a return (UMK-1970 addition): the goods back into their batches, the debt back up; a reason is required. */
+  @Post(':id/returns/:returnId/reverse')
+  @RequirePermission('purchasing.manage')
+  @HttpCode(200)
+  reverseReturn(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('returnId') returnId: string,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    const ret = parseId(returnId);
+    return this.payments.reverseReturn(
+      s,
+      orderId,
+      ret,
+      validate(VoidInput, body).reason,
+    );
+  }
+
+  /** "Terima uang retur": money the supplier hands back, into the drawer or the store cash; `Idempotency-Key`. */
+  @Post(':id/refunds')
+  @RequirePermission('purchasing.manage')
+  refund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    return this.payments.refund(
+      s,
+      orderId,
+      keyOf(key),
+      validate(RefundInput, body),
+    );
+  }
+
+  /** The correction of a refund: voided with a reason, never edited or deleted. */
+  @Post(':id/refunds/:refundId/void')
+  @RequirePermission('purchasing.manage')
+  @HttpCode(200)
+  voidRefund(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Param('refundId') refundId: string,
+    @Body() body: unknown,
+  ) {
+    const orderId = parseId(id);
+    const refund = parseId(refundId);
+    return this.payments.voidRefund(
+      s,
+      orderId,
+      refund,
+      validate(VoidInput, body).reason,
     );
   }
 

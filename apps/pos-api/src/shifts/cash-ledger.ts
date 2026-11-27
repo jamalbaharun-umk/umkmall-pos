@@ -104,6 +104,10 @@ export type CashTotals = {
   purchasePaymentReversals: number;
   /** Cash of corrected kasbon instalments taken back out of the drawer (part of cashOut, UMK-1971). */
   receivableReversals: number;
+  /** Money suppliers handed back after a return, into the drawer (part of cashIn, UMK-1970). */
+  purchaseRefunds: number;
+  /** Those refunds voided while the shift was open, their cash out of the drawer again (part of cashOut). */
+  purchaseRefundReversals: number;
 };
 
 export const NO_CASH: CashTotals = {
@@ -119,6 +123,8 @@ export const NO_CASH: CashTotals = {
   purchasePayments: 0,
   purchasePaymentReversals: 0,
   receivableReversals: 0,
+  purchaseRefunds: 0,
+  purchaseRefundReversals: 0,
 };
 
 /** The actor's open shift, row-locked until the transaction ends; null when none is open. */
@@ -318,6 +324,12 @@ export async function cashTotals(
       receivableReversals: sum(
         sql`${e.direction} = 'out' and ${e.kind} = 'receivable_reversal'`,
       ),
+      purchaseRefunds: sum(
+        sql`${e.direction} = 'in' and ${e.kind} = 'purchase_refund'`,
+      ),
+      purchaseRefundReversals: sum(
+        sql`${e.direction} = 'out' and ${e.kind} = 'purchase_refund_reversal'`,
+      ),
     })
     .from(e)
     .where(and(eq(e.tenantId, tenantId), inArray(e.shiftId, shiftIds)))
@@ -338,6 +350,8 @@ export async function cashTotals(
         purchasePayments: Number(r.purchasePayments),
         purchasePaymentReversals: Number(r.purchasePaymentReversals),
         receivableReversals: Number(r.receivableReversals),
+        purchaseRefunds: Number(r.purchaseRefunds),
+        purchaseRefundReversals: Number(r.purchaseRefundReversals),
       },
     ]),
   );

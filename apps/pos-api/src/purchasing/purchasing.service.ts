@@ -16,7 +16,13 @@ import {
   suppliers,
 } from '../db/schema';
 import { StockService } from '../stock/stock.service';
-import { debtFromRow, dueInDaysSql, paidSql, returnedSql } from './debt';
+import {
+  debtFromRow,
+  dueInDaysSql,
+  paidSql,
+  refundedSql,
+  returnedSql,
+} from './debt';
 import {
   PurchasePaymentsService,
   purchaseNumber,
@@ -116,6 +122,7 @@ export class PurchasingService {
         createdAt: purchaseOrders.createdAt,
         paid: paidSql,
         returned: returnedSql,
+        refunded: refundedSql,
         dueInDays: dueInDaysSql(tenantId),
       })
       .from(purchaseOrders)
@@ -123,16 +130,16 @@ export class PurchasingService {
       .where(eq(purchaseOrders.tenantId, tenantId))
       .orderBy(desc(purchaseOrders.createdAt))
       .limit(200);
-    return rows.map(({ paid, returned, dueInDays, ...r }) => ({
+    return rows.map(({ paid, returned, refunded, dueInDays, ...r }) => ({
       ...r,
       code: purchaseNumber(r.number),
-      ...debtFromRow({ ...r, paid, returned, dueInDays }),
+      ...debtFromRow({ ...r, paid, returned, refunded, dueInDays }),
     }));
   }
 
   /**
    * The store's debt to its suppliers over EVERY approved purchase (not only the listed 200): what is owed, the part
-   * past its due date, and the part due within the next 7 days (today included). Store calendar days.
+   * past its due date, and the part due within 7 days counting today (today up to today + 6). Store calendar days.
    */
   async summary(tenantId: string) {
     const today = storeToday(tenantId);
@@ -140,13 +147,16 @@ export class PurchasingService {
       select coalesce(sum(x.remaining), 0) as total,
              coalesce(sum(x.remaining) filter (where x.due_date < ${today}), 0) as overdue,
              coalesce(sum(x.remaining) filter (
-               where x.due_date >= ${today} and x.due_date <= ${today} + 7), 0) as due_soon,
+               where x.due_date >= ${today} and x.due_date < ${today} + 7), 0) as due_soon,
              count(*) filter (where x.remaining > 0)::int as open_count,
              count(*) filter (where x.remaining > 0 and x.due_date < ${today})::int as overdue_count
         from (select o.due_date,
                      greatest(o.total
                        - coalesce((select sum(pr.total) from pos.purchase_returns pr
-                                    where pr.tenant_id = o.tenant_id and pr.order_id = o.id), 0)
+                                    where pr.tenant_id = o.tenant_id and pr.order_id = o.id
+                                      and not exists (select 1 from pos.purchase_return_reversals rr
+                                                       where rr.tenant_id = pr.tenant_id
+                                                         and rr.return_id = pr.id)), 0)
                        - coalesce((select sum(pp.amount) from pos.purchase_payments pp
                                     where pp.tenant_id = o.tenant_id and pp.order_id = o.id
                                       and pp.voided_at is null), 0), 0) as remaining
@@ -178,6 +188,7 @@ export class PurchasingService {
         createdAt: purchaseOrders.createdAt,
         paid: paidSql,
         returned: returnedSql,
+        refunded: refundedSql,
         dueInDays: dueInDaysSql(tenantId),
       })
       .from(purchaseOrders)
@@ -204,17 +215,18 @@ export class PurchasingService {
         ),
       )
       .orderBy(products.name);
-    const { paid, returned, dueInDays, ...head } = order;
+    const { paid, returned, refunded, dueInDays, ...head } = order;
     // UMK-1970: the debt, its history (payments, voided ones too, and returns) and per line what may still go back.
-    const [payments, returns, stock] = await Promise.all([
+    const [payments, returns, refunds, stock] = await Promise.all([
       this.payments.payments(tenantId, id),
       this.payments.returns(tenantId, id),
+      this.payments.refunds(tenantId, id),
       this.payments.lineStock(tenantId, id),
     ]);
     return {
       ...head,
       code: purchaseNumber(head.number),
-      ...debtFromRow({ ...head, paid, returned, dueInDays }),
+      ...debtFromRow({ ...head, paid, returned, refunded, dueInDays }),
       lines: lines.map((l) => ({
         ...l,
         returnedQty: stock.get(l.id)?.returnedQty ?? 0,
@@ -223,6 +235,7 @@ export class PurchasingService {
       })),
       payments,
       returns,
+      refunds,
     };
   }
 
