@@ -15,6 +15,7 @@ import {
   returnSummary,
   shortDay,
   signedRupiah,
+  returnDebtText,
   statusBadge,
 } from './-debt'
 
@@ -191,11 +192,14 @@ describe('purchase debt helpers (UMK-1970)', () => {
     expect(rows.map((r) => [r.kind, r.detail, r.amount, !!r.voided])).toEqual([
       ['Retur', '2 Mentega · Barang rusak · Rp30.000 harus dikembalikan pemasok', -30_000, true],
       ['Uang retur diterima', 'masuk laci kasir', 10_000, true],
-      ['Uang retur dibatalkan', 'Salah jumlah · uang keluar dari kas toko', 10_000, false],
+      ['Uang retur dibatalkan', 'Salah jumlah · uang keluar dari kas toko', -10_000, false],
       ['Retur dibatalkan', 'Salah catat · barang kembali ke stok', 30_000, false],
     ])
     expect(rows[1].undo).toEqual({ type: 'refund', id: 'f1' })
     expect(rows[3].plus).toBe(true)
+    // UMK-2089: money back reads +Rp when it came in and −Rp when it was cancelled.
+    expect(signedRupiah(rows[1].amount, rp, rows[1].plus)).toBe('+Rp10.000')
+    expect(signedRupiah(rows[2].amount, rp, rows[2].plus)).toBe('−Rp10.000')
   })
 
   it('caps money back at what is due and explains where it goes', () => {
@@ -279,5 +283,31 @@ describe('purchase debt helpers (UMK-1970)', () => {
     expect(parseAmount('Rp 500.000')).toBe(500_000)
     expect(formatAmountInput('1400000')).toBe('1.400.000')
     expect(formatAmountInput('')).toBe('')
+  })
+})
+
+describe('returnDebtText (UMK-2089)', () => {
+  const rp = (n: number) => `Rp${n.toLocaleString('id-ID')}`
+
+  it('a return on a purchase that still owed money lowers the debt', () => {
+    expect(returnDebtText({ returned: 31_000, credit: 0, refundDue: 0, refunded: 0 }, rp)).toBe(
+      'Retur mengurangi hutang Rp31.000.',
+    )
+  })
+
+  it('a return on a purchase paid in full lowers nothing: all of it is owed back', () => {
+    const text = returnDebtText({ returned: 31_000, credit: 31_000, refundDue: 31_000, refunded: 0 }, rp)
+    expect(text).not.toContain('mengurangi hutang')
+    expect(text).toBe('Retur Rp31.000: hutang sudah lunas, jadi tidak ada hutang yang berkurang. Pemasok masih harus mengembalikan Rp31.000.')
+  })
+
+  it('splits a return that is partly debt and partly credit, and says what came back', () => {
+    expect(returnDebtText({ returned: 31_000, credit: 11_000, refundDue: 1_000, refunded: 10_000 }, rp)).toBe(
+      'Retur mengurangi hutang Rp20.000. Pemasok masih harus mengembalikan Rp1.000. Sudah diterima kembali Rp10.000.',
+    )
+  })
+
+  it('says nothing without a return', () => {
+    expect(returnDebtText({ returned: 0, credit: 0 }, rp)).toBe('')
   })
 })
