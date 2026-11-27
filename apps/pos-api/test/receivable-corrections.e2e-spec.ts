@@ -544,7 +544,7 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
         { kind: string; direction: string; amount: number; ref_id: string }[]
       >`
         select kind, direction, amount::int as amount, ref_id from pos.store_cash_entries
-         where tenant_id = ${k.tenantId} order by created_at, amount`;
+         where tenant_id = ${k.tenantId} and direction = 'out' order by created_at, amount`;
 
     // No open shift: the reversal needs none (owner ruling 2026-11-26), only a new CASH payment does, and that
     // refusal still comes before the PIN.
@@ -557,6 +557,24 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
     expect(cashNoShift.body).toMatchObject({ code: 'SHIFT_REQUIRED' });
     expect(cashNoShift.body.message).toMatch(/Buka shift dulu/);
     expect(await pinFailures(k)).toBe(0);
+    // The store cash is empty: it cannot give the closed shift's cash back (never below zero, owner ruling
+    // 2026-11-27). Then Rp5.000 is in it (seeded: how it got there is not this test's subject).
+    const empty = await correct(
+      k.auth,
+      k,
+      p.id,
+      body(
+        k,
+        { amount: 2500, paymentMethodId: k.transferId },
+        { reasonCode: 'wrong_method' },
+      ),
+    ).expect(422);
+    expect(empty.body).toMatchObject({
+      code: 'STORE_CASH_INSUFFICIENT',
+      available: 0,
+    });
+    await admin`insert into pos.store_cash_entries (tenant_id, direction, kind, amount, actor_id, actor_kind)
+      values (${k.tenantId}, 'in', 'expense_void', 5000, ${k.userId}, 'owner')`;
     const toTransfer = await correct(
       k.auth,
       k,
@@ -594,7 +612,11 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
     ]);
     // The store cash pays it out; no collector holds less (Setoran penagih and Laporan kasbon).
     const store = (await get(k.auth, '/store-cash').expect(200)).body;
-    expect(store.summary).toMatchObject({ cashOut: 5000, outstanding: 0 });
+    expect(store.summary).toMatchObject({
+      cashOut: 5000,
+      balance: 0,
+      outstanding: 0,
+    });
     expect(store.collectors).toEqual([]);
     const report = await get(k.auth, '/reports/receivables').expect(200);
     expect(report.body.summary.collectorHeld).toBe(0);

@@ -144,6 +144,18 @@ export const correctionToast = (oldAmount: number, newAmount: number | null, fmt
     ? `Pembayaran ${fmt(oldAmount)} dibatalkan`
     : `Pembayaran dikoreksi: ${fmt(oldAmount)} jadi ${fmt(newAmount)}`
 
+/** What to do after a refusal that has a way forward, by its code; undefined for the rest. */
+export function correctionTodo(code: string | undefined, available: number | undefined, fmt: (n: number) => string) {
+  switch (code) {
+    case 'ALREADY_REVERSED':
+      return 'Muat ulang riwayat pembayaran.'
+    case 'STORE_CASH_INSUFFICIENT':
+      return `Uang pembayaran ini harus keluar dari kas toko, yang sekarang berisi ${fmt(available ?? 0)}. Kas toko tidak boleh minus: koreksi setelah kas toko cukup.`
+    default:
+      return undefined
+  }
+}
+
 /** A refusal whose message is about the PIN field: shown there, and the PIN is cleared. */
 export const isPinRefusal = (errors: Record<string, string> | undefined) => !!errors?.pin
 

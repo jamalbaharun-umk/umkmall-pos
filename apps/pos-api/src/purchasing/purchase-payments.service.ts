@@ -29,6 +29,7 @@ import {
   purchaseReturnLines,
   purchaseReturnReversals,
   purchaseReturns,
+  shifts,
   staff,
   stockBatches,
   suppliers,
@@ -147,7 +148,7 @@ type Key = { id: string; hash: string; actorId: string };
  * Refusals carry a `code`: `PURCHASE_OVERPAY` (with `remaining`), `PURCHASE_NOT_APPROVED`, `SHIFT_REQUIRED`,
  * `DRAWER_INSUFFICIENT` (with `drawerCash`), `RETURN_EXCEEDS_BATCH` (with `available`), `IDEMPOTENCY_KEY_REUSED`,
  * `REFUND_EXCEEDS_DUE` (with `refundDue`), `REFUND_RECEIVED` and `RETURN_REFUNDED` (with `refunded`),
- * `RETURN_UNDO_BATCH_FULL`.
+ * `RETURN_UNDO_BATCH_FULL`, `STORE_CASH_INSUFFICIENT` (with `available`), 403 `DRAWER_REFUND_NOT_YOURS`.
  */
 @Injectable()
 export class PurchasePaymentsService {
@@ -797,7 +798,14 @@ export class PurchasePaymentsService {
   /**
    * The correction of a refund, as of a payment: the row stays, marked voided, and what is due back grows again. A
    * drawer refund whose shift is still open gets one cash-out entry in that shift (`DRAWER_INSUFFICIENT` when the
-   * drawer no longer holds it); otherwise the cash leaves the store cash. Repeating changes nothing.
+   * drawer no longer holds it); otherwise the cash leaves the store cash, which never goes below zero
+   * (`STORE_CASH_INSUFFICIENT`, owner ruling 2026-11-27). Repeating changes nothing.
+   *
+   * A drawer refund is voided only by a person at that till (owner rulings 2026-11-27): the owner, the cashier whose
+   * shift took the cash (with or without `purchasing.manage`), or an admin (a `sales.void` holder, the permission
+   * that reverses another cashier's till money); anyone else, purchasing staff without cashier rights included, gets
+   * 403 `DRAWER_REFUND_NOT_YOURS`. Any other refund needs `purchasing.manage` (the route carries no permission of its
+   * own for that reason).
    */
   async voidRefund(
     s: PosSession,
@@ -805,6 +813,13 @@ export class PurchasePaymentsService {
     refundId: string,
     reason: string,
   ) {
+    // Before any query: who could void no refund at all (neither purchasing, nor at a till, nor admin).
+    if (
+      !hasPermission(s, 'purchasing.manage') &&
+      !hasPermission(s, 'sales.create') &&
+      !hasPermission(s, 'sales.void')
+    )
+      throw new ForbiddenException();
     await this.db.transaction(async (tx) => {
       // Lock order: the purchase row, the refund row, then its shift.
       const order = await this.lockOrder(tx, s.tenantId, orderId);
@@ -825,6 +840,10 @@ export class PurchasePaymentsService {
         )
         .for('update');
       if (!row) throw new NotFoundException();
+      if (row.destination === 'drawer')
+        await this.assertMayVoidDrawerRefund(tx, s, row.shiftId);
+      else if (!hasPermission(s, 'purchasing.manage'))
+        throw new ForbiddenException();
       if (row.voidedAt) return;
       let drawerReversed: boolean | null = null;
       if (row.destination === 'drawer' && row.shiftId) {
@@ -851,13 +870,18 @@ export class PurchasePaymentsService {
         }
       }
       if (drawerReversed !== true)
-        await recordStoreCash(tx, s, {
-          direction: 'out',
-          kind: 'purchase_refund_void',
-          amount: row.amount,
-          refId: refundId,
-          note: reason,
-        });
+        await recordStoreCash(
+          tx,
+          s,
+          {
+            direction: 'out',
+            kind: 'purchase_refund_void',
+            amount: row.amount,
+            refId: refundId,
+            note: reason,
+          },
+          { mustCover: true },
+        );
       await tx
         .update(purchaseRefunds)
         .set({
@@ -886,6 +910,30 @@ export class PurchasePaymentsService {
       });
     });
     return this.refundRow(s.tenantId, orderId, refundId);
+  }
+
+  /** 403 unless the actor may take a drawer refund's cash back: the owner, that shift's cashier, or an admin. */
+  private async assertMayVoidDrawerRefund(
+    tx: Tx,
+    s: PosSession,
+    shiftId: string | null,
+  ) {
+    assertPersonAtTill(s.kind);
+    if (s.kind === 'owner' || hasPermission(s, 'sales.void')) return;
+    const [shift] = shiftId
+      ? await tx
+          .select({ actorId: shifts.actorId, actorKind: shifts.actorKind })
+          .from(shifts)
+          .where(and(eq(shifts.tenantId, s.tenantId), eq(shifts.id, shiftId)))
+      : [];
+    if (shift?.actorKind === s.kind && shift.actorId === s.actorId) return;
+    throw new ForbiddenException({
+      message:
+        'Uang ini masuk laci shift kasir lain. Yang bisa membatalkannya: kasir shift itu, admin, atau pemilik.',
+      error: 'Forbidden',
+      statusCode: 403,
+      code: 'DRAWER_REFUND_NOT_YOURS',
+    });
   }
 
   /** The purchase's refunds, oldest first, voided ones included. */

@@ -226,6 +226,10 @@ export function refusalTodo(
       return `Batalkan dulu uang retur yang diterima (${fmt(extra.refunded ?? 0)}) di riwayat, lalu coba lagi.`
     case 'RETURN_UNDO_BATCH_FULL':
       return 'Periksa stok barang ini, lalu hubungi pemilik.'
+    case 'STORE_CASH_INSUFFICIENT':
+      return `Kas toko sekarang berisi ${fmt(extra.available ?? 0)}, kurang dari uang yang dibatalkan. Kas toko tidak boleh minus: batalkan setelah kas toko cukup.`
+    case 'DRAWER_REFUND_NOT_YOURS':
+      return 'Uang ini masuk laci kasir lain. Minta kasir shift itu, admin, atau pemilik untuk membatalkannya.'
     case 'AGENT_FORBIDDEN':
       return context === 'refund'
         ? 'Catat dari POS sebagai kasir atau pemilik, atau pilih Kas toko.'
