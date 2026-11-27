@@ -108,13 +108,20 @@ export class StockService {
       reason?: StockReason;
       /** Optional best-before date, `YYYY-MM-DD` (UMK-2087). */
       expiresAt?: string | null;
+      /**
+       * The date belongs to an already-saved draft that was checked when it was written (a purchase order being
+       * approved): it may have elapsed since, and the batch then simply shows as expired. A date taken from a request
+       * is always checked.
+       */
+      savedExpiry?: boolean;
     },
   ) {
     positiveInt(input.qty, 'Jumlah');
     if (!Number.isSafeInteger(input.unitCost) || input.unitCost < 0)
       throw new UnprocessableEntityException('Harga modal tidak valid');
     await this.tracked(tx, input.tenantId, input.productId);
-    await this.assertNotExpired(tx, input.tenantId, input.expiresAt);
+    if (!input.savedExpiry)
+      await this.assertNotExpired(tx, input.tenantId, input.expiresAt);
     const [batch] = await tx
       .insert(stockBatches)
       .values({

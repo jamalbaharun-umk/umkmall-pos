@@ -523,9 +523,13 @@ A shop is not one day. Money comes back, and new ways to be paid open up.
 
 ### 22. Store cash and collector deposits
 
-> A helper without an open shift collects a debt on the way home. The system remembers the money is in their hands until someone receives it.
+> A helper who only collects debts picks up cash on the way home. The system remembers the money is in their hands until someone receives it.
 
-Kasbon cash collected by someone **without an open shift** is held by that person (**Dipegang penagih**).
+Kasbon cash needs an open shift for anyone who can sell (holds the permission to create sales, as every owner and cashier
+does): the app tells them to open a shift instead of holding the cash, and the cash goes into that shift's drawer. Only
+collector-only staff, whose role does **not** include selling (for example a role with just receivables management),
+take kasbon instalments without a shift. That cash is held by that person (**Dipegang penagih**). Debit and wallet
+instalments never need a shift.
 
 1. Open **Kas toko** to see the store cash balance and who is holding money.
 2. When the collector hands it over, another person presses **Terima setoran**, enters the amount and saves. Collectors

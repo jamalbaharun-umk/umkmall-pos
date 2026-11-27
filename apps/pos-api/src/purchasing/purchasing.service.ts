@@ -416,6 +416,7 @@ export class PurchasingService {
         qty: l.qty,
         unitCost: l.unitCost,
         expiresAt: l.expiresAt,
+        savedExpiry: true,
         source: 'purchase',
         sourceId: id,
         actorId,

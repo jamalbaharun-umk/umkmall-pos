@@ -3,6 +3,7 @@ import { Alert, ProgressBar, SegmentedControl } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { Empty, Panel } from '@/components/page'
 import { ReportVisuals } from '@/components/report-visual'
+import { CsvButton } from './-csv-button'
 import { PdfButton } from './-pdf-button'
 import { rangeLabel } from './-pdf'
 import { asPeriod, barPercent, PERIODS, periodNoun, profitChangeText } from '../pengeluaran/-helpers'
@@ -27,7 +28,12 @@ function ProfitLossPage() {
   return (
     <ReportLayout
       title="Untung rugi"
-      actions={<PdfButton jenis="untung-rugi" query={{ period }} label={rangeLabel(r.current.from, r.current.to)} />}
+      actions={
+        <>
+          <CsvButton jenis="untung-rugi" period={period} />
+          <PdfButton jenis="untung-rugi" query={{ period }} label={rangeLabel(r.current.from, r.current.to)} />
+        </>
+      }
     >
       <SegmentedControl
         aria-label="Periode"
