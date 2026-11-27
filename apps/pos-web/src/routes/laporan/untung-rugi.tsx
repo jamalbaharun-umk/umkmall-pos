@@ -77,7 +77,7 @@ function Formula({ r }: { r: ProfitLoss }) {
         sudah mencakup barang dari pemasok.
       </p>
       <p className="text-xs text-default-secondary">
-        Susut stok adalah modal barang yang hilang menurut stok opname yang disetujui. Kelebihan stok tidak menambah untung.
+        Susut stok adalah modal barang yang hilang menurut stok opname yang disetujui, dikurangi modal barang yang ternyata lebih pada periode yang sama (paling kecil Rp0).
       </p>
     </Card>
   )

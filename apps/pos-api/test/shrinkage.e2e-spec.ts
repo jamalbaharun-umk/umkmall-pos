@@ -14,13 +14,15 @@ const day = (offset = 0) =>
 
 /**
  * UMK-2072, owner ruling 2026-11-26: units an approved stock opname took out ("Susut stok") reduce profit at the
- * cost of the batches they came from, as their own line between gross profit and net profit; a surplus adds
- * nothing; dated by the opname's approval in the store's timezone.
+ * cost of the batches they came from, as their own line between gross profit and net profit; a surplus is netted
+ * against it within the period, never below 0 (ruling on PR 72); dated by the opname's approval in the store's
+ * timezone.
  *
  * The store (tax 0): Teh Rp5.000 (10 at cost 3.000), Kopi (2 at cost 2.000, then a purchase of 5 at 2.500), Gula
  * (10 at cost 1.000). Teh 2 sold → revenue 10.000, cost 6.000, gross profit 4.000; a Kopi sold and voided the same
  * day nets to 0. Expense Rp1.000. Opname: Teh 8 → 6 (−2 × 3.000 = 6.000), Kopi 7 → 4 (FIFO: 2 × 2.000 + 1 × 2.500 =
- * 6.500), Gula 10 → 15 (+5, adds nothing). Shrinkage 12.500; net profit 4.000 − 12.500 − 1.000 = −9.500.
+ * 6.500), Gula 10 → 15 (+5 × 1.000 = 5.000 surplus). Shrinkage 12.500 − 5.000 = 7.500; net profit 4.000 − 7.500 −
+ * 1.000 = −4.500.
  */
 describe('stock shrinkage in profit and loss (UMK-2072)', () => {
   let app: INestApplication;
@@ -133,7 +135,7 @@ describe('stock shrinkage in profit and loss (UMK-2072)', () => {
     }).expect(201);
   }
 
-  it('an approved opname takes the batch cost of the missing units off net profit, not gross profit; a surplus adds nothing; CSV and dashboard agree', async () => {
+  it('an approved opname takes the batch cost of the missing units, less the surplus, off net profit, not gross profit; CSV and dashboard agree', async () => {
     const s = await shop();
     await trade(s);
     const before = await profitLoss(s);
@@ -160,21 +162,21 @@ describe('stock shrinkage in profit and loss (UMK-2072)', () => {
       revenue: 10_000,
       cost: 6000,
       grossProfit: 4000,
-      shrinkage: 12_500,
+      shrinkage: 7500,
       expenses: 1000,
-      netProfit: -9500,
+      netProfit: -4500,
     });
     const csv = await get(s.auth, '/reports/profit-loss/csv').expect(200);
     const rows = csv.text.split('\r\n');
     const at = (label: string) => rows.findIndex((r) => r.startsWith(label));
     expect(rows[at('Susut stok')]).toBe(
-      'Susut stok (selisih stok opname),12500,0',
+      'Susut stok (selisih stok opname),7500,0',
     );
     // Between gross profit and expenses.
     expect(at('Untung kotor')).toBe(at('Susut stok') - 1);
     expect(at('Pengeluaran,')).toBe(at('Susut stok') + 1);
     expect(rows[at('Untung bersih')]).toBe(
-      'Untung bersih (tanpa pajak),-9500,0',
+      'Untung bersih (tanpa pajak),-4500,0',
     );
     // The dashboard shows gross profit: the same number, the opname not in it.
     const dash = await get(s.auth, '/reports/dashboard?period=today').expect(
@@ -204,6 +206,27 @@ describe('stock shrinkage in profit and loss (UMK-2072)', () => {
       .expect(200);
     const wide = await profitLoss(s, `?from=${day(-2)}&to=${day(1)}`);
     expect(wide.current.shrinkage).toBe(6000);
+  });
+
+  it('a surplus larger than the shrinkage of the period leaves Rp0, never a gain; another period keeps its own', async () => {
+    const s = await shop();
+    // Teh 10 → 9 (−1 × 3.000) and Gula 10 → 20 (+10 × 1.000 = 10.000) in one opname: max(0, 3.000 − 10.000) = 0.
+    await opname(s, [
+      { productId: s.teh, countedQty: 9 },
+      { productId: s.gula, countedQty: 20 },
+    ]);
+    expect((await profitLoss(s)).current).toMatchObject({
+      grossProfit: 0,
+      shrinkage: 0,
+      netProfit: 0,
+    });
+    // A shrinkage yesterday is not netted with today's surplus. Kopi 7 → 5: FIFO 2 × 2.000 = 4.000.
+    const id = await opname(s, [{ productId: s.kopi, countedQty: 5 }]);
+    await admin`update pos.stock_opnames set approved_at = now() - interval '1 day' where id = ${id}`;
+    expect(
+      (await profitLoss(s, `?from=${day(-1)}&to=${day(-1)}`)).current.shrinkage,
+    ).toBe(4000);
+    expect((await profitLoss(s)).current.shrinkage).toBe(0);
   });
 
   it("cross-tenant: store B's report holds none of store A's shrinkage", async () => {

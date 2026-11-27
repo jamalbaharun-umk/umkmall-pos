@@ -84,7 +84,7 @@ export type ProfitLossFigures = {
   tax: number
   cost: number
   grossProfit: number
-  /** UMK-2072: batch cost of the units approved stock opnames took out; between gross and net profit. */
+  /** UMK-2072: batch cost of the units approved stock opnames took out, less their surplus in the period, floor 0. */
   shrinkage: number
   expenses: number
   netProfit: number
