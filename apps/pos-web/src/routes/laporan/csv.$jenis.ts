@@ -1,5 +1,6 @@
 import { createFileRoute, isRedirect } from '@tanstack/react-router'
 import { api } from '@/lib/api.server'
+import { PERIOD_CSV_PATHS, periodCsvQuery } from './-csv'
 import { REPORTS } from './-reports'
 
 // Streams pos-api's CSV through the session (the browser never holds the pos-api token).
@@ -7,11 +8,15 @@ export const Route = createFileRoute('/laporan/csv/$jenis')({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
+        const periodPath = Object.hasOwn(PERIOD_CSV_PATHS, params.jenis) ? PERIOD_CSV_PATHS[params.jenis] : undefined
         const report = Object.hasOwn(REPORTS, params.jenis) ? REPORTS[params.jenis] : undefined
-        if (!report) return new Response(null, { status: 404 })
+        if (!report && !periodPath) return new Response(null, { status: 404 })
         const q = new URL(request.url).searchParams
-        const range = new URLSearchParams({ from: q.get('from') ?? '', to: q.get('to') ?? '' })
-        const res = await api(`/reports/${report.kind}/csv?${range}`).catch((e: unknown) => {
+        // Untung rugi and Pengeluaran show a period; the other reports a date range.
+        const target = periodPath
+          ? `${periodPath}?${periodCsvQuery(q.get('period'))}`
+          : `/reports/${report!.kind}/csv?${new URLSearchParams({ from: q.get('from') ?? '', to: q.get('to') ?? '' })}`
+        const res = await api(target).catch((e: unknown) => {
           if (isRedirect(e)) throw e
           return null
         })

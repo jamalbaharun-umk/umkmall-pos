@@ -3,6 +3,7 @@ import { Badge, Button, SegmentedControl } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
 import { useCan } from '@/components/shell'
+import { CsvButton } from '../laporan/-csv-button'
 import { loadExpenses } from './-api'
 import { asPeriod, dayLabel, groupByDate, PERIODS, periodNoun, rupiah, sourceLabel, timeLabel } from './-helpers'
 
@@ -23,9 +24,12 @@ function ExpenseList() {
   // Without reports.view pos-api lists and totals only the expenses the actor recorded.
   const seesAll = useCan('reports.view')
   const add = (
-    <Button type="primary" color="primary" width="auto" onClick={() => void navigate({ to: '/pengeluaran/baru' })}>
-      + Catat pengeluaran
-    </Button>
+    <>
+      <CsvButton jenis="pengeluaran" period={period} />
+      <Button type="primary" color="primary" width="auto" onClick={() => void navigate({ to: '/pengeluaran/baru' })}>
+        + Catat pengeluaran
+      </Button>
+    </>
   )
   return (
     <Page title="Pengeluaran" crumbs={[{ label: 'Pengeluaran' }]} actions={add}>
