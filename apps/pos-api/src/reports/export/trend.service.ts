@@ -11,8 +11,8 @@ import { ExpensesService } from '../../expenses/expenses.service';
 import { ReportsService } from '../reports.service';
 import type { BarsVisual } from '../visuals/types';
 import {
-  addDays,
   bucketEnd,
+  comparisonEnd,
   bucketLabel,
   bucketStart,
   bucketStarts,
@@ -172,14 +172,8 @@ export class SalesExpensesService {
       return out;
     })();
     const prevFrom = prevStarts[0];
-    // A window that is still running is compared with the same number of days of the one before (like-for-like, as
-    // the profit and loss report does); a finished one with the whole previous window.
     const partial = lastEnd > today;
-    const elapsedDays = Math.round(
-      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
-        86_400_000,
-    );
-    const prevTo = partial ? addDays(prevFrom, elapsedDays) : addDays(from, -1);
+    const prevTo = comparisonEnd(partial, from, to, prevFrom);
 
     const [series, totals, previous] = await Promise.all([
       this.perBucket(tenantId, tz, scale, from, to),
