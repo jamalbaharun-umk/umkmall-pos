@@ -390,6 +390,7 @@ function AppForm({
   const router = useRouter()
   const [tax, setTax] = useState(taxBps === null ? '' : String(taxBps / 100).replace('.', ','))
   const [tz, setTz] = useState(timezone ?? 'Asia/Jakarta')
+  const [taxTouched, setTaxTouched] = useState(false)
   const [errors, setErrors] = useState<Errors>({})
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -407,7 +408,12 @@ function AppForm({
     setErrors({})
     setBusy(true)
     const r = await saveAppSettings({
-      data: { taxBps: parsed.bps, ...(timezone === null ? {} : { timezone: tz }) },
+      // The tax is an explicit choice when the owner touched it, or when it is the only thing to save. A timezone-only
+      // change leaves it out, so it is not taken as "tax chosen" for the Kelengkapan toko board.
+      data: {
+        ...(taxTouched || timezone === null || tz === timezone ? { taxBps: parsed.bps } : {}),
+        ...(timezone === null ? {} : { timezone: tz }),
+      },
     }).catch(() => ({ error: GENERIC_ERROR, errors: undefined, status: 0 }))
     setBusy(false)
     if (r.error) {
@@ -432,6 +438,7 @@ function AppForm({
           value={tax}
           onChange={(e) => {
             setTax(e.target.value)
+            setTaxTouched(true)
             setErrors({})
           }}
           placeholder="0"

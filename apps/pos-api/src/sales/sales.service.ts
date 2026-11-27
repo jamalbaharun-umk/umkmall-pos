@@ -1750,21 +1750,19 @@ export class SalesService {
   }
 
   /**
-   * `tax_set_at` (feature 39, "Kelengkapan toko") is stamped the first time a tax above 0 is saved and never moved
-   * after: the settings form always sends the tax, so saving only the timezone with 0% must not count as set.
+   * `tax_set_at` (feature 39, "Kelengkapan toko") is stamped the first time the tax is saved, at any rate (0% is a
+   * valid choice: "tidak memungut pajak") and never moved after. The settings form skips this call when only the
+   * timezone changed, so that save is not a tax choice.
    */
   async updateSettings(tenantId: string, taxBps: number) {
     await this.db
       .insert(salesSettings)
-      .values({ tenantId, taxBps, taxSetAt: taxBps > 0 ? new Date() : null })
+      .values({ tenantId, taxBps, taxSetAt: new Date() })
       .onConflictDoUpdate({
         target: salesSettings.tenantId,
         set: {
           taxBps,
-          taxSetAt:
-            taxBps > 0
-              ? sql`coalesce(${salesSettings.taxSetAt}, now())`
-              : sql`${salesSettings.taxSetAt}`,
+          taxSetAt: sql`coalesce(${salesSettings.taxSetAt}, now())`,
         },
       });
     return { taxBps };
