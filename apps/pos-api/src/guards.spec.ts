@@ -422,6 +422,8 @@ describe('repo guards', () => {
       path.join('payments-client', 'payment-sync.service.ts'),
       // One sale by id, of any status: the payment screen of a sale that still waits.
       path.join('payments-client', 'sale-payment.service.ts'),
+      // The dashboard widgets (UMK-1972): every aggregate filters `status in FINAL_SALE_STATUSES`.
+      path.join('reports', 'dashboard-widgets.service.ts'),
       // The kasbon report (UMK-1964): each open kasbon's sale number, joined by id, receipts only.
       path.join('reports', 'receivables-report.service.ts'),
       path.join('reports', 'reports.service.ts'),

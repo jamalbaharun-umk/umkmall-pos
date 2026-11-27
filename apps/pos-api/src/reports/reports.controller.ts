@@ -24,6 +24,8 @@ import {
 } from './reports.schemas';
 import { ShiftsModule } from '../shifts/shifts.module';
 import { ReportsService } from './reports.service';
+import { DashboardWidgetsController } from './dashboard-widgets.controller';
+import { DashboardWidgetsService } from './dashboard-widgets.service';
 
 const CSV = 'text/csv; charset=utf-8';
 
@@ -211,6 +213,12 @@ export class ReportsController {
     return this.receivables.summary(s.tenantId);
   }
 
+  /** The dashboard card "Piutang menurut umur". */
+  @Get('receivables/aging')
+  receivablesAging(@CurrentSession() s: PosSession) {
+    return this.receivables.aging(s.tenantId);
+  }
+
   @Get('receivables/csv')
   @Header('Content-Type', CSV)
   @Header('Content-Disposition', 'attachment; filename="laporan-kasbon.csv"')
@@ -370,9 +378,13 @@ export class ReportsController {
 }
 
 @Module({
-  controllers: [ReportsController],
+  controllers: [ReportsController, DashboardWidgetsController],
   imports: [ShiftsModule],
-  providers: [ReportsService, ReceivablesReportService],
+  providers: [
+    ReportsService,
+    ReceivablesReportService,
+    DashboardWidgetsService,
+  ],
   exports: [ReportsService],
 })
 export class ReportsModule {}
