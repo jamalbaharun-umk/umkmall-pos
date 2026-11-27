@@ -1,6 +1,7 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
 import {
   Badge,
+  Button,
   Card,
   Table,
   TableBody,
@@ -14,6 +15,8 @@ import {
   TextField,
 } from '@umkmall/ui'
 import { useState } from 'react'
+import { ActionRow } from '@/components/action-row'
+import { WhatsappReminderDialog } from '@/components/whatsapp-dialogs'
 import { loadReceivables } from '../pelanggan/-api'
 import { Empty, formatDay, formatMomentDay, ListFooter, LoadError, Page, Pending, rupiah } from '../pelanggan/-ui'
 
@@ -34,12 +37,19 @@ export const Route = createFileRoute('/piutang/')({
   component: ReceivablesPage,
 })
 
+/** The queue after this step: the next customer, or nothing after the last. */
+const next = (q: { ids: string[]; index: number }) => (q.index + 1 < q.ids.length ? { ...q, index: q.index + 1 } : null)
+
 function ReceivablesPage() {
   const list = Route.useLoaderData()
   const rows = list.data
   const { status, q } = Route.useSearch()
   const navigate = useNavigate({ from: '/piutang/' })
   const [query, setQuery] = useState(q ?? '')
+  const router = useRouter()
+  // UMK-1973: one customer's reminder, or the queue of late customers (one chat opens at a time).
+  const [reminder, setReminder] = useState<{ ids: string[]; index: number } | null>(null)
+  const late = list.summary.overdueMemberIds
   return (
     <Page title="Piutang" crumbs={[{ label: 'Piutang' }, { label: 'Daftar' }]}>
       {/* Lakasir's StatsReceivable: what members still owe, over the search (any page, any tab). */}
@@ -60,6 +70,16 @@ function ReceivablesPage() {
           </div>
         )}
       </Card>
+      {late.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-default-secondary">{late.length} pelanggan terlambat dan punya nomor WhatsApp.</p>
+          <ActionRow align="start">
+            <Button width="auto" type="outline" color="light" onClick={() => setReminder({ ids: late, index: 0 })}>
+              Ingatkan yang terlambat
+            </Button>
+          </ActionRow>
+        </div>
+      )}
       <Card variant="outlined" padding="none" className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-default-primary p-4 md:flex-row md:items-center md:justify-between">
           <div className="md:min-w-96">
@@ -104,11 +124,9 @@ function ReceivablesPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Pelanggan</TableHead>
-                <TableHead>Penjualan</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Sisa</TableHead>
                 <TableHead>Jatuh tempo</TableHead>
-                <TableHead>Bayar terakhir</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">
                   <span className="sr-only">Aksi</span>
@@ -126,13 +144,15 @@ function ReceivablesPage() {
                     >
                       {r.memberName}
                     </Link>
+                    <div className="text-xs text-default-secondary">Penjualan #{r.saleNumber}</div>
                   </TableCell>
-                  <TableCell>#{r.saleNumber}</TableCell>
                   <TableCell className="text-right">{rupiah(r.total)}</TableCell>
                   <TableCell className="text-right">{rupiah(r.rest)}</TableCell>
-                  <TableCell>{formatDay(r.dueDate)}</TableCell>
                   <TableCell>
-                    {r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}
+                    {formatDay(r.dueDate)}
+                    <div className="text-xs text-default-secondary">
+                      Bayar terakhir {r.lastPaymentAt ? formatMomentDay(r.lastPaymentAt) : '–'}
+                    </div>
                     {r.outsideShiftCollected > 0 && (
                       <div className="text-xs text-default-secondary">
                         {rupiah(r.outsideShiftCollected)} dikumpulkan di luar shift
@@ -140,16 +160,33 @@ function ReceivablesPage() {
                     )}
                   </TableCell>
                   <TableCell>
-                    {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
+                    <div className="flex flex-wrap gap-1">
+                      {r.rest === 0 ? <Badge color="success">Lunas</Badge> : <Badge color="warning">Belum lunas</Badge>}
+                      {r.overdueDays > 0 && <Badge color="danger">Terlambat {r.overdueDays} hari</Badge>}
+                    </div>
+                    <div className="mt-1 text-xs text-default-secondary">
+                      Diingatkan {r.memberLastRemindedAt ? formatMomentDay(r.memberLastRemindedAt) : '–'}
+                    </div>
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-right">
-                    <Link
-                      to="/piutang/$id"
-                      params={{ id: r.id }}
-                      className="font-medium text-brand-primary hover:underline"
-                    >
-                      {r.rest > 0 ? 'Bayar' : 'Lihat'}
-                    </Link>
+                  <TableCell>
+                    {/* One column, two real buttons of the same size, stacked with the main one on top: the page's main action stays in view */}
+                    <ActionRow align="start" stacked className="w-40">
+                      {r.rest > 0 && !r.memberDeleted && (
+                        <Button
+                          type="outline"
+                          color="light"
+                          width="auto"
+                          onClick={() => setReminder({ ids: [r.memberId], index: 0 })}
+                        >
+                          Kirim pengingat
+                        </Button>
+                      )}
+                      <Button asChild type={r.rest > 0 ? 'primary' : 'outline'} color={r.rest > 0 ? 'primary' : 'light'} width="auto">
+                        <Link to="/piutang/$id" params={{ id: r.id }}>
+                          {r.rest > 0 ? 'Bayar' : 'Lihat'}
+                        </Link>
+                      </Button>
+                    </ActionRow>
                   </TableCell>
                 </TableRow>
               ))}
@@ -167,6 +204,20 @@ function ReceivablesPage() {
           />
         )}
       </Card>
+      {reminder && (
+        <WhatsappReminderDialog
+          // A new key per customer: each one loads its own message.
+          key={reminder.ids[reminder.index]}
+          memberId={reminder.ids[reminder.index]}
+          step={reminder.ids.length > 1 ? { index: reminder.index + 1, total: reminder.ids.length } : undefined}
+          onClose={() => setReminder(null)}
+          onDone={() => {
+            void router.invalidate()
+            setReminder(next(reminder))
+          }}
+          onSkip={reminder.ids.length > 1 ? () => setReminder(next(reminder)) : undefined}
+        />
+      )}
     </Page>
   )
 }

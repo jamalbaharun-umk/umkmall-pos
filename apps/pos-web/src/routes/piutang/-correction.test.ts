@@ -6,6 +6,7 @@ import {
   correctionErrors,
   correctionReasonLabel,
   correctionToast,
+  correctionTodo,
   fieldErrorsOf,
   paidFromBook,
   restAfterCorrection,
@@ -106,5 +107,14 @@ describe('koreksi kasbon helpers (UMK-1971)', () => {
       pin: 'PIN salah',
     })
     expect(fieldErrorsOf(undefined)).toEqual({})
+  })
+
+  it('says what to do after a refusal with a way forward, in the correction dialog', () => {
+    expect(correctionTodo('ALREADY_REVERSED', undefined, rp)).toBe('Muat ulang riwayat pembayaran.')
+    const store = correctionTodo('STORE_CASH_INSUFFICIENT', 1_500, rp)!
+    expect(store).toContain('kas toko, yang sekarang berisi Rp1.500')
+    expect(store).toContain('tidak boleh minus')
+    expect(correctionTodo('STORE_CASH_INSUFFICIENT', undefined, rp)).toContain('Rp0')
+    expect(correctionTodo('PIN_INVALID', undefined, rp)).toBeUndefined()
   })
 })

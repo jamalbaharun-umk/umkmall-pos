@@ -86,6 +86,8 @@ export class LedgerController {
                'Tunai', null, m.note
           from pos.manual_cash_entries m
          where m.tenant_id = ${s.tenantId} and m.created_at >= ${start} and m.created_at < ${end}
+        union all select 'purchase_payment:' || pp.id, pp.created_at, ${day(sql`pp.created_at`)}, 'out', 'supplier_payment', 'bayar_pemasok', 'Bayar pemasok', pp.amount, case when pp.source = 'drawer' then 'Tunai' end, null, pp.note from pos.purchase_payments pp where pp.tenant_id = ${s.tenantId} and pp.voided_at is null and pp.created_at >= ${start} and pp.created_at < ${end}
+        union all select 'purchase_refund:' || rf.id, rf.created_at, ${day(sql`rf.created_at`)}, 'in', 'supplier_refund', 'retur_pemasok', 'Uang retur dari pemasok', rf.amount, 'Tunai', null, rf.note from pos.purchase_refunds rf where rf.tenant_id = ${s.tenantId} and rf.voided_at is null and rf.created_at >= ${start} and rf.created_at < ${end}
       ) x
       order by date, at, id
       limit ${LEDGER_ROW_CAP + 1}`)) as Row[];

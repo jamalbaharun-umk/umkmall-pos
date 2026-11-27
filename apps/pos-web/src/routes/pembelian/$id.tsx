@@ -4,12 +4,32 @@ import { useState } from 'react'
 import { act, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { useCan } from '@/components/shell'
 import { loadOrderPage, orderAction } from './-api'
-import { dueText, historyRows, orderCode, type Payment, signedRupiah, statusBadge } from './-debt'
-import { DueDateDialog, PayDialog, ReturnDialog, VoidPaymentDialog } from './-money-dialogs'
+import {
+  dueText,
+  historyRows,
+  type HistoryRow,
+  orderCode,
+  type Payment,
+  type Refund,
+  type Return,
+  returnDebtText,
+  signedRupiah,
+  statusBadge,
+} from './-debt'
+import {
+  DueDateDialog,
+  PayDialog,
+  RefundDialog,
+  ReturnDialog,
+  ReverseReturnDialog,
+  VoidPaymentDialog,
+  VoidRefundDialog,
+} from './-money-dialogs'
 import { StatusBadge } from './-ui'
 
 // Lakasir's View purchasing: details, stock lines and the status actions (approve raises stock), plus the debt to the
-// supplier (UMK-1970, design feature 29): total, paid, remaining, the history, "Bayar pemasok" and "Retur barang".
+// supplier (UMK-1970, design feature 29): total, paid, remaining, the history, "Bayar pemasok", "Retur barang" and
+// "Terima uang retur"; a payment or a refund is voided and a return undone from its history row.
 export const Route = createFileRoute('/pembelian/$id')({
   loader: ({ params }) => loadOrderPage({ data: params.id }),
   component: OrderPage,
@@ -54,6 +74,9 @@ function OrderPage() {
   const [returning, setReturning] = useState(false)
   const [editingDue, setEditingDue] = useState(false)
   const [voiding, setVoiding] = useState<Payment | null>(null)
+  const [refunding, setRefunding] = useState(false)
+  const [undoing, setUndoing] = useState<Return | null>(null)
+  const [voidingRefund, setVoidingRefund] = useState<Refund | null>(null)
   const reload = () => router.invalidate()
 
   // Confirm first; the dialog keeps its button busy while the action runs and shows a refusal in place.
@@ -76,10 +99,30 @@ function OrderPage() {
   const remaining = order.remaining ?? 0
   const payments = order.payments ?? []
   const returns = order.returns ?? []
-  const history = seesMoney ? historyRows({ ...order, total: order.total ?? 0 }, payments, returns, rupiah) : []
+  const refunds = order.refunds ?? []
+  const refundDue = order.refundDue ?? 0
+  const history = seesMoney ? historyRows({ ...order, total: order.total ?? 0 }, payments, returns, rupiah, refunds) : []
   const due = dueText(order)
   const badge = statusBadge(order)
   const byId = new Map(payments.map((p) => [p.id, p]))
+  const returnById = new Map(returns.map((r) => [r.id, r]))
+  const refundById = new Map(refunds.map((f) => [f.id, f]))
+  // The history row's own correction: void a payment or a refund, undo a return.
+  const undoOf = (h: HistoryRow) => {
+    if (!h.undo || h.voided || !canManage) return null
+    const { type, id } = h.undo
+    const open =
+      type === 'payment'
+        ? () => setVoiding(byId.get(id) ?? null)
+        : type === 'return'
+          ? () => setUndoing(returnById.get(id) ?? null)
+          : () => setVoidingRefund(refundById.get(id) ?? null)
+    return (
+      <Button type="text" size="compact" width="auto" color="danger" onClick={open}>
+        {type === 'return' ? 'Batalkan retur' : 'Batalkan'}
+      </Button>
+    )
+  }
 
   return (
     <Page
@@ -104,7 +147,7 @@ function OrderPage() {
                 Batalkan
               </Button>
               <Button width="auto" onClick={() => run('approve')}>
-                Setujui dan tambah stok
+                Setujui, tambah stok
               </Button>
             </>
           )}
@@ -113,6 +156,11 @@ function OrderPage() {
               <Button width="auto" type="outline" color="light" onClick={() => setReturning(true)}>
                 Retur barang
               </Button>
+              {refundDue > 0 && (
+                <Button width="auto" type="outline" color="light" onClick={() => setRefunding(true)}>
+                  Terima uang retur
+                </Button>
+              )}
               {remaining > 0 && (
                 <Button width="auto" onClick={() => setPaying(true)}>
                   Bayar pemasok
@@ -146,9 +194,9 @@ function OrderPage() {
           </dl>
           {((order.returned ?? 0) > 0 || (order.credit ?? 0) > 0) && (
             <p className="mt-3 text-sm text-default-secondary">
-              {(order.returned ?? 0) > 0 && `Retur mengurangi hutang ${rupiah(order.returned ?? 0)}.`}
-              {(order.credit ?? 0) > 0 &&
-                ` ${rupiah(order.credit ?? 0)} kembali dari pemasok di luar sistem (dicatat sebagai catatan).`}
+              {returnDebtText(order, rupiah)}
+              {(order.returned ?? 0) <= 0 && refundDue > 0 && `Pemasok masih harus mengembalikan ${rupiah(refundDue)}.`}
+              {(order.returned ?? 0) <= 0 && (order.refunded ?? 0) > 0 && ` Sudah diterima kembali ${rupiah(order.refunded ?? 0)}.`}
             </p>
           )}
           {remaining === 0 && (
@@ -173,14 +221,10 @@ function OrderPage() {
                     {formatDate(h.at)} · {h.kind}
                   </p>
                   {h.detail && <p className="text-xs text-default-secondary">{h.detail}</p>}
-                  {h.paymentId && !h.voided && canManage && (
-                    <Button type="text" size="compact" width="auto" color="danger" onClick={() => setVoiding(byId.get(h.paymentId!) ?? null)}>
-                      Batalkan
-                    </Button>
-                  )}
+                  {undoOf(h)}
                 </div>
                 <p className={`shrink-0 text-sm font-semibold ${h.voided ? 'line-through text-default-secondary' : 'text-default-primary'}`}>
-                  {signedRupiah(h.amount, rupiah, h.kind === 'Pembayaran dibatalkan')}
+                  {signedRupiah(h.amount, rupiah, h.plus)}
                 </p>
               </li>
             ))}
@@ -193,7 +237,7 @@ function OrderPage() {
                   <TableHead>Jenis</TableHead>
                   <TableHead>Keterangan</TableHead>
                   <TableHead className="text-right">Jumlah</TableHead>
-                  <TableHead className="w-28" />
+                  <TableHead className="w-32" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -202,16 +246,8 @@ function OrderPage() {
                     <TableCell className="whitespace-nowrap">{formatDate(h.at)}</TableCell>
                     <TableCell className="whitespace-nowrap">{h.kind}</TableCell>
                     <TableCell>{h.detail || '–'}</TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      {signedRupiah(h.amount, rupiah, h.kind === 'Pembayaran dibatalkan')}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {h.paymentId && !h.voided && canManage && (
-                        <Button type="text" size="compact" width="auto" color="danger" onClick={() => setVoiding(byId.get(h.paymentId!) ?? null)}>
-                          Batalkan
-                        </Button>
-                      )}
-                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{signedRupiah(h.amount, rupiah, h.plus)}</TableCell>
+                    <TableCell className="text-right">{undoOf(h)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -220,7 +256,7 @@ function OrderPage() {
           <p className="border-t border-default-primary px-4 py-3 text-sm text-default-secondary">
             {payments.length === 0 && 'Pembayaran belum ada. '}
             {returns.length === 0 && 'Retur belum ada. '}
-            Pembayaran dan retur tidak bisa diubah; pembayaran yang salah dibatalkan dengan catatan pembalik.
+            Pembayaran, retur dan uang retur tidak bisa diubah; yang salah dibatalkan dengan catatan pembalik.
           </p>
         </Card>
       )}
@@ -294,6 +330,9 @@ function OrderPage() {
           <PayDialog order={order} drawerCash={drawerCash} open={paying} onClose={() => setPaying(false)} onDone={reload} />
           <ReturnDialog order={order} open={returning} onClose={() => setReturning(false)} onDone={reload} />
           <VoidPaymentDialog orderId={order.id} payment={voiding} onClose={() => setVoiding(null)} onDone={reload} />
+          <RefundDialog order={order} drawerCash={drawerCash} open={refunding} onClose={() => setRefunding(false)} onDone={reload} />
+          <ReverseReturnDialog orderId={order.id} ret={undoing} onClose={() => setUndoing(null)} onDone={reload} />
+          <VoidRefundDialog orderId={order.id} refund={voidingRefund} onClose={() => setVoidingRefund(null)} onDone={reload} />
         </>
       )}
       <DueDateDialog order={order} open={editingDue} onClose={() => setEditingDue(false)} onDone={reload} />

@@ -142,12 +142,12 @@ describe('repo guards', () => {
     expect(service).not.toMatch(/\.(update|delete)\(\s*expenseEdits\b/);
   });
 
-  it('writes supplier payments, purchase returns and their ledger kinds only in purchasing/purchase-payments.service.ts (UMK-1970)', () => {
+  it('writes supplier payments, purchase returns, their reversals, supplier refunds and their ledger kinds only in purchasing/purchase-payments.service.ts (UMK-1970)', () => {
     const own = path.join('purchasing', 'purchase-payments.service.ts');
     const offenders = files
       .filter(({ f }) => f !== own)
       .filter(({ text }) =>
-        /\.(insert|update|delete)\(\s*(purchasePayments|purchaseReturns|purchaseReturnLines)\b|(insert\s+into|update|delete\s+from)\s+pos\.purchase_(payments|returns|return_lines)\b|kind:\s*['"`]purchase_payment(_reversal|_void)?['"`]/i.test(
+        /\.(insert|update|delete)\(\s*(purchasePayments|purchaseReturns|purchaseReturnLines|purchaseReturnReversals|purchaseRefunds)\b|(insert\s+into|update|delete\s+from)\s+pos\.purchase_(payments|returns|return_lines|return_reversals|refunds)\b|kind:\s*['"`]purchase_(payment|refund)(_reversal|_void)?['"`]/i.test(
           text,
         ),
       )
@@ -158,12 +158,17 @@ describe('repo guards', () => {
     expect(service).toMatch(/recordShiftCash\(/);
     expect(service).toMatch(/recordShiftCashInShift\(/);
     expect(service).toMatch(/this\.stock\.returnToSupplier\(/);
-    // Returns are append-only; a payment changes only by its void (an update of the voided_* columns).
+    expect(service).toMatch(/this\.stock\.undoReturnToSupplier\(/);
+    // Returns and their reversals are append-only; a payment or a refund changes only by its void (an update of
+    // the voided_* columns).
     expect(service).not.toMatch(
-      /\.(update|delete)\(\s*(purchaseReturns|purchaseReturnLines)\b/,
+      /\.(update|delete)\(\s*(purchaseReturns|purchaseReturnLines|purchaseReturnReversals)\b/,
     );
-    expect(service).not.toMatch(/\.delete\(\s*purchasePayments\b/);
+    expect(service).not.toMatch(
+      /\.delete\(\s*(purchasePayments|purchaseRefunds)\b/,
+    );
     expect(service.match(/\.update\(\s*purchasePayments\b/g)).toHaveLength(1);
+    expect(service.match(/\.update\(\s*purchaseRefunds\b/g)).toHaveLength(1);
   });
 
   it('writes pos.manual_cash_entries and the manual kinds of the shift ledger only in shifts/cash-entries.service.ts', () => {
@@ -418,6 +423,8 @@ describe('repo guards', () => {
       path.join('payments-client', 'payment-sync.service.ts'),
       // One sale by id, of any status: the payment screen of a sale that still waits.
       path.join('payments-client', 'sale-payment.service.ts'),
+      // The dashboard widgets (UMK-1972): every aggregate filters `status in FINAL_SALE_STATUSES`.
+      path.join('reports', 'dashboard-widgets.service.ts'),
       // The kasbon report (UMK-1964): each open kasbon's sale number, joined by id, receipts only.
       path.join('reports', 'receivables-report.service.ts'),
       path.join('reports', 'reports.service.ts'),

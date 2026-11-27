@@ -31,7 +31,13 @@ export type ReceivableSummary = {
   id: string
   saleId: string
   saleNumber: number
+  memberId: string
   memberName: string
+  /** UMK-1973: when the customer was last reminded (a date, never the message), and how late an open balance is. */
+  memberLastRemindedAt: string | null
+  /** A deleted customer is not reminded. */
+  memberDeleted: boolean
+  overdueDays: number
   total: number
   rest: number
   dueDate: string
@@ -133,7 +139,7 @@ async function openShiftOf(): Promise<OpenShift> {
 }
 
 export type Paged<T> = { data: T[]; total: number; page: number; perPage: number }
-export type ReceivablePage = Paged<ReceivableSummary> & { summary: { openRest: number; openCount: number; outsideShiftCollected: number } }
+export type ReceivablePage = Paged<ReceivableSummary> & { summary: { openRest: number; openCount: number; outsideShiftCollected: number; overdueMemberIds: string[] } }
 
 const query = (params: Record<string, string | number | undefined>) => {
   const qs = new URLSearchParams()
@@ -205,7 +211,16 @@ export type Correction = {
 }
 export type CorrectionResult =
   | { ok: true; correction: Correction }
-  | { ok: false; status: number; error: string; errors?: Record<string, string>; code?: string; retryAfter?: number }
+  | {
+      ok: false
+      status: number
+      error: string
+      errors?: Record<string, string>
+      code?: string
+      retryAfter?: number
+      /** STORE_CASH_INSUFFICIENT: what the store's cash holds now. */
+      available?: number
+    }
 
 /**
  * What the correction dialog may send, checked at this server boundary before it is relayed (pos-api checks it all
@@ -263,11 +278,18 @@ export const correctPayment = createServerFn({ method: 'POST' })
     })
     if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.' }
     if (res.ok) return { ok: true, correction: ((await res.json()) as { correction: Correction }).correction }
-    const err = (await res.json().catch(() => ({}))) as { message?: unknown; errors?: unknown; code?: unknown; retryAfter?: unknown }
+    const err = (await res.json().catch(() => ({}))) as {
+      message?: unknown
+      errors?: unknown
+      code?: unknown
+      retryAfter?: unknown
+      available?: unknown
+    }
     const errors = err.errors && typeof err.errors === 'object' ? (err.errors as Record<string, string>) : undefined
     const code = typeof err.code === 'string' && /^[A-Z_]{3,40}$/.test(err.code) ? err.code : undefined
     const retryAfter = typeof err.retryAfter === 'number' ? err.retryAfter : undefined
+    const available = typeof err.available === 'number' && Number.isSafeInteger(err.available) ? err.available : undefined
     if ((res.status === 409 || res.status === 422 || res.status === 429) && typeof err.message === 'string')
-      return { ok: false, status: res.status, error: err.message, errors, code, retryAfter }
+      return { ok: false, status: res.status, error: err.message, errors, code, retryAfter, available }
     return { ok: false, status: res.status, error: ERRORS[res.status] ?? 'Gagal menyimpan, coba lagi.' }
   })

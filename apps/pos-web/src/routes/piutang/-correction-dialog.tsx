@@ -14,6 +14,7 @@ import {
   correctionBody,
   correctionErrors,
   correctionToast,
+  correctionTodo,
   fieldErrorsOf,
   restAfterCorrection,
   type CorrectionErrors,
@@ -139,7 +140,7 @@ export function CorrectionDialog({ receivable: r, payment, methods, shift, canOp
             error: answer.error,
             code: answer.code,
             retryAfter: answer.retryAfter,
-            ...(answer.code === 'ALREADY_REVERSED' ? { todo: 'Muat ulang riwayat pembayaran.' } : {}),
+            todo: correctionTodo(answer.code, answer.available, rupiah),
           }
     showError(failure, { action: 'mengoreksi pembayaran' })
     if (fields.pin || answer.status === 429) reload()

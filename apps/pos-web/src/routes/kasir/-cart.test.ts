@@ -72,4 +72,19 @@ describe('open bill restore', () => {
     )
     expect(r.discounts).toEqual({ 'a:': { kind: 'percent', value: 40 } })
   })
+  it('keeps a manual price (ruling 2026-11-26) of any whole rupiah from Rp1; drops Rp0 and an unknown kind', () => {
+    const r = restoreCart(
+      {
+        lines: [
+          { productId: 'a', qty: 4 },
+          { productId: 'b', qty: 1, unit: 'dus' },
+        ],
+        discounts: { 'a:': { kind: 'price', value: 3500 }, 'b:dus': { kind: 'price', value: 0 } },
+      },
+      products,
+    )
+    expect(r.discounts).toEqual({ 'a:': { kind: 'price', value: 3500 } })
+    const odd = restoreCart({ lines: [{ productId: 'a', qty: 1 }], discounts: { 'a:': { kind: 'gratis', value: 1 } } }, products)
+    expect(odd.discounts).toEqual({})
+  })
 })

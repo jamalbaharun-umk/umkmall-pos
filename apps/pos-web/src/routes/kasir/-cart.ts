@@ -12,10 +12,10 @@ const isSavedDiscount = (d: unknown): d is SavedDiscount => {
   const x = d as Partial<SavedDiscount> | null
   return (
     !!x &&
-    (x.kind === 'percent' || x.kind === 'amount') &&
+    (x.kind === 'percent' || x.kind === 'amount' || x.kind === 'price') &&
     Number.isInteger(x.value) &&
     (x.value as number) >= 1 &&
-    (x.kind === 'amount' || (x.value as number) <= 99)
+    (x.kind !== 'percent' || (x.value as number) <= 99)
   )
 }
 

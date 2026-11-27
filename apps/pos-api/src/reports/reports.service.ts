@@ -4,6 +4,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { AGENT_LABEL, FINAL_SALE_STATUSES, reportSettings } from '../db/schema';
 import { fieldError } from '../common/validation';
+import { ShiftsService } from '../shifts/shifts.service';
 import {
   TIMEZONE_UNKNOWN,
   type DateRange,
@@ -66,7 +67,10 @@ const FINAL = sql`and status in (${FINAL_LIST})`;
 
 @Injectable()
 export class ReportsService {
-  constructor(@InjectDb() private readonly db: Db) {}
+  constructor(
+    @InjectDb() private readonly db: Db,
+    private readonly shiftsService: ShiftsService,
+  ) {}
 
   private async rows(q: SQL): Promise<Row[]> {
     return [...(await this.db.execute(q))] as Row[];
@@ -100,7 +104,7 @@ export class ReportsService {
   }
 
   /** `[from 00:00, to+1 00:00)` in the store's timezone, as timestamptz expressions. */
-  private bounds(r: DateRange, tz: string) {
+  bounds(r: DateRange, tz: string) {
     return {
       start: sql`((${r.from}::date)::timestamp at time zone ${tz})`,
       end: sql`(((${r.to}::date) + 1)::timestamp at time zone ${tz})`,
@@ -191,6 +195,36 @@ export class ReportsService {
   }
 
   /**
+   * UMK-2072 (owner ruling 2026-11-26) "Susut stok": the cost of the units approved stock opnames took out, for
+   * whole store days `[from, to]` (with `cutoff` as `salesTotals`), dated by the opname's approval. Each unit at
+   * the cost of the batch it was drawn from (FIFO, `stock_movements.batch_id`). Owner ruling on PR 72 (major 4): a
+   * surplus (a positive opname line: a new batch at the latest batch cost, which becomes cost of goods when sold) is
+   * netted against the shrinkage of the same period, never below 0, so a miscount found again later is not lost
+   * twice: max(0, missing − surplus). The floor applies to the QUERIED range as a whole, not per day or month: a
+   * month of net surplus counts 0 on its own but lowers the shrinkage of a wider range that holds it, so the
+   * figures of two ranges do not add up to the figure of their union. A draft opname has no movements. Integer rupiah. Reason `opname` is written
+   * only by an approved stock opname (`StockOpnameService.approve`, both signs; `StockService.receive` names it for
+   * a positive adjustment), and every such movement carries the opname's id in `ref_id`: the join keeps it so.
+   */
+  async shrinkage(
+    tenantId: string,
+    tz: string,
+    range: DateRange,
+    cutoff?: SQL,
+  ) {
+    const { start, end } = this.bounds(range, tz);
+    const until = cutoff ? sql`least(${end}, ${cutoff})` : end;
+    const [r] = await this.rows(sql`
+      select greatest(coalesce(sum(-m.delta * b.unit_cost), 0), 0) as shrinkage
+        from pos.stock_movements m
+        join pos.stock_opnames o on o.tenant_id = m.tenant_id and o.id = m.ref_id
+        join pos.stock_batches b on b.tenant_id = m.tenant_id and b.id = m.batch_id
+       where m.tenant_id = ${tenantId} and m.reason = 'opname'
+         and o.status = 'approved' and o.approved_at >= ${start} and o.approved_at < ${until}`);
+    return n(r.shrinkage);
+  }
+
+  /**
    * Current period so far vs the same span one period earlier ("this week so far" vs "last week up to the same
    * moment"). Lakasir compared overlapping windows.
    */
@@ -230,7 +264,7 @@ export class ReportsService {
    * in the range, the voided sale's lines again with negative quantity, amount and cost, dated at the void
    * and attributed to whoever started it.
    */
-  private lineRows(tenantId: string, start: SQL, end: SQL) {
+  lineRows(tenantId: string, start: SQL, end: SQL) {
     return sql`(
       select 'sale' as kind, s.paid_at as at, s.number, s.actor_kind, s.actor_id,
              l.id as line_id, l.product_id, l.name, l.qty, l.unit, l.base_qty, l.unit_price, l.line_total, l.discount, l.cost_total
@@ -329,11 +363,20 @@ export class ReportsService {
       cost: n(r.cost),
       grossProfit: n(r.sales) - n(r.cost),
     }));
+    // The rows are net of line discounts. `grossSales` and `discount` keep their meaning of every other report (the
+    // agent tools read them); `netSales` (the sum of the rows) and `orderDiscount` (the discount without the line
+    // discounts) are the Total row, and netSales - orderDiscount - voucher + tax = revenue.
+    const netSales = items.reduce((a, r) => a + r.sales, 0);
     return {
       ...range,
       timezone: tz,
       rows: items,
-      totals: { qty: items.reduce((a, r) => a + r.qty, 0), ...totals },
+      totals: {
+        qty: items.reduce((a, r) => a + r.qty, 0),
+        ...totals,
+        netSales,
+        orderDiscount: totals.discount - (totals.grossSales - netSales),
+      },
     };
   }
 
@@ -360,6 +403,7 @@ export class ReportsService {
              c.cash_in, c.cash_out, c.receivable_payments, c.void_refunds,
              c.expenses, c.expense_reversals, c.manual_in, c.manual_out, c.collector_deposits,
              c.receivable_reversals,
+             c.purchase_payments, c.purchase_payment_reversals, c.purchase_refunds, c.purchase_refund_reversals,
              s.n - v.n as sales_count, s.gross_sales - v.gross_sales as gross_sales,
              s.discount - v.discount as discount, s.voucher - v.voucher as voucher,
              s.tax - v.tax as tax, s.revenue - v.revenue as revenue, s.cost - v.cost as cost,
@@ -386,14 +430,42 @@ export class ReportsService {
                  coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'collector_deposit'), 0)
                    as collector_deposits,
                  coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'receivable_reversal'), 0)
-                   as receivable_reversals
+                   as receivable_reversals,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'purchase_payment'), 0)
+                   as purchase_payments,
+                 coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'purchase_payment_reversal'), 0)
+                   as purchase_payment_reversals,
+                 coalesce(sum(e.amount) filter (where e.direction = 'in' and e.kind = 'purchase_refund'), 0)
+                   as purchase_refunds,
+                 coalesce(sum(e.amount) filter (where e.direction = 'out' and e.kind = 'purchase_refund_reversal'), 0)
+                   as purchase_refund_reversals
             from pos.shift_cash_entries e
            where e.tenant_id = sh.tenant_id and e.shift_id = sh.id) c
        where sh.tenant_id = ${tenantId} and sh.opened_at >= ${start} and sh.opened_at < ${end}
        order by sh.opened_at`);
+    // An open shift stores no expected cash yet: the same figure the shift screens and the close use.
+    const expectedOf = new Map(
+      await Promise.all(
+        rows
+          .filter((r) => r.closed_at == null)
+          .map(
+            async (r) =>
+              [
+                r.id as string,
+                await this.shiftsService.expectedCashOf(
+                  this.db,
+                  tenantId,
+                  r.id as string,
+                ),
+              ] as const,
+          ),
+      ),
+    );
     const items = rows.map((r) => {
       const counted = r.counted_cash == null ? null : n(r.counted_cash);
-      const expected = r.expected_cash == null ? null : n(r.expected_cash);
+      const expected =
+        expectedOf.get(r.id as string) ??
+        (r.expected_cash == null ? null : n(r.expected_cash));
       return {
         shiftId: r.id as string,
         cashier: cashierName(r),
@@ -412,6 +484,12 @@ export class ReportsService {
         manualOut: n(r.manual_out),
         // Collectors' outside-shift cash received into the drawer ("Setoran penagih").
         collectorDeposits: n(r.collector_deposits),
+        // Suppliers paid for a purchase from the drawer, and those payments voided while it was open (UMK-1970).
+        purchasePayments: n(r.purchase_payments),
+        purchasePaymentReversals: n(r.purchase_payment_reversals),
+        // Money suppliers handed back into the drawer after a return, and those voided while it was open.
+        purchaseRefunds: n(r.purchase_refunds),
+        purchaseRefundReversals: n(r.purchase_refund_reversals),
         voidCount: n(r.void_count),
         cashIn: n(r.cash_in),
         cashOut: n(r.cash_out),

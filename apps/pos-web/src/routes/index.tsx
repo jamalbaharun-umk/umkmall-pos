@@ -9,7 +9,8 @@ import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
 import { devSignInUser } from '@/lib/sign-in'
 import { OwnerSignIn } from './-owner-sign-in'
-import { MetricWidgets, ReceivablesCard } from './laporan/-dashboard-widgets'
+import { useCan } from '@/components/shell'
+import { DashboardWidgets } from './-dashboard'
 
 const getHome = createServerFn().handler(async () => {
   const devSignIn = Boolean(devSignInUser())
@@ -55,14 +56,22 @@ function Home() {
 }
 
 /**
- * Lakasir's dashboard. Its metric widgets (revenue, sales and discount today, best sellers, expiring stock) come from
- * U5 as one `<MetricWidgets />` line below the title; until then the page shows where to start.
+ * The dashboard. With `reports.view` it is the chart widgets (design feature 35, UMK-1972); the quick start below stays
+ * for a signed-in actor without that permission (no card shows) and for a store with no product yet.
  */
 function Dashboard({ products }: { products: number }) {
+  const canReport = useCan('reports.view')
   return (
     <Page title="Dashboard">
-      <MetricWidgets />
-      <ReceivablesCard />
+      {canReport && <DashboardWidgets />}
+      {(!canReport || products === 0) && <QuickStartPanel products={products} />}
+    </Page>
+  )
+}
+
+function QuickStartPanel({ products }: { products: number }) {
+  return (
+    <>
       <Panel>
         {products === 0 ? (
           <Empty
@@ -86,7 +95,7 @@ function Dashboard({ products }: { products: number }) {
           </QuickStart>
         )}
       </Panel>
-    </Page>
+    </>
   )
 }
 

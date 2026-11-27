@@ -349,6 +349,62 @@ export class StockService {
     return { unitCost: b.unitCost, productId: b.productId };
   }
 
+  /**
+   * A purchase return undone (UMK-1970): `qty` units back into the batch they left, at that batch's cost, under its
+   * row lock. Units sold since do not matter. Refused (`RETURN_UNDO_BATCH_FULL`) only when the batch would hold more
+   * than it received, which no normal flow reaches.
+   */
+  async undoReturnToSupplier(
+    tx: Tx,
+    input: {
+      tenantId: string;
+      batchId: string;
+      qty: number;
+      refId: string;
+      actorId: string;
+    },
+  ): Promise<void> {
+    positiveInt(input.qty, 'Jumlah');
+    const [b] = await tx
+      .select({
+        productId: stockBatches.productId,
+        qtyInitial: stockBatches.qtyInitial,
+        qtyRemaining: stockBatches.qtyRemaining,
+      })
+      .from(stockBatches)
+      .where(
+        and(
+          eq(stockBatches.tenantId, input.tenantId),
+          eq(stockBatches.id, input.batchId),
+        ),
+      )
+      .for('update');
+    if (!b || b.qtyRemaining + input.qty > b.qtyInitial)
+      throw codedError(
+        'RETURN_UNDO_BATCH_FULL',
+        '_',
+        'Stok batch pembelian ini tidak bisa menampung barang retur lagi',
+      );
+    await tx
+      .update(stockBatches)
+      .set({ qtyRemaining: b.qtyRemaining + input.qty })
+      .where(
+        and(
+          eq(stockBatches.tenantId, input.tenantId),
+          eq(stockBatches.id, input.batchId),
+        ),
+      );
+    await tx.insert(stockMovements).values({
+      tenantId: input.tenantId,
+      productId: b.productId,
+      batchId: input.batchId,
+      delta: input.qty,
+      reason: 'purchase_return_reversal',
+      refId: input.refId,
+      actorId: input.actorId,
+    });
+  }
+
   /** On-hand of one product with its batches locked FOR UPDATE: a concurrent sale waits until the caller commits. */
   async lockedOnHand(tx: Tx, tenantId: string, productId: string) {
     const batches = await tx

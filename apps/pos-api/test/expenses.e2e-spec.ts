@@ -1511,6 +1511,8 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       tax: 2225,
       cost: 20_700,
       grossProfit: 16_550,
+      // UMK-2072: no stock opname in this store.
+      shrinkage: 0,
       expenses: 17_000,
       netProfit: -450,
       rounding: 25,
@@ -1525,6 +1527,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       tax: 500,
       cost: 3000,
       grossProfit: 2000,
+      shrinkage: 0,
       expenses: 1000,
       netProfit: 1000,
       rounding: 0,
@@ -1545,6 +1548,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
           revenue: 'Hasil jualan (tanpa pajak)',
           cost: 'Modal barang terjual',
           grossProfit: 'Untung kotor (tanpa pajak)',
+          shrinkage: 'Susut stok (selisih stok opname)',
           expenses: 'Pengeluaran',
           netProfit: 'Untung bersih (tanpa pajak)',
           tax: 'Pajak (titipan, di luar hasil jualan)',
@@ -1589,7 +1593,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       // The sum on the screen holds without tax.
       const c = res.body.current;
       expect(c.revenue - c.cost).toBe(c.grossProfit);
-      expect(c.grossProfit - c.expenses).toBe(c.netProfit);
+      expect(c.grossProfit - c.shrinkage - c.expenses).toBe(c.netProfit);
       // The drawer: 100.000 + cash sales (15.000 + 14.300 + 1.400 + 17.600 + 5.500) − void 17.600 − 16.000.
       expect(await current(s.auth)).toMatchObject({
         expectedCash: 120_200,
@@ -1728,6 +1732,7 @@ describe('expense log and profit and loss (UMK-1984)', () => {
         'Hasil jualan (tanpa pajak),37250,5000',
         'Modal barang terjual,20700,3000',
         'Untung kotor (tanpa pajak),16550,2000',
+        'Susut stok (selisih stok opname),0,0',
         'Pengeluaran,17100,1000',
         'Untung bersih (tanpa pajak),-550,1000',
         '"Pajak (titipan, di luar hasil jualan)",2225,500',

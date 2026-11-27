@@ -1,9 +1,10 @@
 import { Button, Skeleton } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
-import { Link, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
+import { Link, useRouter, useRouterState, type ErrorComponentProps } from '@tanstack/react-router'
 import { ChevronRight, Inbox } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { actionRowClass } from '@/lib/action-row'
+import { isNotFoundError, parentPath } from '@/lib/not-found'
 
 export type Crumb = { label: string; to?: string; params?: Record<string, string> }
 
@@ -89,6 +90,7 @@ export const NO_PERMISSION = 'Anda tidak punya izin untuk ini'
 
 export function PageError({ error }: ErrorComponentProps) {
   const router = useRouter()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
   // A 403 does not get better by retrying: say so, without the retry button.
   if (error instanceof Error && error.message.startsWith(NO_PERMISSION))
     return (
@@ -96,6 +98,19 @@ export function PageError({ error }: ErrorComponentProps) {
         <Panel>
           <Empty title={NO_PERMISSION}>Minta pemilik toko menambahkan izin yang dibutuhkan ke peran Anda.</Empty>
         </Panel>
+      </div>
+    )
+  // A 404 does not get better by retrying either: offer the way back instead.
+  if (isNotFoundError(error))
+    return (
+      <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-4 py-16 text-center">
+        <p className="text-lg font-semibold text-default-primary">Data tidak ditemukan</p>
+        <p className="text-sm text-default-secondary">Datanya tidak ada atau sudah dihapus.</p>
+        <div className={actionRowClass({ className: 'sm:justify-center' })}>
+          <Button asChild type="outline" color="primary" size="medium" width="auto">
+            <Link to={parentPath(pathname)}>Kembali</Link>
+          </Button>
+        </div>
       </div>
     )
   return (
@@ -111,7 +126,7 @@ export function PageError({ error }: ErrorComponentProps) {
   )
 }
 
-export const rupiah = (n: number) => `Rp${n.toLocaleString('id-ID')}`
+export { rupiah } from '../lib/rupiah'
 
 export const dateTime = (iso: string) =>
   new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })

@@ -335,10 +335,19 @@ export class ShiftsService {
       s.tenantId,
       rows.map((r) => r.id),
     );
+    // An open shift stores no expected cash yet: show what the drawer should hold right now.
+    const live = await Promise.all(
+      rows.map(async (r) =>
+        r.closedAt === null
+          ? await this.expectedCashOf(this.db, s.tenantId, r.id)
+          : r.expectedCash,
+      ),
+    );
     return {
-      data: rows.map((r) => ({
+      data: rows.map((r, i) => ({
         ...withDifference(r),
         ...(cash.get(r.id) ?? NO_CASH),
+        expectedCash: live[i],
       })),
       total,
     };
@@ -470,6 +479,11 @@ export class ShiftsService {
     return {
       ...withDifference(row),
       ...cash,
+      // Open shift: the stored column is still null, so compute it from the same ledger the close uses.
+      expectedCash:
+        row.closedAt === null
+          ? await this.expectedCashOf(this.db, s.tenantId, id)
+          : row.expectedCash,
       cashEntries: cashEntries.map(
         ({
           expenseVoidedAt,

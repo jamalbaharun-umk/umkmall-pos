@@ -16,7 +16,7 @@ export function FeedbackHost() {
   const main = (() => {
     if (state.primary === 'retry' && state.retry) {
       const retry = state.retry
-      return { label: 'Coba lagi', run: () => (dismissError(), retry()) }
+      return { label: state.retryLabel ?? 'Coba lagi', run: () => (dismissError(), retry()) }
     }
     if (state.primary === 'reload') return { label: 'Muat ulang', run: () => window.location.reload() }
     if (state.primary === 'signin') return { label: 'Masuk lagi', run: () => window.location.assign('/') }

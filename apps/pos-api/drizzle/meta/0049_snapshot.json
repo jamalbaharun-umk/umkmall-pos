@@ -1,5 +1,5 @@
 {
-  "id": "6e0bdcca-ea5f-4e4d-94c6-0286088dbbb8",
+  "id": "c4a628cf-7008-499d-be4e-c867cf3c25bf",
   "prevId": "0d82be66-2260-4506-b2c2-5158e2faeda7",
   "version": "7",
   "dialect": "postgresql",
@@ -1879,7 +1879,7 @@
         },
         "stock_movements_reason_ck": {
           "name": "stock_movements_reason_ck",
-          "value": "\"pos\".\"stock_movements\".\"reason\" in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return')"
+          "value": "\"pos\".\"stock_movements\".\"reason\" in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return', 'purchase_return_reversal')"
         }
       },
       "isRLSEnabled": true
@@ -2764,6 +2764,216 @@
       },
       "isRLSEnabled": true
     },
+    "pos.purchase_refunds": {
+      "name": "purchase_refunds",
+      "schema": "pos",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination": {
+          "name": "destination",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "shift_id": {
+          "name": "shift_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_kind": {
+          "name": "actor_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "voided_at": {
+          "name": "voided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "voided_by_id": {
+          "name": "voided_by_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "voided_by_kind": {
+          "name": "voided_by_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "void_reason": {
+          "name": "void_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "drawer_reversed": {
+          "name": "drawer_reversed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "purchase_refunds_order_idx": {
+          "name": "purchase_refunds_order_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "purchase_refunds_tenant_key_uq": {
+          "name": "purchase_refunds_tenant_key_uq",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "purchase_refunds_tenant_id_tenants_id_fk": {
+          "name": "purchase_refunds_tenant_id_tenants_id_fk",
+          "tableFrom": "purchase_refunds",
+          "tableTo": "tenants",
+          "schemaTo": "pos",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "purchase_refunds_order_id_purchase_orders_id_fk": {
+          "name": "purchase_refunds_order_id_purchase_orders_id_fk",
+          "tableFrom": "purchase_refunds",
+          "tableTo": "purchase_orders",
+          "schemaTo": "pos",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "purchase_refunds_tenant_id_shift_id_shifts_tenant_id_id_fk": {
+          "name": "purchase_refunds_tenant_id_shift_id_shifts_tenant_id_id_fk",
+          "tableFrom": "purchase_refunds",
+          "tableTo": "shifts",
+          "schemaTo": "pos",
+          "columnsFrom": [
+            "tenant_id",
+            "shift_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "purchase_refunds_ck": {
+          "name": "purchase_refunds_ck",
+          "value": "\"pos\".\"purchase_refunds\".\"amount\" > 0 and \"pos\".\"purchase_refunds\".\"destination\" in ('drawer', 'store_cash')\n          and (\"pos\".\"purchase_refunds\".\"destination\" = 'drawer') = (\"pos\".\"purchase_refunds\".\"shift_id\" is not null)"
+        }
+      },
+      "isRLSEnabled": true
+    },
     "pos.purchase_return_lines": {
       "name": "purchase_return_lines",
       "schema": "pos",
@@ -2924,6 +3134,119 @@
       },
       "isRLSEnabled": true
     },
+    "pos.purchase_return_reversals": {
+      "name": "purchase_return_reversals",
+      "schema": "pos",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "return_id": {
+          "name": "return_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_kind": {
+          "name": "actor_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "purchase_return_reversals_return_uq": {
+          "name": "purchase_return_reversals_return_uq",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "return_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "purchase_return_reversals_tenant_id_tenants_id_fk": {
+          "name": "purchase_return_reversals_tenant_id_tenants_id_fk",
+          "tableFrom": "purchase_return_reversals",
+          "tableTo": "tenants",
+          "schemaTo": "pos",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "purchase_return_reversals_return_id_purchase_returns_id_fk": {
+          "name": "purchase_return_reversals_return_id_purchase_returns_id_fk",
+          "tableFrom": "purchase_return_reversals",
+          "tableTo": "purchase_returns",
+          "schemaTo": "pos",
+          "columnsFrom": [
+            "return_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "purchase_return_reversals_ck": {
+          "name": "purchase_return_reversals_ck",
+          "value": "length(\"pos\".\"purchase_return_reversals\".\"reason\") between 1 and 200"
+        }
+      },
+      "isRLSEnabled": true
+    },
     "pos.purchase_returns": {
       "name": "purchase_returns",
       "schema": "pos",
@@ -2964,13 +3287,6 @@
           "type": "bigint",
           "primaryKey": false,
           "notNull": true
-        },
-        "refund_due": {
-          "name": "refund_due",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
         },
         "actor_id": {
           "name": "actor_id",
@@ -3084,7 +3400,7 @@
       "checkConstraints": {
         "purchase_returns_ck": {
           "name": "purchase_returns_ck",
-          "value": "\"pos\".\"purchase_returns\".\"total\" > 0 and \"pos\".\"purchase_returns\".\"refund_due\" >= 0 and \"pos\".\"purchase_returns\".\"refund_due\" <= \"pos\".\"purchase_returns\".\"total\""
+          "value": "\"pos\".\"purchase_returns\".\"total\" > 0"
         }
       },
       "isRLSEnabled": true
@@ -4193,18 +4509,6 @@
           "type": "date",
           "primaryKey": false,
           "notNull": false
-        },
-        "daily_target": {
-          "name": "daily_target",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "tax_set_at": {
-          "name": "tax_set_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -4231,10 +4535,6 @@
         "sales_settings_tax_ck": {
           "name": "sales_settings_tax_ck",
           "value": "\"pos\".\"sales_settings\".\"tax_bps\" between 0 and 10000"
-        },
-        "sales_settings_target_ck": {
-          "name": "sales_settings_target_ck",
-          "value": "\"pos\".\"sales_settings\".\"daily_target\" is null or \"pos\".\"sales_settings\".\"daily_target\" > 0"
         }
       },
       "isRLSEnabled": true

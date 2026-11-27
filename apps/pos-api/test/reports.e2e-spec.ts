@@ -257,7 +257,12 @@ describe('reports and dashboard (U5)', () => {
         grossProfit: 8000,
       }),
     ]);
-    expect(products.totals).toEqual({ qty: 7, ...KNOWN });
+    expect(products.totals).toEqual({
+      qty: 7,
+      ...KNOWN,
+      netSales: 44_000,
+      orderDiscount: 1000,
+    });
 
     const shifts = (await get(store, `/reports/shifts?${q}`).expect(200)).body;
     expect(shifts.rows).toHaveLength(1);
@@ -331,6 +336,49 @@ describe('reports and dashboard (U5)', () => {
       await get(store, `/reports/products/csv?${q}`).expect(200)
     ).text.split('\r\n');
     expect(productsCsv).toContain('Voucher,,,950,,');
+  });
+
+  it('product report: the Total row is the sum of the net rows when lines carry discounts, and still reconciles', async () => {
+    const store = await createStore();
+    const teh = await product(store, 'Es Teh', 5000, 3000);
+    const kopi = await product(store, 'Kopi Susu', 8000, 4000);
+    await openShift(store);
+    // Teh 4 x 5.000 = 20.000 less 10% (2.000) = 18.000; Kopi 1 x 8.000 less an order discount of 500.
+    await sell(store, {
+      lines: [
+        { productId: teh, qty: 4, discountPercent: 10 },
+        { productId: kopi, qty: 1 },
+      ],
+      discount: 500,
+      paid: 30_000,
+    });
+    const q = `from=${today()}&to=${today()}`;
+    const r = (await get(store, `/reports/products?${q}`).expect(200)).body;
+    const net = (r.rows as { sales: number }[]).reduce(
+      (a, x) => a + x.sales,
+      0,
+    );
+    expect(net).toBe(18_000 + 8000);
+    // grossSales and discount keep the meaning the sales report gives them (the agent tools read them).
+    expect(r.totals.grossSales).toBe(28_000);
+    expect(r.totals.discount).toBe(2500);
+    expect(r.totals.netSales).toBe(net);
+    expect(r.totals.orderDiscount).toBe(500);
+    expect(
+      r.totals.netSales -
+        r.totals.orderDiscount -
+        r.totals.voucher +
+        r.totals.tax,
+    ).toBe(r.totals.revenue);
+    const csv = (
+      await get(store, `/reports/products/csv?${q}`).expect(200)
+    ).text.split('\r\n');
+    expect(csv).toContain(`Total,,5,${net},16000,`);
+    expect(csv).toContain('Diskon pesanan,,,500,,');
+    // The sales report keeps the gross figure and the whole discount.
+    const sales = (await get(store, `/reports/sales?${q}`).expect(200)).body;
+    expect(sales.totals.grossSales).toBe(28_000);
+    expect(sales.totals.discount).toBe(2500);
   });
 
   it('shift and sales reports name the cashier who sold', async () => {

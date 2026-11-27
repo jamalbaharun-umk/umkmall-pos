@@ -5,7 +5,7 @@ import type { LedgerEntry } from './-shift-helpers'
 
 // Server functions for the shift history and the cash ledger screens (UMK-1963). pos-api computes every figure.
 
-export type ShiftRow = Shift & { actorId: string; actorKind: 'owner' | 'cashier' }
+export type ShiftRow = Shift & { actorId: string; actorKind: 'owner' | 'cashier'; actorName?: string }
 export type ShiftDetail = Shift & { cashEntries: LedgerEntry[] }
 export type ShiftPage = { data: ShiftRow[]; total: number }
 

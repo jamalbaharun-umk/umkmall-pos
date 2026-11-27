@@ -18,14 +18,37 @@ export type CashEntryRow = {
   reason: string | null
   reasonLabel: string | null
   createdAt: string
+  /** The source row: for `purchase_refund`, the supplier refund's id. */
+  refId?: string | null
 }
 
-/** The deposits a collector handed over: cash that entered this drawer without a sale, so the list shows it too. */
-const SHOWN_KINDS = [...MANUAL_KINDS, 'collector_deposit']
+/**
+ * Cash that entered or left this drawer without a sale, so the list shows it too: the deposits a collector handed
+ * over, suppliers paid from the drawer and money a supplier handed back into it, with their reversals (UMK-2083).
+ */
+const SHOWN_KINDS = [
+  ...MANUAL_KINDS,
+  'collector_deposit',
+  'purchase_payment',
+  'purchase_payment_reversal',
+  'purchase_refund',
+  'purchase_refund_reversal',
+]
 
-/** The shift's manual entries and the collector deposits it received (sales, kasbon and expenses are in the closing screen), newest first. */
+/** The shift's manual entries, collector deposits and supplier cash (sales, kasbon and expenses are in the closing screen), newest first. */
 export function manualEntries<T extends { kind: string; createdAt: string }>(rows: T[]): T[] {
   return rows.filter((r) => SHOWN_KINDS.includes(r.kind)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/**
+ * The supplier refunds of this drawer that can still be voided from Kas laci: a `purchase_refund` entry without the
+ * `purchase_refund_reversal` its void writes into the same (open) shift.
+ */
+export function voidableRefunds(rows: { kind: string; refId?: string | null }[]): Set<string> {
+  const reversed = new Set(rows.filter((r) => r.kind === 'purchase_refund_reversal').map((r) => r.refId))
+  return new Set(
+    rows.flatMap((r) => (r.kind === 'purchase_refund' && r.refId && !reversed.has(r.refId) ? [r.refId] : [])),
+  )
 }
 
 /** What a server function reports on a refusal; `status` 0 means pos-api could not be reached. */
@@ -97,6 +120,6 @@ export function cashToast(e: { direction: CashDirection; amount: number; reasonL
     : `Uang ${rupiah(e.amount)} diambil dari laci (${e.reasonLabel}). Sisa ${rupiah(e.drawerCashAfter)}`
 }
 
-/** "+Rp200.000" / "-Rp500.000" for the list. */
+/** "+Rp200.000" / "−Rp500.000" (a real minus sign, as `rupiah()` writes it) for the list. */
 export const signedRupiah = (direction: CashDirection, amount: number) =>
-  `${direction === 'in' ? '+' : '-'}${rupiah(amount)}`
+  direction === 'in' ? `+${rupiah(amount)}` : rupiah(-amount)

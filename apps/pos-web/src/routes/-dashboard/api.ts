@@ -1,0 +1,92 @@
+import { createServerFn } from '@tanstack/react-start'
+import { loadWidget, type Result } from '../laporan/-api'
+import type { Period } from './wording'
+
+// Server functions of the dashboard widgets. pos-api computes every figure (integer rupiah); these only relay.
+// The expenses card reuses the existing profit-loss loader (`loadProfitLoss`).
+
+export type Figures = {
+  sales: number
+  salesCount: number
+  averageBasket: number
+  grossProfit: number
+}
+export type Bucket = Figures & { from: string; to: string }
+export type Overview = {
+  period: Period
+  timezone: string
+  from: string
+  to: string
+  current: Figures
+  previous: Figures
+  /** Percent for money (null: nothing before to compare with), the plain difference for the transaction count. */
+  delta: {
+    sales: number | null
+    salesCount: number
+    averageBasket: number | null
+    grossProfit: number | null
+  }
+  trend: Bucket[]
+}
+export type Hourly = {
+  date: string
+  timezone: string
+  hours: { hour: number; sales: number; count: number }[]
+  total: number
+  transactions: number
+  peak: { hour: number; sales: number } | null
+}
+export type PaymentMix = {
+  period: Period
+  total: number
+  parts: { name: string; value: number; count: number }[]
+}
+export type TopProducts = {
+  period: Period
+  rows: {
+    productId: string
+    name: string
+    sku: string
+    unit: string
+    qty: number
+    sales: number
+  }[]
+}
+export type LowStock = {
+  total: number
+  out: number
+  low: number
+  rows: {
+    productId: string
+    name: string
+    sku: string
+    unit: string
+    onHand: number
+    threshold: number
+    fullLevel: number
+    status: 'out' | 'low'
+  }[]
+}
+export type Aging = {
+  total: number
+  customers: number
+  buckets: { key: string; label: string; amount: number; customers: number }[]
+}
+
+const get = <T>(path: string) => loadWidget({ data: path }) as unknown as Promise<Result<T>>
+
+export const loadOverview = createServerFn()
+  .validator((p: Period) => p)
+  .handler(({ data }) => get<Overview>(`/reports/widgets/overview?period=${encodeURIComponent(data)}`))
+
+export const loadHourly = createServerFn().handler(() => get<Hourly>('/reports/widgets/hourly'))
+
+export const loadPaymentMix = createServerFn().handler(() => get<PaymentMix>('/reports/widgets/payment-mix?period=today'))
+
+export const loadTopProducts = createServerFn().handler(() =>
+  get<TopProducts>('/reports/widgets/top-products?period=week&limit=5'),
+)
+
+export const loadLowStock = createServerFn().handler(() => get<LowStock>('/reports/widgets/low-stock?limit=5'))
+
+export const loadAging = createServerFn().handler(() => get<Aging>('/reports/receivables/aging'))
