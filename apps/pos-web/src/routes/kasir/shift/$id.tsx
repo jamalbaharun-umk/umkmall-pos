@@ -13,7 +13,7 @@ import {
 } from '@umkmall/ui'
 import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
 import { loadShift } from '../-shift-api'
-import { directionLabel, drawerRows, entryKindLabel, signedAmount } from '../-shift-helpers'
+import { directionLabel, drawerRowText, drawerRows, entryKindLabel, signedAmount } from '../-shift-helpers'
 
 // One shift: the drawer arithmetic and the append-only ledger of cash in and out behind it.
 export const Route = createFileRoute('/kasir/shift/$id')({
@@ -56,10 +56,7 @@ function ShiftPage() {
                 className={`flex justify-between ${r.strong ? 'pt-1 text-base font-bold' : 'text-default-secondary'}`}
               >
                 <dt>{r.label}</dt>
-                <dd>
-                  {r.sign}
-                  {rupiah(r.amount)}
-                </dd>
+                <dd>{drawerRowText(r, rupiah)}</dd>
               </div>
             ))}
             {closed && (

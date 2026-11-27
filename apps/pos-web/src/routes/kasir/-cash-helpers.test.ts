@@ -70,7 +70,7 @@ describe('drawer figures', () => {
   })
   it('signs the list amounts', () => {
     expect(signedRupiah('in', 200_000)).toBe('+Rp200.000')
-    expect(signedRupiah('out', 500_000)).toBe('-Rp500.000')
+    expect(signedRupiah('out', 500_000)).toBe('−Rp500.000')
   })
 })
 
