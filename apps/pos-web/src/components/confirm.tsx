@@ -13,6 +13,7 @@ export function useConfirm() {
     title: string
     body?: ReactNode
     label: string
+    color: 'danger' | 'primary'
     action: string
     run: () => Promise<string | FailureLike | void>
   } | null>(null)
@@ -23,9 +24,9 @@ export function useConfirm() {
   const ask = (
     title: string,
     run: () => Promise<string | FailureLike | void>,
-    opts: { body?: ReactNode; label?: string; action?: string } = {},
+    opts: { body?: ReactNode; label?: string; action?: string; color?: 'danger' | 'primary' } = {},
   ) => {
-    setState({ title, run, body: opts.body, label: opts.label ?? 'Hapus', action: opts.action ?? 'menjalankan aksi ini' })
+    setState({ title, run, body: opts.body, label: opts.label ?? 'Hapus', color: opts.color ?? 'danger', action: opts.action ?? 'menjalankan aksi ini' })
   }
 
   const dialog = (
@@ -44,7 +45,7 @@ export function useConfirm() {
           </Button>
           <Button
             type="primary"
-            color="danger"
+            color={state?.color ?? 'danger'}
             size="small"
             width="auto"
             isLoading={busy}
