@@ -1540,6 +1540,8 @@ describe('expense log and profit and loss (UMK-1984)', () => {
       expect(res.body).toEqual({
         period: 'today',
         timezone: 'Asia/Jakarta',
+        // UMK-2130: every line sold today carried its cost.
+        costMissing: { products: 0 },
         from: day(),
         to: day(),
         // Tax is in no profit, and the labels say so (owner ruling 2026-11-25).

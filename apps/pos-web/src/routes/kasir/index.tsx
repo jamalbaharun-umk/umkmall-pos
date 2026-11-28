@@ -106,6 +106,7 @@ import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
 import { cashRounding, numpadEdit, parseRupiah, qtyError, quickAmounts } from './-money'
 import { DiscountDialog, type DiscountTarget } from './-discount-dialog'
+import { QuickProductDialog } from './-quick-product-dialog'
 import {
   breakdown,
   discountFields,
@@ -270,6 +271,9 @@ function Register({
   }, [pend.state.showing, payments])
   // UMK-1990: line discounts, by cart line key; only an actor with sales.price_override gives one (pos-api: 403).
   const canDiscount = useCan('sales.price_override')
+  // UMK-2130 "Produk cepat": only an actor who may manage the catalog makes one from the till (pos-api: 403).
+  const canQuick = useCan('catalog.manage')
+  const [quickOpen, setQuickOpen] = useState(false)
   const [discounts, setDiscounts] = useState<Record<string, LineDiscount>>({})
   const [discounting, setDiscounting] = useState<DiscountTarget>()
   const [member, setMember] = useState<MemberOption | null>(null)
@@ -462,6 +466,11 @@ function Register({
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
+          {canQuick && (
+            <Button width="auto" type="outline" size="small" onClick={() => setQuickOpen(true)}>
+              <Icon name="plus" size="sm" /> Produk cepat
+            </Button>
+          )}
         </div>
         {categories.length > 1 && (
           <div className="overflow-x-auto">
@@ -484,15 +493,32 @@ function Register({
               title="Belum ada produk aktif"
               hint="Tambahkan produk di Katalog untuk mulai berjualan."
               action={
-                <Button width="auto" asChild type="outline">
-                  <Link to="/catalog/products">Buka katalog</Link>
-                </Button>
+                <ActionRow>
+                  <Button width="auto" asChild type="outline">
+                    <Link to="/catalog/products">Buka katalog</Link>
+                  </Button>
+                  {canQuick && (
+                    <Button width="auto" onClick={() => setQuickOpen(true)}>
+                      Tambah produk cepat
+                    </Button>
+                  )}
+                </ActionRow>
               }
             />
           </Card>
         ) : shown.length === 0 ? (
           <Card>
-            <Empty title="Produk tidak ditemukan" hint="Coba kata atau kategori lain." />
+            <Empty
+              title="Produk tidak ditemukan"
+              hint={canQuick ? 'Jual dulu: tambahkan sebagai produk cepat, lengkapi modal nanti.' : 'Coba kata atau kategori lain.'}
+              action={
+                canQuick && (
+                  <Button width="auto" type="outline" onClick={() => setQuickOpen(true)}>
+                    Tambah produk cepat
+                  </Button>
+                )
+              }
+            />
           </Card>
         ) : (
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
@@ -806,6 +832,17 @@ function Register({
         onAdd={(product, unit, qty) => {
           setCart((c) => addEntry(c, product, unit, qty))
           setPicking(undefined)
+        }}
+      />
+      <QuickProductDialog
+        open={quickOpen}
+        initialName={q.trim()}
+        onClose={() => setQuickOpen(false)}
+        onCreated={(product) => {
+          setQuickOpen(false)
+          setQ('')
+          setCart((c) => addEntry(c, product, null, 1))
+          void router.invalidate() // the grid lists it from now on
         }}
       />
       <NoteDialog open={editingNote} note={note} onClose={() => setEditingNote(false)} onSave={setNote} />

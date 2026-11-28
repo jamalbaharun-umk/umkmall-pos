@@ -23,6 +23,7 @@ import {
   CategoryInput,
   parse,
   ProductCreate,
+  QuickProductCreate,
   ProductQuery,
   ProductUpdate,
   Uuid,
@@ -88,6 +89,7 @@ function withoutCost<T extends Record<string, unknown>>(s: PosSession, p: T) {
   if (sees) return p;
   const rest: Record<string, unknown> = { ...p };
   delete rest.costPrice;
+  delete rest.costMissingCount;
   return rest;
 }
 
@@ -102,7 +104,11 @@ export class ProductsController {
       s.tenantId,
       parse(ProductQuery, query),
     );
-    return { ...page, data: page.data.map((p) => withoutCost(s, p)) };
+    // Without cost visibility neither a product's cost nor how many lack one (UMK-2130).
+    return withoutCost(s, {
+      ...page,
+      data: page.data.map((p) => withoutCost(s, p)),
+    });
   }
 
   @AgentRoute()
@@ -115,6 +121,16 @@ export class ProductsController {
       s.kind === 'agent'
         ? parse(AgentProductCreate, body)
         : parse(ProductCreate, body),
+    );
+  }
+
+  /** UMK-2130: "Produk cepat" from the till (name and price, cost optional); not an agent route. */
+  @Post('quick')
+  @RequirePermission('catalog.manage')
+  createQuick(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    return this.catalog.createQuickProduct(
+      s.tenantId,
+      parse(QuickProductCreate, body),
     );
   }
 

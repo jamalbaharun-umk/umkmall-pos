@@ -434,7 +434,7 @@ export class SummariesService {
       step(
         'owner_pin',
         'PIN pemilik',
-        'Dipakai untuk menyetujui pembatalan struk dan diskon besar.',
+        'Pemilik membuatnya sendiri di Keamanan; dipakai untuk menyetujui pembatalan struk dan diskon besar.',
         ownerHasPin,
         '/pengaturan/keamanan',
       ),
