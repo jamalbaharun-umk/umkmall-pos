@@ -40,8 +40,19 @@ export const categories = pos
   )
   .enableRLS();
 
-export const PRODUCT_TYPES = ['product', 'service', 'non_stock'] as const;
+export const PRODUCT_TYPES = [
+  'product',
+  'service',
+  'non_stock',
+  // UMK-2125: bought and stocked like `product`, never sold (the sale path refuses it); used by recipes.
+  'ingredient',
+] as const;
 export type ProductType = (typeof PRODUCT_TYPES)[number];
+
+/** The types that keep stock in batches: purchases, stock in, opname and FIFO cost apply to them only. */
+export const STOCKED_TYPES = ['product', 'ingredient'] as const;
+export const isStocked = (type: string) =>
+  (STOCKED_TYPES as readonly string[]).includes(type);
 
 export const products = pos
   .table(
@@ -61,7 +72,7 @@ export const products = pos
       // products_cost_set_at (migration 0054) on every write path, so the day-7 activation metric can read it.
       costSetAt: timestamp('cost_set_at', { withTimezone: true }),
       sellingPrice: rupiah('selling_price').notNull(),
-      // Only 'product' tracks stock (U3/U6); 'service' and 'non_stock' never do.
+      // 'product' and 'ingredient' track stock (STOCKED_TYPES); 'service' and 'non_stock' never do.
       type: text('type', { enum: PRODUCT_TYPES }).notNull().default('product'),
       isActive: boolean('is_active').notNull().default(true),
       // On-hand at or below this counts as "menipis" on the cashier grid and in the catalog (UMK-1966).
@@ -82,7 +93,7 @@ export const products = pos
       ),
       check(
         'products_type_ck',
-        sql`${t.type} in ('product', 'service', 'non_stock')`,
+        sql`${t.type} in ('product', 'service', 'non_stock', 'ingredient')`,
       ),
       check('products_sku_ck', sql`${t.sku} !~ '\\s'`),
       check('products_low_stock_ck', sql`${t.lowStockThreshold} >= 0`),

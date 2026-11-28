@@ -18,6 +18,7 @@ import {
   inArray,
   lt,
   isNull,
+  ne,
   or,
   sql,
   type SQL,
@@ -40,6 +41,7 @@ import {
   shifts,
   staff,
   tenants,
+  isStocked,
 } from '../db/schema';
 import { priceLines, type ProductPricing } from '../catalog/pricing';
 import { loadPricing } from '../catalog/pricing-store';
@@ -772,7 +774,7 @@ export class SalesService {
     for (const l of ordered) {
       const p = byId.get(l.productId)!;
       if (
-        p.type === 'product' &&
+        isStocked(p.type) &&
         needed.get(l.productId) !== l.baseQty &&
         !checked.has(l.productId)
       ) {
@@ -1022,6 +1024,8 @@ export class SalesService {
             inArray(products.id, ids),
             isNull(products.deletedAt),
             eq(products.isActive, true),
+            // UMK-2125: an ingredient is never sold; it answers like an unknown product.
+            ne(products.type, 'ingredient'),
           ),
         ),
       loadPricing(db, tenantId, ids),

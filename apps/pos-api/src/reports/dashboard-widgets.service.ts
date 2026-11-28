@@ -289,7 +289,7 @@ export class DashboardWidgetsService {
                order by lb.received_at desc, lb.created_at desc limit 1) as last_in
         from pos.products p
         left join pos.stock_batches b on b.tenant_id = p.tenant_id and b.product_id = p.id
-       where p.tenant_id = ${tenantId} and p.type = 'product' and p.deleted_at is null
+       where p.tenant_id = ${tenantId} and p.type in ('product', 'ingredient') and p.deleted_at is null
        group by p.id
       having coalesce(sum(b.qty_remaining), 0) <= p.low_stock_threshold
        order by on_hand, p.name, p.id`);

@@ -14,6 +14,7 @@ import {
   purchaseOrderLines,
   purchaseOrders,
   suppliers,
+  STOCKED_TYPES,
 } from '../db/schema';
 import { StockService } from '../stock/stock.service';
 import {
@@ -88,7 +89,7 @@ export async function assertStockProducts(
         eq(products.tenantId, tenantId),
         inArray(products.id, ids),
         isNull(products.deletedAt),
-        eq(products.type, 'product'),
+        inArray(products.type, [...STOCKED_TYPES]),
       ),
     );
   if (found.length !== new Set(ids).size) {
