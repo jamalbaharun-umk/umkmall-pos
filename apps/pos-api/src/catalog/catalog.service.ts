@@ -40,6 +40,7 @@ import {
 import { loadPricing, type StoredPricing } from './pricing-store';
 import type {
   ProductCreate,
+  QuickProductCreate,
   ProductQuery,
   ProductUpdate,
 } from './catalog.schemas';
@@ -97,6 +98,8 @@ const productColumns = {
 };
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+/** UMK-2130: where a product made from the till goes until the owner files it. */
+export const QUICK_CATEGORY = 'Lainnya';
 
 @Injectable()
 export class CatalogService {
@@ -199,6 +202,7 @@ export class CatalogService {
     // Counts for the "Menipis (n)" / "Habis (n)" filters follow the search and category, not the stock filter.
     const countsWhere = and(...filters);
     if (q.stock) filters.push(this.stockStateIs(tenantId, q.stock));
+    if (q.cost === 'missing') filters.push(eq(products.costPrice, 0));
     const where = and(...filters);
     const [rows, [{ total }], [stockCounts]] = await Promise.all([
       this.db
@@ -214,6 +218,7 @@ export class CatalogService {
         .select({
           low: sql<number>`count(*) filter (where ${this.stockStateIs(tenantId, 'low')})::int`,
           out: sql<number>`count(*) filter (where ${this.stockStateIs(tenantId, 'out')})::int`,
+          costMissing: sql<number>`count(*) filter (where ${products.costPrice} = 0)::int`,
         })
         .from(products)
         .where(countsWhere),
@@ -240,6 +245,8 @@ export class CatalogService {
       perPage: q.perPage,
       total,
       stockCounts: { low: stockCounts.low, out: stockCounts.out },
+      // UMK-2130: "Modal belum diisi (n)", following the search and category like the stock counts.
+      costMissingCount: stockCounts.costMissing,
     };
   }
 
@@ -344,6 +351,46 @@ export class CatalogService {
         rethrow(e);
       }
     }
+  }
+
+  /**
+   * UMK-2130 "Produk cepat": a `non_stock` product in the store's "Lainnya" category (made the first time, found
+   * ignoring case after that), SKU generated, cost 0 when not given (flagged "Modal belum diisi").
+   */
+  async createQuickProduct(tenantId: string, input: QuickProductCreate) {
+    const categoryId = await this.otherCategory(tenantId);
+    return this.createProduct(tenantId, {
+      categoryId,
+      name: input.name,
+      sellingPrice: input.sellingPrice,
+      costPrice: input.costPrice,
+      type: 'non_stock',
+      barcodes: input.barcode ? [input.barcode] : undefined,
+    });
+  }
+
+  /** The id of the store's "Lainnya" category, made if it has none (a race answers the other insert's row). */
+  private async otherCategory(tenantId: string): Promise<string> {
+    const find = async () =>
+      (
+        await this.db
+          .select({ id: categories.id })
+          .from(categories)
+          .where(
+            and(
+              eq(categories.tenantId, tenantId),
+              sql`lower(${categories.name}) = lower(${QUICK_CATEGORY})`,
+            ),
+          )
+      )[0]?.id;
+    const found = await find();
+    if (found) return found;
+    const [row] = await this.db
+      .insert(categories)
+      .values({ tenantId, name: QUICK_CATEGORY })
+      .onConflictDoNothing()
+      .returning({ id: categories.id });
+    return row?.id ?? (await find());
   }
 
   async updateProduct(tenantId: string, id: string, input: ProductUpdate) {

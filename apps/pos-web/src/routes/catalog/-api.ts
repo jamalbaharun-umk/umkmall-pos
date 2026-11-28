@@ -35,6 +35,8 @@ export type ProductPage = {
   perPage: number
   total: number
   stockCounts: { low: number; out: number }
+  // UMK-2130: products whose cost is 0; absent for actors who may not see costs.
+  costMissingCount?: number
 }
 export type Movement = { id: string; delta: number; reason: string; createdAt: string }
 export type Batch = { id: string; qtyInitial: number; qtyRemaining: number; unitCost: number; source: string; receivedAt: string }
@@ -89,7 +91,7 @@ export const deleteCategory = createServerFn({ method: 'POST' })
   .validator((id: string) => id)
   .handler(({ data }) => write(`/catalog/categories/${encodeURIComponent(data)}`, 'DELETE'))
 
-export type ProductSearch = { q?: string; categoryId?: string; stock?: 'low' | 'out'; page?: number }
+export type ProductSearch = { q?: string; categoryId?: string; stock?: 'low' | 'out'; cost?: 'missing'; page?: number }
 
 export const PER_PAGE = 10
 
@@ -101,6 +103,7 @@ export const listProducts = createServerFn({ method: 'GET' })
     if (data.q) qs.set('q', data.q)
     if (data.categoryId) qs.set('categoryId', data.categoryId)
     if (data.stock) qs.set('stock', data.stock)
+    if (data.cost) qs.set('cost', data.cost)
     qs.set('page', String(data.page ?? 1))
     qs.set('perPage', String(PER_PAGE))
     return read<ProductPage>(`/catalog/products?${qs}`)

@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Chip,
   Menu,
   Pagination,
   SegmentedControl,
@@ -32,6 +33,7 @@ export const Route = createFileRoute('/catalog/products/')({
     q: s.q == null || s.q === '' ? undefined : String(s.q),
     categoryId: typeof s.categoryId === 'string' && s.categoryId ? s.categoryId : undefined,
     stock: s.stock === 'low' || s.stock === 'out' ? s.stock : undefined,
+    cost: s.cost === 'missing' ? 'missing' : undefined,
     page: Number(s.page) >= 1 ? Math.floor(Number(s.page)) : undefined,
   }),
   loaderDeps: ({ search }) => search,
@@ -54,7 +56,7 @@ function ProductsPage() {
   const canEdit = useCan('catalog.manage')
   const [q, setQ] = useState(search.q ?? '')
   const pages = Math.max(1, Math.ceil(page.total / page.perPage))
-  const filtered = Boolean(search.q || search.categoryId || search.stock)
+  const filtered = Boolean(search.q || search.categoryId || search.stock || search.cost)
   const first = (page.page - 1) * page.perPage + 1
   // pos-api omits cost for actors who may not see margins; their table has no cost or profit columns.
   const showCost = page.data.some((p) => p.costPrice !== undefined)
@@ -100,6 +102,19 @@ function ProductsPage() {
               void navigate({ search: (s) => ({ ...s, stock: v === 'all' ? undefined : v, page: undefined }) })
             }
           />
+          {page.costMissingCount !== undefined && (page.costMissingCount > 0 || search.cost) && (
+            // UMK-2130: products sold without a cost make profit look complete when it is not.
+            <Chip
+              size="small"
+              state={search.cost ? 'active' : 'default'}
+              aria-pressed={Boolean(search.cost)}
+              onClick={() =>
+                void navigate({ search: (s) => ({ ...s, cost: s.cost ? undefined : 'missing', page: undefined }) })
+              }
+            >
+              {filterLabel('Modal belum diisi', page.costMissingCount)}
+            </Chip>
+          )}
           <div className="md:w-56 md:shrink-0">
             <Select
               aria-label="Filter kategori"
@@ -180,7 +195,17 @@ function ProductsPage() {
                     <StockCell stock={p.stock} threshold={p.lowStockThreshold} />
                   </TableCell>
                   <TableCell>{p.unit}</TableCell>
-                  {showCost && <TableCell className="text-right tabular-nums">{rupiah(p.costPrice ?? 0)}</TableCell>}
+                  {showCost && (
+                    <TableCell className="text-right tabular-nums">
+                      {p.costPrice === 0 ? (
+                        <Badge color="warning" size="small">
+                          Modal belum diisi
+                        </Badge>
+                      ) : (
+                        rupiah(p.costPrice ?? 0)
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="text-right tabular-nums">{rupiah(p.sellingPrice)}</TableCell>
                   {showCost && (
                     <TableCell className="text-right tabular-nums">{rupiah(p.sellingPrice - (p.costPrice ?? 0))}</TableCell>

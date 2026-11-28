@@ -6,6 +6,7 @@ import type { SalePayment } from './-online'
 import { parseWaitingSales, type WaitingSale } from './-shift-helpers'
 import { parseOnlineMethods, type Bank, type OnlineMethodsResult } from './-pay-step'
 import type { CashTotals } from './-shift-helpers'
+import type { QuickProductBody } from './-quick-product'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
 
@@ -320,3 +321,12 @@ export const pickMembers = createServerFn()
 export const checkVoucher = createServerFn({ method: 'POST' })
   .validator((d: { code: string; amount: number }) => d)
   .handler(({ data }) => send<{ discount: number }>('/vouchers/check', data))
+
+/** UMK-2130 "Produk cepat": made from the till (catalog.manage); pos-api answers the product it made. */
+export const createQuickProduct = createServerFn({ method: 'POST' })
+  .validator((d: QuickProductBody) => d)
+  .handler(async ({ data }): Promise<Result<Product>> => {
+    const r = await send<Omit<Product, 'stock'>>('/catalog/products/quick', data)
+    // A non-stock product tracks no stock: the till's grid shows no count for it.
+    return r.ok ? { ok: true, data: { ...r.data, stock: null } } : r
+  })

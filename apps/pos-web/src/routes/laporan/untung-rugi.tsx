@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Alert, ProgressBar, SegmentedControl } from '@umkmall/ui/primitives'
 import { Card } from '@umkmall/ui/compositions'
 import { Empty, Panel } from '@/components/page'
@@ -6,6 +6,7 @@ import { ReportVisuals } from '@/components/report-visual'
 import { CsvButton } from './-csv-button'
 import { PdfButton } from './-pdf-button'
 import { rangeLabel } from './-pdf'
+import { costMissingText } from './-reports'
 import { asPeriod, barPercent, PERIODS, periodNoun, profitChangeText } from '../pengeluaran/-helpers'
 import { loadProfitLoss, rupiah, type ProfitLoss } from './-api'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
@@ -43,6 +44,7 @@ function ProfitLossPage() {
         onChange={(value) => void navigate({ to: '/laporan/untung-rugi', search: { period: value } })}
       />
       <NetProfit r={r} period={period} />
+      <CostMissing products={r.costMissing.products} />
       <ReportVisuals kind="profit-loss" query={{ period }} />
       <Formula r={r} />
       <TopExpenses r={r} period={period} />
@@ -58,6 +60,23 @@ function NetProfit({ r, period }: { r: ProfitLoss; period: 'today' | 'week' | 'm
       <p className={`text-3xl font-bold ${loss ? 'text-default-error' : 'text-default-success'}`}>{money(r.current.netProfit)}</p>
       <p className="text-sm text-default-secondary">{profitChangeText(r.netProfitChange, period)}</p>
     </Card>
+  )
+}
+
+/**
+ * UMK-2130 (design 44, screen 6): the profit above is not complete while products sold this period have no cost.
+ * Links to the catalog filtered on them.
+ */
+function CostMissing({ products }: { products: number }) {
+  const text = costMissingText(products)
+  if (!text) return null
+  return (
+    <Alert variant="warning" size="small" className="max-w-xl">
+      <span className="font-semibold">{text.title}.</span> {text.body}{' '}
+      <Link to="/catalog/products" search={{ cost: 'missing' }} className="font-semibold underline">
+        Isi modal sekarang
+      </Link>
+    </Alert>
   )
 }
 
