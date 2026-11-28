@@ -118,7 +118,7 @@ import {
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
 import { CloseYesterday } from './-close-yesterday'
-import { BarcodeScanSheet, canShowScan, useScanSupport } from '@/components/barcode-scanner'
+import { BarcodeScanSheet, canShowScan, primeBeep, useScanSupport } from '@/components/barcode-scanner'
 import {
   addedResult,
   looksLikeTypedBarcode,
@@ -527,7 +527,11 @@ function Register({
             />
           </div>
           {canShowScan(scanSupport) && (
-            <Button width="auto" type="outline" size="small" onClick={() => setScanOpen(true)} data-guide="kasir-scan">
+            <Button width="auto" type="outline" size="small" onClick={() => {
+                primeBeep()
+                setScanOpen(true)
+              }}
+              data-guide="kasir-scan">
               <Icon name="camera" size="sm" /> Scan
             </Button>
           )}

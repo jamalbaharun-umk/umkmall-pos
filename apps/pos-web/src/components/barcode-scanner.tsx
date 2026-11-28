@@ -3,14 +3,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import {
+  audioAction,
   cameraSupport,
   classifyCameraError,
   createDedupe,
   normalizeCode,
   pickFormats,
   readBeep,
+  setBeep,
   showScanButton,
-  writeBeep,
+  subscribeBeep,
   type CameraSupport,
   type ScanResult,
 } from '@/lib/barcode-scan'
@@ -61,23 +63,60 @@ export function useScanSupport(): CameraSupport | 'unknown' {
 export const canShowScan = (s: CameraSupport | 'unknown') => s !== 'unknown' && showScanButton(s)
 
 let audio: AudioContext | undefined
+/**
+ * The shared AudioContext, created or revived when needed. Never throws. `resume()` only works inside a user gesture on
+ * mobile, so the Scan buttons, the sheet's open effect and the switches call `primeBeep()`; `beep()` asks again.
+ */
+function audioContext(): AudioContext | undefined {
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctx) return undefined
+    const action = audioAction(audio?.state)
+    if (action === 'create') audio = new Ctx()
+    else if (action === 'resume') audio?.resume().catch(() => undefined)
+    return audio
+  } catch {
+    return undefined
+  }
+}
+
+/** Call from a click or tap handler (the Scan button) so the first beep is allowed to play. */
+export function primeBeep(): void {
+  audioContext()
+}
+
 /** A short beep; never throws (no audio device, autoplay rules). */
 function beep() {
   try {
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!Ctx) return
-    audio ??= new Ctx()
-    void audio.resume()
-    const osc = audio.createOscillator()
-    const gain = audio.createGain()
+    const ctx = audioContext()
+    if (!ctx) return
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
     osc.frequency.value = 1000
     gain.gain.value = 0.15
-    osc.connect(gain).connect(audio.destination)
+    osc.connect(gain).connect(ctx.destination)
     osc.start()
-    osc.stop(audio.currentTime + 0.12)
+    osc.stop(ctx.currentTime + 0.12)
   } catch {
     // No sound is not a failure.
   }
+}
+
+/** The per-device beep choice, kept in step between the camera sheet and Pengaturan (same tab and other tabs). */
+export function useBeepSetting(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(true)
+  useEffect(() => {
+    setOn(readBeep())
+    return subscribeBeep(() => setOn(readBeep()))
+  }, [])
+  return [
+    on,
+    (next) => {
+      if (next) primeBeep() // a gesture: the context may start now
+      setOn(next)
+      setBeep(next)
+    },
+  ]
 }
 
 type Phase = 'starting' | 'scanning' | 'denied' | 'insecure' | 'unavailable' | 'unknown-code'
@@ -112,15 +151,13 @@ export function BarcodeScanSheet({
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<ScanResult | null>(null)
   const [flash, setFlash] = useState(false)
-  const [beepOn, setBeepOn] = useState(true)
+  const [beepOn, setBeepOn] = useBeepSetting()
   const [manual, setManual] = useState(false)
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const closeRef = useRef<() => void>(() => undefined)
   const beepRef = useRef(true)
   beepRef.current = beepOn
-
-  useEffect(() => setBeepOn(readBeep()), [])
 
   const handle = useCallback(async (raw: string, source: 'camera' | 'manual') => {
     const code = normalizeCode(raw)
@@ -150,6 +187,7 @@ export function BarcodeScanSheet({
   // The camera lives exactly as long as the sheet is open: every exit path ends in `stop()`.
   useEffect(() => {
     if (!open) return
+    primeBeep()
     let stopped = false
     let stream: MediaStream | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -331,10 +369,7 @@ export function BarcodeScanSheet({
           <Switch
             label="Bunyi saat berhasil"
             checked={beepOn}
-            onCheckedChange={(on) => {
-              setBeepOn(on)
-              writeBeep(on)
-            }}
+            onCheckedChange={setBeepOn}
           />
         )}
 

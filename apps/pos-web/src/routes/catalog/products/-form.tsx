@@ -36,7 +36,7 @@ import {
   type UnitRow,
 } from './-helpers'
 import { ActionRow } from '@/components/action-row'
-import { BarcodeScanSheet, canShowScan, useScanSupport } from '@/components/barcode-scanner'
+import { BarcodeScanSheet, canShowScan, primeBeep, useScanSupport } from '@/components/barcode-scanner'
 import { fieldScanResult, normalizeCode, type ScanResult } from '@/lib/barcode-scan'
 
 export const TYPE_LABEL: Record<ProductType, string> = {
@@ -266,7 +266,10 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
                   color="light"
                   iconOnly
                   aria-label={`Scan barcode ${i + 1}`}
-                  onClick={() => setScanRow(i)}
+                  onClick={() => {
+                    primeBeep()
+                    setScanRow(i)
+                  }}
                 >
                   <Icon name="camera" size="sm" />
                 </Button>
@@ -301,6 +304,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
                 width="auto"
                 onClick={() => {
                   // A new empty row, scanned into at once.
+                  primeBeep()
                   set('barcodes', [...form.barcodes, ''])
                   setScanRow(form.barcodes.length)
                 }}

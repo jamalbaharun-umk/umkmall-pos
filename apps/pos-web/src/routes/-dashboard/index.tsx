@@ -4,6 +4,7 @@ import { showError, type FailureLike } from '@/lib/feedback'
 import { SCROLL_ROW } from '@/lib/scroll-row'
 import {
   AgingCard,
+  CostRiseCard,
   ExpensesCard,
   ExpiringCard,
   Headline,
@@ -59,6 +60,7 @@ export function DashboardWidgets() {
         <ExpiringCard ctx={ctx} />
         <AgingCard ctx={ctx} />
         <ExpensesCard ctx={ctx} />
+        <CostRiseCard ctx={ctx} />
       </div>
     </div>
   )
