@@ -22,6 +22,7 @@ import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import { tenants } from '../db/schema';
+import { cashMethodId } from '../sales/cash';
 import { WindowLimiter } from '../agent/rate-limit';
 import { agentEnabled } from '../agent/usage';
 import { addressKey } from '../staff/address-limits';
@@ -581,21 +582,29 @@ export class AuthController {
     });
   }
 
-  private async findOrCreateTenant(
-    db: Pick<Db, 'insert' | 'select'>,
-    userId: string,
-  ): Promise<string> {
-    const [created] = await db
-      .insert(tenants)
-      .values({ userId })
-      .onConflictDoNothing({ target: tenants.userId })
-      .returning({ id: tenants.id });
-    if (created) return created.id;
-    const [existing] = await db
-      .select({ id: tenants.id })
-      .from(tenants)
-      .where(eq(tenants.userId, userId));
-    return existing.id;
+  /**
+   * The owner's store, created on first sign-in together with its "Tunai" method (UMK-2120), so the cash method
+   * and the "Kelengkapan toko" step for it are there from the start. Idempotent: an existing store without Tunai
+   * (created before this) gets it at the owner's next sign-in.
+   */
+  private findOrCreateTenant(db: Db, userId: string): Promise<string> {
+    return db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(tenants)
+        .values({ userId })
+        .onConflictDoNothing({ target: tenants.userId })
+        .returning({ id: tenants.id });
+      const tenantId =
+        created?.id ??
+        (
+          await tx
+            .select({ id: tenants.id })
+            .from(tenants)
+            .where(eq(tenants.userId, userId))
+        )[0].id;
+      await cashMethodId(tx, tenantId);
+      return tenantId;
+    });
   }
 
   private async issue(session: PosSession) {
