@@ -81,6 +81,16 @@ const requestHash = (i: CashEntryInput) =>
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk catatan kas lain';
 const NO_SHIFT = 'Buka shift dulu untuk mencatat kas masuk atau keluar';
 
+/**
+ * Thrown inside the transaction when the key turns up after the drawer lock: rolls back everything the lock
+ * wrote (a solo owner's automatically opened shift and its audit row), then the first entry is answered.
+ */
+class KeyAnswered extends Error {
+  constructor(readonly id: string) {
+    super('idempotency key already answered');
+  }
+}
+
 const m = manualCashEntries;
 const columns = {
   id: m.id,
@@ -174,6 +184,10 @@ export class CashEntriesService {
     let id: string;
     try {
       id = await this.db.transaction(async (tx) => {
+        // The key again before the drawer lock: in solo-owner mode the lock may open a shift, and a
+        // duplicate must not open one (UMK-2120 review).
+        const early = await this.byKey(tx, s.tenantId, key);
+        if (early) return replay(early);
         // The shift's row lock (the lock a sale and the close take), then the key again: a duplicate in
         // flight waits here and then finds the first entry, instead of being judged against a drawer
         // the first one already changed.
@@ -184,7 +198,9 @@ export class CashEntriesService {
           input.direction === 'in' ? 'manual_in' : 'manual_out',
         );
         const prior = await this.byKey(tx, s.tenantId, key);
-        if (prior) return replay(prior);
+        // A duplicate that waited behind a shift close finds no open shift, and a solo owner's lock opens a
+        // new one: rolled back, so the replay leaves no empty shift and no audit row behind.
+        if (prior) throw new KeyAnswered(replay(prior));
         const newId = randomUUID();
         // Writes the movement into the locked shift's ledger; 422 without an open shift.
         const shiftId = await recordShiftCashAt(
@@ -248,6 +264,7 @@ export class CashEntriesService {
         return newId;
       });
     } catch (e) {
+      if (e instanceof KeyAnswered) return this.get(s.tenantId, e.id);
       if (!isUniqueViolation(e)) throw e;
       const prior = await this.byKey(this.db, s.tenantId, key);
       if (!prior) throw e;
