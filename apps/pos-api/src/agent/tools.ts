@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { RecipeCreate } from '../recipes/recipes.service';
 import type { PosSession } from '../tenancy/session';
 import {
   costDataRows,
@@ -10,6 +11,7 @@ import {
   HPP_MAX_ROWS,
   hppSku,
   withMargins,
+  withRecipes,
 } from './hpp';
 import type { AgentIdempotency } from './idempotency';
 import { callRoute, type Loopback, type RouteAnswer } from './loopback';
@@ -158,7 +160,28 @@ export const AGENT_TOOL_NAMES = [
   'ledger_entries',
   'add_product_photo',
   'stock_in',
+  // UMK-2127
+  'create_recipe',
 ] as const;
+
+/** The recipe a `create_recipe` call carries: the recipe route's own checks, minus the product it is for. */
+const RecipeDraft = RecipeCreate.omit({ productId: true });
+/** A product the agent makes for a recipe: one base price, no cost price, no ingredient type, no own SKU. */
+const NewRecipeProduct = z
+  .object({
+    name: z.string().trim().min(1, 'Nama produk wajib diisi').max(200),
+    categoryId: z.string().trim().min(1).max(64),
+    sellingPrice: z
+      .number({ invalid_type_error: 'sellingPrice harus berupa angka' })
+      .int('sellingPrice harus bilangan bulat rupiah')
+      .min(0, 'sellingPrice tidak boleh negatif'),
+    unit: z.string().trim().min(1).max(40).optional(),
+    type: z.enum(['non_stock', 'product']).optional(),
+  })
+  .strict();
+/** The SKU a new recipe product gets: from the call's key, so a retry finds the product the first try made. */
+const recipeSku = (key: string) =>
+  `RC-${createHash('sha256').update(key).digest('hex').slice(0, 12)}`;
 
 /** The purchase route's line bounds (`purchasing.service.ts` Line, orderFields), for the stock_in preview. */
 const StockLines = z
@@ -432,6 +455,12 @@ export function buildAgentServer(
           .enum(['low', 'out'])
           .optional()
           .describe('Only low or out-of-stock tracked products'),
+        type: z
+          .enum(['product', 'service', 'non_stock', 'ingredient'])
+          .optional()
+          .describe(
+            'Only this product type, e.g. "ingredient" for the ingredients a recipe can use',
+          ),
         page: z.number().int().optional(),
         perPage: z.number().int().optional().describe('1 to 100, default 20'),
       },
@@ -622,7 +651,7 @@ export function buildAgentServer(
     'hpp_product_data',
     {
       description:
-        "Everything UMKMall's HPP calculators need from the POS, one row per product: selling price, cost price, units and wholesale tiers, stock, what sold in the period (qty, sales, cost, average price and unit cost) and what buying it really cost (qty, total, average and last unit cost), plus the store's operating expenses by category for the period (fixed-cost candidates). The POS provides the data; UMKMall does the calculation. Paged by products.",
+        "Everything UMKMall's HPP calculators need from the POS, one row per product: selling price, cost price, units and wholesale tiers, stock, what sold in the period (qty, sales, cost, average price and unit cost) and what buying it really cost (qty, total, average and last unit cost), plus the store's operating expenses by category for the period (fixed-cost candidates). A product that has a recipe also carries 'recipe': its lines with their costs, 'costPerPortion' (variable cost: use it as cogs), 'fullCostPerPortion' (HPP lengkap: plus labour only, still no allocated fixed costs) and 'missingCost' flags; a product without one has no 'recipe' key. The POS provides the data; UMKMall does the calculation. Paged by products.",
       inputSchema: {
         ...dateRange,
         q: text(100)
@@ -662,6 +691,12 @@ export function buildAgentServer(
         truncated: boolean;
         rows: Parameters<typeof costDataRows>[2];
       };
+      // One call for the page's recipes; a product without a recipe is simply absent from it.
+      const ids = page.data.map((p) => p.id);
+      const recipes = ids.length
+        ? await get('/recipes/breakdown', { productIds: ids.join(',') })
+        : null;
+      if (recipes && !recipes.ok) return refused(recipes.message);
       const profit = pl.data as {
         timezone: string;
         current: { revenue: number; grossProfit: number; expenses: number };
@@ -673,10 +708,19 @@ export function buildAgentServer(
         page: page.page,
         perPage: page.perPage,
         total: page.total,
-        products: costDataRows(
-          page.data,
-          (sold.data as { rows: Parameters<typeof costDataRows>[1] }).rows,
-          purchases.rows,
+        products: withRecipes(
+          costDataRows(
+            page.data,
+            (sold.data as { rows: Parameters<typeof costDataRows>[1] }).rows,
+            purchases.rows,
+          ),
+          recipes
+            ? (
+                recipes.data as {
+                  data: Parameters<typeof withRecipes>[1];
+                }
+              ).data
+            : [],
         ),
         // The purchase lines of a very busy period are capped by the report; averages then cover the first lines.
         purchasesTruncated: purchases.truncated,
@@ -1524,6 +1568,201 @@ export function buildAgentServer(
           return { data: order, resultRefs: [order.id] };
         },
         true,
+      );
+    },
+  );
+
+  tool(
+    'create_recipe',
+    {
+      description:
+        'Create a recipe (resep) for a NEW product, or draft one for an existing product. Send either newProduct ({ name, categoryId, sellingPrice, unit?, type: non_stock | product }), which makes the product without a cost price and writes its recipe, or productId of an existing product, which only answers a draft the owner enters in the POS (the agent never changes an existing product). Recipe: yieldQty (portions one batch makes), yieldUnit?, laborCost? (rupiah per batch), note?, lines (1 to 100): each { ingredientId (a product of type ingredient, find them with search_products type "ingredient") or subRecipeId (a recipe id from hpp_product_data), quantity (base units: gram, ml, pcs; portions for a sub-recipe), wastePercent? (0 to the route limit) }. Packaging (plastic, box, sticker) is an ordinary ingredient line. The cost per portion is shown in hpp_product_data afterwards. The agent never sets a cost price or a selling price of an existing product: applying the cost is the owner\'s, in the POS. Preview without confirm.',
+      inputSchema: {
+        newProduct: NewRecipeProduct.optional(),
+        productId: text(64).optional(),
+        yieldQty: z.number().describe('Portions one batch makes'),
+        yieldUnit: text(20).optional(),
+        laborCost: z.number().optional().describe('Integer rupiah per batch'),
+        note: text(500).optional(),
+        lines: z
+          .array(
+            z
+              .object({
+                ingredientId: text(64).optional(),
+                subRecipeId: text(64).optional(),
+                quantity: z.number(),
+                wastePercent: z.number().optional(),
+              })
+              .strict(),
+          )
+          .describe('1 to 100 lines'),
+        ...writeControls,
+      },
+      registry: writes(
+        'Strategi Harga dan Profit and Chat: the owner dictates a recipe, HPP gets exact costs',
+        '/catalog/products',
+      ),
+    },
+    async (a, track) => {
+      const {
+        confirm: _c,
+        idempotencyKey: _k,
+        newProduct: rawProduct,
+        productId: rawProductId,
+        ...rawRecipe
+      } = a;
+      void _c;
+      void _k;
+      if (!session.agentScopes?.includes('pos.write'))
+        return refused(NO_WRITE_CONSENT);
+      if ((rawProduct === undefined) === (rawProductId === undefined))
+        return refused(
+          'Kirim tepat satu: newProduct (produk baru) atau productId (draf untuk produk yang sudah ada).',
+        );
+      const issues = (e: z.ZodError) =>
+        e.issues
+          .map((i) =>
+            i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message,
+          )
+          .join('; ');
+      const recipe = RecipeDraft.safeParse(rawRecipe);
+      if (!recipe.success) return refused(issues(recipe.error));
+      const product =
+        rawProduct === undefined
+          ? null
+          : NewRecipeProduct.safeParse(rawProduct);
+      if (product && !product.success) return refused(issues(product.error));
+
+      // The lines against this store (its own session: another store's ids answer 404 here), before any write.
+      const checkLines = async (): Promise<
+        { error: string } | { lines: Record<string, unknown>[] }
+      > => {
+        const out: Record<string, unknown>[] = [];
+        for (const [i, l] of recipe.data.lines.entries()) {
+          if (l.ingredientId) {
+            const id = idParam(l.ingredientId);
+            if (!id)
+              return { error: `Baris ${i + 1}: ingredientId tidak valid.` };
+            const r = await get(`/catalog/products/${id}`);
+            if (!r.ok)
+              return {
+                error:
+                  r.status === 404
+                    ? `Baris ${i + 1}: bahan tidak ditemukan. Cari dengan search_products type "ingredient".`
+                    : r.message,
+              };
+            const p = r.data as { name: string; type: string; unit: string };
+            if (p.type !== 'ingredient')
+              return {
+                error: `Baris ${i + 1}: ${p.name} bukan bahan baku (tipe ingredient). Bahan dibuat pemilik di POS.`,
+              };
+            out.push({ ...l, name: p.name, unit: p.unit });
+          } else {
+            const id = idParam(l.subRecipeId);
+            if (!id)
+              return { error: `Baris ${i + 1}: subRecipeId tidak valid.` };
+            const r = await get(`/recipes/${id}`);
+            if (!r.ok)
+              return {
+                error:
+                  r.status === 404
+                    ? `Baris ${i + 1}: sub-resep tidak ditemukan.`
+                    : r.message,
+              };
+            const sub = r.data as { product: { name: string } };
+            out.push({ ...l, name: sub.product.name });
+          }
+        }
+        return { lines: out };
+      };
+      const NO_COST =
+        'Harga modal dan harga jual produk tidak diubah. Pemilik memakai biaya resep sebagai modal di POS.';
+
+      if (!product) {
+        // An existing product: a draft only. Nothing is written, so no key is needed and no call is recorded as a write.
+        const id = idParam(rawProductId);
+        if (!id) return refused(BAD_ID);
+        const p = await get(`/catalog/products/${id}`);
+        if (!p.ok) return refused(p.message);
+        const checked = await checkLines();
+        if ('error' in checked) return refused(checked.error);
+        track.outcome = 'preview';
+        const cur = p.data as {
+          name: string;
+          type: string;
+          costPrice?: number;
+          sellingPrice: number;
+        };
+        return ok({
+          draft: true,
+          written: false,
+          product: {
+            id,
+            name: cur.name,
+            type: cur.type,
+            costPrice: cur.costPrice ?? null,
+            sellingPrice: cur.sellingPrice,
+          },
+          recipe: { ...recipe.data, lines: checked.lines },
+          note: `Produk ini sudah ada, jadi agent tidak menulis resepnya. Pemilik memasukkannya di POS. ${NO_COST}`,
+        });
+      }
+
+      const sku = recipeSku(String(a.idempotencyKey));
+      const body = { ...product.data, sku };
+      return runWrite(
+        'create_recipe',
+        a,
+        track,
+        async () => {
+          const checked = await checkLines();
+          if ('error' in checked) return refused(checked.error);
+          return ok({
+            preview: true,
+            wouldCreate: {
+              product: body,
+              recipe: { ...recipe.data, lines: checked.lines },
+            },
+            note: NO_COST,
+          });
+        },
+        async () => {
+          const checked = await checkLines();
+          if ('error' in checked) return { error: checked.error, status: 422 };
+          let productId: string;
+          const made = await callRoute(ctx, 'POST', '/catalog/products', {
+            body,
+          });
+          if (made.ok) productId = (made.data as { id: string }).id;
+          else {
+            // 409: a first try of this key made the product before the recipe was refused; use it, once.
+            const found =
+              made.status === 409
+                ? await get('/catalog/products', { sku, perPage: 1 })
+                : null;
+            const hit =
+              found && found.ok
+                ? (found.data as { data: Product[] }).data.find(
+                    (x) => x.sku === sku,
+                  )
+                : undefined;
+            if (!hit) return { error: made.message, status: made.status };
+            productId = hit.id;
+          }
+          const r = await callRoute(ctx, 'POST', '/recipes', {
+            body: { productId, ...recipe.data },
+          });
+          if (!r.ok)
+            return {
+              error: `${r.message} Produk sudah dibuat tanpa resep (productId ${productId}); perbaiki bahannya lalu kirim lagi dengan kunci yang SAMA, tidak dibuat dua kali.`,
+              status: r.status,
+            };
+          const made2 = r.data as { id: string };
+          return {
+            data: { productId, recipe: r.data, note: NO_COST },
+            resultRefs: [productId, made2.id],
+          };
+        },
       );
     },
   );
