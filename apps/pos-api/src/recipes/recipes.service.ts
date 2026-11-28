@@ -188,6 +188,11 @@ export class RecipesService {
     };
   }
 
+  /** UMK-2132: the store's recipe graph as the reads see it, for a production run inside the caller's transaction. */
+  graph(db: Db | Tx, tenantId: string) {
+    return this.load(db, tenantId);
+  }
+
   /** The ingredients among `ids` that were deleted from the catalog after a recipe named them. */
   private async deletedIngredients(
     db: Db | Tx,
@@ -427,6 +432,16 @@ export class RecipesService {
   private lock(tx: Tx, tenantId: string) {
     return tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('pos.recipes'), hashtext(${tenantId}))`,
+    );
+  }
+
+  /**
+   * UMK-2132: the shared side of `lock` (same key). A production run holds it while it reads the graph and draws,
+   * so no recipe write of the store lands in between; runs do not wait for one another.
+   */
+  readLock(tx: Tx, tenantId: string) {
+    return tx.execute(
+      sql`select pg_advisory_xact_lock_shared(hashtext('pos.recipes'), hashtext(${tenantId}))`,
     );
   }
 

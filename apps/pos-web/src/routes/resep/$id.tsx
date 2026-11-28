@@ -67,7 +67,7 @@ function RecipePage() {
     if (res.ok) await router.invalidate()
   }
 
-  // Overwrites the product's cost price, so Anda confirm the new and the old figure first.
+  // Overwrites the product's cost price, so the owner confirms the new and the old figure first.
   const applyCost = () =>
     ask(applyCostConfirm(r.costPerPortion, r.product.costPrice), runApplyCost, { label: 'Lanjutkan', color: 'primary', action: 'memakai harga modal' })
 

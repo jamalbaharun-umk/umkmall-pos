@@ -132,7 +132,7 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       cost: 18_000,
       perQty: 1_000,
     }).expect(200);
-    await post('/recipes', {
+    const kopiRecipe = await post('/recipes', {
       productId,
       yieldQty: 1,
       lines: [{ ingredientId: milk.body.id, quantity: 150, wastePercent: 5 }],
@@ -354,6 +354,17 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     await admin`insert into pos.agent_tool_calls (tenant_id, tool, outcome, actor_id, duration_ms)
       values (${s.tenantId}, 'list_categories', 'ok', ${s.userId}, 3)`;
     await admin`insert into pos.agent_access (tenant_id, revoked_before) values (${s.tenantId}, now())`;
+    // UMK-2132: a production run of the recipe above (production_runs, production_run_lines, a production batch).
+    await post('/stock/opening', {
+      productId: milk.body.id,
+      qty: 1_000,
+      unitCost: 18,
+    }).expect(201);
+    await post(
+      '/production-runs',
+      { recipeId: kopiRecipe.body.id, batches: 2, actualYield: 2 },
+      randomUUID(),
+    ).expect(201);
     return s;
   }
 
