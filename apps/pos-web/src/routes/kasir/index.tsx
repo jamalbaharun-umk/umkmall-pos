@@ -22,6 +22,7 @@ import { useCan } from '@/components/shell'
 import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import {
   createSale,
+  findProductByBarcode,
   loadCashier,
   openShift,
   quoteCart,
@@ -116,6 +117,15 @@ import {
   type LineDiscount,
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
+import { BarcodeScanSheet, canShowScan, useScanSupport } from '@/components/barcode-scanner'
+import {
+  addedResult,
+  looksLikeTypedBarcode,
+  soldOutResult,
+  unknownResult,
+  unknownTypedText,
+  type ScanResult,
+} from '@/lib/barcode-scan'
 import { GuideButton } from '@/components/guide'
 import { DailyTargetCard } from '../ringkasan/-panels'
 
@@ -278,6 +288,10 @@ function Register({
   // UMK-2130 "Produk cepat": only an actor who may manage the catalog makes one from the till (pos-api: 403).
   const canQuick = useCan('catalog.manage')
   const [quickOpen, setQuickOpen] = useState(false)
+  // UMK-1986 camera scan: the sheet, and the barcode a quick product is made for (an unknown scanned code).
+  const scanSupport = useScanSupport()
+  const [scanOpen, setScanOpen] = useState(false)
+  const [quickBarcode, setQuickBarcode] = useState<string>()
   const [discounts, setDiscounts] = useState<Record<string, LineDiscount>>({})
   const [discounting, setDiscounting] = useState<DiscountTarget>()
   const [member, setMember] = useState<MemberOption | null>(null)
@@ -450,6 +464,34 @@ function Register({
     if (needsUnitPicker(product)) setPicking(product)
     else setCart((c) => addEntry(c, product, null, 1))
   }
+  // The cart as the last scan left it: two scans in one tick must both see the first one's line.
+  const cartNow = useRef(cart)
+  cartNow.current = cart
+  /** A code from the camera, the sheet's typed field or the search field: add the product it belongs to. */
+  const scanCode = async (code: string): Promise<ScanResult> => {
+    const product = await findProductByBarcode({ data: code })
+    if (!product) return unknownResult(code)
+    if (stockState(product.stock, product.lowStockThreshold) === 'out') return soldOutResult(product.name)
+    // A scan adds the base unit; the unit picker is not stacked on the camera sheet.
+    const next = addEntry(cartNow.current, product, null, 1)
+    cartNow.current = next
+    setCart(next)
+    return addedResult(product.name, next.reduce((n, l) => n + l.qty, 0))
+  }
+  // A keyboard scanner types the code into the search field and presses Enter.
+  const searchEnter = async () => {
+    if (!looksLikeTypedBarcode(q, shown.length)) return
+    const code = q.trim()
+    try {
+      const r = await scanCode(code)
+      if (r.kind === 'unknown') return setSoldOut(unknownTypedText(code))
+      if (r.kind === 'warn') return setSoldOut(r.detail)
+      setQ('')
+      notifySuccess(r.detail)
+    } catch (e) {
+      showError(e, { action: 'mencari barcode', retry: () => void searchEnter() })
+    }
+  }
   const setQty = (key: string, qty: number) => setCart((c) => setEntryQty(c, key, qty))
 
   return (
@@ -468,11 +510,22 @@ function Register({
               type="search"
               size="small"
               leadingAdornment={<Icon name="search" size="sm" />}
-              placeholder="Cari nama atau SKU…"
+              placeholder="Ketik nama atau kode…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void searchEnter()
+                }
+              }}
             />
           </div>
+          {canShowScan(scanSupport) && (
+            <Button width="auto" type="outline" size="small" onClick={() => setScanOpen(true)} data-guide="kasir-scan">
+              <Icon name="camera" size="sm" /> Scan
+            </Button>
+          )}
           {canQuick && (
             <Button width="auto" type="outline" size="small" onClick={() => setQuickOpen(true)}>
               <Icon name="plus" size="sm" /> Produk cepat
@@ -843,12 +896,32 @@ function Register({
           setPicking(undefined)
         }}
       />
+      <BarcodeScanSheet
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        onCode={(code) => scanCode(code)}
+        status={`Di keranjang ${cart.reduce((n, l) => n + l.qty, 0)} barang`}
+        onAddUnknown={
+          canQuick
+            ? (code) => {
+                setScanOpen(false)
+                setQuickBarcode(code)
+                setQuickOpen(true)
+              }
+            : undefined
+        }
+      />
       <QuickProductDialog
         open={quickOpen}
-        initialName={q.trim()}
-        onClose={() => setQuickOpen(false)}
+        initialName={quickBarcode ? '' : q.trim()}
+        barcode={quickBarcode}
+        onClose={() => {
+          setQuickOpen(false)
+          setQuickBarcode(undefined)
+        }}
         onCreated={(product) => {
           setQuickOpen(false)
+          setQuickBarcode(undefined)
           setQ('')
           setCart((c) => addEntry(c, product, null, 1))
           void router.invalidate() // the grid lists it from now on

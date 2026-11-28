@@ -2,6 +2,7 @@ import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { refusalOf } from '@/lib/refusal'
+import { barcodePath, exactMatch } from '@/lib/barcode-scan'
 import type { SaveWarning, TierInput, UnitInput } from './products/-helpers'
 
 // Server functions for the catalog screens: every call goes server-side through the session client,
@@ -111,6 +112,15 @@ export const listProducts = createServerFn({ method: 'GET' })
     qs.set('page', String(data.page ?? 1))
     qs.set('perPage', String(PER_PAGE))
     return read<ProductPage>(`/catalog/products?${qs}`)
+  })
+
+/** UMK-1986: the product of this store that already holds `data` as a barcode (name only), or null. Tenant from the session. */
+export const findBarcodeHolder = createServerFn({ method: 'GET' })
+  .validator((code: string) => code)
+  .handler(async ({ data }): Promise<{ id: string; name: string } | null> => {
+    const page = await read<ProductPage>(barcodePath(data, 'all'))
+    const hit = exactMatch(page.data, data)
+    return hit ? { id: hit.id, name: hit.name } : null
   })
 
 export const getProductDetail = createServerFn({ method: 'GET' })
