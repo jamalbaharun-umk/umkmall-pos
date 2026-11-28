@@ -31,6 +31,7 @@ import { RecipesModule } from './recipes/recipes.controller';
 import { OnboardingModule } from './onboarding/onboarding.controller';
 import { GuidesModule } from './guides/guides.controller';
 import { ProductionModule } from './production/production.controller';
+import { HelperModule } from './helper/helper.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -65,6 +66,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     OnboardingModule,
     GuidesModule,
     ProductionModule,
+    HelperModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [

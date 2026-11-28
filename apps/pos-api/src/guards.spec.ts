@@ -30,6 +30,40 @@ describe('repo guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('pins the routes a helper session can reach (@HelperRoute, UMK-2124): a new one is a reviewed change', () => {
+    const reached: string[] = [];
+    for (const { text } of files) {
+      const re =
+        /@Controller\('([^']*)'\)|@HelperRoute\(\)\s*(?:@\w+\([^)]*\)\s*)*?@(Get|Post|Put|Patch|Delete)\((?:'([^']*)')?\)/g;
+      let prefix = '';
+      for (const m of text.matchAll(re)) {
+        if (m[1] !== undefined) prefix = m[1];
+        else
+          reached.push(
+            `${m[2].toUpperCase()} /${[prefix, m[3]].filter(Boolean).join('/')}`,
+          );
+      }
+    }
+    // Design 42: the restricted till reads what it shows, sells, prints its own receipts, and hands back.
+    expect(reached.sort()).toEqual(
+      [
+        'GET /catalog/products',
+        'GET /catalog/products/:id/images/:imageId',
+        'GET /payment-methods',
+        'GET /sales/:id/receipt',
+        'GET /sales/settings',
+        'GET /shifts/current',
+        'GET /store/profile',
+        'GET /store/profile/logo',
+        'GET /store/profile/qris',
+        'GET /tenant/me',
+        'POST /helper/end',
+        'POST /sales',
+        'POST /sales/quote',
+      ].sort(),
+    );
+  });
+
   it("pins the routes UMKMall's agent session can reach (@AgentRoute): a new one is a reviewed change", () => {
     const reached: string[] = [];
     for (const { text } of files) {

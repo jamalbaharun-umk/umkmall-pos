@@ -21,6 +21,7 @@ import { fieldError, validate } from '../common/validation';
 import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
+import { parkedSidRefused, SESSION_PARKED } from '../helper/helper.controller';
 import { tenants } from '../db/schema';
 import { cashMethodId } from '../sales/cash';
 import { WindowLimiter } from '../agent/rate-limit';
@@ -29,6 +30,7 @@ import { addressKey } from '../staff/address-limits';
 import { Public } from '../tenancy/decorators';
 import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
+import { hashSecret } from '../staff/secrets';
 import { type NativeAnswer, UmkmallNative } from './umkmall-native';
 
 const SESSION_TTL = 15 * 60;
@@ -269,6 +271,7 @@ export class AuthController {
         actorId: user.id,
         kind: 'owner',
         signedInAt: nowSeconds(),
+        nativeSidHash: hashSecret(session.id),
       })),
       umkmall: { sid: session.id, refreshToken },
     };
@@ -285,6 +288,13 @@ export class AuthController {
   async umkmallRefresh(@Body() body: unknown) {
     const umkmall = this.nativeOrNotFound();
     const { sid, refreshToken } = parse(NativeSessionBody, body);
+    // UMK-2124: a native session parked by "Serahkan ke pembantu" wakes only through the owner's PIN.
+    if (await parkedSidRefused(this.db, sid))
+      throw new ForbiddenException({
+        message:
+          'Sesi pemilik sedang diparkir. Kembali ke pemilik dengan PIN, atau masuk lagi lewat WhatsApp.',
+        code: SESSION_PARKED,
+      });
     const refreshed = await umkmall.call('POST', '/mobile/v1/auth/refresh', {
       sid,
       refreshToken,
@@ -297,7 +307,12 @@ export class AuthController {
     const { user, refreshToken: rotated } = answer.data.data;
     const tenantId = await this.tenantOfUmkmallUser(user.id);
     return {
-      ...(await this.issue({ tenantId, actorId: user.id, kind: 'owner' })),
+      ...(await this.issue({
+        tenantId,
+        actorId: user.id,
+        kind: 'owner',
+        nativeSidHash: hashSecret(sid),
+      })),
       umkmall: { sid, ...(rotated && { refreshToken: rotated }) },
     };
   }

@@ -28,6 +28,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
   AGENT_LABEL,
+  HELPER_LABEL,
   discountApprovals,
   FINAL_SALE_STATUSES,
   members,
@@ -308,6 +309,9 @@ const PRICE_NEEDS_PIN =
  * is linked to the actor's open shift (flaw 4), stock is drawn in the same transaction under row
  * locks (flaw 8), and `Idempotency-Key` makes a retry return the first sale (flaw 10).
  */
+/** UMK-2124: a helper asked for something the restricted till does not do (a kasbon or online method). */
+export const HELPER_NOT_ALLOWED = 'helper_not_allowed';
+
 @Injectable()
 export class SalesService {
   constructor(
@@ -655,6 +659,14 @@ export class SalesService {
       taxBps: settings.taxBps,
       isCash: method.isCash,
     });
+    if (s.kind === 'helper' && (method.isCredit || method.isOnline))
+      // UMK-2124 (design 42): a helper sells for cash, debit or the store's QRIS only. Kasbon needs a member and
+      // the owner's word; an online payment needs the waiting screen, which the restricted till does not have.
+      throw new ForbiddenException({
+        message:
+          'Mode pembantu hanya menerima tunai, kartu debit, atau QRIS toko.',
+        code: HELPER_NOT_ALLOWED,
+      });
     if (method.isCredit) {
       // Kasbon: the rest becomes the member's receivable; paid may be 0.
       if (!memberId) throw fail('Pilih member untuk kasbon', {}, 'memberId');
@@ -710,6 +722,7 @@ export class SalesService {
         shiftId: shift.id,
         actorId: s.actorId,
         actorKind: s.kind,
+        helperSessionId: s.kind === 'helper' ? s.helperSessionId : null,
         paymentMethodId: method.id,
         idempotencyKey: key,
         requestHash: hash,
@@ -1294,6 +1307,7 @@ export class SalesService {
           actorKind: sales.actorKind,
           // Owner sales have no staff row (Lakasir's "user.name" column).
           cashier: sql<string>`case when ${sales.actorKind} = 'agent' then ${AGENT_LABEL}
+            when ${sales.actorKind} = 'helper' then ${HELPER_LABEL}
             else coalesce(${staff.name}, 'Pemilik') end`,
           subtotal: sales.subtotal,
           discount: sales.discount,
@@ -1622,6 +1636,20 @@ export class SalesService {
    * "No." next to real receipt numbers). So `number` here is always the receipt number.
    */
   async receipt(s: PosSession, id: string) {
+    // UMK-2124: a helper acts as the owner, but reads only the receipts of its own handover.
+    if (s.kind === 'helper') {
+      const [own] = await this.db
+        .select({ id: sales.id })
+        .from(sales)
+        .where(
+          and(
+            eq(sales.tenantId, s.tenantId),
+            eq(sales.id, id),
+            eq(sales.helperSessionId, s.helperSessionId!),
+          ),
+        );
+      if (!own) throw new NotFoundException('Penjualan tidak ditemukan');
+    }
     const sale = await this.get(s, id);
     if (sale.receiptNumber === null || !isFinalSale(sale.status))
       throw new ConflictException({
@@ -1633,7 +1661,12 @@ export class SalesService {
         saleId: id,
         status: sale.status,
       });
-    let cashier = sale.actorKind === 'agent' ? AGENT_LABEL : 'Pemilik';
+    let cashier =
+      sale.actorKind === 'agent'
+        ? AGENT_LABEL
+        : sale.actorKind === 'helper'
+          ? HELPER_LABEL
+          : 'Pemilik';
     if (sale.actorKind === 'cashier') {
       const [row] = await this.db
         .select({ name: staff.name })

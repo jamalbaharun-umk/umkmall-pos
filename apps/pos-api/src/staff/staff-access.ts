@@ -5,6 +5,7 @@ import { InjectDb } from '../db/db.module';
 import {
   agentAccess,
   devices,
+  helperSessions,
   rolePermissions,
   roles,
   staff,
@@ -12,7 +13,12 @@ import {
   staffSessions,
 } from '../db/schema';
 import type { PosSession } from '../tenancy/session';
-import { agentPermissions, DEFAULT_ROLES, PERMISSIONS } from './permissions';
+import {
+  agentPermissions,
+  DEFAULT_ROLES,
+  HELPER_PERMISSIONS,
+  PERMISSIONS,
+} from './permissions';
 import { secretMatches } from './secrets';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -46,6 +52,24 @@ export class StaffAccess {
         ...session,
         permissions: agentPermissions(session.agentScopes ?? ['pos.read']),
       };
+    }
+    if (session.kind === 'helper') {
+      // UMK-2124: the handover must still be live (not ended by the owner's PIN, not past its 12 hours), in this
+      // store and for this owner. A helper may only sell.
+      if (!session.helperSessionId) return null;
+      const [live] = await this.db
+        .select({ id: helperSessions.id })
+        .from(helperSessions)
+        .where(
+          and(
+            eq(helperSessions.id, session.helperSessionId),
+            eq(helperSessions.tenantId, session.tenantId),
+            eq(helperSessions.ownerId, session.actorId),
+            isNull(helperSessions.endedAt),
+            gt(helperSessions.expiresAt, sql`now()`),
+          ),
+        );
+      return live ? { ...session, permissions: HELPER_PERMISSIONS } : null;
     }
     if (!session.cashierSessionId) return null;
     const [live] = await this.db

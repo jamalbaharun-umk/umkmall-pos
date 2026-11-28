@@ -13,7 +13,7 @@ import { validate } from '../common/validation';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { AgentRoute, CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession, HelperRoute } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   CashEntriesService,
@@ -57,9 +57,20 @@ export class ShiftsController {
   ) {}
 
   @AgentRoute()
+  @HelperRoute()
   @Get('current')
   @RequirePermission('sales.create')
   async current(@CurrentSession() s: PosSession) {
+    // UMK-2124 (review of PR 109): a helper sells into the owner's shift but sees none of its money (revenue,
+    // profit, cost, the drawer ledger): only that a shift is open.
+    if (s.kind === 'helper') {
+      const open = await this.shifts.current(s);
+      return {
+        shift: open ? { id: open.id, openedAt: open.openedAt } : null,
+        autoOpen: false,
+        discountPinRequired: true,
+      };
+    }
     const shift = await this.shifts.current(s);
     // UMK-2120: no shift, but the owner's next cash action opens one (a store without staff).
     return {

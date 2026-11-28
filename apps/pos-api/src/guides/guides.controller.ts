@@ -29,9 +29,12 @@ const ProgressInput = z
 
 type Person = { tenantId: string; kind: 'owner' | 'cashier'; id: string };
 
-/** The person the progress belongs to: the session's own actor. An agent has no screens, so no guides. */
+/**
+ * The person the progress belongs to: the session's own actor. An agent has no screens, so no guides; a helper
+ * (UMK-2124) acts as the owner and never reaches these routes (not `@HelperRoute()`).
+ */
 function personOf(s: PosSession): Person {
-  if (s.kind === 'agent') throw new ForbiddenException();
+  if (s.kind === 'agent' || s.kind === 'helper') throw new ForbiddenException();
   return { tenantId: s.tenantId, kind: s.kind, id: s.actorId };
 }
 

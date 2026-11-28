@@ -354,6 +354,9 @@ describe('store purge on UMKMall account erasure (U8)', () => {
     await admin`insert into pos.agent_tool_calls (tenant_id, tool, outcome, actor_id, duration_ms)
       values (${s.tenantId}, 'list_categories', 'ok', ${s.userId}, 3)`;
     await admin`insert into pos.agent_access (tenant_id, revoked_before) values (${s.tenantId}, now())`;
+    // UMK-2124: a handover to a helper (helper_sessions).
+    await admin`insert into pos.helper_sessions (tenant_id, owner_id, expires_at)
+                values (${s.tenantId}, ${s.userId}, now() + interval '12 hours')`;
     // UMK-2132: a production run of the recipe above (production_runs, production_run_lines, a production batch).
     await post('/stock/opening', {
       productId: milk.body.id,

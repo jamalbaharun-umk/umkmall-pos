@@ -4,6 +4,7 @@ import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
 import {
   AGENT_LABEL,
+  HELPER_LABEL,
   FINAL_SALE_STATUSES,
   salesSettings,
   STOCKED_TYPES,
@@ -357,6 +358,7 @@ export class SummariesService {
       this.rows(sql`
         select case s.actor_kind when 'owner' then 'Pemilik'
                                  when 'agent' then ${AGENT_LABEL}
+                                 when 'helper' then ${HELPER_LABEL}
                                  else coalesce(st.name, 'Staf') end as name,
                count(*) as receipts, sum(s.total) as amount
           from pos.sales s

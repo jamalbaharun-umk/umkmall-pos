@@ -15,7 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { fieldError } from '../common/validation';
-import { AgentRoute, CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession, HelperRoute } from '../tenancy/decorators';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import type { PosSession } from '../tenancy/session';
 import {
@@ -106,6 +106,7 @@ export class ProductsController {
   ) {}
 
   @AgentRoute()
+  @HelperRoute()
   @Get()
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
     const q = parse(ProductQuery, query);
@@ -216,6 +217,7 @@ export class ProductsController {
     return this.catalog.addImage(s.tenantId, idOf(id), file);
   }
 
+  @HelperRoute()
   @Get(':id/images/:imageId')
   async getImage(
     @CurrentSession() s: PosSession,

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { fieldError } from '../common/validation';
 import { recordAudit } from '../audit/record';
 import type { Db } from '../db/db.module';
@@ -16,6 +16,7 @@ import {
   staffRoles,
   tenants,
   voidPins,
+  helperSessions,
 } from '../db/schema';
 import type { Permission } from '../staff/permissions';
 import { hashPin, verifyPin } from '../staff/secrets';
@@ -359,6 +360,23 @@ export class VoidPins {
         return made.length ? { ok: true } : { ok: false, attemptsLeft: -1 };
       }
       if (currentPin === undefined) return { ok: false, attemptsLeft: -1 };
+      // UMK-2124 (review of PR 109): a PIN that was typed on a till handed to a helper since it was set may be
+      // known to the helper, so changing it with that PIN alone needs a fresh WhatsApp sign-in, during or after the
+      // handover. A change after that fresh sign-in moves `updated_at` past the handover, and the usual rule is back.
+      if (s.kind === 'owner') {
+        const [handover] = await tx
+          .select({ id: helperSessions.id })
+          .from(helperSessions)
+          .where(
+            and(
+              eq(helperSessions.tenantId, s.tenantId),
+              eq(helperSessions.ownerId, s.actorId),
+              gte(helperSessions.createdAt, row.updatedAt),
+            ),
+          )
+          .limit(1);
+        if (handover) this.needsFreshSignIn(s);
+      }
       const checked = await this.check(tx, row, currentPin);
       if (checked.ok)
         await tx
