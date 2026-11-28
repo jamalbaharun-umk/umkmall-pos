@@ -25,6 +25,14 @@ import {
   recipeCoster,
   type UnitCost,
 } from './cost';
+import {
+  COST_RISE_PERCENT,
+  DEFAULT_TARGET_MARGIN,
+  marginPermille,
+  risePermille,
+  roseEnough,
+  suggestedPrice,
+} from './suggest';
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
@@ -123,6 +131,7 @@ export class RecipesService {
           productName: products.name,
           productType: products.type,
           productUnit: products.unit,
+          productDeletedAt: products.deletedAt,
           costPrice: products.costPrice,
           sellingPrice: products.sellingPrice,
         })
@@ -316,6 +325,80 @@ export class RecipesService {
 
   get(tenantId: string, id: string, db: Db | Tx = this.db) {
     return this.costed(() => this.read(tenantId, id, db));
+  }
+
+  /** UMK-2126: `get` with the suggested selling price for a target margin (whole percent, validated by the caller). */
+  async getWithSuggestion(tenantId: string, id: string, targetMargin: number) {
+    const r = await this.get(tenantId, id);
+    const complete =
+      r.missingCostIngredientIds.length === 0 &&
+      r.deletedIngredientIds.length === 0;
+    const price = complete
+      ? suggestedPrice(r.costPerPortion, targetMargin)
+      : null;
+    return {
+      ...r,
+      // Never applied by itself: "Pakai sebagai harga jual" is the owner's own PATCH of the product.
+      suggestedPrice:
+        price === null
+          ? null
+          : {
+              targetMargin,
+              price,
+              currentPrice: r.product.sellingPrice,
+              marginAtCurrentPermille: marginPermille(
+                r.product.sellingPrice,
+                r.costPerPortion,
+              ),
+            },
+    };
+  }
+
+  /**
+   * UMK-2126 "Biaya naik": recipes whose cost per portion is COST_RISE_PERCENT or more above the product's stored
+   * cost price (what the owner last applied), largest rise first. A product without a cost price has no baseline,
+   * and a recipe with a missing or deleted ingredient cost is incomplete: neither is listed.
+   */
+  alerts(tenantId: string, limit: number) {
+    return this.costed(async () => {
+      const { rows, coster, deletedIn } = await this.load(this.db, tenantId);
+      const all = rows.flatMap((r) => {
+        if (r.productDeletedAt || r.costPrice <= 0 || deletedIn(r.id).length)
+          return [];
+        const s = coster.summary(r.id);
+        if (
+          s.missingCostIngredientIds.length ||
+          !roseEnough(s.costPerPortion, r.costPrice)
+        )
+          return [];
+        return [
+          {
+            recipeId: r.id,
+            product: { id: r.productId, name: r.productName },
+            previousCost: r.costPrice,
+            costPerPortion: s.costPerPortion,
+            risePermille: risePermille(s.costPerPortion, r.costPrice)!,
+            sellingPrice: r.sellingPrice,
+            marginPermille: marginPermille(r.sellingPrice, s.costPerPortion),
+            // The card's "Usulan harga": at the default margin; nothing is applied.
+            suggested: {
+              targetMargin: DEFAULT_TARGET_MARGIN,
+              price: suggestedPrice(s.costPerPortion, DEFAULT_TARGET_MARGIN),
+            },
+          },
+        ];
+      });
+      all.sort(
+        (a, b) =>
+          b.risePermille - a.risePermille ||
+          a.product.name.localeCompare(b.product.name),
+      );
+      return {
+        thresholdPercent: COST_RISE_PERCENT,
+        total: all.length,
+        rows: all.slice(0, limit),
+      };
+    });
   }
 
   /** The full recipe of each product that has one (one graph load for all), for the agent's HPP data. */

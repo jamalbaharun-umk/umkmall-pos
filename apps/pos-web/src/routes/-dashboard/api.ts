@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { loadWidget, type Result } from '../laporan/-api'
+import type { CostAlerts } from '../resep/-recipe'
 import type { Period } from './wording'
 
 // Server functions of the dashboard widgets. pos-api computes every figure (integer rupiah); these only relay.
@@ -109,3 +110,6 @@ export const loadLowStock = createServerFn().handler(() => get<LowStock>('/repor
 export const loadExpiring = createServerFn().handler(() => get<Expiring>('/reports/widgets/expiring?days=30&limit=5'))
 
 export const loadAging = createServerFn().handler(() => get<Aging>('/reports/receivables/aging'))
+
+/** UMK-2126 "Biaya naik": recipes whose cost per portion rose 5% or more since the cost price was set (needs catalog.manage). */
+export const loadCostAlerts = createServerFn().handler(() => get<CostAlerts>('/recipes/cost-alerts?limit=5'))

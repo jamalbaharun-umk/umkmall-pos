@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyBlocker,
+  alertDetail,
+  alertsFooter,
+  alertTitle,
   applyCostConfirm,
+  checkTargetMargin,
+  permilleText,
+  priceCompare,
+  priceConfirm,
   pickerOptions,
   buildManualCost,
   buildPayload,
@@ -50,6 +57,7 @@ const recipe = (over: Partial<Recipe> = {}): Recipe => ({
   deletedIngredientIds: [],
   createdAt: '',
   updatedAt: '',
+  suggestedPrice: null,
   ...over,
 })
 const filled = () => ({
@@ -190,5 +198,54 @@ describe('applyCostConfirm', () => {
     expect(t.endsWith('Lanjutkan?')).toBe(true)
     expect(t).toMatch(/12\.500/)
     expect(t).toMatch(/10\.000/)
+  })
+})
+
+// UMK-2126: the cost-rise card and the suggested price panel only word what pos-api computed.
+describe('cost-rise card wording', () => {
+  it('prints tenths of a percent with integers only', () => {
+    expect(permilleText(87)).toBe('8,7%')
+    expect(permilleText(563)).toBe('56,3%')
+    expect(permilleText(600)).toBe('60%')
+    expect(permilleText(50)).toBe('5%')
+    expect(permilleText(5)).toBe('0,5%')
+    expect(permilleText(12345)).toBe('1.234,5%')
+    expect(permilleText(-25)).toBe('−2,5%')
+  })
+  const row = {
+    product: { id: 'p', name: 'Nasi goreng' },
+    previousCost: 7232,
+    costPerPortion: 7864,
+    risePermille: 87,
+    marginPermille: 563,
+    suggested: { targetMargin: 60, price: 19700 },
+  }
+  it('words the title and the detail as design 43 screen 5 does', () => {
+    expect(alertTitle(row)).toBe('Nasi goreng naik 8,7%')
+    expect(alertDetail(row)).toBe('Dari Rp7.232 menjadi Rp7.864. Margin Anda kini 56,3%. Usulan harga (margin 60%) Rp19.700.')
+  })
+  it('leaves out what the server did not answer', () => {
+    expect(alertDetail({ ...row, marginPermille: null, suggested: { targetMargin: 60, price: null } })).toBe('Dari Rp7.232 menjadi Rp7.864.')
+  })
+  it('says when the list is shortened', () => {
+    expect(alertsFooter(2, 2)).toBe('Harga tidak berubah kecuali Anda mengubahnya.')
+    expect(alertsFooter(7, 5)).toContain('Menampilkan 5 dari 7 resep.')
+  })
+})
+
+describe('suggested price panel', () => {
+  it('accepts whole percents from 1 to 90 only, like pos-api', () => {
+    expect(checkTargetMargin('60')).toEqual({ value: 60 })
+    expect(checkTargetMargin(' 1 ')).toEqual({ value: 1 })
+    expect(checkTargetMargin('90')).toEqual({ value: 90 })
+    for (const bad of ['', '0', '91', '1,5', '1.5', 'abc', '-5', '60%']) expect(checkTargetMargin(bad)).toHaveProperty('error')
+  })
+  it('compares the suggestion with the current price', () => {
+    expect(priceCompare({ price: 19700, currentPrice: 18000 })).toBe('Rp1.700 di atas harga jual sekarang.')
+    expect(priceCompare({ price: 15000, currentPrice: 18000 })).toBe('Rp3.000 di bawah harga jual sekarang.')
+    expect(priceCompare({ price: 18000, currentPrice: 18000 })).toBe('Sama dengan harga jual sekarang.')
+  })
+  it('confirms with the new and the old price', () => {
+    expect(priceConfirm(19700, 18000)).toBe('Harga jual menjadi Rp19.700 (sebelumnya Rp18.000). Lanjutkan?')
   })
 })

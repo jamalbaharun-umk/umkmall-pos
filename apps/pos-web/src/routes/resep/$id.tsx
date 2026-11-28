@@ -18,8 +18,9 @@ import { useRef, useState, type FormEvent } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { act, ErrorText, type FieldErrors, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
 import { Panel } from '@/components/page'
-import { applyRecipeCost, deleteRecipe, loadRecipe, loadRecipeChoices, removeIngredientCost, setIngredientCost } from './-api'
+import { applyRecipeCost, deleteRecipe, loadProductionRefusal, loadRecipe, loadRecipeChoices, removeIngredientCost, setIngredientCost, setSellingPrice } from './-api'
 import { RecipeEditor } from './-editor'
+import { SuggestedPricePanel } from './-suggest'
 import {
   applyBlocker,
   applyCostConfirm,
@@ -29,6 +30,7 @@ import {
   flagsOf,
   marginPercent,
   percentText,
+  priceConfirm,
   type Recipe,
   type RecipeLine,
   unitCostText,
@@ -38,8 +40,8 @@ import {
 // UMK-2125, design 43: the cost of one portion, where it comes from, and the actions on it.
 export const Route = createFileRoute('/resep/$id')({
   loader: async ({ params }) => {
-    const [recipe, choices] = await Promise.all([loadRecipe({ data: params.id }), loadRecipeChoices()])
-    return { recipe, choices }
+    const [recipe, choices, refusal] = await Promise.all([loadRecipe({ data: params.id }), loadRecipeChoices(), loadProductionRefusal({ data: params.id })])
+    return { recipe, choices, refusal }
   },
   component: RecipePage,
   pendingComponent: Pending,
@@ -47,13 +49,14 @@ export const Route = createFileRoute('/resep/$id')({
 })
 
 function RecipePage() {
-  const { recipe: r, choices } = Route.useLoaderData()
+  const { recipe: r, choices, refusal } = Route.useLoaderData()
   const router = useRouter()
   const navigate = useNavigate()
   const { ask, dialog } = useConfirm()
   const [editing, setEditing] = useState(false)
   const [costFor, setCostFor] = useState<RecipeLine | null>(null)
   const [applying, setApplying] = useState(false)
+  const [pricing, setPricing] = useState(false)
   const blocker = applyBlocker(r)
   const margin = marginPercent(r.product.sellingPrice, r.costPerPortion)
   const shares = costShares(r.lines)
@@ -70,6 +73,20 @@ function RecipePage() {
   // Overwrites the product's cost price, so the owner confirms the new and the old figure first.
   const applyCost = () =>
     ask(applyCostConfirm(r.costPerPortion, r.product.costPrice), runApplyCost, { label: 'Lanjutkan', color: 'primary', action: 'memakai harga modal' })
+
+  // The owner's own change of the selling price to the suggested one: confirmed first, then the catalog route (`catalog.manage`).
+  const applyPrice = (price: number) =>
+    ask(
+      priceConfirm(price, r.product.sellingPrice),
+      async () => {
+        if (pricing) return
+        setPricing(true)
+        const res = await act(() => setSellingPrice({ data: { productId: r.product.id, price } }), `Harga jual ${r.product.name} jadi ${rupiah(price)}`, 'mengubah harga jual')
+        setPricing(false)
+        if (res.ok) await router.invalidate()
+      },
+      { label: 'Lanjutkan', color: 'primary', action: 'mengubah harga jual' },
+    )
 
   const remove = () =>
     ask(
@@ -100,6 +117,18 @@ function RecipePage() {
           <Button width="auto" type="outline" color="primary" onClick={() => setEditing(true)}>
             Ubah resep
           </Button>
+          {/* UMK-2126: opens a production run with this recipe chosen; pos-api's refusal (for example a sub-recipe) disables it. */}
+          {refusal ? (
+            <Button width="auto" type="outline" color="primary" disabled>
+              Produksi
+            </Button>
+          ) : (
+            <Button width="auto" type="outline" color="primary" asChild>
+              <Link to="/produksi/baru" search={{ recipeId: r.id }}>
+                Produksi
+              </Link>
+            </Button>
+          )}
           <Button width="auto" isLoading={applying} onClick={applyCost}>
             Pakai harga modal
           </Button>
@@ -119,6 +148,12 @@ function RecipePage() {
             </Alert>
           )}
         </div>
+      )}
+
+      {refusal && (
+        <Alert variant="info" size="small" role="status">
+          Produksi belum bisa dicatat dari resep ini. {refusal.message}.
+        </Alert>
       )}
 
       <section aria-label="Biaya" className="grid gap-3 sm:grid-cols-3">
@@ -143,6 +178,7 @@ function RecipePage() {
             state={shares.length === 0 ? 'empty' : 'ready'}
             emptyText="Belum ada biaya untuk digambar"
           />
+          <SuggestedPricePanel key={`${r.costPerPortion}:${r.product.sellingPrice}`} recipe={r} onUse={applyPrice} busy={pricing} />
           <Panel className="p-4">
             <dl className="flex flex-col gap-2 text-sm">
               <Row label="Biaya per batch" value={rupiah(r.batchCost)} />
