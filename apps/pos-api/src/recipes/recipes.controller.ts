@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   Module,
@@ -9,10 +10,12 @@ import {
   Patch,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
+import { z } from 'zod';
 import { parseBody, parseId } from '../staff/http';
-import { RequirePermission } from '../staff/require-permission';
-import { CurrentSession } from '../tenancy/decorators';
+import { hasPermission, RequirePermission } from '../staff/require-permission';
+import { AgentRoute, CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   ManualCostInput,
@@ -21,8 +24,13 @@ import {
   RecipeUpdate,
 } from './recipes.service';
 
+const BreakdownQuery = z
+  .object({ productIds: z.array(z.string().uuid()).min(1).max(100) })
+  .strict();
+
 // UMK-2125 recipes R1. Every route shows or changes costs: `catalog.manage` (owners hold every permission).
-// Not an agent route: the agent's create_recipe is a later unit.
+// UMK-2127: the agent reaches only POST /recipes (create_recipe), GET /recipes/:id (its checks) and
+// GET /recipes/breakdown (hpp_product_data); it never edits, deletes or applies a cost.
 @Controller('recipes')
 export class RecipesController {
   constructor(private readonly recipes: RecipesService) {}
@@ -33,12 +41,32 @@ export class RecipesController {
     return { data: await this.recipes.list(s.tenantId) };
   }
 
+  /** Recipes of the given products, for UMKMall's HPP data: `reports.view` (a read-only agent) or `catalog.manage`. */
+  @AgentRoute()
+  @Get('breakdown')
+  async breakdown(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    if (
+      !hasPermission(s, 'reports.view') &&
+      !hasPermission(s, 'catalog.manage')
+    )
+      throw new ForbiddenException();
+    const raw = (query as { productIds?: unknown } | null)?.productIds;
+    const { productIds } = parseBody(BreakdownQuery, {
+      productIds: (typeof raw === 'string' ? raw.split(',') : []).filter(
+        Boolean,
+      ),
+    });
+    return { data: await this.recipes.breakdowns(s.tenantId, productIds) };
+  }
+
+  @AgentRoute()
   @Get(':id')
   @RequirePermission('catalog.manage')
   get(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return this.recipes.get(s.tenantId, parseId(id));
   }
 
+  @AgentRoute()
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentSession() s: PosSession, @Body() body: unknown) {

@@ -1,4 +1,4 @@
-import { costDataRows } from './hpp';
+import { costDataRows, withRecipes } from './hpp';
 
 describe('costDataRows', () => {
   it('joins catalog, sales and purchases by SKU, in integer rupiah', () => {
@@ -51,5 +51,50 @@ describe('costDataRows', () => {
         lastDate: '2026-11-20',
       },
     });
+  });
+});
+
+describe('withRecipes (UMK-2127)', () => {
+  const recipe = {
+    id: 'r1',
+    product: { id: 'p1' },
+    yieldQty: 4,
+    yieldUnit: 'porsi',
+    laborCost: 400,
+    note: null,
+    lines: [
+      {
+        kind: 'ingredient',
+        ingredientId: 'i1',
+        subRecipeId: null,
+        name: 'Tepung',
+        quantity: 100,
+        unit: 'GRAM',
+        wastePercent: 0,
+        unitCost: { amount: 10, per: 1, source: 'manual' },
+        cost: 1000,
+        missingCost: false,
+        deleted: false,
+      },
+    ],
+    batchCost: 1000,
+    costPerPortion: 250,
+    fullCostPerPortion: 350,
+    fixedCostsIncluded: false,
+    missingCostIngredientIds: [],
+    deletedIngredientIds: [],
+  };
+
+  it('adds a recipe key only to a product that has one', () => {
+    const rows = withRecipes(
+      [{ productId: 'p1' }, { productId: 'p2' }],
+      [recipe],
+    );
+    expect(rows[0]).toMatchObject({
+      productId: 'p1',
+      recipe: { id: 'r1', costPerPortion: 250, fullCostPerPortion: 350 },
+    });
+    expect('recipe' in rows[1]).toBe(false);
+    expect(rows[1]).toEqual({ productId: 'p2' });
   });
 });
