@@ -188,6 +188,11 @@ export class RecipesService {
     };
   }
 
+  /** UMK-2132: the store's recipe graph as the reads see it, for a production run inside the caller's transaction. */
+  graph(db: Db | Tx, tenantId: string) {
+    return this.load(db, tenantId);
+  }
+
   /** The ingredients among `ids` that were deleted from the catalog after a recipe named them. */
   private async deletedIngredients(
     db: Db | Tx,

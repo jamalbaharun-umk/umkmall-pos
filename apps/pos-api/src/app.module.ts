@@ -29,6 +29,7 @@ import { PaymentsModule } from './payments-client/payments.module';
 import { RecipesModule } from './recipes/recipes.controller';
 import { OnboardingModule } from './onboarding/onboarding.controller';
 import { GuidesModule } from './guides/guides.controller';
+import { ProductionModule } from './production/production.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -62,6 +63,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     RecipesModule,
     OnboardingModule,
     GuidesModule,
+    ProductionModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [

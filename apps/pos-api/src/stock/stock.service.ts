@@ -163,6 +163,17 @@ export class StockService {
     return this.draw(tx, input, 'sale');
   }
 
+  /**
+   * UMK-2132: an ingredient a production run uses, out FIFO under the same row locks as a sale (ledger reason
+   * `production_use`, `ref_id` = the run) and its cost. 422 when the batches hold less. Same lock order as
+   * `consume`: callers drawing several products call in product-id order.
+   */
+  async drawForProduction(tx: Tx, input: Draw): Promise<{ costTotal: number }> {
+    positiveInt(input.qty, 'Jumlah');
+    await this.tracked(tx, input.tenantId, input.productId);
+    return this.draw(tx, input, 'production_use');
+  }
+
   /** Opname or correction: positive adds a batch at the latest batch cost, negative draws FIFO. */
   async adjust(
     tx: Tx,

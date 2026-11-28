@@ -18,8 +18,8 @@ const norm = (n: bigint, d: bigint): Frac => {
 };
 export const ZERO: Frac = { n: 0n, d: 1n };
 export const add = (a: Frac, b: Frac) => norm(a.n * b.d + b.n * a.d, a.d * b.d);
-const mul = (a: Frac, b: Frac) => norm(a.n * b.n, a.d * b.d);
-const ratio = (n: number, d: number) => norm(BigInt(n), BigInt(d));
+export const mul = (a: Frac, b: Frac) => norm(a.n * b.n, a.d * b.d);
+export const ratio = (n: number, d: number) => norm(BigInt(n), BigInt(d));
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
 /** A cost figure beyond what a JS number holds exactly: refused, never rounded silently. */
