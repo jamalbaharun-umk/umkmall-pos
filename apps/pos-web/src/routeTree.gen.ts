@@ -53,6 +53,7 @@ import { Route as StokOpnameBaruRouteImport } from './routes/stok-opname/baru'
 import { Route as VoucherIndexRouteImport } from './routes/voucher/index'
 import { Route as CatalogProductsIndexRouteImport } from './routes/catalog/products/index'
 import { Route as CatalogProductsBaruRouteImport } from './routes/catalog/products/baru'
+import { Route as CatalogProductsImporRouteImport } from './routes/catalog/products/impor'
 import { Route as KasirRiwayatIndexRouteImport } from './routes/kasir/riwayat.index'
 import { Route as KasirRiwayatIdRouteImport } from './routes/kasir/riwayat.$id'
 import { Route as KasirShiftIndexRouteImport } from './routes/kasir/shift/index'
@@ -293,6 +294,11 @@ const CatalogProductsBaruRoute = CatalogProductsBaruRouteImport.update({
   path: '/catalog/products/baru',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CatalogProductsImporRoute = CatalogProductsImporRouteImport.update({
+  id: '/catalog/products/impor',
+  path: '/catalog/products/impor',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KasirRiwayatIndexRoute = KasirRiwayatIndexRouteImport.update({
   id: '/kasir/riwayat/',
   path: '/kasir/riwayat/',
@@ -424,6 +430,7 @@ export interface FileRoutesByFullPath {
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
+  '/catalog/products/impor': typeof CatalogProductsImporRoute
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
@@ -487,6 +494,7 @@ export interface FileRoutesByTo {
   '/stok-opname': typeof StokOpnameIndexRoute
   '/voucher': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
+  '/catalog/products/impor': typeof CatalogProductsImporRoute
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
@@ -551,6 +559,7 @@ export interface FileRoutesById {
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
   '/catalog/products/baru': typeof CatalogProductsBaruRoute
+  '/catalog/products/impor': typeof CatalogProductsImporRoute
   '/kasir/riwayat/$id': typeof KasirRiwayatIdRoute
   '/kasir/shift/$id': typeof KasirShiftIdRoute
   '/kasir/struk/$id': typeof KasirStrukIdRoute
@@ -616,6 +625,7 @@ export interface FileRouteTypes {
     | '/stok-opname/'
     | '/voucher/'
     | '/catalog/products/baru'
+    | '/catalog/products/impor'
     | '/kasir/riwayat/$id'
     | '/kasir/shift/$id'
     | '/kasir/struk/$id'
@@ -679,6 +689,7 @@ export interface FileRouteTypes {
     | '/stok-opname'
     | '/voucher'
     | '/catalog/products/baru'
+    | '/catalog/products/impor'
     | '/kasir/riwayat/$id'
     | '/kasir/shift/$id'
     | '/kasir/struk/$id'
@@ -742,6 +753,7 @@ export interface FileRouteTypes {
     | '/stok-opname/'
     | '/voucher/'
     | '/catalog/products/baru'
+    | '/catalog/products/impor'
     | '/kasir/riwayat/$id'
     | '/kasir/shift/$id'
     | '/kasir/struk/$id'
@@ -806,6 +818,7 @@ export interface RootRouteChildren {
   StokOpnameIndexRoute: typeof StokOpnameIndexRoute
   VoucherIndexRoute: typeof VoucherIndexRoute
   CatalogProductsBaruRoute: typeof CatalogProductsBaruRoute
+  CatalogProductsImporRoute: typeof CatalogProductsImporRoute
   KasirRiwayatIdRoute: typeof KasirRiwayatIdRoute
   KasirShiftIdRoute: typeof KasirShiftIdRoute
   KasirStrukIdRoute: typeof KasirStrukIdRoute
@@ -1136,6 +1149,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CatalogProductsBaruRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/catalog/products/impor': {
+      id: '/catalog/products/impor'
+      path: '/catalog/products/impor'
+      fullPath: '/catalog/products/impor'
+      preLoaderRoute: typeof CatalogProductsImporRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/kasir/riwayat/': {
       id: '/kasir/riwayat/'
       path: '/kasir/riwayat'
@@ -1302,6 +1322,7 @@ const rootRouteChildren: RootRouteChildren = {
   StokOpnameIndexRoute: StokOpnameIndexRoute,
   VoucherIndexRoute: VoucherIndexRoute,
   CatalogProductsBaruRoute: CatalogProductsBaruRoute,
+  CatalogProductsImporRoute: CatalogProductsImporRoute,
   KasirRiwayatIdRoute: KasirRiwayatIdRoute,
   KasirShiftIdRoute: KasirShiftIdRoute,
   KasirStrukIdRoute: KasirStrukIdRoute,

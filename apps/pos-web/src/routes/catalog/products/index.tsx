@@ -19,6 +19,7 @@ import { EllipsisVertical, Eye, Pencil, Search, Trash2 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
+import { ActionRow } from '@/components/action-row'
 import { SCROLL_ROW } from '@/lib/scroll-row'
 import { useCan } from '@/components/shell'
 import { Empty, Page, PageError, PageLoading, Panel, rupiah } from '@/components/page'
@@ -80,9 +81,15 @@ function ProductsPage() {
       crumbs={[{ label: 'Produk', to: '/catalog/products' }, { label: 'Daftar' }]}
       actions={
         canEdit && (
-          <Button asChild type="primary" color="primary" size="small" width="auto">
-            <Link to="/catalog/products/baru">Tambah produk</Link>
-          </Button>
+          <ActionRow>
+            {/* UMK-2129: many products at once from a CSV. */}
+            <Button asChild type="outline" color="primary" size="small" width="auto">
+              <Link to="/catalog/products/impor">Impor CSV</Link>
+            </Button>
+            <Button asChild type="primary" color="primary" size="small" width="auto">
+              <Link to="/catalog/products/baru">Tambah produk</Link>
+            </Button>
+          </ActionRow>
         )
       }
     >

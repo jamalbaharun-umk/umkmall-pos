@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Rupiah, validate } from '../common/validation';
 import { PRODUCT_TYPES } from '../db/schema';
+import { IMPORT_MAX_CHARS } from './import';
 
 /** Parses at the boundary: 422 `{ message, errors }` with Indonesian messages (common/validation). */
 export const parse = validate;
@@ -194,6 +195,19 @@ export const QuickProductCreate = z
     message: 'Harga modal tidak boleh melebihi harga jual',
     path: ['costPrice'],
   });
+
+/** UMK-2129: the CSV text of an import (the screen reads the file; the server parses it). */
+export const ImportInput = z
+  .object({
+    csv: z
+      .string({ required_error: 'Pilih berkas CSV' })
+      .min(1, 'Berkas ini kosong.')
+      .max(
+        IMPORT_MAX_CHARS,
+        'Berkas terlalu besar. Maksimal 500 baris produk.',
+      ),
+  })
+  .strict();
 
 export type ProductCreate = z.infer<typeof ProductCreate>;
 export type QuickProductCreate = z.infer<typeof QuickProductCreate>;
