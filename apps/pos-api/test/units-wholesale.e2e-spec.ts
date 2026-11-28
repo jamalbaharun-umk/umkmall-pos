@@ -976,6 +976,8 @@ describe('units and wholesale pricing (UMK-1985)', () => {
         ],
         orderDiscount: 0,
         orderDiscountNeedsApproval: false,
+        // UMK-2123: the owner of a store without staff needs no discount PIN.
+        discountPinRequired: false,
         listSubtotal: 117_600,
         uncoveredListSubtotal: 117_600,
         totalReduction: 0,
