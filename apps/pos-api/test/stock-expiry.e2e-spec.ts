@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call -- supertest answers `any` bodies; the specs read them as JSON */
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';

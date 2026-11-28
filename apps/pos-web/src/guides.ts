@@ -12,7 +12,10 @@ import { NAV } from './nav'
 export type GuideStep = { target: string; title: string; text: string }
 export type Guide = { key: string; to: string; title: string; steps: GuideStep[] }
 
-/** The targets every page built on `Page`/`Panel` has. */
+/**
+ * The targets every page built on `Page`/`Panel` has. `panel` is on EVERY Panel, so a step that targets it points at
+ * the first panel of the page; give a screen's own element its own `data-guide` to point anywhere else.
+ */
 export const SHARED_TARGETS = ['page-title', 'panel', 'guide-button'] as const
 
 const replay: GuideStep = {

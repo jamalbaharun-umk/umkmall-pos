@@ -44,6 +44,13 @@ const describeLoadFailure = (): ErrorDescription => ({
   primary: 'retry',
 })
 
+const describeSaveFailure = (): ErrorDescription => ({
+  what: 'Tanda panduan belum tersimpan, jadi panduan ini bisa muncul lagi di perangkat lain.',
+  todo: 'Cek sinyal, lalu tekan Coba lagi. Layar tetap bisa dipakai.',
+  code: 'GUIDE_PROGRESS_FAILED',
+  primary: 'retry',
+})
+
 export function GuideProvider({ children, enabled, helper = false }: { children: ReactNode; enabled: boolean; helper?: boolean }) {
   const { pathname } = useLocation()
   const [progress, setProgress] = useState<Map<string, GuideStatus> | null>(null)
@@ -133,6 +140,13 @@ export function GuideProvider({ children, enabled, helper = false }: { children:
       }
       const r = await markGuide({ data: { key: guide.key, status } }).catch(() => ({ ok: false }))
       if (r.ok && status === 'done') notifySuccess('Panduan ditandai selesai')
+      // Not saved: the guide would start again on another device with no word. Say so, and offer to save again.
+      if (!r.ok)
+        showError(
+          { code: 'GUIDE_PROGRESS_FAILED' },
+          { action: 'menyimpan panduan', retry: () => void finish(guide, status) },
+          describeSaveFailure,
+        )
     },
     [helper],
   )
