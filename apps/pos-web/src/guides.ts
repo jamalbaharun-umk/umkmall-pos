@@ -49,7 +49,12 @@ const STEPS: Record<string, GuideStep[]> = {
     {
       target: 'kasir-search',
       title: 'Mulai dari sini',
-      text: 'Ketik nama barang atau scan kodenya untuk mencarinya.',
+      text: 'Ketik nama barang atau kodenya untuk mencarinya.',
+    },
+    {
+      target: 'kasir-scan',
+      title: 'Scan barang',
+      text: 'Ketuk Scan, lalu arahkan kamera ke kode batang di bungkus barang.',
     },
     {
       target: 'kasir-products',
@@ -62,14 +67,9 @@ const STEPS: Record<string, GuideStep[]> = {
       text: 'Ubah jumlah atau hapus barang di rincian pesanan ini.',
     },
     {
-      target: 'kasir-total',
-      title: 'Lihat total',
-      text: 'Total sudah termasuk diskon dan pajak, dan dihitung oleh sistem.',
-    },
-    {
       target: 'kasir-pay',
       title: 'Terima pembayaran',
-      text: 'Ketuk tombol ini, pilih Tunai atau QRIS, lalu struk keluar otomatis.',
+      text: 'Total dihitung oleh sistem; ketuk tombol ini, pilih Tunai atau QRIS, lalu struk keluar.',
     },
   ],
   '/kasir/riwayat': screen(

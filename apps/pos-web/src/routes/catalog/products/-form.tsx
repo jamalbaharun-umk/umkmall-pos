@@ -1,4 +1,4 @@
-import { Alert, Button, CheckBox, Select, TextField, Upload, toast } from '@umkmall/ui/primitives'
+import { Alert, Button, CheckBox, Icon, Select, TextField, Upload, toast } from '@umkmall/ui/primitives'
 import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { Plus, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
@@ -9,6 +9,7 @@ import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { IMAGE_ERROR, plainNumber, productErrors, splitImages, type Errors } from '@/lib/validate'
 import {
   deleteImage,
+  findBarcodeHolder,
   isStockedType,
   recordOpeningStock,
   saveProduct,
@@ -35,6 +36,8 @@ import {
   type UnitRow,
 } from './-helpers'
 import { ActionRow } from '@/components/action-row'
+import { BarcodeScanSheet, canShowScan, useScanSupport } from '@/components/barcode-scanner'
+import { fieldScanResult, normalizeCode, type ScanResult } from '@/lib/barcode-scan'
 
 export const TYPE_LABEL: Record<ProductType, string> = {
   product: 'Barang',
@@ -54,6 +57,9 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
   const navigate = useNavigate()
   const router = useRouter()
   const confirm = useConfirm()
+  // UMK-1986: the camera fills one barcode row at a time.
+  const scanSupport = useScanSupport()
+  const [scanRow, setScanRow] = useState<number | null>(null)
   const blank = {
     name: '',
     sku: '',
@@ -254,6 +260,17 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
                 className="flex-1"
                 error={errors[`barcodes.${i}`] ?? (i === 0 ? errors.barcodes : undefined)}
               />
+              {canShowScan(scanSupport) && (
+                <Button
+                  type="outline"
+                  color="light"
+                  iconOnly
+                  aria-label={`Scan barcode ${i + 1}`}
+                  onClick={() => setScanRow(i)}
+                >
+                  <Icon name="camera" size="sm" />
+                </Button>
+              )}
               <Button
                 type="text"
                 color="danger"
@@ -268,16 +285,52 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
               </Button>
             </div>
           ))}
-          <Button
-            type="outline"
-            color="light"
-            size="small"
-            width="auto"
-            className="self-center"
-            onClick={() => set('barcodes', [...form.barcodes, ''])}
-          >
-            <Plus className="size-4" aria-hidden /> Tambah barcode
-          </Button>
+          <ActionRow align="start">
+            <Button
+              type="outline"
+              color="light"
+              width="auto"
+              onClick={() => set('barcodes', [...form.barcodes, ''])}
+            >
+              <Plus className="size-4" aria-hidden /> Tambah barcode
+            </Button>
+            {canShowScan(scanSupport) && (
+              <Button
+                type="outline"
+                color="light"
+                width="auto"
+                onClick={() => {
+                  // A new empty row, scanned into at once.
+                  set('barcodes', [...form.barcodes, ''])
+                  setScanRow(form.barcodes.length)
+                }}
+              >
+                <Icon name="camera" size="sm" /> Scan barcode
+              </Button>
+            )}
+          </ActionRow>
+          <BarcodeScanSheet
+            open={scanRow !== null}
+            closeOnOk
+            title="Scan barcode"
+            onClose={() => setScanRow(null)}
+            onCode={async (code): Promise<ScanResult> => {
+              const row = scanRow
+              const holder = await findBarcodeHolder({ data: code })
+              // The product being edited holding its own code is not a clash.
+              const other = holder && holder.id !== product?.id ? holder.name : null
+              const r = fieldScanResult(
+                code,
+                form.barcodes.filter((_, j) => j !== row),
+                other,
+              )
+              if (r.kind === 'ok' && row !== null) {
+                setForm((f) => ({ ...f, barcodes: f.barcodes.map((b, j) => (j === row ? normalizeCode(code) : b)) }))
+                setErrors(({ [`barcodes.${row}`]: _gone, ...rest }) => rest)
+              }
+              return r
+            }}
+          />
         </fieldset>
 
         <div className="flex flex-col gap-1">
