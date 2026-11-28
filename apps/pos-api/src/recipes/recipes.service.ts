@@ -27,6 +27,7 @@ import {
 } from './cost';
 import {
   COST_RISE_PERCENT,
+  DEFAULT_TARGET_MARGIN,
   marginPermille,
   risePermille,
   roseEnough,
@@ -379,6 +380,11 @@ export class RecipesService {
             risePermille: risePermille(s.costPerPortion, r.costPrice)!,
             sellingPrice: r.sellingPrice,
             marginPermille: marginPermille(r.sellingPrice, s.costPerPortion),
+            // The card's "Usulan harga": at the default margin; nothing is applied.
+            suggested: {
+              targetMargin: DEFAULT_TARGET_MARGIN,
+              price: suggestedPrice(s.costPerPortion, DEFAULT_TARGET_MARGIN),
+            },
           },
         ];
       });

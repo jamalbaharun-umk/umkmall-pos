@@ -133,12 +133,14 @@ describe('recipe remainders (UMK-2126)', () => {
         risePermille: 200,
         sellingPrice: 8_000,
         marginPermille: 250,
+        suggested: { targetMargin: 60, price: 15_000 },
       });
       expect(res.body.rows[1]).toMatchObject({
         previousCost: 5_000,
         costPerPortion: 5_300,
         risePermille: 60,
         marginPermille: 338, // 33,75% rounded half up
+        suggested: { targetMargin: 60, price: 13_300 },
       });
 
       // Applying the new cost clears the card; it never touched the selling price.
