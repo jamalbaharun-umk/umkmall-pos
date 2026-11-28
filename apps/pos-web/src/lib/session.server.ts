@@ -59,6 +59,11 @@ export function rememberMe(me: unknown, maxAgeSeconds = 7 * 24 * 60 * 60): void 
   })
 }
 
+/** UMK-2124: drops the last /tenant/me, so a session swap never renders the previous actor's shell from it. */
+export function forgetMe(): void {
+  deleteCookie(LAST_ME, { path: '/' })
+}
+
 export function lastMe<T>(): T | null {
   try {
     const raw = getCookie(LAST_ME)

@@ -249,7 +249,7 @@ describe('owner sign-in by WhatsApp OTP through UMKMall native auth (UMK-2065)',
       expect(c.auth_time).toEqual(expect.any(Number)); // a sign-in: fresh for the owner PIN reset (UMK-2054)
       // UMK-2124: the session names its native session (a hash, never the sid), the one a handover parks
       expect(c.nsh).toBe(hashSecret('sid-1'));
-      expect(first.body.sessionToken).not.toContain('sid-1');
+      expect(JSON.stringify(c)).not.toContain('sid-1'); // the decoded claims, never the sid itself
       const me = await request(app.getHttpServer())
         .get('/tenant/me')
         .set('Authorization', `Bearer ${first.body.sessionToken}`)
@@ -395,6 +395,7 @@ describe('owner sign-in by WhatsApp OTP through UMKMall native auth (UMK-2065)',
       expect(c).toMatchObject({ sub, kind: 'owner' });
       expect(c).not.toHaveProperty('auth_time');
       expect(c.nsh).toBe(hashSecret('sid-1')); // UMK-2124
+      expect(JSON.stringify(c)).not.toContain('sid-1');
     });
 
     it("keeps the client's refresh token when UMKMall did not rotate it (grace)", async () => {

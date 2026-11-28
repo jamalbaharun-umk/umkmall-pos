@@ -1,8 +1,9 @@
-import { useNavigate, useRouter } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { Alert, Button, Dialog, TextField } from '@umkmall/ui'
 import { useRef, useState } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { notifySuccess, showError } from '@/lib/feedback'
+import { switchSessionAndReload } from '@/lib/session-signal'
 import { closeHelper, startHelper } from './-api'
 import { CLOSED_TOAST, HANDOVER_TOAST, nameError, pinFailure, pinInputError } from './-helper'
 import { pinDigits } from './-void-helpers'
@@ -33,7 +34,6 @@ function SignInAgain({ kembali, label, onCancel }: { kembali: 'pembantu' | 'kasi
 
 /** "Serahkan ke pembantu" on the owner's till, with its dialog (optional name, owner PIN). */
 export function HandoverButton() {
-  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>({ kind: 'form' })
   const [name, setName] = useState('')
@@ -66,10 +66,10 @@ export function HandoverButton() {
     setBusy(false)
     setPin('')
     if (res.ok) {
-      notifySuccess(HANDOVER_TOAST)
       setOpen(false)
       setName('')
-      await router.invalidate() // the root reads the helper session: the till turns into "Mode pembantu"
+      // The till loads afresh as "Mode pembantu" and every other tab reloads: no owner page or shell stays on screen.
+      switchSessionAndReload(HANDOVER_TOAST)
       return
     }
     const code = 'code' in res ? res.code : undefined
@@ -152,7 +152,6 @@ export function HandoverButton() {
 
 /** After "Akhiri lewat WhatsApp" (`?pembantu=akhiri`): the fresh sign-in ends the handover on the lost device. */
 export function CloseHandoverDialog({ open }: { open: boolean }) {
-  const router = useRouter()
   const navigate = useNavigate()
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
@@ -170,9 +169,7 @@ export function CloseHandoverDialog({ open }: { open: boolean }) {
     lock.current = false
     setBusy(false)
     if (res.ok) {
-      notifySuccess(CLOSED_TOAST)
-      leave()
-      await router.invalidate()
+      switchSessionAndReload(CLOSED_TOAST) // a tab of this browser still on the helper till reloads too
       return
     }
     // Nothing left to end (ended there meanwhile): said once, the till goes on.

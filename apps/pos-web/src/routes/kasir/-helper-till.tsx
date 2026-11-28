@@ -6,6 +6,7 @@ import { GuideButton } from '@/components/guide'
 import { Empty, ErrorText, rupiah } from '@/components/pos-page'
 import { useHelper } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
+import { switchSessionAndReload } from '@/lib/session-signal'
 import { createSale, endHelper, quoteCart, type PaymentMethod, type Product } from './-api'
 import { breakdown } from './-discount'
 import {
@@ -42,7 +43,10 @@ export function HelperTill({
   taxBps,
   methods: allMethods,
   qris,
+  hasShift,
 }: {
+  /** False when the owner's shift is closed: the helper cannot sell until the owner opens one. */
+  hasShift: boolean
   products: Product[]
   taxBps: number
   methods: PaymentMethod[]
@@ -133,7 +137,14 @@ export function HelperTill({
           </div>
         </div>
         {soldOut && <ErrorText>{soldOut}</ErrorText>}
-        {products.length === 0 ? (
+        {!hasShift ? (
+          <Card>
+            <Empty
+              title="Shift belum dibuka"
+              hint="Penjualan pembantu masuk ke shift pemilik. Kembali ke pemilik untuk membuka shift."
+            />
+          </Card>
+        ) : products.length === 0 ? (
           <Card>
             <Empty title="Belum ada produk aktif" hint="Minta pemilik menambahkan produk di Katalog." />
           </Card>
@@ -267,7 +278,7 @@ export function HelperTill({
         <Button
           size="large"
           width="full"
-          disabled={cart.length === 0 || quoteState !== 'idle' || methods.length === 0}
+          disabled={!hasShift || cart.length === 0 || quoteState !== 'idle' || methods.length === 0}
           onClick={() => setPaying(true)}
           data-guide="helper-pay"
         >
@@ -485,7 +496,6 @@ function HelperDoneDialog({ sale, onClose }: { sale?: { id: string; change: numb
 
 /** "Kembali ke pemilik": the owner's PIN ends the handover and this device holds the owner's session again. */
 function ReturnDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter()
   const [pin, setPin] = useState('')
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -506,9 +516,8 @@ function ReturnDialog({ open, onClose }: { open: boolean; onClose: () => void })
       const failure = pinFailure(res)
       return showError(failure, { action: 'membuka sesi pemilik' })
     }
-    notifySuccess(RETURN_TOAST)
     onClose()
-    await router.invalidate()
+    switchSessionAndReload(RETURN_TOAST) // the owner's till loads afresh, and every other tab of this browser reloads
   }
 
   return (

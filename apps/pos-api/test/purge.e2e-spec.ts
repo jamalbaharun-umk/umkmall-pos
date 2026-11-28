@@ -355,8 +355,12 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       values (${s.tenantId}, 'list_categories', 'ok', ${s.userId}, 3)`;
     await admin`insert into pos.agent_access (tenant_id, revoked_before) values (${s.tenantId}, now())`;
     // UMK-2124: a handover to a helper (helper_sessions).
-    await admin`insert into pos.helper_sessions (tenant_id, owner_id, expires_at)
-                values (${s.tenantId}, ${s.userId}, now() + interval '12 hours')`;
+    const [handover] = await admin<{ id: string }[]>`
+      insert into pos.helper_sessions (tenant_id, owner_id, expires_at)
+      values (${s.tenantId}, ${s.userId}, now() + interval '12 hours') returning id`;
+    // ...and a helper's sale under it (sales.helper_session_id references it: the purge orders the deletes).
+    await admin`update pos.sales set actor_kind = 'helper', helper_session_id = ${handover.id}
+                where id = (select id from pos.sales where tenant_id = ${s.tenantId} order by created_at limit 1)`;
     // UMK-2132: a production run of the recipe above (production_runs, production_run_lines, a production batch).
     await post('/stock/opening', {
       productId: milk.body.id,

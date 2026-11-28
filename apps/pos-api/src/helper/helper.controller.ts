@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpException,
   Injectable,
+  Logger,
   Module,
   Post,
   UnauthorizedException,
@@ -88,6 +89,7 @@ export async function parkedSidRefused(db: Db, sid: string) {
 
 @Injectable()
 export class HelperService {
+  private readonly log = new Logger(HelperService.name);
   private readonly env = loadEnv();
   private readonly secret = this.env.POS_SESSION_SECRET;
 
@@ -344,7 +346,12 @@ export class HelperService {
           details: { helperSessionId, reason },
         }),
       )
-      .catch(() => undefined);
+      .catch((err: unknown) =>
+        // ids and the reason only: never the PIN
+        this.log.warn(
+          `helper_end_refused audit not written for ${helperSessionId} (${reason}): ${err instanceof Error ? err.name : 'error'}`,
+        ),
+      );
   }
 }
 

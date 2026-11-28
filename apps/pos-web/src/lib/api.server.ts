@@ -1,6 +1,6 @@
 import { redirect } from '@tanstack/react-router'
 import { setResponseStatus } from '@tanstack/react-start/server'
-import { clearSessionToken, getSessionToken, posApiUrl, refreshOwner } from './session.server'
+import { clearSessionToken, getSessionToken, posApiUrl, refreshOwner, setReturnTo } from './session.server'
 import { sessionKind } from './sign-in'
 
 export const UMKMALL_DOWN = 'Layanan login UMKMall sedang tidak bisa dihubungi, coba lagi'
@@ -54,6 +54,9 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
     trySetStatus(503)
     throw new Error(UMKMALL_DOWN)
   }
+  // UMK-2124: 403 is the refresh's `session_parked` (a handover parked this native session and the PIN never ended
+  // it): after the WhatsApp sign-in the owner lands where a lost helper device's handover is ended.
+  if (fresh === 403) setReturnTo('pembantu')
   clearSessionToken()
   throw redirect({ to: '/' })
 }

@@ -154,7 +154,7 @@ function CashierPage() {
   const helper = useIsHelper()
   const owner = useIsOwner()
   // UMK-2124: a helper session gets the sales-only till, whatever the shift (pos-api refuses a sale without one).
-  if (helper) return <HelperTill products={products} taxBps={taxBps} methods={methods} qris={qris} />
+  if (helper) return <HelperTill hasShift={shift !== null} products={products} taxBps={taxBps} methods={methods} qris={qris} />
   return (
     <>
       {shift ? (

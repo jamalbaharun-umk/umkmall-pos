@@ -1,7 +1,7 @@
 import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
-import { getSessionToken, nativeSid, refreshOwner, storeSession } from '@/lib/session.server'
+import { forgetMe, getSessionToken, nativeSid, refreshOwner, sameOriginRequest, storeSession } from '@/lib/session.server'
 import { sessionKind } from '@/lib/sign-in'
 import type { Quote, SaleUnit } from './-helpers'
 import type { SalePayment } from './-online'
@@ -270,6 +270,7 @@ export const checkOpening = createServerFn({ method: 'POST' })
 export const startHelper = createServerFn({ method: 'POST' })
   .validator((d: { pin: string; name?: string }) => d)
   .handler(async ({ data }) => {
+    if (!sameOriginRequest()) return crossSite()
     const parkedSid = nativeSid()
     const res = await send<{ sessionToken: string; expiresIn: number; helper: { id: string; name: string | null; expiresAt: string } }>(
       '/helper/start',
@@ -277,6 +278,7 @@ export const startHelper = createServerFn({ method: 'POST' })
     )
     if (!res.ok) return res
     storeSession({ sessionToken: res.data.sessionToken, expiresIn: res.data.expiresIn })
+    forgetMe() // the owner's last /tenant/me must never render for the helper
     return { ok: true as const, data: res.data.helper }
   })
 
@@ -284,9 +286,11 @@ export const startHelper = createServerFn({ method: 'POST' })
 export const endHelper = createServerFn({ method: 'POST' })
   .validator((d: { pin: string }) => d)
   .handler(async ({ data }) => {
+    if (!sameOriginRequest()) return crossSite()
     const res = await send<{ sessionToken: string; expiresIn: number }>('/helper/end', data)
     if (!res.ok) return res
     storeSession(res.data)
+    forgetMe()
     // The owner's native session slept in the httpOnly cookie while the helper sold: refresh it now, so UMKMall
     // rotates its refresh token (where it does) and the one the helper's device held is spent. Best effort: a failure
     // leaves the owner signed in on the token just stored.
@@ -295,7 +299,12 @@ export const endHelper = createServerFn({ method: 'POST' })
   })
 
 /** The owner ends a handover from a fresh WhatsApp sign-in, when the helper's device cannot be reached. */
-export const closeHelper = createServerFn({ method: 'POST' }).handler(() => send<{ ended: true }>('/helper/close', {}))
+export const closeHelper = createServerFn({ method: 'POST' }).handler(() =>
+  sameOriginRequest() ? send<{ ended: true }>('/helper/close', {}) : crossSite(),
+)
+
+/** A session swap asked from another site (no same-origin POST): refused, nothing sent to pos-api. */
+const crossSite = () => ({ ok: false as const, status: 403, error: 'Permintaan ditolak. Muat ulang halaman lalu coba lagi.' })
 
 /** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
 type LineDiscountFields = { discountPercent?: number; discountAmount?: number }

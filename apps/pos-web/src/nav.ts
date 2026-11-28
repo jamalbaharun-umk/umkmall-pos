@@ -117,8 +117,11 @@ export const NAV: NavGroup[] = [
 
 /** Route ids that render full-screen, without the shell (Lakasir's POS page uses the bare layout too). */
 export const BARE_ROUTES = ['/kasir/', '/kasir/masuk', '/kasir/struk/$id']
-/** UMK-2124: the only screens of a helper session ("Mode pembantu"): the sales-only till and a receipt. */
-export const HELPER_ROUTES = ['/kasir/', '/kasir/struk/$id']
+/**
+ * UMK-2124: the only screens of a helper session ("Mode pembantu"), by path, for the root's redirect before anything
+ * loads: the sales-only till (`/kasir`) and a receipt (`/kasir/struk/<id>`).
+ */
+export const helperMayOpen = (pathname: string) => /^\/kasir\/?$/.test(pathname) || /^\/kasir\/struk\/[^/]+\/?$/.test(pathname)
 
 /** Solo-owner mode as the owner's `/tenant/me` tells it; absent (a cashier, or offline) means "show the team". */
 export type SoloNav = { active: boolean; storeCash: boolean }
