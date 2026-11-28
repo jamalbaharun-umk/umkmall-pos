@@ -54,6 +54,8 @@ export const shifts = pos
         .notNull()
         .default(false),
       openingCheckedAt: ts('opening_checked_at'),
+      // The automatic opening cash the owner corrected ("Modal dibetulkan dari Rp…"); null when not corrected.
+      openingCashCorrectedFrom: rupiah('opening_cash_corrected_from'),
     },
     (t) => [
       unique().on(t.tenantId, t.id),

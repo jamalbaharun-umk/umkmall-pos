@@ -4,7 +4,7 @@ import { Dialog } from '@umkmall/ui/primitives'
 import { useRef, useState } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { notifySuccess, showError } from '@/lib/feedback'
-import { rupiah } from '../../lib/rupiah'
+import { rupiah } from '@/lib/rupiah'
 import { checkOpening } from './-api'
 import { parseRupiah } from './-money'
 import { openingToast, showOpeningCard } from './-opening'
@@ -36,8 +36,9 @@ export function OpeningCard({ shift }: { shift: OpeningShift }) {
     setBusy(false)
     if (!res.ok) {
       const errors = (res as { errors?: Record<string, string> }).errors
+      // A refusal of the amount is shown once, under the field; anything else in the shared error dialog.
       if (errors?.openingCash) setError(errors.openingCash)
-      showError(res, { action: 'menyimpan modal awal' })
+      else showError(res, { action: 'menyimpan modal awal' })
       const code = (res as { code?: string }).code
       // Another shift, a shift already checked, or one opened by hand: the till reads the shift again.
       if (code === 'shift_changed' || code === 'opening_checked' || code === 'opening_not_automatic') {
@@ -68,7 +69,7 @@ export function OpeningCard({ shift }: { shift: OpeningShift }) {
           Modal awal {rupiah(shift.openingCash)}, dari hitungan laci terakhir. Betulkan bila isi laci berbeda.
         </p>
       </div>
-      <ActionRow>
+      <ActionRow align="start">
         <Button
           type="outline"
           color="light"
@@ -90,7 +91,7 @@ export function OpeningCard({ shift }: { shift: OpeningShift }) {
       <Dialog open={editing} onOpenChange={(open) => !open && !busy && setEditing(false)} title="Betulkan modal awal" size="small" centered>
         <form onSubmit={save} noValidate className="flex flex-col gap-4 px-6 pt-2 pb-6">
           <TextField
-            label="Uang di laci saat mulai"
+            label="Modal awal"
             required
             error={error}
             prefix="Rp"

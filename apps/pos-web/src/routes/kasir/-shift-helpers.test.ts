@@ -43,6 +43,13 @@ describe('drawerRows', () => {
     expect(drawerAddsUp(rows)).toBe(true)
   })
 
+  it('notes a corrected automatic opening under the opening row', () => {
+    const rows = drawerRows({ ...shift, openingCash: 150_000, expectedCash: 1_342_500, openingCashCorrectedFrom: 200_000 })
+    expect(rows[0]).toMatchObject({ key: 'opening', amount: 150_000, note: 'Modal dibetulkan dari Rp200.000' })
+    expect(drawerAddsUp(rows)).toBe(true)
+    expect(drawerRows(shift)[0].note).toBeUndefined()
+  })
+
   it('UMK-1971: a corrected cash kasbon instalment is its own cash-out line, and the rows still add up', () => {
     // The design's closed-shift case in the open drawer: Rp2.500 out (the old cash), Rp3.000 in (the new): +Rp500.
     const rows = drawerRows({

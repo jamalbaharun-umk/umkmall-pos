@@ -1,5 +1,6 @@
 // Pure helpers for the shift cash screens and the cash kasbon instalment (UMK-1963). pos-api computes every figure
 // (expected cash, totals, which ledger a payment lands in); these only label, order and explain them.
+import { rupiah } from '../../lib/rupiah'
 
 export type CashTotals = {
   cashIn: number
@@ -38,7 +39,15 @@ export const NO_CASH: CashTotals = {
   purchaseRefundReversals: 0,
 }
 
-export type DrawerRow = { key: string; label: string; amount: number; sign: '+' | '-' | ''; strong?: boolean }
+export type DrawerRow = {
+  key: string
+  label: string
+  amount: number
+  sign: '+' | '-' | ''
+  strong?: boolean
+  /** A line under the label: the opening cash's automatic figure the owner corrected (design 40 screen 7). */
+  note?: string
+}
 
 /**
  * The drawer arithmetic as the closing screen shows it: opening cash + cash sales + cash in - cash out. Cash in and
@@ -51,6 +60,7 @@ export function drawerRows(
     cashSales: number | null
     salesCount?: number | null
     expectedCash: number | null
+    openingCashCorrectedFrom?: number | null
   } & Partial<CashTotals>,
 ): DrawerRow[] {
   const c = { ...NO_CASH, ...s }
@@ -62,7 +72,14 @@ export function drawerRows(
   const otherIn = c.cashIn - c.receivablePayments - c.expenseReversals - supplierBack - refundIn
   const otherOut = c.cashOut - c.voidRefunds - c.expenses - supplierPaid - kasbonOut - refundOut
   const rows: DrawerRow[] = [
-    { key: 'opening', label: 'Uang awal di laci', amount: s.openingCash, sign: '' },
+    {
+      key: 'opening',
+      label: 'Uang awal di laci',
+      amount: s.openingCash,
+      sign: '',
+      // The coordinator's call on PR 107: a corrected automatic opening stays visible at the close and in the report.
+      ...(s.openingCashCorrectedFrom == null ? {} : { note: `Modal dibetulkan dari ${rupiah(s.openingCashCorrectedFrom)}` }),
+    },
     {
       key: 'sales',
       // The count is of every sale of the shift (any method), the amount is cash only (UMK-2057).

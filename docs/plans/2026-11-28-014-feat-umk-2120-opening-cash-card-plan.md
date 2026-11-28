@@ -30,6 +30,12 @@ correct it.
   modal" opens a dialog with the amount (Batal / Simpan). Toasts "Modal awal sudah dicek" and "Modal awal
   dibetulkan jadi Rp…". Refusals use the shared error dialog; `shift_changed` reloads.
 - **Log aktivitas** shows the new event as "Modal awal dibetulkan".
+- **Follow-up (coordinator's call on PR 107, 2026-11-28):** the correction stays allowed for the owner, and stays
+  visible: migration `0059` adds `shifts.opening_cash_corrected_from` (the automatic figure, set by the correction),
+  answered on every shift read. The drawer rows of Tutup shift / Tutup hari and the shift report note "Modal
+  dibetulkan dari Rp…" under the opening row. Review tidy-ups: the dialog's field is "Modal awal", the card's
+  buttons start-aligned, an amount refusal is shown once (under the field), plus a concurrency test and a
+  hand-opened-shift test.
 
 ## Definition of Done
 
@@ -39,7 +45,9 @@ correct it.
   - a correction changes the opening and the expected cash, and is audited;
   - a correction after the check is 409; a hand-opened shift is 409; another shift is 409 `shift_changed`;
   - 422 for a negative amount, and for an opening that leaves the expected cash below zero;
-  - store B cannot touch store A's shift.
+  - store B cannot touch store A's shift;
+  - two corrections at once: one applied, one 409, one audit row (revert-red: without the row lock);
+  - the shift report answers `openingCashCorrectedFrom`; a hand-opened shift answers it null.
   - Revert-red once on the expected-cash guard.
 - [test] pos-web: the card's visibility and the toast wording (`kasir/-opening.test.ts`).
 - [qa] 375 px and 1280 px: the card, the correction dialog, the error dialog.

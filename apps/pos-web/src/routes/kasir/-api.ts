@@ -24,6 +24,8 @@ export type Shift = CashTotals & {
   /** Design 40 screen 7: opened by the owner's first cash action, and when its opening cash was checked. */
   openedAutomatically?: boolean
   openingCheckedAt?: string | null
+  /** The automatic opening the owner corrected ("Modal dibetulkan dari Rp…"); null when not corrected. */
+  openingCashCorrectedFrom?: number | null
 }
 export type Product = {
   id: string

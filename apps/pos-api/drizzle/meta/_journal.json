@@ -414,6 +414,13 @@
       "when": 1795869493905,
       "tag": "0058_shift_opening_check",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1795870538346,
+      "tag": "0059_shift_opening_corrected_from",
+      "breakpoints": true
     }
   ]
 }
