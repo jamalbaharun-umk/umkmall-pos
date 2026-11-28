@@ -680,6 +680,8 @@ describe('cashier PG flow with the fake gateway (UMK-1991)', () => {
 
     it('UMK-1990 a PG sale is gated by the 30% PIN like a cash sale; the approval stays used when the sale is cancelled', async () => {
       const s = await shop(5000);
+      // A staff member, so the owner's own discount takes the PIN (UMK-2123: a solo owner needs none).
+      await createCashier(app, s);
       // 4 × Rp5.000 = 20.000 with 8.000 off (40%): refused without an order approval, no bill made.
       const body = {
         lines: [{ productId: s.productId, qty: 4 }],
