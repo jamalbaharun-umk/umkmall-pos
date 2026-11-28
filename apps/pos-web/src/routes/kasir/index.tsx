@@ -1263,6 +1263,9 @@ function PayDialog({
         showError(res, { action: 'menyimpan penjualan' }, () => recordedDescription(res.error))
         return setError(RECORDED_TEXT)
       }
+      // UMK-2121: a till opened while the owner ran the store alone skips the PIN; if staff was added since, pos-api
+      // asks for one. Read `discountPinRequired` again so the lines ask for the PIN before the next try.
+      if (res.status === 422 && res.code === 'DISCOUNT_APPROVAL_REQUIRED') void router.invalidate()
       // UMK-1990: a line's PIN approval ran out or was used: that line asks for the PIN again before the next try.
       const lostApproval = Object.keys(res.errors ?? {})
         .map((k) => /^lines\.(\d+)\.discountApprovalId$/.exec(k)?.[1])

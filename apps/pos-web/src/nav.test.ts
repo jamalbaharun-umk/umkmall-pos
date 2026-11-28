@@ -111,3 +111,13 @@ describe('solo-owner mode (UMK-2121)', () => {
       expect(TEAM.every((to) => shown(s).includes(to))).toBe(true)
   })
 })
+
+describe('Resep entry (UMK-2125)', () => {
+  it('shows only with catalog.manage, under Inventori', () => {
+    const find = (perms: string[]) =>
+      visibleNav(NAV, () => true, perms).find((g) => g.items.some((i) => i.to === '/resep'))
+    expect(find(['sales.create'])).toBeUndefined()
+    expect(find(['catalog.manage'])?.label).toBe('Inventori')
+    expect(activeNav(NAV, '/resep/abc')).toBe('/resep')
+  })
+})

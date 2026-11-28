@@ -7,6 +7,7 @@ import {
   Globe,
   CalendarDays,
   Clock,
+  CookingPot,
   CreditCard,
   Database,
   FileText,
@@ -71,6 +72,8 @@ export const NAV: NavGroup[] = [
       { to: '/pembelian', label: 'Pembelian', icon: PackagePlus, permission: 'purchasing.manage' },
       { to: '/stok-opname', label: 'Stok opname', icon: Database, permission: 'purchasing.manage' },
       { to: '/catalog/products', label: 'Produk', icon: Archive },
+      // UMK-2125 (design 43): the cost of one portion from its recipe.
+      { to: '/resep', label: 'Resep', icon: CookingPot, permission: 'catalog.manage' },
       { to: '/catalog/categories', label: 'Kategori', icon: Layers },
     ],
   },
