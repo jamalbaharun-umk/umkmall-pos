@@ -6,9 +6,11 @@ import {
   dayText,
   differenceText,
   emptyRunDraft,
+  initialRunDraft,
   keyFor,
   listQuery,
   newKey,
+  newRunSearch,
   parseListSearch,
   planBlocker,
   planMatches,
@@ -252,5 +254,20 @@ describe('label maps', () => {
     expect(REASON.production).toBe('Hasil produksi')
     expect(REASON.production_use).toBe('Dipakai produksi')
     expect(REASON.sale).toBe('Penjualan')
+  })
+})
+
+// UMK-2126: the recipe page's "Produksi" opens this screen with the recipe in the address.
+describe('new run search', () => {
+  it('keeps a uuid recipeId, lower-cased, and drops anything else', () => {
+    expect(newRunSearch({ recipeId: RECIPE.toUpperCase() })).toEqual({ recipeId: RECIPE })
+    expect(newRunSearch({ recipeId: RECIPE })).toEqual({ recipeId: RECIPE })
+    for (const bad of [undefined, '', 'abc', `${RECIPE}x`, 12, ['a'], null]) expect(newRunSearch({ recipeId: bad })).toEqual({})
+    expect(newRunSearch({})).toEqual({})
+  })
+  it('preselects the recipe only when the store has it', () => {
+    expect(initialRunDraft(RECIPE, [{ id: RECIPE }])).toEqual({ ...emptyRunDraft(), recipeId: RECIPE })
+    expect(initialRunDraft(RECIPE, [{ id: 'other' }])).toEqual(emptyRunDraft())
+    expect(initialRunDraft(undefined, [{ id: RECIPE }])).toEqual(emptyRunDraft())
   })
 })

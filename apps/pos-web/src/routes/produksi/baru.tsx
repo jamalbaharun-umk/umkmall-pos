@@ -8,10 +8,11 @@ import { clearKeys } from '@/lib/form-checks'
 import { createRun, loadPlan, loadRecipeOptions } from './-api'
 import {
   buildRunPayload,
-  emptyRunDraft,
+  initialRunDraft,
   keyFor,
   type KeyMemo,
   newKey,
+  newRunSearch,
   type Plan,
   planBlocker,
   planMatches,
@@ -26,6 +27,8 @@ import {
 
 // UMK-2132, design 45 (screens 1 and 2): plan a run (what it takes against what is on hand), then record the real yield.
 export const Route = createFileRoute('/produksi/baru')({
+  // The recipe page's "Produksi" names the recipe; without it (or with a value that is no uuid) nothing is preselected.
+  validateSearch: newRunSearch,
   loader: () => loadRecipeOptions(),
   component: NewRunPage,
   pendingComponent: Pending,
@@ -42,9 +45,10 @@ type PlanState =
 
 function NewRunPage() {
   const recipes = Route.useLoaderData()
+  const { recipeId: wanted } = Route.useSearch()
   const router = useRouter()
   const navigate = useNavigate()
-  const [d, setD] = useState<RunDraft>(emptyRunDraft)
+  const [d, setD] = useState<RunDraft>(() => initialRunDraft(wanted, recipes))
   const [errors, setErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string>()
   const [plan, setPlan] = useState<PlanState>({ kind: 'idle' })

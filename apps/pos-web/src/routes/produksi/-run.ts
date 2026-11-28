@@ -243,3 +243,15 @@ export function costShares(lines: readonly RunLine[]): CostShare[] {
     .map((l) => ({ label: l.name, value: l.cost }))
     .sort((a, b) => b.value - a.value)
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The optional `recipeId` of /produksi/baru (the recipe page's "Produksi"): kept only when it is a uuid, else dropped. */
+export function newRunSearch(s: Record<string, unknown>): { recipeId?: string } {
+  return typeof s.recipeId === 'string' && UUID.test(s.recipeId) ? { recipeId: s.recipeId.toLowerCase() } : {}
+}
+
+/** The form's first state: the recipe named in the address when the store has it, else nothing chosen. */
+export function initialRunDraft(recipeId: string | undefined, recipes: readonly { id: string }[]): RunDraft {
+  return { ...emptyRunDraft(), recipeId: recipeId && recipes.some((r) => r.id === recipeId) ? recipeId : '' }
+}
