@@ -16,11 +16,11 @@ export const PICKER_DEBOUNCE_MS = 250
 /** The search term as pos-api receives it: trimmed, at most 100 characters (its `q` limit). */
 export const normalizeQuery = (raw: string): string => raw.trim().slice(0, 100)
 
-/** pos-api path for one page of stock-tracked products matching `raw` (empty: the first page). */
+/** pos-api path for one page of stock-tracked products (products and ingredients) matching `raw` (empty: the first page). */
 export function searchPath(raw: string): string {
   const q = normalizeQuery(raw)
   const params = new URLSearchParams({
-    type: 'product',
+    use: 'stock',
     perPage: String(PICKER_PAGE_SIZE),
   })
   if (q) params.set('q', q)

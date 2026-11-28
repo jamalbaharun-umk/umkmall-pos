@@ -169,6 +169,9 @@ export const ProductQuery = z.object({
   categoryId: Uuid.optional(),
   // UMK-1967: line pickers list stock-tracked products only.
   type: z.enum(PRODUCT_TYPES).optional(),
+  // UMK-2125: `sale` = every type but `ingredient` (the till grid); `stock` = the stocked types (purchase and
+  // stock-opname pickers: products and ingredients).
+  use: z.enum(['sale', 'stock']).optional(),
   // UMK-1966: only tracked products that are running low (0 < on-hand <= threshold) or out (on-hand 0).
   stock: z.enum(['low', 'out']).optional(),
   // UMK-2130: products whose cost is still 0 ("Modal belum diisi").

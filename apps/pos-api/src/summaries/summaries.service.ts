@@ -2,13 +2,19 @@ import { Injectable } from '@nestjs/common';
 import { sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { AGENT_LABEL, FINAL_SALE_STATUSES, salesSettings } from '../db/schema';
+import {
+  AGENT_LABEL,
+  FINAL_SALE_STATUSES,
+  salesSettings,
+  STOCKED_TYPES,
+} from '../db/schema';
 import { ReceivablesReportService } from '../reports/receivables-report.service';
 import { ReportsService } from '../reports/reports.service';
 
 type Row = Record<string, unknown>;
 const n = (v: unknown) => Number(v ?? 0);
 const FINAL_LIST = sql.raw(FINAL_SALE_STATUSES.map((s) => `'${s}'`).join(', '));
+const STOCKED_LIST = sql.raw(STOCKED_TYPES.map((t) => `'${t}'`).join(', '));
 
 /** The most rows a list inside a summary carries: a picture shows the top, the menu's list has the rest. */
 export const TOP = 5;
@@ -165,20 +171,24 @@ export class SummariesService {
     };
   }
 
-  /** Stock-tracked products on the shelf: `ok`, `low` (at or under its minimum) and `out` (nothing left). */
+  /**
+   * Stock-tracked products on the shelf (`STOCKED_TYPES`, ingredients included): `ok`, `low` (at or under its
+   * minimum) and `out` (nothing left). "Modal belum diisi" and the margins are about what is sold, so they leave
+   * ingredients out: an ingredient's cost comes from its purchases and its selling price is never used (UMK-2125).
+   */
   async products(tenantId: string, money: boolean) {
     const [status] = await this.rows(sql`
       select count(*) as total,
              count(*) filter (where on_hand <= 0) as out,
              count(*) filter (where on_hand > 0 and on_hand <= low_stock_threshold) as low,
              count(*) filter (where on_hand > low_stock_threshold) as ok,
-             count(*) filter (where cost_price = 0) as no_cost
-        from (select p.cost_price, p.low_stock_threshold,
+             count(*) filter (where cost_price = 0 and type <> 'ingredient') as no_cost
+        from (select p.cost_price, p.low_stock_threshold, p.type,
                      coalesce((select sum(b.qty_remaining) from pos.stock_batches b
                                 where b.tenant_id = p.tenant_id and b.product_id = p.id), 0) as on_hand
                 from pos.products p
                where p.tenant_id = ${tenantId} and p.deleted_at is null and p.is_active
-                 and p.type = 'product') x`);
+                 and p.type in (${STOCKED_LIST})) x`);
     const margins = money
       ? await this.rows(sql`
           select name, round((selling_price - cost_price) * 100.0 / selling_price) as percent

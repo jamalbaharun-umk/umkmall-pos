@@ -7,7 +7,10 @@ import type { SaveWarning, TierInput, UnitInput } from './products/-helpers'
 // so the browser never holds the POS token. Mutations return { error } instead of throwing, for forms.
 
 export type Category = { id: string; name: string }
-export type ProductType = 'product' | 'service' | 'non_stock'
+// UMK-2125: `ingredient` is bought and stocked like `product`, never sold (pos-api refuses it at the till).
+export type ProductType = 'product' | 'service' | 'non_stock' | 'ingredient'
+/** The types that keep stock (pos-api's STOCKED_TYPES). */
+export const isStockedType = (type: ProductType) => type === 'product' || type === 'ingredient'
 export type Product = {
   id: string
   name: string
