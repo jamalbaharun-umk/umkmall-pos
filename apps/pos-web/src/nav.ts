@@ -10,6 +10,7 @@ import {
   CookingPot,
   CreditCard,
   Database,
+  Factory,
   FileText,
   HandCoins,
   Layers,
@@ -74,6 +75,8 @@ export const NAV: NavGroup[] = [
       { to: '/catalog/products', label: 'Produk', icon: Archive },
       // UMK-2125 (design 43): the cost of one portion from its recipe.
       { to: '/resep', label: 'Resep', icon: CookingPot, permission: 'catalog.manage' },
+      // UMK-2132 (design 45): record a production run, ingredients out and finished product in.
+      { to: '/produksi', label: 'Produksi', icon: Factory, permission: 'catalog.manage' },
       { to: '/catalog/categories', label: 'Kategori', icon: Layers },
     ],
   },

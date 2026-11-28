@@ -52,6 +52,7 @@ describe('Log aktivitas (UMK-1969)', () => {
     expect(actorLabel({ id: 'x', kind: 'cashier', name: null })).toBe('Staf yang sudah dihapus')
     expect(actionLabel('shift_close')).toBe('Tutup shift')
     expect(actionLabel('whatever')).toBe('Aksi lain')
+    expect(actionLabel('production_run')).toBe('Produksi dicatat')
     expect(targetLabel(row())).toBe('Struk #139')
     expect(targetLabel(row({ target: { type: 'device', id: 'd', label: 'Tablet lama' } }))).toBe('Tablet lama')
     expect(targetLabel(row({ target: null }))).toBe('')
@@ -81,6 +82,16 @@ describe('Log aktivitas (UMK-1969)', () => {
     expect(lines.map((l) => l[0])).toEqual(['Waktu', 'Siapa', 'Aksi', 'Target', 'Jumlah', 'Alasan'])
     expect(lines.find((l) => l[0] === 'Jumlah')?.[1]).toBe('Rp130.536')
     expect(detailLines(row({ event: 'sign_in', target: null, details: { deviceId: ID } }), 'Asia/Jakarta').map((l) => l[0])).toEqual(['Waktu', 'Siapa', 'Aksi'])
+  })
+
+  it('UMK-2132: words a production run, its yield against the plan and the cost of one portion', () => {
+    const p = row({
+      event: 'production_run',
+      target: { type: 'production_run', id: ID, label: 'Nasi goreng' },
+      details: { actualYield: 19, plannedYield: 20, costPerPortion: 7613, ingredientCost: 144632 },
+    })
+    expect(detailText(p)).toBe('Hasil 19 · rencana 20 · Rp7.613 per porsi')
+    expect(targetLabel(p)).toBe('Nasi goreng')
   })
 
   it('UMK-1971: words a kasbon correction, its amounts and reason, never a note', () => {

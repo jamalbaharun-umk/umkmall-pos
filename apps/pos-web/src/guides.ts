@@ -177,6 +177,24 @@ const STEPS: Record<string, GuideStep[]> = {
     'Hitung modal satu porsi dari bahan, bungkus, dan tenaga kerja.',
     'Bandingkan modal tiap resep, lalu pakai sebagai harga modal produk.',
   ),
+  '/produksi': [
+    {
+      target: 'page-title',
+      title: 'Produksi',
+      text: 'Catat saat Anda memasak: bahan keluar dari stok dan barang jadi masuk stok.',
+    },
+    {
+      target: 'produksi-filter',
+      title: 'Pilih tanggal',
+      text: 'Atur tanggal untuk melihat produksi di periode tertentu.',
+    },
+    {
+      target: 'panel',
+      title: 'Riwayat produksi',
+      text: 'Setiap baris menunjukkan hasil rencana, hasil nyata, dan selisihnya; ketuk untuk rinciannya.',
+    },
+    replay,
+  ],
   '/voucher': screen(
     'Voucher',
     'Buat kode voucher diskon untuk pelanggan.',
