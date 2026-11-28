@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { Alert, Button, Card, Chip, Switch, Text, TextField } from '@umkmall/ui'
 import { useRef, useState } from 'react'
 import { act, Empty, formatDate, LoadError, Page, Pending, rupiah, useConfirm } from '@/components/pos-page'
@@ -167,6 +167,8 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
   const revenue = shift.revenue ?? 0
   const profit = shift.grossProfit ?? 0
   const take = takeOf(keep, takeText, Number.isNaN(amount) ? 0 : amount)
+  const { ask, dialog } = useConfirm()
+  const router = useRouter()
 
   function next(e: React.FormEvent) {
     e.preventDefault()
@@ -176,7 +178,8 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
     setStep('money')
   }
 
-  async function submit(e: React.FormEvent) {
+  // Closing cannot be undone: check the take, then confirm (the dialog stays busy until pos-api answers).
+  function submit(e: React.FormEvent) {
     e.preventDefault()
     if (lock.current) return
     if (take.error) {
@@ -184,12 +187,24 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
       return showError({ status: 422, error: take.error }, { action: 'menutup hari' })
     }
     setTakeError(undefined)
+    ask('Tutup hari?', close, {
+      body: `${take.amount > 0 ? `Diambil pemilik ${rupiah(take.amount)}, t` : 'T'}inggal di laci untuk besok ${rupiah(amount - take.amount)}. Hari yang ditutup tidak bisa dibuka lagi.`,
+      label: 'Tutup hari',
+      color: 'primary',
+      action: 'menutup hari',
+    })
+  }
+
+  async function close() {
+    if (lock.current) return
     setBlocked(undefined)
     setWaiting([])
     lock.current = true
     setBusy(true)
+    // The close names the shift the owner counted: if a sale opened another one meanwhile, pos-api refuses
+    // (409 shift_changed) instead of closing the new shift with this count and take.
     const res = await closeShift({
-      data: { countedCash: amount, ...(take.amount > 0 ? { ownerTakes: take.amount } : {}) },
+      data: { countedCash: amount, shiftId: shift.id, ...(take.amount > 0 ? { ownerTakes: take.amount } : {}) },
     }).catch(() => ({ ok: false as const, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.', errors: undefined }))
     lock.current = false
     setBusy(false)
@@ -204,6 +219,7 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
       const sales = (res as { waiting?: WaitingSale[] }).waiting ?? []
       if (sales.length > 0 || isPendingPaymentRefusal(res.error)) setBlocked(res.error)
       setWaiting(sales)
+      if ((res as { code?: string }).code === 'shift_changed') void router.invalidate()
       return
     }
     const difference = res.data.difference ?? 0
@@ -211,8 +227,8 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
     setResult({
       shiftId: res.data.id,
       openedAt: shift.openedAt,
-      revenue,
-      grossProfit: profit,
+      revenue: res.data.revenue ?? revenue,
+      grossProfit: res.data.grossProfit ?? profit,
       counted: amount,
       taken: take.amount,
       difference,
@@ -299,7 +315,7 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
                 </ActionRow>
               </form>
             ) : (
-              <form onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
+              <form onSubmit={submit} noValidate className="space-y-4">
                 <dl className="space-y-1 text-sm">
                   <Row label="Di laci" value={rupiah(amount)} strong />
                 </dl>
@@ -359,6 +375,7 @@ function CloseDayPage({ shift }: { shift: OpenShift }) {
           </>
         )}
       </Card>
+      {dialog}
     </Page>
   )
 }

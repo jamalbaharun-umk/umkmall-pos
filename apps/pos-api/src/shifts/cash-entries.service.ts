@@ -290,12 +290,14 @@ export async function recordOwnerTakeAtClose(
 ) {
   assertPersonAtTill(s.kind);
   const id = randomUUID();
-  await recordShiftCashInShift(tx, s, shiftId, {
+  const written = await recordShiftCashInShift(tx, s, shiftId, {
     direction: 'out',
     kind: 'manual_out',
     amount,
     refId: id,
   });
+  // The close holds this shift's lock while it is open, so this cannot happen; never write the entry without it.
+  if (!written) throw new Error('owner take: the shift is not open');
   await tx.insert(manualCashEntries).values({
     id,
     tenantId: s.tenantId,

@@ -238,8 +238,8 @@ export const openShift = createServerFn({ method: 'POST' })
 
 // UMK-2122: `ownerTakes`, the cash the solo owner takes home at "Tutup hari" (pos-api writes it as "Diambil pemilik").
 export const closeShift = createServerFn({ method: 'POST' })
-  .validator((d: { countedCash: number; ownerTakes?: number }) => d)
-  .handler(({ data }) => send<Shift & { ownerTakes?: number }>('/shifts/current/close', data))
+  .validator((d: { countedCash: number; ownerTakes?: number; shiftId?: string }) => d)
+  .handler(({ data }) => send<Shift & { ownerTakes?: number; revenue?: number; grossProfit?: number }>('/shifts/current/close', data))
 
 /** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
 type LineDiscountFields = { discountPercent?: number; discountAmount?: number }

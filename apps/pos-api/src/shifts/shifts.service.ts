@@ -54,6 +54,8 @@ import { shiftActorName, shiftNumbers } from './shift-read';
 
 /** The `code` of the 409 that refuses to close a shift while sales of it await payment (UMK-2044). */
 export const SALES_AWAITING_PAYMENT = 'sales_awaiting_payment';
+/** UMK-2122: the close named a shift that is no longer the actor's open one (PR 105 review). */
+export const SHIFT_CHANGED = 'shift_changed';
 
 /**
  * UMK-2122: writes the owner's take at "Tutup hari" (`recordOwnerTakeAtClose` in cash-entries.service, the one
@@ -283,12 +285,19 @@ export class ShiftsService {
    * as a "Diambil pemilik" manual cash-out of this shift, in this transaction and before the close (a closed shift
    * takes no entry), so the stored count and the expected cash both exclude it and the difference is the count's.
    * The next automatic opening (`autoOpeningCash`, the last closed shift's count) is then what stays in the drawer.
+   * The take is at most what the drawer holds: the count, and the expected cash under the lock (every manual
+   * cash-out is refused above the drawer amount, PR 105 review).
+   *
+   * `shiftId` names the shift the screen counted (required with a take, PR 105 review): a close that finds another
+   * open shift (a sale opened a new one after a lost answer) or none answers 409 `shift_changed` and writes nothing,
+   * so a repeated "Tutup hari" never closes or takes from the next day's shift.
    */
   async close(
     s: PosSession,
     countedCash: number,
     ownerTakes = 0,
     writeTake?: TakeWriter,
+    shiftId?: string,
   ) {
     if (ownerTakes > 0 && s.kind !== 'owner')
       throw new ForbiddenException(
@@ -302,6 +311,12 @@ export class ShiftsService {
       );
     return this.db.transaction(async (tx) => {
       const shift = await lockOpenShift(tx, s);
+      if (shiftId !== undefined && shift?.id !== shiftId)
+        throw new ConflictException({
+          message:
+            'Shift ini sudah ditutup. Muat ulang untuk melihat shift yang terbuka sekarang.',
+          code: SHIFT_CHANGED,
+        });
       if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
       // Owner decision (UMK-1991): a shift does not close while a sale of it awaits payment. Under the
       // shift's row lock, which a new sale also takes, so none appears after this check.
@@ -364,6 +379,7 @@ export class ShiftsService {
         if (!writeTake) throw new Error('close: a take needs its writer');
         await this.takeAtClose(tx, s, shift, ownerTakes, writeTake);
       }
+      const profit = await this.profitOf(tx, s.tenantId, shift.id);
       const t = await this.totals(tx, shift.id);
       const cash = await this.cashOf(tx, s.tenantId, shift.id);
       const stored = countedCash - ownerTakes;
@@ -390,7 +406,7 @@ export class ShiftsService {
           difference: withDifference(row).difference,
         },
       });
-      return { ...withDifference(row), ...cash, ownerTakes };
+      return { ...withDifference(row), ...cash, ...profit, ownerTakes };
     });
   }
 
@@ -408,7 +424,15 @@ export class ShiftsService {
       t.cashSales,
       await this.cashOf(tx, s.tenantId, shift.id),
     );
-    await writeTake(tx, s, shift.id, amount, Math.max(before, 0));
+    // Under the shift lock the figure cannot move. Above it, the drawer would be said to hold less than nothing.
+    if (amount > before)
+      throw codedError(
+        'OWNER_TAKES_TOO_MUCH',
+        'ownerTakes',
+        `Jumlah diambil lebih besar dari uang yang seharusnya ada di laci (${formatRupiah(Math.max(before, 0))})`,
+        { drawerCash: Math.max(before, 0) },
+      );
+    await writeTake(tx, s, shift.id, amount, before);
   }
 
   /** Cashiers see their own shifts; `reports.view` sees the store's. */

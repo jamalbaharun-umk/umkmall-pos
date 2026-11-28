@@ -24,10 +24,19 @@ import { ShiftsService } from './shifts.service';
 
 const cash = z.number().int().nonnegative().max(1_000_000_000_000);
 const OpenInput = z.object({ openingCash: cash }).strict();
-// UMK-2122: `ownerTakes`, the cash the owner takes from the counted drawer at "Tutup hari" (owner only).
+// UMK-2122: `ownerTakes`, the cash the owner takes from the counted drawer at "Tutup hari" (owner only), and
+// `shiftId`, the shift the screen counted (required with a take): a close of another shift answers 409.
 const CloseInput = z
-  .object({ countedCash: cash, ownerTakes: cash.optional() })
-  .strict();
+  .object({
+    countedCash: cash,
+    ownerTakes: cash.optional(),
+    shiftId: z.string().uuid('Shift tidak dikenal').optional(),
+  })
+  .strict()
+  .refine((i) => !i.ownerTakes || i.shiftId !== undefined, {
+    path: ['shiftId'],
+    message: 'Shift yang ditutup wajib disebut',
+  });
 const Page = z.object({
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
@@ -71,6 +80,7 @@ export class ShiftsController {
       input.countedCash,
       input.ownerTakes ?? 0,
       recordOwnerTakeAtClose,
+      input.shiftId,
     );
   }
 

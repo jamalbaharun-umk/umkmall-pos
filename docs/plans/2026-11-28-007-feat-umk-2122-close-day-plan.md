@@ -9,6 +9,12 @@ drawer for tomorrow.
 - **One close, one more field.** `POST /shifts/current/close` takes an optional `ownerTakes`: whole rupiah, 0 or
   more, never above `countedCash` (422 `OWNER_TAKES_TOO_MUCH` on `ownerTakes`). It is for the owner only: a
   cashier session that sends it gets 403. Leaving it out keeps today's close.
+- **The take is bounded by the drawer and bound to the counted shift** (PR 105 review). Under the shift lock it must
+  also be at most the expected cash (422 `OWNER_TAKES_TOO_MUCH`), so an over count never takes money the drawer
+  should not hold; the audit's `drawerCashBefore` is never clamped. A close with a take names `shiftId` (the
+  screen always sends it); a locked shift that is another one, or none, answers 409 `shift_changed` and writes
+  nothing, so a repeat or a second close never closes the next shift with this count and take. The screen
+  confirms before the close and reloads on `shift_changed`. The close answers `revenue` and `grossProfit`.
 - **The take is a "Diambil pemilik" cash-out of the closing shift.** It is written in the close's transaction,
   under the shift lock and before the close, because a closed shift takes no entry. It writes a ledger
   `manual_out`, a `manual_cash_entries` row with reason `ambil_pemilik` and key `close-day:<shiftId>`, and a
@@ -50,10 +56,14 @@ drawer for tomorrow.
   - a short count keeps its difference;
   - a close without a take, and a day without sales;
   - 422 for a take above the count, a missing count and a negative take, leaving the shift open;
+  - 422 for a take above the expected cash when the count is over; a take without `shiftId` is 422;
+  - 409 `shift_changed` for a repeat after a new shift opened, a repeat with none open, two closes at once;
+  - profit after a line discount and less a void;
   - a waiting sale still refuses and writes no take;
   - a cashier's take gets 403;
   - store B touches nothing of store A.
-  - Revert-red proven once by storing the count without the take.
+  - Revert-red proven once by storing the count without the take, and once each for the expected-cash bound and
+    the shift binding.
 - [test] pos-web `kasir/-close-day.test.ts`: store day, the earlier-day check, the take check, the difference
   wording and toast, the summary text and link.
 - [qa] 375 px and 1280 px: the till offer, the two steps, a take above the count (error dialog), the result and the
