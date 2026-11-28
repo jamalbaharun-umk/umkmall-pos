@@ -365,6 +365,13 @@ session lasts 12 hours.
 
 Selling needs an open shift.
 
+**Owner alone (no staff):** the owner of a store with no active staff member does not have to open a shift. The first
+cash action of the day (a sale, a cash kasbon instalment, an expense from the drawer, a cash void or any drawer cash
+movement) opens it, with the cash counted at the last close as its opening cash (Rp0 before the first close). Cash
+the owner takes home is recorded as **Kas keluar · Diambil pemilik** before closing, so the count is what stays in the
+drawer. The audit log marks such a shift as opened automatically. As soon as the store has one active staff member,
+everyone opens their shift by hand again.
+
 1. Open **Kasir**.
 2. Count the money in the drawer and type it in **Uang awal di laci**.
 3. Press **Buka shift**.

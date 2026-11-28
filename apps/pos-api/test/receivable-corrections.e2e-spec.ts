@@ -468,6 +468,8 @@ describe('koreksi pembayaran kasbon: a reversal plus a new payment (UMK-1971, de
 
   it('the reversal and the new payment are one transaction: a new payment refused inside it leaves no reversal behind', async () => {
     const k = await kasbonStore();
+    // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+    await createCashier(app, k);
     const p = await pay(k.auth, k, 1000, k.transferId);
     // The request passes every check and the PIN (the owner's shift is open), then waits on the receivable's
     // lock; meanwhile the shift closes, so the new CASH payment is refused after the reversal was written.

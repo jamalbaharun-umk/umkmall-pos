@@ -454,6 +454,8 @@ describe('shift cash ledger: receivable payments in expected cash (UMK-1963)', (
 
   it('a payment that reaches the shift after the close began is refused; the close does not count it', async () => {
     const s = await storeWithKasbon();
+    // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+    await createCashier(app, s);
     // Both wait for the shift's row lock, the close first.
     const [closing, paying] = await holding('shifts', s.shiftId, async () => {
       const closing = send(close(s.auth, 100_000));

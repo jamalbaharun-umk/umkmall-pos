@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { createApp, createStore } from './support/fixtures';
+import { createCashier } from './support/staff';
 
 // Every refusal on the sales, shift, supplier, purchase and stock-opname endpoints answers with the shared shape
 // `{ message, errors: { field: "<Indonesian message>" } }` and the right status (UI parity B, owner 2026-11-17).
@@ -43,6 +44,8 @@ describe('validation: sales, shifts, suppliers, purchasing, stock opname', () =>
   beforeAll(async () => {
     app = await createApp();
     s = await createStore();
+    // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+    await createCashier(app, s);
     const cat = await post('/catalog/categories', { name: 'Minuman' }).expect(
       201,
     );

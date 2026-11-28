@@ -32,7 +32,11 @@ import {
   paymentHttpError,
   refusal,
 } from '../payments-client/sale-payment.service';
-import { lockOpenShift, recordShiftCash } from '../shifts/cash-ledger';
+import {
+  isSoloOwner,
+  lockOpenShift,
+  recordShiftCash,
+} from '../shifts/cash-ledger';
 import { isUniqueViolation } from '../staff/http';
 import { hasPermission } from '../staff/require-permission';
 import { StockService, type Tx } from '../stock/stock.service';
@@ -251,7 +255,9 @@ export class VoidService {
           isNull(shifts.closedAt),
         ),
       );
-    if (!open) throw fieldError('_', NO_SHIFT);
+    // A solo owner's void opens the shift in its transaction (UMK-2120, `lockDrawerShift`).
+    if (!open && !(await isSoloOwner(this.db, s)))
+      throw fieldError('_', NO_SHIFT);
   }
 
   private async apply(

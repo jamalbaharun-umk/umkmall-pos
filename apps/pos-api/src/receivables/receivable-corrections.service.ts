@@ -29,6 +29,7 @@ import { PaymentSync } from '../payments-client/payment-sync.service';
 import { paymentMethodCode } from '../payments-client/payments.client';
 import {
   assertPersonAtTill,
+  isSoloOwner,
   recordShiftCashIfOpen,
   recordShiftCashInShift,
 } from '../shifts/cash-ledger';
@@ -345,8 +346,13 @@ export class ReceivableCorrectionsService {
     const back = await this.cashBack(db, s.tenantId, p);
     if (!locked) {
       // Without locks: refuse early what will certainly fail, so no PIN attempt is spent on it.
-      const open = await this.hasOpenShift(s);
-      if (method?.isCash && !open && hasPermission(s, 'sales.create'))
+      // A solo owner's cash replacement opens the shift in its transaction (UMK-2120).
+      if (
+        method?.isCash &&
+        hasPermission(s, 'sales.create') &&
+        !(await this.hasOpenShift(s)) &&
+        !(await isSoloOwner(this.db, s))
+      )
         throw codedError('SHIFT_REQUIRED', '_', NO_SHIFT_CASH);
       if (back.kind === 'collector')
         await this.assertHeld(db, s, back, p.amount);

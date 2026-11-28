@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { recordAudit } from '../audit/record';
 import { codedError } from '../common/validation';
 import type { Db } from '../db/db.module';
 import {
@@ -7,9 +8,11 @@ import {
   type CASH_ENTRY_KINDS,
   shiftCashEntries,
   shifts,
+  staff,
 } from '../db/schema';
 import type { Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
+import { shiftNumbers } from './shift-read';
 
 /**
  * The shift's cash ledger (UMK-1963): every movement of drawer cash that is not a sale.
@@ -28,6 +31,10 @@ import type { PosSession } from '../tenancy/session';
  *
  * Refusals carry a stable `code` next to their message: `SHIFT_REQUIRED`, `SHIFT_NOT_YOURS`,
  * `AGENT_FORBIDDEN`.
+ *
+ * Solo-owner mode (UMK-2120): the owner of a store without active staff is never refused for want of a shift.
+ * Every path that takes the actor's drawer for a cash action goes through `lockDrawerShift`, which opens the
+ * owner's shift inside the action's transaction (opening cash: `autoOpeningCash`) and audits it as automatic.
  */
 
 /**
@@ -144,18 +151,117 @@ export async function lockOpenShift(tx: Tx, s: PosSession) {
 }
 
 /**
+ * Solo-owner mode (UMK-2120): true when `s` is the store's owner (an `owner` session, or UMKMall's agent acting
+ * as the owner) and the store has no staff member that is active and not deleted. Read in the caller's
+ * transaction on every call, never cached: the first staff member ends the mode at once. A cashier session is
+ * never solo.
+ */
+export async function isSoloOwner(
+  tx: Db | Tx,
+  s: PosSession,
+): Promise<boolean> {
+  if (s.kind !== 'owner' && s.kind !== 'agent') return false;
+  const [member] = await tx
+    .select({ id: staff.id })
+    .from(staff)
+    .where(
+      and(
+        eq(staff.tenantId, s.tenantId),
+        eq(staff.active, true),
+        isNull(staff.deletedAt),
+      ),
+    )
+    .limit(1);
+  return !member;
+}
+
+/**
+ * The cash an automatically opened shift starts with: the counted cash of the store's most recently closed
+ * shift (the drawer's last count), 0 when the store never closed one. Cash the owner took at that close
+ * ("Diambil pemilik", a manual cash-out) can only be recorded while the shift is open, so it left the drawer
+ * before the count and is already out of the counted cash: it is not subtracted again. Never negative: the
+ * counted cash is checked `>= 0` by the database.
+ */
+export async function autoOpeningCash(tx: Tx, tenantId: string) {
+  const [last] = await tx
+    .select({ countedCash: shifts.countedCash })
+    .from(shifts)
+    .where(and(eq(shifts.tenantId, tenantId), isNotNull(shifts.closedAt)))
+    .orderBy(desc(shifts.closedAt), desc(shifts.id))
+    .limit(1);
+  return Math.max(0, last?.countedCash ?? 0);
+}
+
+/**
+ * Opens the actor's shift inside the caller's transaction and returns it row-locked, as `lockOpenShift` would.
+ * Written with `on conflict do nothing` on `shifts_one_open_uq` (one open shift per actor): a concurrent first
+ * action waits on the other's uncommitted row and then finds and locks that shift, so two first actions open
+ * one shift. The audit row (`shift_open`, `automatic: true`) is written only by the transaction whose insert
+ * won, and commits or rolls back with the action.
+ */
+async function autoOpenShift(tx: Tx, s: PosSession, trigger: string) {
+  const openingCash = await autoOpeningCash(tx, s.tenantId);
+  const [created] = await tx
+    .insert(shifts)
+    .values({
+      tenantId: s.tenantId,
+      actorId: s.actorId,
+      actorKind: s.kind,
+      openingCash,
+    })
+    .onConflictDoNothing({
+      target: [shifts.tenantId, shifts.actorId],
+      where: isNull(shifts.closedAt),
+    })
+    .returning({ id: shifts.id });
+  if (created) {
+    const number = (await shiftNumbers(tx, s.tenantId, [created.id])).get(
+      created.id,
+    );
+    await recordAudit(tx, s, 'shift_open', {
+      target: { type: 'shift', id: created.id, label: `Shift #${number}` },
+      details: {
+        shiftId: created.id,
+        openingCash,
+        automatic: true,
+        trigger,
+      },
+    });
+  }
+  return lockOpenShift(tx, s);
+}
+
+/**
+ * The actor's drawer for a cash action, row-locked: the open shift, or, in solo-owner mode (`isSoloOwner`), a
+ * shift opened now for this action (UMK-2120, owner decision 2026-11-28). Null when the actor has no open shift
+ * and may not have one opened: the caller answers its usual `SHIFT_REQUIRED`. `trigger` names the action for
+ * the audit row (a ledger kind, or `sale`).
+ *
+ * Called where the caller already locks the open shift, so the lock order stays: the caller's own row (a sale
+ * being voided, a receivable) → this shift → voucher → stock batches.
+ */
+export async function lockDrawerShift(tx: Tx, s: PosSession, trigger: string) {
+  const open = await lockOpenShift(tx, s);
+  if (open) return open;
+  if (!(await isSoloOwner(tx, s))) return null;
+  return autoOpenShift(tx, s, trigger);
+}
+
+/**
  * The drawer a hand-recorded movement goes into, row-locked: the actor's own open shift, or the open
  * shift `shiftId` of this store when an OWNER names one (design fitur 20: "bila dua shift buka, pengguna
  * memilih shift"). A cashier's cash only ever goes into their own shift. Null when the actor has no
- * open shift and names none; 422 `SHIFT_NOT_YOURS` for a shift the actor may not use, a closed one, or
- * one of another store (the lookup filters the session's tenant).
+ * open shift and names none (and is not a solo owner, whose shift `lockDrawerShift` opens); 422
+ * `SHIFT_NOT_YOURS` for a shift the actor may not use, a closed one, or one of another store (the lookup
+ * filters the session's tenant).
  */
 export async function lockShiftForCash(
   tx: Tx,
   s: PosSession,
   shiftId?: string,
+  trigger = 'manual',
 ) {
-  if (!shiftId) return lockOpenShift(tx, s);
+  if (!shiftId) return lockDrawerShift(tx, s, trigger);
   if (s.kind !== 'owner') {
     const own = await lockOpenShift(tx, s);
     if (own?.id !== shiftId)
@@ -207,7 +313,8 @@ async function insertEntry(
 
 /**
  * Adds one cash movement to the actor's open shift, inside the caller's transaction, and returns the
- * shift's id; returns null and writes nothing when the actor has no open shift.
+ * shift's id; returns null and writes nothing when the actor has no open shift. In solo-owner mode the shift
+ * is opened for it (`lockDrawerShift`), so the owner of a store without staff is never refused.
  *
  * Lock order: a caller that also locks its own row (a sale, a receivable, a purchase order) locks that
  * row first and calls this after; nothing locks a shift and then such a row. Stock batches and voucher
@@ -219,7 +326,7 @@ export async function recordShiftCashIfOpen(
   entry: CashEntry,
 ): Promise<string | null> {
   assertMayMoveDrawerCash(s.kind, entry.direction);
-  const shift = await lockOpenShift(tx, s);
+  const shift = await lockDrawerShift(tx, s, entry.kind);
   if (!shift) return null;
   await insertEntry(tx, s, shift.id, entry);
   return shift.id;
@@ -250,7 +357,7 @@ export async function recordShiftCashAt(
   noShiftMessage: string,
 ): Promise<string> {
   assertMayMoveDrawerCash(s.kind, entry.direction);
-  const shift = await lockShiftForCash(tx, s, shiftId);
+  const shift = await lockShiftForCash(tx, s, shiftId, entry.kind);
   if (!shift) throw codedError('SHIFT_REQUIRED', '_', noShiftMessage);
   await insertEntry(tx, s, shift.id, entry);
   return shift.id;

@@ -227,6 +227,8 @@ describe('sales and shifts (U3)', () => {
 
   it('refuses a sale without an open shift (422)', async () => {
     const { store, productId } = await storeWithProduct();
+    // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+    await createCashier(app, store);
     await sell(store.auth, {
       lines: [{ productId, qty: 1 }],
       paid: 5000,
@@ -296,6 +298,8 @@ describe('sales and shifts (U3)', () => {
 
   it('shifts: one open per actor; close reconciles counted against expected; no sale after close', async () => {
     const { store, productId } = await storeWithProduct();
+    // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+    await createCashier(app, store);
     const shift = await openShift(store.auth, 100_000).expect(201);
     await openShift(store.auth).expect(409);
     await sell(store.auth, {

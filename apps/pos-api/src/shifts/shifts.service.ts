@@ -42,6 +42,7 @@ import type { PosSession } from '../tenancy/session';
 import {
   cashTotals,
   expectedCash,
+  isSoloOwner,
   lockOpenShift,
   NO_CASH,
 } from './cash-ledger';
@@ -174,6 +175,14 @@ export class ShiftsService {
       ...cash,
       expectedCash: expectedCash(shift.openingCash, t.cashSales, cash),
     };
+  }
+
+  /**
+   * True when the actor has no open shift and their next cash action would open one (solo-owner mode,
+   * UMK-2120): what `GET /shifts/current` tells a screen or the agent instead of "open a shift first".
+   */
+  async autoOpens(s: PosSession, open: boolean) {
+    return !open && (await isSoloOwner(this.db, s));
   }
 
   /** One shift of this store as a screen reads it (after a write). */
