@@ -155,6 +155,17 @@ export const takenResult = (code: string, productName: string): ScanResult => ({
   detail: `Barcode ${code} sudah dipakai produk ${productName}.`,
 })
 
+/**
+ * Product form: what a scanned `code` means for a barcode field. `others` are the form's other barcode rows;
+ * `holderName` is the name of another product of the store that already holds the code, null when it is free.
+ */
+export function fieldScanResult(code: string, others: readonly string[], holderName: string | null): ScanResult {
+  if (holderName) return takenResult(code, holderName)
+  if (others.some((o) => normalizeCode(o) === code))
+    return { kind: 'warn', title: 'Barcode sudah ada', detail: `Barcode ${code} sudah ada di daftar barcode produk ini.` }
+  return filledResult(code)
+}
+
 export const unknownResult = (code: string): ScanResult => ({ kind: 'unknown', code })
 
 /** The sentence at the till when a typed or keyboard-scanner code is not in the store (Enter in the search field). */

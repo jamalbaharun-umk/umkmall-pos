@@ -7,6 +7,7 @@ import {
   classifyCameraError,
   createDedupe,
   exactMatch,
+  fieldScanResult,
   looksLikeTypedBarcode,
   normalizeCode,
   pickFormats,
@@ -156,5 +157,13 @@ describe('result texts', () => {
     expect(takenResult('899', 'Teh Botol 350ml')).toMatchObject({
       detail: 'Barcode 899 sudah dipakai produk Teh Botol 350ml.',
     })
+  })
+  it('product form: a free code fills the field, a taken one names the product, a repeat in the form is refused', () => {
+    expect(fieldScanResult('899', ['111'], null).kind).toBe('ok')
+    expect(fieldScanResult('899', [], 'Teh Botol 350ml')).toMatchObject({
+      kind: 'warn',
+      detail: 'Barcode 899 sudah dipakai produk Teh Botol 350ml.',
+    })
+    expect(fieldScanResult('899', ['', ' 899 '], null)).toMatchObject({ kind: 'warn', title: 'Barcode sudah ada' })
   })
 })

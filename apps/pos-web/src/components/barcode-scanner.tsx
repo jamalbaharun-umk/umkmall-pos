@@ -89,6 +89,7 @@ export function BarcodeScanSheet({
   title = 'Scan produk',
   status,
   onAddUnknown,
+  closeOnOk = false,
 }: {
   open: boolean
   onClose: () => void
@@ -99,6 +100,8 @@ export function BarcodeScanSheet({
   status?: string
   /** Offers "Produk cepat" for an unknown code; absent when the actor may not add products. */
   onAddUnknown?: (code: string) => void
+  /** A single-shot scan (a form field): the sheet closes by itself a moment after a success. */
+  closeOnOk?: boolean
 }) {
   const video = useRef<HTMLVideoElement>(null)
   const onCodeRef = useRef(onCode)
@@ -113,6 +116,7 @@ export function BarcodeScanSheet({
   const [manual, setManual] = useState(false)
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
+  const closeRef = useRef<() => void>(() => undefined)
   const beepRef = useRef(true)
   beepRef.current = beepOn
 
@@ -135,12 +139,13 @@ export function BarcodeScanSheet({
         setTimeout(() => setFlash(false), 450)
         if (beepRef.current) beep()
         notifySuccess(r.detail)
+        if (closeOnOk) setTimeout(() => closeRef.current(), 700)
       }
     } catch (e) {
       dedupe.current.forget(code)
       showError(e, { action: 'mencari barcode', retry: () => void handle(code, source) })
     }
-  }, [])
+  }, [closeOnOk])
 
   // The camera lives exactly as long as the sheet is open: every exit path ends in `stop()`.
   useEffect(() => {
@@ -219,6 +224,7 @@ export function BarcodeScanSheet({
     setTyped('')
     onClose()
   }
+  closeRef.current = close
   const again = () => {
     paused.current = false
     dedupe.current.reset()
