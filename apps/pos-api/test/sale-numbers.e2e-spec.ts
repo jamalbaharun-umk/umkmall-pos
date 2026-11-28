@@ -1014,6 +1014,8 @@ describe('hold number and receipt number (UMK-2038)', () => {
     it('a close and a new PG sale at once: the shift closes without the sale, or the sale is rung up and blocks the close; never a closed shift with a waiting sale', async () => {
       for (let i = 0; i < 6; i += 1) {
         const s = await shop();
+        // A store with staff: a sale after the close finds no shift instead of opening one (UMK-2120).
+        await createCashier(app, s);
         const [close, sale] = await Promise.all([
           post(s.auth, '/shifts/current/close', { countedCash: 100_000 }),
           sell(s),

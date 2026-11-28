@@ -257,6 +257,8 @@ describe('expense log and profit and loss (UMK-1984)', () => {
 
     it('a drawer expense needs an open shift and is dated today: 422, nothing written', async () => {
       const s = await createStore();
+      // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+      await createCashier(app, s);
       const none = await spend(s.auth, {
         amount: 10_000,
         category: 'transport',
@@ -1274,6 +1276,8 @@ describe('expense log and profit and loss (UMK-1984)', () => {
 
     it('a drawer expense that reaches the shift after the close is refused', async () => {
       const s = await createStore();
+      // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+      await createCashier(app, s);
       const shift = (await open(s.auth, 100_000)).body as { id: string };
       const [closed, late] = await holding('shifts', shift.id, async () => {
         const first = send(

@@ -9,6 +9,7 @@ import {
   recordShiftCashAt,
   type CashEntry,
   DRAWER_CASH_OUT_ACTOR_KINDS,
+  isSoloOwner,
   recordShiftCash,
   recordShiftCashIfOpen,
   recordShiftCashInShift,
@@ -161,4 +162,24 @@ describe('shift cash ledger: who may take cash out of a drawer', () => {
       }),
     ).rejects.toThrow(/the database was reached/);
   });
+});
+
+describe('solo-owner mode (UMK-2120): who may have a shift opened for them', () => {
+  it.each(['cashier', 'service', '', 'OWNER'])(
+    'never a "%s" session, before the database is asked',
+    async (kind) => {
+      await expect(isSoloOwner(untouchable, session(kind))).resolves.toBe(
+        false,
+      );
+    },
+  );
+
+  it.each(['owner', 'agent'])(
+    'the owner (and the agent acting as the owner, "%s") asks the store’s staff',
+    async (kind) => {
+      await expect(isSoloOwner(untouchable, session(kind))).rejects.toThrow(
+        /the database was reached/,
+      );
+    },
+  );
 });

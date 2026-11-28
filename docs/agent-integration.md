@@ -212,14 +212,17 @@ Needs `pos.write`. In: `memberId?`, `status?` (`open` | `settled` | `cancelled`)
 
 ### `open_shift`
 In: `openingCash` + write controls. Opens the owner's shift. **Only when the owner asks**: the agent never opens a
-shift on its own to record a sale (owner ruling 24 Nov 2026). Refused when a shift is already open.
+shift on its own to record a sale (owner ruling 24 Nov 2026). Refused when a shift is already open. In a store
+without staff it is not needed: the owner's first cash action opens the shift (UMK-2120).
 
 ### `record_sale`
 In: `lines` (`productId`, `qty`, `unit?`), `memberId?`, `voucherCode?`, `paymentMethodId?` (default Tunai),
 `downPayment?` (kasbon only, default 0), `note?` + write controls.
 
 - The sale goes into the owner's open shift; with none open the tool answers "Belum ada shift yang dibuka" and records
-  nothing.
+  nothing. Exception (UMK-2120, owner decision 28 Nov 2026): in a store without active staff the sale opens the owner's
+  shift itself, in the sale's transaction, with the cash counted at the last close (`GET /shifts/current` answers
+  `autoOpen: true`). A cash kasbon instalment does the same.
 - A line `price`, `discountPercent` or `discountAmount`, or an order `discount`, that the agent sends anyway is
   **ignored and said so** (UMK-2069): the preview and the answer carry `ignored` (`linePrices` with `sentPrice`,
   `sentDiscountPercent`, `sentDiscountAmount`; `discount`; a sentence), whole numbers only; the sale uses the catalog

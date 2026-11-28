@@ -177,7 +177,12 @@ export class CashEntriesService {
         // The shift's row lock (the lock a sale and the close take), then the key again: a duplicate in
         // flight waits here and then finds the first entry, instead of being judged against a drawer
         // the first one already changed.
-        await lockShiftForCash(tx, s, input.shiftId);
+        await lockShiftForCash(
+          tx,
+          s,
+          input.shiftId,
+          input.direction === 'in' ? 'manual_in' : 'manual_out',
+        );
         const prior = await this.byKey(tx, s.tenantId, key);
         if (prior) return replay(prior);
         const newId = randomUUID();

@@ -994,7 +994,7 @@ export function buildAgentServer(
     'record_sale',
     {
       description:
-        "Record a sale into the owner's open shift. The agent never sends a price or a discount: the server prices every line (units, wholesale tiers), applies the voucher and tax, and the tool pays the exact amount due (cash is rounded up to Rp100). For kasbon give memberId and downPayment (default 0). Online payment methods are refused. With no open shift the tool says so and records nothing. Preview without confirm shows the server's total.",
+        "Record a sale into the owner's open shift. The agent never sends a price or a discount: the server prices every line (units, wholesale tiers), applies the voucher and tax, and the tool pays the exact amount due (cash is rounded up to Rp100). For kasbon give memberId and downPayment (default 0). Online payment methods are refused. With no open shift the tool says so and records nothing, except in a store without staff, where the sale opens the owner's shift itself. Preview without confirm shows the server's total.",
       inputSchema: {
         lines: z
           .array(
@@ -1114,7 +1114,9 @@ export function buildAgentServer(
       > => {
         const cur = await get('/shifts/current');
         if (!cur.ok) return { error: cur.message, status: cur.status };
-        if (!(cur.data as { shift: unknown }).shift)
+        // UMK-2120: in a store without staff the sale itself opens the owner's shift (`autoOpen`).
+        const current = cur.data as { shift: unknown; autoOpen?: boolean };
+        if (!current.shift && !current.autoOpen)
           return { error: NO_SHIFT, status: 422 };
         // Quoted with a method so the quote carries tax, rounding and the method's kind: the one given, else the
         // store's cash method (the default of a sale).

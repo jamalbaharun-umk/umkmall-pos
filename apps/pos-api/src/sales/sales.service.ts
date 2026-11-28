@@ -38,7 +38,6 @@ import {
   sales,
   saleVoids,
   salesSettings,
-  shifts,
   staff,
   tenants,
   isStocked,
@@ -61,6 +60,7 @@ import { SalePayments } from '../payments-client/sale-payment.service';
 import { codedError } from '../common/validation';
 import { VoidPins } from '../void/void-pin';
 import { cashMethodId, cashRounding } from './cash';
+import { lockDrawerShift } from '../shifts/cash-ledger';
 import {
   DISCOUNT_APPROVAL_REQUIRED,
   DISCOUNT_APPROVAL_TTL_SECONDS,
@@ -507,18 +507,9 @@ export class SalesService {
     input: SaleInput,
     hash: string,
   ): Promise<{ id: string; downPaymentId: string | null }> {
-    // The shift row lock serializes this actor's sales with closing the shift.
-    const [shift] = await tx
-      .select({ id: shifts.id })
-      .from(shifts)
-      .where(
-        and(
-          eq(shifts.tenantId, s.tenantId),
-          eq(shifts.actorId, s.actorId),
-          isNull(shifts.closedAt),
-        ),
-      )
-      .for('update');
+    // The shift row lock serializes this actor's sales with closing the shift. A solo owner's first sale
+    // opens the shift here, in this transaction (UMK-2120).
+    const shift = await lockDrawerShift(tx, s, 'sale');
     if (!shift) throw fail('Buka shift dulu sebelum berjualan');
 
     const { byId, priced } = await this.price(tx, s.tenantId, input.lines);

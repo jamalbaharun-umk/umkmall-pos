@@ -525,6 +525,8 @@ describe('purchase payments and returns (UMK-1970)', () => {
   describe('paying from the drawer', () => {
     it('needs an open shift (SHIFT_REQUIRED) and enough cash in it (DRAWER_INSUFFICIENT); outside the drawer needs neither', async () => {
       const s = await createStore();
+      // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+      await createCashier(app, s);
       const { o } = await designOrder(s);
       const noShift = await pay(s.auth, o.id, {
         amount: 100_000,
@@ -1115,6 +1117,8 @@ describe('purchase payments and returns (UMK-1970)', () => {
 
     it('money back into the drawer or the store cash: partial, never above what is due back, idempotent', async () => {
       const s = await createStore();
+      // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+      await createCashier(app, s);
       const { o } = await overpaid(s);
       expect(await figures(s, o.id)).toMatchObject({
         remaining: 0,

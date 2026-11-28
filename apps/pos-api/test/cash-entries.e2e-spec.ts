@@ -243,6 +243,8 @@ describe('manual drawer cash in/out (UMK-1924 U3)', () => {
 
   it('needs an open shift (422, nothing written, the key is not claimed) and sales.create (403)', async () => {
     const s = await createStore();
+    // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+    await createCashier(app, s);
     const key = randomUUID();
     const refused = await entry(s.auth, cashIn(10_000), key).expect(422);
     expect(refused.body).toEqual({

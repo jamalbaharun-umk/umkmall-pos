@@ -593,7 +593,7 @@ export class ReceivablesService {
         const method = await this.method(tx, s.tenantId, input.paymentMethodId);
         // Cash taken while the actor has an open shift goes into that drawer: a ledger entry raises the
         // shift's expected cash (UMK-1963). An actor who can open a shift (`sales.create`; every owner)
-        // must open one first. Only an actor who cannot (e.g. `receivables.manage` alone) collects
+        // must open one first; the owner of a store without staff has it opened here (UMK-2120). Only an actor who cannot (e.g. `receivables.manage` alone) collects
         // outside a shift (owner ruling 2026-11-24): the payment is marked and the cash goes into the
         // store's cash ledger, so no shift ever counts it. Decided once, here, under the shift's row
         // lock: a cash payment is in a shift's ledger or in the store's, never both, never neither.

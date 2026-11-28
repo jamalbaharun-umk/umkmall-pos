@@ -378,6 +378,8 @@ describe('void a full sale (UMK-1962)', () => {
 
     it('no open shift: 422 with a clear message, nothing changes and no PIN attempt is counted', async () => {
       const s = await shop();
+      // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+      await createCashier(app, s);
       await open(s.auth);
       const sale = await sell(s.auth, {
         lines: [{ productId: s.productId, qty: 3 }],
@@ -624,6 +626,8 @@ describe('void a full sale (UMK-1962)', () => {
 
     it('partly paid in a closed shift: needs an open shift, and pays out of that one', async () => {
       const s = await shop();
+      // A store with staff, so the owner has no shift opened for them (UMK-2120 solo-owner mode).
+      await createCashier(app, s);
       const first = await open(s.auth);
       const sale = await kasbonSale(s, 0);
       await pay(s.auth, sale.body.receivableId, { amount: 2500 }).expect(201);
