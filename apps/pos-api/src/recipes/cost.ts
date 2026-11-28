@@ -20,8 +20,21 @@ export const ZERO: Frac = { n: 0n, d: 1n };
 export const add = (a: Frac, b: Frac) => norm(a.n * b.d + b.n * a.d, a.d * b.d);
 const mul = (a: Frac, b: Frac) => norm(a.n * b.n, a.d * b.d);
 const ratio = (n: number, d: number) => norm(BigInt(n), BigInt(d));
-/** Whole rupiah, rounded up. */
-export const ceilFrac = (f: Frac) => Number((f.n + f.d - 1n) / f.d);
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/** A cost figure beyond what a JS number holds exactly: refused, never rounded silently. */
+export class CostTooLargeError extends Error {
+  constructor() {
+    super('recipe cost beyond the safe integer range');
+  }
+}
+
+/** Whole rupiah, rounded up. Throws `CostTooLargeError` above `Number.MAX_SAFE_INTEGER`. */
+export const ceilFrac = (f: Frac) => {
+  const whole = (f.n + f.d - 1n) / f.d;
+  if (whole > MAX_SAFE) throw new CostTooLargeError();
+  return Number(whole);
+};
 
 /** Rupiah per base unit as `amount / per` (manual cost Rp17.000 per 1.000 ml), or none known. */
 export type UnitCost = {

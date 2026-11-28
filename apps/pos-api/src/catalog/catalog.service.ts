@@ -13,6 +13,7 @@ import {
   ilike,
   inArray,
   isNull,
+  ne,
   or,
   sql,
 } from 'drizzle-orm';
@@ -30,6 +31,7 @@ import {
   productUnits,
   stockBatches,
   isStocked,
+  STOCKED_TYPES,
 } from '../db/schema';
 import {
   pricingIssues,
@@ -190,6 +192,10 @@ export class CatalogService {
     if (q.categoryId) filters.push(eq(products.categoryId, q.categoryId));
     if (q.sku) filters.push(eq(products.sku, q.sku));
     if (q.type) filters.push(eq(products.type, q.type));
+    // UMK-2125: the till lists what can be sold (never an ingredient); the stock pickers list the stocked types.
+    if (q.use === 'sale') filters.push(ne(products.type, 'ingredient'));
+    if (q.use === 'stock')
+      filters.push(inArray(products.type, [...STOCKED_TYPES]));
     if (q.q) {
       const like = `%${escapeLike(q.q)}%`;
       filters.push(
@@ -254,9 +260,10 @@ export class CatalogService {
   /** On-hand from the batches (the only truth, see StockService.onHand) against the product's threshold. */
   private stockStateIs(tenantId: string, state: 'low' | 'out') {
     const onHand = sql`coalesce((select sum(b.qty_remaining) from ${stockBatches} b where b.product_id = ${products.id} and b.tenant_id = ${tenantId}), 0)`;
+    const stocked = inArray(products.type, [...STOCKED_TYPES]);
     return state === 'out'
-      ? sql`(${products.type} in ('product', 'ingredient') and ${onHand} = 0)`
-      : sql`(${products.type} in ('product', 'ingredient') and ${onHand} > 0 and ${onHand} <= ${products.lowStockThreshold})`;
+      ? sql`(${stocked} and ${onHand} = 0)`
+      : sql`(${stocked} and ${onHand} > 0 and ${onHand} <= ${products.lowStockThreshold})`;
   }
 
   async getProduct(tenantId: string, id: string) {

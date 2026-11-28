@@ -1,5 +1,7 @@
 import {
+  ceilFrac,
   checkRecipeGraph,
+  CostTooLargeError,
   type CostRecipe,
   recipeCoster,
   type UnitCost,
@@ -165,5 +167,26 @@ describe('recipe graph check (UMK-2125)', () => {
     // c gains a sub-recipe d: c alone is 2 levels, but a → b → c → d is 4.
     expect(g({ a: ['b'], b: ['c'], c: ['d'], d: [] })).toBe('depth');
     expect(g({ c: ['d'], d: [], a: ['b'], b: ['c'] })).toBe('depth');
+  });
+});
+
+describe('ceilFrac stays exact', () => {
+  it('rounds up within the safe range and refuses a figure beyond it', () => {
+    expect(ceilFrac({ n: 7n, d: 2n })).toBe(4);
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    expect(ceilFrac({ n: max, d: 1n })).toBe(Number.MAX_SAFE_INTEGER);
+    expect(() => ceilFrac({ n: max + 1n, d: 1n })).toThrow(CostTooLargeError);
+  });
+
+  it('a 3-level recipe at the input caps overflows: refused, not rounded', () => {
+    const graph = new Map([
+      recipe('c', 1, [ing('x', 10_000_000)]),
+      recipe('b', 1, [sub('c', 10_000_000)]),
+      recipe('a', 1, [sub('b', 10_000_000)]),
+    ]);
+    const costs = new Map([['x', manual(1_000_000_000_000)]]);
+    expect(() => recipeCoster(graph, costs).summary('a')).toThrow(
+      CostTooLargeError,
+    );
   });
 });

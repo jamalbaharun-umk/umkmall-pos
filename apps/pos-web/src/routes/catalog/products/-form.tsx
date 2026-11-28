@@ -9,6 +9,7 @@ import { GENERIC_ERROR, placeErrors } from '@/lib/refusal'
 import { IMAGE_ERROR, plainNumber, productErrors, splitImages, type Errors } from '@/lib/validate'
 import {
   deleteImage,
+  isStockedType,
   recordOpeningStock,
   saveProduct,
   uploadImage,
@@ -35,7 +36,12 @@ import {
 } from './-helpers'
 import { ActionRow } from '@/components/action-row'
 
-export const TYPE_LABEL: Record<ProductType, string> = { product: 'Barang', service: 'Jasa', non_stock: 'Tanpa stok' }
+export const TYPE_LABEL: Record<ProductType, string> = {
+  product: 'Barang',
+  service: 'Jasa',
+  non_stock: 'Tanpa stok',
+  ingredient: 'Bahan baku',
+}
 const TYPES = (Object.keys(TYPE_LABEL) as ProductType[]).map((value) => ({ value, label: TYPE_LABEL[value] }))
 
 const FIELDS = ['name', 'categoryId', 'sku', 'unit', 'costPrice', 'sellingPrice', 'type', 'barcodes', 'lowStockThreshold', 'file', 'units', 'priceTiers'] as const
@@ -139,7 +145,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
       if (!id) return fail({ error: GENERIC_ERROR, status: 500 })
       const problems: string[] = []
       const qty = Number(plainNumber(form.stock) || '0')
-      if (!product && form.type === 'product' && qty > 0) {
+      if (!product && isStockedType(form.type) && qty > 0) {
         const r = await recordOpeningStock({ data: { productId: id, qty } })
         if (r.error) problems.push(`Stok awal belum tercatat: ${r.error}`)
       }
@@ -302,8 +308,8 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
             inputMode="numeric"
             value={form.stock}
             onChange={(e) => set('stock', e.target.value)}
-            disabled={form.type !== 'product'}
-            placeholder={form.type === 'product' ? '0' : 'Tidak memakai stok'}
+            disabled={!isStockedType(form.type)}
+            placeholder={isStockedType(form.type) ? '0' : 'Tidak memakai stok'}
             error={errors.stock}
           />
         )}
@@ -312,7 +318,7 @@ export function ProductForm({ categories, product }: { categories: Category[]; p
           inputMode="numeric"
           value={form.lowStockThreshold}
           onChange={(e) => set('lowStockThreshold', e.target.value)}
-          disabled={form.type !== 'product'}
+          disabled={!isStockedType(form.type)}
           placeholder="5"
           error={errors.lowStockThreshold}
         />
