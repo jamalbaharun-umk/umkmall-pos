@@ -1,10 +1,11 @@
-import { Alert, Badge, Button, Select, TextField, Upload } from '@umkmall/ui/primitives'
+import { Alert, Badge, Button, Select, Switch, TextField, Upload } from '@umkmall/ui/primitives'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
 import { Link, createFileRoute, useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { SCROLL_TABS } from '@/lib/scroll-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { ActionRow } from '@/components/action-row'
+import { useBeepSetting } from '@/components/barcode-scanner'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
 import { useCan, useIsOwner, useSoloStatus } from '@/components/shell'
@@ -69,6 +70,7 @@ function SettingsPage() {
           </TabsContent>
           <TabsContent value="aplikasi">
             <AppForm taxBps={taxBps} timezone={timezone} onSaved={onSaved} />
+            <ScanBeepCard />
             {owner && <DailyTargetForm />}
           </TabsContent>
           <TabsContent value="tentang">
@@ -410,6 +412,22 @@ function QrisForm({ profile }: { profile: Profile }) {
       )}
       {confirm.dialog}
     </form>
+  )
+}
+
+/** UMK-1986 (design 47): the scan beep, a per-device preference (localStorage), not a store setting; it saves at once. */
+function ScanBeepCard() {
+  const [on, setOn] = useBeepSetting()
+  return (
+    <Panel className="mt-4 flex items-center justify-between gap-4 p-6">
+      <div className="min-w-0">
+        <p className="font-semibold text-default-primary">Bunyi scan</p>
+        <p className="text-sm text-default-secondary">
+          Bunyi singkat saat kamera berhasil membaca barcode. Pilihan ini disimpan di perangkat ini.
+        </p>
+      </div>
+      <Switch label="Bunyi scan" checked={on} onCheckedChange={setOn} />
+    </Panel>
   )
 }
 
