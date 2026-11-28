@@ -57,7 +57,6 @@ export function RecipeEditor({
     .filter((r) => r.id !== recipe?.id)
     .map((r) => ({ value: r.id, label: r.product.name, hint: `${r.yieldQty} ${r.yieldUnit}` }))
   const taken = new Set(choices.recipes.map((r) => r.product.id))
-  const productOptions = choices.products.filter((p) => !taken.has(p.id))
 
   const set = (patch: Partial<RecipeDraft>, ...keys: string[]) => {
     setD((x) => ({ ...x, ...patch }))
@@ -106,7 +105,8 @@ export function RecipeEditor({
             label="Produk"
             kind="sale"
             value={d.productId}
-            initial={productOptions}
+            initial={choices.products}
+            taken={taken}
             error={errors.productId}
             onPick={(p) => set({ productId: p.id }, 'productId')}
           />

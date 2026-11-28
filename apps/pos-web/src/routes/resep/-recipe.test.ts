@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyBlocker,
+  applyCostConfirm,
+  pickerOptions,
   buildManualCost,
   buildPayload,
   costShares,
@@ -161,5 +163,32 @@ describe('manual ingredient cost', () => {
     expect(buildManualCost('17.000', '1000')).toEqual({ cost: 17000, perQty: 1000 })
     expect(validateManualCost('17000', '0')).toEqual({ perQty: 'Isi kemasan harus lebih dari 0' })
     expect(validateManualCost('', '1')).toEqual({ cost: 'Harga wajib diisi' })
+  })
+})
+
+describe('pickerOptions', () => {
+  const rows = [
+    { id: 'a', name: 'Nasi Goreng', sku: 'NG' },
+    { id: 'b', name: 'Mie Goreng', sku: 'MG' },
+  ]
+  it('disables a product that already has a recipe and keeps the rest', () => {
+    expect(pickerOptions(rows, new Set(['b']))).toEqual([
+      { value: 'a', label: 'Nasi Goreng', hint: 'NG' },
+      { value: 'b', label: 'Mie Goreng', hint: 'Sudah punya resep', disabled: true },
+    ])
+  })
+  it('offers everything when no recipe exists', () => {
+    expect(pickerOptions(rows, new Set()).some((o) => o.disabled)).toBe(false)
+  })
+})
+
+describe('applyCostConfirm', () => {
+  it('names the new and the old cost price', () => {
+    const t = applyCostConfirm(12500, 10000)
+    expect(t).toContain('menjadi')
+    expect(t).toContain('sebelumnya')
+    expect(t.endsWith('Lanjutkan?')).toBe(true)
+    expect(t).toMatch(/12\.500/)
+    expect(t).toMatch(/10\.000/)
   })
 })

@@ -219,3 +219,20 @@ export function validateManualCost(cost: string, perQty: string): FieldErrors {
     perQty: check.wholeNumber(plain(perQty), { min: 1, max: 10_000_000, label: 'Isi kemasan' }),
   })
 }
+
+export type PickerOption = { value: string; label: string; hint: string; disabled?: boolean }
+
+/**
+ * Options of the product picker. A product that already has a recipe stays visible but disabled, because pos-api
+ * answers 409 for a second recipe per product. `taken` holds the product ids of the existing recipes.
+ */
+export function pickerOptions(rows: { id: string; name: string; sku: string }[], taken: ReadonlySet<string>): PickerOption[] {
+  return rows.map((p) =>
+    taken.has(p.id) ? { value: p.id, label: p.name, hint: 'Sudah punya resep', disabled: true } : { value: p.id, label: p.name, hint: p.sku },
+  )
+}
+
+/** The text of the confirm before "Pakai harga modal": the new cost price per portion and the old one. */
+export function applyCostConfirm(newCost: number, oldCost: number): string {
+  return `Harga modal produk menjadi ${rupiah(newCost)} (sebelumnya ${rupiah(oldCost)}). Lanjutkan?`
+}

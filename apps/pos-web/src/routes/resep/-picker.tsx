@@ -1,6 +1,7 @@
 import { Select } from '@umkmall/ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { latestOnly, PICKER_DEBOUNCE_MS } from '@/lib/product-search'
+import { pickerOptions } from './-recipe'
 import { type PickerKind, type PickerProduct, searchPickerProducts } from './-api'
 
 /**
@@ -14,6 +15,7 @@ export function ProductSearchSelect({
   value,
   initial,
   known = [],
+  taken,
   error,
   onPick,
 }: {
@@ -22,6 +24,8 @@ export function ProductSearchSelect({
   value: string
   initial: PickerProduct[]
   known?: PickerProduct[]
+  /** Product ids that cannot be picked (they already have a recipe). */
+  taken?: ReadonlySet<string>
   error?: string
   onPick: (p: PickerProduct) => void
 }) {
@@ -63,8 +67,8 @@ export function ProductSearchSelect({
   const options = useMemo(() => {
     const picked = seen.get(value)
     const rows = picked && !results.some((p) => p.id === picked.id) ? [picked, ...results] : results
-    return rows.map((p) => ({ value: p.id, label: p.name, hint: p.sku }))
-  }, [results, seen, value])
+    return pickerOptions(rows, taken ?? new Set())
+  }, [results, seen, value, taken])
 
   return (
     <Select

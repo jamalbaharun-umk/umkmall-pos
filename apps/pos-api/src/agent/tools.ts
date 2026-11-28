@@ -174,7 +174,7 @@ const NewRecipeProduct = z
     sellingPrice: z
       .number({ invalid_type_error: 'sellingPrice harus berupa angka' })
       .int('sellingPrice harus bilangan bulat rupiah')
-      .min(0, 'sellingPrice tidak boleh negatif'),
+      .min(1, 'sellingPrice harus lebih dari 0'),
     unit: z.string().trim().min(1).max(40).optional(),
     type: z.enum(['non_stock', 'product']).optional(),
   })
@@ -244,7 +244,22 @@ type Product = {
   name: string;
   costPrice?: number;
   sellingPrice: number;
+  categoryId?: string;
+  unit?: string;
+  type?: string;
 };
+const KEY_REUSED =
+  'Kunci idempotensi ini sudah dipakai untuk permintaan lain. Pakai kunci baru.';
+/** The product a first try of a key made is the one this call asks for: every field the call sent matches. */
+const sameProduct = (
+  found: Product,
+  want: Partial<
+    Pick<Product, 'name' | 'sellingPrice' | 'categoryId' | 'unit' | 'type'>
+  >,
+) =>
+  (['name', 'sellingPrice', 'categoryId', 'unit', 'type'] as const).every(
+    (f) => want[f] === undefined || found[f] === want[f],
+  );
 type RunResult =
   | { data: object; resultRefs?: string[] }
   | { error: string; status: number; replay?: unknown };
@@ -1747,6 +1762,9 @@ export function buildAgentServer(
                   )
                 : undefined;
             if (!hit) return { error: made.message, status: made.status };
+            // The key was freed by a refused first try: a retry may fix the lines, never the product.
+            if (!sameProduct(hit, body))
+              return { error: KEY_REUSED, status: 422 };
             productId = hit.id;
           }
           const r = await callRoute(ctx, 'POST', '/recipes', {

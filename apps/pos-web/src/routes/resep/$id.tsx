@@ -22,6 +22,7 @@ import { applyRecipeCost, deleteRecipe, loadRecipe, loadRecipeChoices, removeIng
 import { RecipeEditor } from './-editor'
 import {
   applyBlocker,
+  applyCostConfirm,
   buildManualCost,
   costShares,
   FLAG_TEXT,
@@ -57,7 +58,7 @@ function RecipePage() {
   const margin = marginPercent(r.product.sellingPrice, r.costPerPortion)
   const shares = costShares(r.lines)
 
-  async function applyCost() {
+  async function runApplyCost() {
     if (applying) return
     setApplying(true)
     // A 422 (a missing cost, a deleted ingredient, cost above the selling price) opens the shared error dialog with pos-api's text.
@@ -65,6 +66,10 @@ function RecipePage() {
     setApplying(false)
     if (res.ok) await router.invalidate()
   }
+
+  // Overwrites the product's cost price, so Anda confirm the new and the old figure first.
+  const applyCost = () =>
+    ask(applyCostConfirm(r.costPerPortion, r.product.costPrice), runApplyCost, { label: 'Lanjutkan', color: 'primary', action: 'memakai harga modal' })
 
   const remove = () =>
     ask(
