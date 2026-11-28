@@ -172,6 +172,11 @@ const STEPS: Record<string, GuideStep[]> = {
     'Bandingkan uang masuk dari penjualan dengan pengeluaran toko.',
     'Pilih harian, bulanan, atau tahunan untuk melihat polanya.',
   ),
+  '/resep': screen(
+    'Resep',
+    'Hitung modal satu porsi dari bahan, bungkus, dan tenaga kerja.',
+    'Bandingkan modal tiap resep, lalu pakai sebagai harga modal produk.',
+  ),
   '/voucher': screen(
     'Voucher',
     'Buat kode voucher diskon untuk pelanggan.',

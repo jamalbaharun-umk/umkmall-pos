@@ -1,0 +1,165 @@
+import { describe, expect, it } from 'vitest'
+import {
+  applyBlocker,
+  buildManualCost,
+  buildPayload,
+  costShares,
+  draftOf,
+  emptyDraft,
+  flagsOf,
+  marginPercent,
+  newLine,
+  percentText,
+  type Recipe,
+  type RecipeLine,
+  unitCostText,
+  validateDraft,
+  validateManualCost,
+} from './-recipe'
+
+const line = (over: Partial<RecipeLine> = {}): RecipeLine => ({
+  id: 'l1',
+  kind: 'ingredient',
+  ingredientId: 'i1',
+  subRecipeId: null,
+  name: 'Beras',
+  quantity: 1500,
+  unit: 'g',
+  wastePercent: 5,
+  unitCost: { amount: 14, per: 1, source: 'purchase' },
+  cost: 21000,
+  missingCost: false,
+  deleted: false,
+  ...over,
+})
+const recipe = (over: Partial<Recipe> = {}): Recipe => ({
+  id: 'r1',
+  product: { id: 'p1', name: 'Nasi goreng', type: 'product', unit: 'porsi', costPrice: 0, sellingPrice: 18000 },
+  yieldQty: 10,
+  yieldUnit: 'porsi',
+  laborCost: 50000,
+  note: null,
+  lines: [line()],
+  batchCost: 72320,
+  costPerPortion: 7232,
+  fullCostPerPortion: 12232,
+  fixedCostsIncluded: false,
+  missingCostIngredientIds: [],
+  deletedIngredientIds: [],
+  createdAt: '',
+  updatedAt: '',
+  ...over,
+})
+const filled = () => ({
+  ...emptyDraft(),
+  productId: 'p1',
+  lines: [{ ...newLine(), refId: 'i1', quantity: '1.500', wastePercent: '5' }],
+})
+
+describe('marginPercent', () => {
+  it('matches the design example (Rp18.000 over Rp7.232 is 59,8%)', () => {
+    expect(marginPercent(18000, 7232)).toBe(59.8)
+    expect(percentText(59.8)).toBe('59,8%')
+  })
+  it('is null without a selling price and negative when cost is above it', () => {
+    expect(marginPercent(0, 100)).toBeNull()
+    expect(marginPercent(1000, 1500)).toBe(-50)
+    expect(percentText(60)).toBe('60%')
+  })
+})
+
+describe('costShares', () => {
+  it('orders by cost, drops zero-cost lines and names a deleted ingredient', () => {
+    const shares = costShares([
+      line({ name: 'Kecap', cost: 5000 }),
+      line({ name: 'Telur', cost: 22000 }),
+      line({ name: 'Garam', cost: 0, missingCost: true }),
+      line({ name: null, cost: 100 }),
+    ])
+    expect(shares).toEqual([
+      { label: 'Telur', value: 22000 },
+      { label: 'Kecap', value: 5000 },
+      { label: 'Bahan dihapus', value: 100 },
+    ])
+  })
+})
+
+describe('buildPayload', () => {
+  it('sends whole numbers, ingredient or sub-recipe, a null note and no blank unit', () => {
+    const d = filled()
+    d.yieldUnit = '  '
+    d.lines.push({ ...newLine('sub_recipe'), refId: 'r2', quantity: '2', wastePercent: '0' })
+    expect(buildPayload(d)).toEqual({
+      yieldQty: 1,
+      laborCost: 0,
+      note: null,
+      lines: [
+        { ingredientId: 'i1', quantity: 1500, wastePercent: 5 },
+        { subRecipeId: 'r2', quantity: 2, wastePercent: 0 },
+      ],
+    })
+  })
+  it('round-trips a server recipe through the draft', () => {
+    const p = buildPayload(draftOf(recipe({ note: ' enak ' })))
+    expect(p).toMatchObject({ yieldQty: 10, yieldUnit: 'porsi', laborCost: 50000, note: 'enak' })
+    expect(p.lines).toEqual([{ ingredientId: 'i1', quantity: 1500, wastePercent: 5 }])
+  })
+})
+
+describe('validateDraft', () => {
+  it('accepts a complete draft, grouped thousands included', () => {
+    expect(validateDraft(filled(), { creating: true })).toEqual({})
+  })
+  it('flags what pos-api would refuse, on the same keys', () => {
+    const d = filled()
+    d.productId = ''
+    d.yieldQty = '0'
+    d.laborCost = '1,5'
+    d.lines = [
+      { ...newLine(), refId: '', quantity: '0', wastePercent: '101' },
+      { ...newLine(), refId: 'i1', quantity: '2', wastePercent: '0' },
+      { ...newLine(), refId: 'i1', quantity: '2', wastePercent: '0' },
+    ]
+    const e = validateDraft(d, { creating: true })
+    expect(e.productId).toBe('Pilih produk')
+    expect(e.yieldQty).toBe('Hasil harus lebih dari 0')
+    expect(e.laborCost).toBe('Upah harus bilangan bulat')
+    expect(e['lines.0.ingredientId']).toBe('Pilih bahan')
+    expect(e['lines.0.quantity']).toBe('Takaran harus lebih dari 0')
+    expect(e['lines.0.wastePercent']).toBe('Susut maksimal 100')
+    expect(e['lines.2.ingredientId']).toBe('Sudah ada di resep ini')
+  })
+  it('needs no product when editing and refuses an empty recipe', () => {
+    const d = { ...filled(), productId: '', lines: [] }
+    expect(validateDraft(d, { creating: false })).toEqual({ lines: 'Isi minimal satu bahan' })
+  })
+})
+
+describe('flags and texts', () => {
+  it('lists deleted before missing', () => {
+    expect(flagsOf({ deleted: true, missingCost: true })).toEqual(['deleted', 'missing'])
+    expect(flagsOf({ deletedIngredient: true })).toEqual(['deleted'])
+    expect(flagsOf({})).toEqual([])
+  })
+  it('writes the unit cost the way the design does', () => {
+    expect(unitCostText(line())).toBe('Rp14 per g')
+    expect(unitCostText(line({ unit: 'ml', unitCost: { amount: 17000, per: 1000, source: 'manual' } }))).toBe(
+      'Rp17.000 per 1.000 ml (harga manual)',
+    )
+    expect(unitCostText(line({ unitCost: null }))).toBe('Belum ada harga')
+    expect(unitCostText(line({ kind: 'sub_recipe' }))).toBe('Dari resep')
+  })
+  it('names what blocks "Pakai harga modal"', () => {
+    expect(applyBlocker(recipe())).toBeNull()
+    expect(applyBlocker(recipe({ deletedIngredientIds: ['x'], missingCostIngredientIds: ['y'] }))).toMatch(/dihapus/)
+    expect(applyBlocker(recipe({ missingCostIngredientIds: ['y'] }))).toMatch(/belum punya harga/)
+  })
+})
+
+describe('manual ingredient cost', () => {
+  it('builds whole numbers and checks the pack size', () => {
+    expect(buildManualCost('17.000', '1000')).toEqual({ cost: 17000, perQty: 1000 })
+    expect(validateManualCost('17000', '0')).toEqual({ perQty: 'Isi kemasan harus lebih dari 0' })
+    expect(validateManualCost('', '1')).toEqual({ cost: 'Harga wajib diisi' })
+  })
+})
