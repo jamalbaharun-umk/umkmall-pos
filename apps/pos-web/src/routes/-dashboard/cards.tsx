@@ -16,8 +16,10 @@ import type { ReactNode } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { expiringFooter, expiryText, formatDay } from '@/lib/expiry'
 import { loadProfitLoss } from '../laporan/-api'
+import { alertDetail, alertsFooter, alertTitle } from '../resep/-recipe'
 import {
   loadAging,
+  loadCostAlerts,
   loadExpiring,
   loadHourly,
   loadLowStock,
@@ -427,6 +429,52 @@ export function ExpensesCard({ ctx }: { ctx: WidgetContext }) {
           {expensesFooter(d.current.expenses)}
           {d.topExpenses.length > CARD_ROWS ? ` Lima kategori terbesar dari ${d.topExpenses.length}.` : ''}
         </p>
+      )}
+    </WidgetCard>
+  )
+}
+
+/**
+ * UMK-2126, design 43 screen 5: recipes whose cost per portion rose 5% or more since the cost price was last set. A bar chart
+ * compares the stored cost with today's, each row opens the recipe. Hidden when nothing rose (and for an actor without
+ * `catalog.manage`, whom pos-api answers 403). Nothing here changes a price.
+ */
+export function CostRiseCard({ ctx }: { ctx: WidgetContext }) {
+  const [state, reload] = useWidget(ctx, 'memuat biaya resep yang naik', () => loadCostAlerts())
+  if (state.status === 'hidden') return null
+  const d = state.status === 'ready' ? state.data : null
+  if (d !== null && d.rows.length === 0) return null
+  return (
+    <WidgetCard>
+      <BarChart
+        title="Biaya resep naik"
+        state={stateOf(state, false)}
+        onRetry={reload}
+        errorText={FAILED}
+        emptyText="Belum ada resep yang biayanya naik."
+        orientation="horizontal"
+        categories={(d?.rows ?? []).map((r) => r.product.name)}
+        series={[
+          { label: 'Harga modal tersimpan', values: (d?.rows ?? []).map((r) => r.previousCost) },
+          { label: 'Biaya sekarang', values: (d?.rows ?? []).map((r) => r.costPerPortion) },
+        ]}
+        unit="rupiah"
+        categoryLabel="Resep"
+      />
+      {d && (
+        <>
+          <ul className="flex flex-col divide-y divide-default-secondary">
+            {d.rows.map((r) => (
+              <li key={r.recipeId}>
+                <Link to="/resep/$id" params={{ id: r.recipeId }} className="flex min-h-11 flex-col justify-center py-2 hover:underline">
+                  <span className="font-medium text-default-primary">{alertTitle(r)}</span>
+                  <span className="text-sm text-default-secondary">{alertDetail(r)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="text-sm text-default-secondary">{alertsFooter(d.total, d.rows.length)}</p>
+        </>
       )}
     </WidgetCard>
   )

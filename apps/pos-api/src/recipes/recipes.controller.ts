@@ -13,6 +13,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { z } from 'zod';
+import { validate as parse } from '../common/validation';
 import { parseBody, parseId } from '../staff/http';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { AgentRoute, CurrentSession } from '../tenancy/decorators';
@@ -23,6 +24,38 @@ import {
   RecipesService,
   RecipeUpdate,
 } from './recipes.service';
+import {
+  DEFAULT_TARGET_MARGIN,
+  MAX_TARGET_MARGIN,
+  MIN_TARGET_MARGIN,
+} from './suggest';
+
+const asText = (v: unknown) =>
+  v === undefined ? undefined : typeof v === 'string' ? v : '\u0000';
+/** A whole-number query value with a default; anything else (text, 1.5, a repeated key) is a 422. */
+const wholeQuery = (
+  label: string,
+  min: number,
+  max: number,
+  fallback: number,
+) =>
+  z.preprocess(
+    (v) => (asText(v) === undefined ? fallback : Number(asText(v))),
+    z
+      .number({ invalid_type_error: `${label} harus berupa angka` })
+      .int(`${label} harus bilangan bulat`)
+      .min(min, `${label} paling sedikit ${min}`)
+      .max(max, `${label} paling banyak ${max}`),
+  );
+const GetQuery = z.object({
+  targetMargin: wholeQuery(
+    'Target margin',
+    MIN_TARGET_MARGIN,
+    MAX_TARGET_MARGIN,
+    DEFAULT_TARGET_MARGIN,
+  ),
+});
+const AlertsQuery = z.object({ limit: wholeQuery('Jumlah baris', 1, 10, 5) });
 
 const BreakdownQuery = z
   .object({ productIds: z.array(z.string().uuid()).min(1).max(100) })
@@ -39,6 +72,13 @@ export class RecipesController {
   @RequirePermission('catalog.manage')
   async list(@CurrentSession() s: PosSession) {
     return { data: await this.recipes.list(s.tenantId) };
+  }
+
+  /** UMK-2126 dashboard card "Biaya naik": recipes whose cost per portion rose 5% or more since the cost price was set. */
+  @Get('cost-alerts')
+  @RequirePermission('catalog.manage')
+  costAlerts(@CurrentSession() s: PosSession, @Query() query: unknown) {
+    return this.recipes.alerts(s.tenantId, parse(AlertsQuery, query).limit);
   }
 
   /** Recipes of the given products, for UMKMall's HPP data: `reports.view` (a read-only agent) or `catalog.manage`. */
@@ -62,8 +102,14 @@ export class RecipesController {
   @AgentRoute()
   @Get(':id')
   @RequirePermission('catalog.manage')
-  get(@CurrentSession() s: PosSession, @Param('id') id: string) {
-    return this.recipes.get(s.tenantId, parseId(id));
+  get(
+    @CurrentSession() s: PosSession,
+    @Param('id') id: string,
+    @Query() query: unknown,
+  ) {
+    const recipeId = parseId(id);
+    const { targetMargin } = parse(GetQuery, query);
+    return this.recipes.getWithSuggestion(s.tenantId, recipeId, targetMargin);
   }
 
   @AgentRoute()
