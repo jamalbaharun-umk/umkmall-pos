@@ -44,5 +44,7 @@ ALTER TABLE "pos"."production_runs" ADD CONSTRAINT "production_runs_batch_id_sto
 CREATE INDEX "production_run_lines_run_idx" ON "pos"."production_run_lines" USING btree ("tenant_id","run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "production_runs_tenant_key_uq" ON "pos"."production_runs" USING btree ("tenant_id","idempotency_key");--> statement-breakpoint
 CREATE INDEX "production_runs_tenant_created_idx" ON "pos"."production_runs" USING btree ("tenant_id","created_at");--> statement-breakpoint
-ALTER TABLE "pos"."stock_batches" ADD CONSTRAINT "stock_batches_source_ck" CHECK ("pos"."stock_batches"."source" in ('opening', 'purchase', 'adjustment', 'production'));--> statement-breakpoint
-ALTER TABLE "pos"."stock_movements" ADD CONSTRAINT "stock_movements_reason_ck" CHECK ("pos"."stock_movements"."reason" in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return', 'purchase_return_reversal', 'production', 'production_use'));
+ALTER TABLE "pos"."stock_batches" ADD CONSTRAINT "stock_batches_source_ck" CHECK ("pos"."stock_batches"."source" in ('opening', 'purchase', 'adjustment', 'production')) NOT VALID;--> statement-breakpoint
+ALTER TABLE "pos"."stock_batches" VALIDATE CONSTRAINT "stock_batches_source_ck";--> statement-breakpoint
+ALTER TABLE "pos"."stock_movements" ADD CONSTRAINT "stock_movements_reason_ck" CHECK ("pos"."stock_movements"."reason" in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return', 'purchase_return_reversal', 'production', 'production_use')) NOT VALID;--> statement-breakpoint
+ALTER TABLE "pos"."stock_movements" VALIDATE CONSTRAINT "stock_movements_reason_ck";
