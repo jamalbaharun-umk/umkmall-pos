@@ -20,6 +20,8 @@ export type Plan = {
   plannedYield: number
   ingredients: PlanIngredient[]
   deletedIngredientIds: string[]
+  /** pos-api's own refusal of this recipe (for example a recipe used as a sub-recipe), with its Indonesian message. */
+  refusal?: { code: string; message: string } | null
   canProduce: boolean
 }
 
@@ -166,6 +168,7 @@ export function runRefusal(status: number, body: unknown): RunRefusal {
 /** The sentence under the plan table when the run cannot be made, or null when it can (or there is no plan). */
 export function planBlocker(plan: Plan | null): string | null {
   if (!plan || plan.canProduce) return null
+  if (plan.refusal) return plan.refusal.message
   if (plan.deletedIngredientIds.length) return 'Ada bahan resep yang sudah dihapus dari katalog. Ganti bahan itu di resep dulu.'
   const short = plan.ingredients.filter((i) => !i.enough)
   if (short.length) return `Stok ${short.map((i) => i.name).slice(0, 3).join(', ')}${short.length > 3 ? ' dan lainnya' : ''} kurang. Beli atau tambah stok, atau kurangi jumlah batch.`

@@ -194,6 +194,8 @@ describe('texts', () => {
     expect(planBlocker(plan())).toBe('Stok Telur kurang. Beli atau tambah stok, atau kurangi jumlah batch.')
     expect(planBlocker(plan({ deletedIngredientIds: ['a'] }))).toContain('sudah dihapus')
     expect(planBlocker(plan({ ingredients: [] }))).toContain('tidak memakai stok')
+    // the server's own refusal wins over every guess made from the figures
+    expect(planBlocker(plan({ refusal: { code: 'RECIPE_USED_AS_SUB_RECIPE', message: 'Catat produksi resep induknya.' } }))).toBe('Catat produksi resep induknya.')
   })
 
   it('words the yield against the plan', () => {
