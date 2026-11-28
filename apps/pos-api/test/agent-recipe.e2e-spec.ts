@@ -367,6 +367,93 @@ describe('agent recipes (UMK-2127)', () => {
     expect(await count()).toBe(1);
   });
 
+  const productCount = async (store: Store, q: string) =>
+    (
+      await http()
+        .get('/catalog/products')
+        .query({ q })
+        .set('Authorization', store.auth)
+        .expect(200)
+    ).body.total as number;
+
+  it('requires a selling price of at least Rp1 for a new product, and writes nothing otherwise', async () => {
+    const bahan = await ingredient(a, 'Bahan harga nol', 10);
+    const client = await agent(a);
+    const input = {
+      newProduct: {
+        name: 'Gratisan Nol',
+        categoryId: await category(a),
+        sellingPrice: 0,
+      },
+      yieldQty: 1,
+      lines: [{ ingredientId: bahan, quantity: 1 }],
+      idempotencyKey: key(),
+    };
+    const before = await recipeCount();
+    for (const confirm of [false, true]) {
+      const r = await call(client, 'create_recipe', { ...input, confirm });
+      expect(r.error).toMatch(/sellingPrice/);
+    }
+    expect(await productCount(a, 'Gratisan Nol')).toBe(0);
+    expect(await recipeCount()).toBe(before);
+    // Rp1 is the lowest price that passes.
+    const ok = await call(client, 'create_recipe', {
+      ...input,
+      newProduct: { ...input.newProduct, sellingPrice: 1 },
+      confirm: true,
+    });
+    expect(ok.error).toBeUndefined();
+  });
+
+  it('refuses a retry of a freed key that changes the new product, and writes no second product', async () => {
+    const bahan = await ingredient(a, 'Bahan kunci', 1_000_000);
+    const client = await agent(a);
+    const cat = await category(a);
+    const k = key();
+    const send = (name: string, sellingPrice: number, quantity: number) =>
+      call(client, 'create_recipe', {
+        newProduct: { name, categoryId: cat, sellingPrice },
+        yieldQty: 1,
+        lines: [{ ingredientId: bahan, quantity }],
+        idempotencyKey: k,
+        confirm: true,
+      });
+    const before = await recipeCount();
+    // First try: the product is made, the route refuses the recipe (cost cap), the key is freed.
+    const bad = await send('Kunci Pertama', 7_000, 10_000_000);
+    expect(bad.error).toMatch(/productId/);
+    expect(await productCount(a, 'Kunci Pertama')).toBe(1);
+    // Another product body under the same key: refused, not silently the first product.
+    const other = await send('Kunci Kedua', 9_000, 1);
+    expect(other.error).toMatch(/kunci idempotensi/i);
+    expect(await productCount(a, 'Kunci Kedua')).toBe(0);
+    expect(await recipeCount()).toBe(before);
+    // The same product with corrected lines still works, once.
+    const fixed = await send('Kunci Pertama', 7_000, 1);
+    expect(fixed.error).toBeUndefined();
+    expect(await recipeCount()).toBe(before + 1);
+    expect(await productCount(a, 'Kunci Pertama')).toBe(1);
+  });
+
+  it('refuses a recipe above the Rp1.000.000.000.000 cap through the agent', async () => {
+    const mahal = await ingredient(a, 'Bahan mahal', 1_000_000);
+    const client = await agent(a);
+    const before = await recipeCount();
+    const r = await call(client, 'create_recipe', {
+      newProduct: {
+        name: 'Resep Terlalu Mahal',
+        categoryId: await category(a),
+        sellingPrice: 1_000,
+      },
+      yieldQty: 1,
+      lines: [{ ingredientId: mahal, quantity: 10_000_000 }],
+      idempotencyKey: key(),
+      confirm: true,
+    });
+    expect(r.error).toMatch(/terlalu besar/i);
+    expect(await recipeCount()).toBe(before);
+  });
+
   it('only drafts for an existing product: nothing written, cost and price untouched', async () => {
     const tepung = await ingredient(a, 'Tepung draf', 10);
     const existing = await product(a, 'Roti lama', {
