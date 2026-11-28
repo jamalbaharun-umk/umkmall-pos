@@ -86,6 +86,7 @@ const ACTIONS: Record<string, string> = {
   device_pair: 'Pasang perangkat',
   device_revoke: 'Cabut perangkat',
   session_revoke: 'Akhiri sesi staf',
+  production_run: 'Produksi dicatat',
 }
 export const actionLabel = (event: string) => ACTIONS[event] ?? 'Aksi lain'
 
@@ -189,6 +190,12 @@ export function detailText(row: Pick<LogRow, 'event' | 'details'>, permissionLab
       break
     case 'purchase_return_undo':
       parts.push(num(d.total) === null ? null : rupiah(num(d.total)!), num(d.units) === null ? null : `${num(d.units)} unit kembali ke stok`)
+      break
+    // UMK-2132: a production run: the yield against the plan, and the cost of one portion.
+    case 'production_run':
+      if (num(d.actualYield) !== null) parts.push(`Hasil ${num(d.actualYield)!.toLocaleString('id-ID')}`)
+      if (num(d.plannedYield) !== null) parts.push(`rencana ${num(d.plannedYield)!.toLocaleString('id-ID')}`)
+      if (num(d.costPerPortion) !== null) parts.push(`${rupiah(num(d.costPerPortion)!)} per porsi`)
       break
     default:
   }
