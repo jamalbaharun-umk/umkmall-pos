@@ -49,3 +49,4 @@ export * from './ProfileHeader';
 export * from './ChatComposer';
 export * from './ChatMessage';
 export * from './Charts';
+export * from './CoachMark';

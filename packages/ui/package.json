@@ -22,7 +22,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.pos.json",
-    "test": "vitest run src/primitives/Charts src/no-raw-colour.test.ts src/no-px-font-size.test.ts"
+    "test": "vitest run src/primitives/Charts src/primitives/CoachMark src/no-raw-colour.test.ts src/no-px-font-size.test.ts"
   },
   "peerDependencies": {
     "@react-native-community/datetimepicker": ">=9.0.0",

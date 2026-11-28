@@ -46,7 +46,9 @@ export function DashboardWidgets() {
   const overview = useOverview(ctx, period)
   return (
     <div className="flex flex-col gap-4">
-      <SegmentedControl aria-label="Periode" className={SCROLL_ROW} options={PERIODS} value={period} onChange={setPeriod} />
+      <div data-guide="dashboard-period">
+        <SegmentedControl aria-label="Periode" className={SCROLL_ROW} options={PERIODS} value={period} onChange={setPeriod} />
+      </div>
       <Headline overview={overview} period={period} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <TrendCard overview={overview} period={period} />
