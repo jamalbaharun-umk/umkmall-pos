@@ -6,7 +6,7 @@ Linear: UMK-2125 (epic UMK-1924). Builds on [2026-11-28-006](2026-11-28-006-feat
 
 Two reviewer asks on the merged `/resep` screens. Web only, no pos-api change.
 
-1. The product picker on `/resep/baru` must not let Anda pick a product that already has a recipe (pos-api answers 409).
+1. The product picker on `/resep/baru` must not let the owner picks a product that already has a recipe (pos-api answers 409).
    Today only the first page was filtered; search results were not. Fix: every option whose product id is in the
    recipes list is shown disabled with the hint "Sudah punya resep".
 2. "Pakai harga modal" asks first: "Harga modal produk menjadi Rp X (sebelumnya Rp Y). Lanjutkan?" using the shared
