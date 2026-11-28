@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { GUIDES, GUIDE_STEPS, SHARED_TARGETS, guideFor, guideKeyOf } from './guides'
+import { GUIDES, GUIDE_STEPS, HELPER_GUIDE, SHARED_TARGETS, guideFor, guideForSession, guideKeyOf } from './guides'
 import { NAV } from './nav'
 
 const SRC = __dirname
@@ -59,5 +59,23 @@ describe('guides (UMK-2134, design 46)', () => {
     expect(guideFor('/catalog/products/')?.key).toBe('catalog.products')
     expect(guideFor('/catalog/products/baru')).toBeUndefined()
     expect(guideFor('/')?.key).toBe('dashboard')
+  })
+
+  it('gives a helper only the restricted till guide, on the till alone (UMK-2124)', () => {
+    expect(guideForSession('/kasir/', true)?.key).toBe('kasir.pembantu')
+    expect(guideForSession('/kasir', true)?.key).toBe('kasir.pembantu')
+    expect(guideForSession('/kasir/riwayat', true)).toBeUndefined()
+    expect(guideForSession('/', true)).toBeUndefined()
+    expect(guideForSession('/kasir', false)?.key).toBe('kasir')
+    expect(GUIDES.map((g) => g.key)).not.toContain(HELPER_GUIDE.key)
+    expect(HELPER_GUIDE.steps.length).toBeGreaterThanOrEqual(3)
+    expect(HELPER_GUIDE.steps.length).toBeLessThanOrEqual(5)
+    for (const s of HELPER_GUIDE.steps) {
+      expect(source).toContain(`data-guide="${s.target}"`)
+      expect(s.title.length).toBeLessThanOrEqual(40)
+      expect(s.text.length).toBeLessThanOrEqual(120)
+      expect(s.text).toMatch(/^[A-Z"].*\.$/)
+      expect(s.text.slice(0, -1)).not.toMatch(/\. [A-Z]/)
+    }
   })
 })

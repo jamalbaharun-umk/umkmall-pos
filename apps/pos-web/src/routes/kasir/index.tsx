@@ -8,7 +8,6 @@ import {
   Dialog,
   Icon,
   SegmentedControl,
-  SelectionCard,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -18,7 +17,7 @@ import {
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
-import { useCan, useSolo } from '@/components/shell'
+import { useCan, useIsHelper, useIsOwner, useSolo } from '@/components/shell'
 import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import {
   createSale,
@@ -47,7 +46,6 @@ import {
   stockLines,
   subtotalOf,
   unitLabel,
-  unitOptions,
   wholesaleHints,
   type CartEntry,
   type Quote,
@@ -105,7 +103,7 @@ import {
 } from './-pending'
 import { usePending, type PendingHandle } from './-pending-store'
 import { useLost } from './-use-lost'
-import { cashRounding, numpadEdit, parseRupiah, qtyError, quickAmounts } from './-money'
+import { cashRounding, numpadEdit, parseRupiah, quickAmounts } from './-money'
 import { DiscountDialog, type DiscountTarget } from './-discount-dialog'
 import { QuickProductDialog } from './-quick-product-dialog'
 import {
@@ -118,6 +116,9 @@ import {
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
 import { CloseYesterday } from './-close-yesterday'
+import { QtyField, UnitPicker } from './-line-fields'
+import { HelperTill } from './-helper-till'
+import { CloseHandoverDialog, HandoverButton } from './-handover'
 import { OpeningCard } from './-opening-card'
 import { BarcodeScanSheet, canShowScan, primeBeep, useScanSupport } from '@/components/barcode-scanner'
 import {
@@ -136,8 +137,10 @@ import { DailyTargetCard } from '../ringkasan/-panels'
 // success modal (change, Print).
 export const Route = createFileRoute('/kasir/')({
   // `?menunggu=daftar` opens the waiting list, `?menunggu=<sale id>` that sale's waiting screen (the shift close links here).
-  validateSearch: (s: Record<string, unknown>): { menunggu?: string } => ({
+  // `?pembantu=akhiri`: back from the WhatsApp sign-in that ends a handover on a lost device (UMK-2124).
+  validateSearch: (s: Record<string, unknown>): { menunggu?: string; pembantu?: 'akhiri' } => ({
     menunggu: typeof s.menunggu === 'string' && /^(daftar|[0-9a-f-]{36})$/i.test(s.menunggu) ? s.menunggu : undefined,
+    pembantu: s.pembantu === 'akhiri' ? 'akhiri' : undefined,
   }),
   loader: () => loadCashier(),
   component: CashierPage,
@@ -147,11 +150,20 @@ export const Route = createFileRoute('/kasir/')({
 
 function CashierPage() {
   const { shift, pinRequired, products, taxBps, methods, qris, chargeable, onlineUnavailable, banks } = Route.useLoaderData()
-  const { menunggu } = Route.useSearch()
-  return shift ? (
-    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} pinRequired={pinRequired} shift={shift} open={menunggu} />
-  ) : (
-    <OpenShift />
+  const { menunggu, pembantu } = Route.useSearch()
+  const helper = useIsHelper()
+  const owner = useIsOwner()
+  // UMK-2124: a helper session gets the sales-only till, whatever the shift (pos-api refuses a sale without one).
+  if (helper) return <HelperTill products={products} taxBps={taxBps} methods={methods} qris={qris} />
+  return (
+    <>
+      {shift ? (
+        <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} pinRequired={pinRequired} shift={shift} open={menunggu} />
+      ) : (
+        <OpenShift />
+      )}
+      <CloseHandoverDialog open={owner && pembantu === 'akhiri'} />
+    </>
   )
 }
 
@@ -243,6 +255,7 @@ function Register({
 }) {
   const router = useRouter()
   const solo = useSolo()
+  const owner = useIsOwner()
   const [q, setQ] = useState('')
   const [category, setCategory] = useState(ALL)
   const [cart, setCart] = useState<CartLine[]>([])
@@ -656,6 +669,8 @@ function Register({
             <Button width="auto" asChild type="text" size="compact">
               <Link to="/kasir/kas-laci">Kas laci</Link>
             </Button>
+            {/* UMK-2124: the owner hands the till to a helper behind the owner PIN. */}
+            {owner && <HandoverButton />}
             <Button width="auto" asChild type="text" size="compact" color="danger">
               <Link to="/kasir/tutup">{solo ? 'Tutup hari' : 'Tutup shift'}</Link>
             </Button>
@@ -1031,100 +1046,6 @@ function Register({
         />
       )}
     </main>
-  )
-}
-
-/**
- * The cart quantity: free typing (it may be empty while editing), applied only when it is a whole number 1–100.000;
- * anything else is shown as an error and the cart keeps the last good quantity until blur restores it.
- */
-function QtyField({ name, qty, onChange }: { name: string; qty: number; onChange: (n: number) => void }) {
-  const [text, setText] = useState(String(qty))
-  useEffect(() => setText(String(qty)), [qty])
-  const error = qtyError(text)
-  return (
-    <TextField
-      aria-label={`Jumlah ${name}`}
-      size="xsmall"
-      inputMode="numeric"
-      className="w-16"
-      value={text}
-      error={text === String(qty) ? undefined : error}
-      onChange={(e) => {
-        setText(e.target.value)
-        if (!qtyError(e.target.value)) onChange(Number(e.target.value.trim()))
-      }}
-      onBlur={() => setText(String(qty))}
-    />
-  )
-}
-
-/** UMK-1985: which unit to add (the base unit is chosen first) and how many of it. Prices are the list prices. */
-function UnitPicker({
-  product,
-  onClose,
-  onAdd,
-}: {
-  product?: Product
-  onClose: () => void
-  onAdd: (product: Product, unit: string | null, qty: number) => void
-}) {
-  const [choice, setChoice] = useState('')
-  const [qtyText, setQtyText] = useState('1')
-  useEffect(() => {
-    setChoice('')
-    setQtyText('1')
-  }, [product?.id])
-  const options = product ? unitOptions(product) : []
-  const qtyBad = qtyError(qtyText)
-  const picked = options.find((o) => (o.unit ?? '') === choice) ?? options[0]
-  return (
-    <Dialog
-      open={!!product}
-      onOpenChange={(o) => !o && onClose()}
-      centered
-      size="small"
-      title={product?.name ?? 'Pilih satuan'}
-    >
-      {product && picked && (
-        <form
-          noValidate
-          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6"
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (!qtyBad) onAdd(product, picked.unit, Number(qtyText.trim()))
-          }}
-        >
-          <SelectionCard
-            label="Pilih satuan"
-            options={options.map((o) => ({
-              value: o.unit ?? '',
-              label: o.unitQty > 1 ? `${o.label} (isi ${o.unitQty})` : o.label,
-              badge: rupiah(o.price),
-              description:
-                o.saving > 0 ? `Hemat ${rupiah(o.saving)} dibanding ${o.unitQty} ${product.unit}` : undefined,
-            }))}
-            value={[picked.unit ?? '']}
-            onValueChange={(v) => setChoice(v[0] ?? '')}
-          />
-          <TextField
-            label="Jumlah"
-            inputMode="numeric"
-            value={qtyText}
-            onChange={(e) => setQtyText(e.target.value)}
-            error={qtyBad}
-          />
-          <ActionRow>
-            <Button width="auto" type="outline" color="light" onClick={onClose}>
-              Batal
-            </Button>
-            <Button width="auto" htmlType="submit">
-              Tambah ke pesanan
-            </Button>
-          </ActionRow>
-        </form>
-      )}
-    </Dialog>
   )
 }
 

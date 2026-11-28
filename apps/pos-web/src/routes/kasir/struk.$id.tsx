@@ -7,6 +7,7 @@ import { loadReceipt } from './-api'
 import { soldQtyText, soldPriceNote } from './-helpers'
 import { hasRounding } from './-money'
 import { ActionRow } from '@/components/action-row'
+import { useIsHelper } from '@/components/shell'
 import { ReceiptMark } from './-receipt-mark'
 import { receiptDiscounts, soldDiscountLabel } from './-discount'
 
@@ -22,6 +23,8 @@ function ReceiptPage() {
   const r = Route.useLoaderData()
   const { id } = Route.useParams()
   const [sharing, setSharing] = useState(false)
+  // UMK-2124: a helper prints the receipt; sending it on WhatsApp stays with the owner and staff.
+  const helper = useIsHelper()
   return (
     <main className="min-h-svh bg-default-secondary px-4 py-6 print:bg-white print:p-0">
       <div className="flex flex-col items-center gap-4 print:block">
@@ -76,7 +79,7 @@ function ReceiptPage() {
           <Button width="auto" asChild size="large" type="outline" color="light">
             <Link to="/kasir">Transaksi baru</Link>
           </Button>
-          {r.status === 'completed' && (
+          {r.status === 'completed' && !helper && (
             <Button width="auto" size="large" type="outline" color="light" onClick={() => setSharing(true)}>
               Kirim struk WhatsApp
             </Button>

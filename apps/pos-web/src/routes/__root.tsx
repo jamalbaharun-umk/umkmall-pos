@@ -1,4 +1,4 @@
-import { HeadContent, Outlet, Scripts, createRootRoute, useMatches } from '@tanstack/react-router'
+import { HeadContent, Navigate, Outlet, Scripts, createRootRoute, useMatches } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { Toaster } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
@@ -8,7 +8,7 @@ import { GuideProvider } from '@/components/guide'
 import { Shell, type Me } from '@/components/shell'
 import { API_DOWN, UMKMALL_DOWN, api } from '@/lib/api.server'
 import { getSessionToken, lastMe, rememberMe } from '@/lib/session.server'
-import { BARE_ROUTES } from '@/nav'
+import { BARE_ROUTES, HELPER_ROUTES } from '@/nav'
 import appCss from '@/styles/app.css?url'
 
 // Who is signed in, for the shell. Never redirects (the root also renders the sign-in page). When UMKMall or pos-api
@@ -57,12 +57,17 @@ export const Route = createRootRoute({
 
 function Root() {
   const me = Route.useLoaderData()
-  const bare = useMatches({ select: (m) => BARE_ROUTES.includes(m.at(-1)?.routeId ?? '') })
+  const routeId = useMatches({ select: (m) => m.at(-1)?.routeId ?? '' })
+  const bare = BARE_ROUTES.includes(routeId)
+  // UMK-2124: a helper session has the sales-only till and its receipts, nothing else (pos-api answers 403 anyway).
+  const helper = me?.actor.kind === 'helper'
   return (
     <RootDocument>
-      {/* UMK-2134: guides for every signed-in screen, the bare till included. */}
-      <GuideProvider enabled={Boolean(me)}>
-        {me && !bare ? (
+      {/* UMK-2134: guides for every signed-in screen, the bare till included; a helper's one guide is on the device. */}
+      <GuideProvider enabled={Boolean(me)} helper={helper}>
+        {helper && !HELPER_ROUTES.includes(routeId) ? (
+          <Navigate to="/kasir" replace />
+        ) : me && !bare ? (
           <Shell me={me}>
             <Outlet />
           </Shell>

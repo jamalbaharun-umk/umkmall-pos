@@ -42,6 +42,12 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
     clearSessionToken()
     throw redirect({ to: '/kasir/masuk', search: { berakhir: 1 } })
   }
+  // UMK-2124: a helper session never refreshes. Its 401 means the handover ended or ran out (12 hours); the owner's
+  // parked native session stays refused by pos-api, so the owner signs in again by WhatsApp.
+  if (sessionKind(token) === 'helper') {
+    clearSessionToken()
+    throw redirect({ to: '/' })
+  }
   const fresh = await refreshOwner()
   if (typeof fresh === 'string') return pageStatus(await send(path, init, fresh), init)
   if (fresh === 0 || fresh >= 500) {

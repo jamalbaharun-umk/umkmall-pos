@@ -77,6 +77,10 @@ const ACTIONS: Record<string, string> = {
   shift_open: 'Buka shift',
   shift_close: 'Tutup shift',
   shift_opening_correct: 'Modal awal dibetulkan',
+  // UMK-2124 "Serahkan ke pembantu".
+  helper_start: 'Serahkan ke pembantu',
+  helper_end: 'Kembali ke pemilik',
+  helper_end_refused: 'PIN pemilik salah di mode pembantu',
   staff_create: 'Tambah staf',
   staff_update: 'Ubah staf',
   staff_delete: 'Hapus staf',
@@ -91,9 +95,21 @@ const ACTIONS: Record<string, string> = {
 }
 export const actionLabel = (event: string) => ACTIONS[event] ?? 'Aksi lain'
 
+const HELPER_END: Record<string, string> = {
+  owner: 'Dibuka dengan PIN pemilik',
+  expired: 'Berakhir setelah 12 jam',
+  signin: 'Diakhiri pemilik lewat WhatsApp',
+}
+const HELPER_REFUSED: Record<string, string> = {
+  wrong_pin: 'PIN salah',
+  locked: 'PIN terkunci',
+  missing: 'PIN belum dibuat',
+}
+
 export function actorLabel(actor: LogRow['actor']): string {
   if (actor.kind === 'owner') return 'Pemilik'
   if (actor.kind === 'agent') return 'Agen UMKMall'
+  if (actor.kind === 'helper') return 'Pembantu'
   return actor.name ?? 'Staf yang sudah dihapus'
 }
 
@@ -173,6 +189,13 @@ export function detailText(row: Pick<LogRow, 'event' | 'details'>, permissionLab
     case 'shift_opening_correct':
       if (num(d.openingCashBefore) !== null && num(d.openingCash) !== null)
         parts.push(`Modal awal ${rupiah(num(d.openingCashBefore)!)} jadi ${rupiah(num(d.openingCash)!)}`)
+      break
+    // UMK-2124: how a handover ended, and why a return was refused (never the PIN).
+    case 'helper_end':
+      parts.push(HELPER_END[text(d.reason) ?? ''] ?? null)
+      break
+    case 'helper_end_refused':
+      parts.push(HELPER_REFUSED[text(d.reason) ?? ''] ?? null)
       break
     case 'staff_update': {
       const changed = list(d.changed).map((f) => FIELDS[f] ?? f)

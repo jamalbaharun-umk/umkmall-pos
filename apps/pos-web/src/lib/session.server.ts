@@ -102,6 +102,11 @@ export async function startSession(path: string, body: unknown, headers: Record<
   return answer.sessionToken
 }
 
+/** UMK-2124: the owner's native session id on this device, which "Serahkan ke pembantu" asks pos-api to park. */
+export function nativeSid(): string | undefined {
+  return parseNativeSession(getCookie(NATIVE))?.sid
+}
+
 /**
  * The owner refresh (UMK-2065): UMKMall's native session → a new 15-minute owner session, never a sign-in (UMK-2054).
  * 401 without a call when there is no native session (a dev sign-in, or signed out).

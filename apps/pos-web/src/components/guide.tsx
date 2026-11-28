@@ -4,8 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { notifySuccess, showError } from '@/lib/feedback'
 import type { ErrorDescription } from '@/lib/describe-error'
 import { getGuideProgress, markGuide, resetGuides, type GuideStatus } from '@/lib/guides-api'
-import { GUIDES, NO_AUTO_START, guideFor, type Guide } from '@/guides'
-import { blocksGuide, LARGE_TEXT_KEY, readLargeText } from './guide-rules'
+import { GUIDES, HELPER_GUIDE, NO_AUTO_START, guideForSession, type Guide } from '@/guides'
+import { blocksGuide, LARGE_TEXT_KEY, readDeviceProgress, readLargeText, writeDeviceProgress } from './guide-rules'
 
 // UMK-2134 coach marks (design 46). One provider for the whole signed-in app (bare routes such as the till too): it
 // loads the person's progress once, starts a screen's guide on the first visit, and keeps it hidden while a dialog,
@@ -15,6 +15,8 @@ type Active = { guide: Guide; step: number }
 type GuideState = {
   /** Signed in: guides exist only for a signed-in person. */
   enabled: boolean
+  /** UMK-2124: a helper session (the sales-only till): its one guide, kept on this device. */
+  helper: boolean
   /** null while loading or after a failed load (no guide starts on its own then). */
   progress: Map<string, GuideStatus> | null
   start: (key: string) => void
@@ -26,6 +28,15 @@ type GuideState = {
 const GuideContext = createContext<GuideState | null>(null)
 export const useGuides = () => useContext(GuideContext)
 
+/** localStorage, or nothing where the browser refuses it (private mode, blocked site data). */
+function storageOrUndefined(): Storage | undefined {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
+
 const describeLoadFailure = (): ErrorDescription => ({
   what: 'Sambungan ke server terputus, jadi kami belum tahu panduan mana yang sudah Anda lihat.',
   todo: 'Cek sinyal. Layar tetap bisa dipakai; panduan tampil lagi setelah tersambung.',
@@ -33,7 +44,7 @@ const describeLoadFailure = (): ErrorDescription => ({
   primary: 'retry',
 })
 
-export function GuideProvider({ children, enabled }: { children: ReactNode; enabled: boolean }) {
+export function GuideProvider({ children, enabled, helper = false }: { children: ReactNode; enabled: boolean; helper?: boolean }) {
   const { pathname } = useLocation()
   const [progress, setProgress] = useState<Map<string, GuideStatus> | null>(null)
   const [active, setActive] = useState<Active | null>(null)
@@ -56,6 +67,8 @@ export function GuideProvider({ children, enabled }: { children: ReactNode; enab
 
   const load = useCallback(async () => {
     if (loading.current) return
+    // UMK-2124: a helper session reaches no guide progress in pos-api; its marks are kept on this device.
+    if (helper) return setProgress(readDeviceProgress(storageOrUndefined()))
     loading.current = true
     const r = await getGuideProgress().catch(() => ({ ok: false as const }))
     loading.current = false
@@ -66,7 +79,7 @@ export function GuideProvider({ children, enabled }: { children: ReactNode; enab
         { action: 'memuat panduan', retry: () => void load() },
         describeLoadFailure,
       )
-  }, [])
+  }, [helper])
   useEffect(() => {
     if (enabled) void load()
   }, [enabled, load])
@@ -85,19 +98,19 @@ export function GuideProvider({ children, enabled }: { children: ReactNode; enab
   useEffect(() => {
     if (!enabled || !progress || active) return
     if (NO_AUTO_START.some((r) => r.test(pathname))) return
-    const guide = guideFor(pathname)
+    const guide = guideForSession(pathname, helper)
     if (!guide || progress.has(guide.key) || startedHere.current.has(guide.key)) return
     const timer = setTimeout(() => {
       startedHere.current.add(guide.key)
       setActive({ guide, step: 0 })
     }, 700)
     return () => clearTimeout(timer)
-  }, [enabled, progress, active, pathname])
+  }, [enabled, progress, active, pathname, helper])
 
   // Leaving the screen ends its guide without saving anything (it starts again next visit).
   useEffect(() => {
-    if (active && guideFor(pathname)?.key !== active.guide.key) setActive(null)
-  }, [pathname, active])
+    if (active && guideForSession(pathname, helper)?.key !== active.guide.key) setActive(null)
+  }, [pathname, active, helper])
 
   // The element the current step points at; re-read while the page settles.
   useEffect(() => {
@@ -113,14 +126,19 @@ export function GuideProvider({ children, enabled }: { children: ReactNode; enab
     async (guide: Guide, status: GuideStatus) => {
       setActive(null)
       setProgress((p) => new Map(p ?? []).set(guide.key, status))
+      if (helper) {
+        writeDeviceProgress(storageOrUndefined(), guide.key, status)
+        if (status === 'done') notifySuccess('Panduan ditandai selesai')
+        return
+      }
       const r = await markGuide({ data: { key: guide.key, status } }).catch(() => ({ ok: false }))
       if (r.ok && status === 'done') notifySuccess('Panduan ditandai selesai')
     },
-    [],
+    [helper],
   )
 
   const start = useCallback((key: string) => {
-    const guide = GUIDES.find((g) => g.key === key)
+    const guide = [...GUIDES, HELPER_GUIDE].find((g) => g.key === key)
     if (guide) setActive({ guide, step: 0 })
   }, [])
 
@@ -140,8 +158,8 @@ export function GuideProvider({ children, enabled }: { children: ReactNode; enab
   }, [])
 
   const value = useMemo(
-    () => ({ enabled, progress, start, reset, largeText, setLargeText }),
-    [enabled, progress, start, reset, largeText, setLargeText],
+    () => ({ enabled, helper, progress, start, reset, largeText, setLargeText }),
+    [enabled, helper, progress, start, reset, largeText, setLargeText],
   )
   const step = active?.guide.steps[active.step]
 
@@ -173,7 +191,7 @@ export function GuideProvider({ children, enabled }: { children: ReactNode; enab
 export function GuideButton() {
   const guides = useGuides()
   const { pathname } = useLocation()
-  const guide = guideFor(pathname)
+  const guide = guideForSession(pathname, guides?.helper ?? false)
   if (!guides?.enabled || !guide) return null
   return (
     <Button

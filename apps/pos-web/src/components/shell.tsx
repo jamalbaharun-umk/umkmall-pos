@@ -8,7 +8,9 @@ import type { SoloStatus } from '@/lib/owner-pin'
 
 export type Me = {
   tenant: { id: string; name?: string | null }
-  actor: { id: string; kind: 'owner' | 'cashier'; name: string | null; permissions: string[] }
+  actor: { id: string; kind: 'owner' | 'cashier' | 'helper'; name: string | null; permissions: string[] }
+  /** UMK-2124: set while the owner handed the till to a helper (a `helper` session): its name and its end. */
+  helper?: { name: string | null; expiresAt: string } | null
   /**
    * UMK-2121 solo-owner mode, owner sessions only (null for a cashier): `active` while the store has no staff,
    * `storeCash` while Kas toko still holds cash, `ownerPin` whether the owner made a PIN, `freshSignIn` whether the
@@ -63,6 +65,18 @@ export function useSoloStatus(): SoloStatus | null {
 export function useIsOwner(): boolean {
   const me = root.useLoaderData() as Me | null
   return me?.actor.kind === 'owner'
+}
+
+/** UMK-2124: whether this device runs the helper's sales-only till ("Mode pembantu"). */
+export function useIsHelper(): boolean {
+  const me = root.useLoaderData() as Me | null
+  return me?.actor.kind === 'helper'
+}
+
+/** UMK-2124: the handover of a helper session (its name may be null); null for any other session. */
+export function useHelper(): { name: string | null; expiresAt: string } | null {
+  const me = root.useLoaderData() as Me | null
+  return me?.actor.kind === 'helper' ? (me.helper ?? { name: null, expiresAt: '' }) : null
 }
 
 // SidebarMenuItem renders `linkComponent` with `href`; TanStack's Link wants `to`.
