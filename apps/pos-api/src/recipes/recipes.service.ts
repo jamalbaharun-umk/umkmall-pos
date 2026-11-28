@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { fieldError } from '../common/validation';
 import { type Db, InjectDb } from '../db/db.module';
@@ -18,6 +18,7 @@ import { isUniqueViolation } from '../staff/http';
 import {
   checkRecipeGraph,
   ceilFrac,
+  CostTooLargeError,
   type CostRecipe,
   MAX_RECIPE_DEPTH,
   MAX_WASTE_PERCENT,
@@ -87,6 +88,14 @@ export const ManualCostInput = z
 
 type LineInput = z.infer<typeof Line>;
 
+/**
+ * The largest cost figure a recipe may reach (batch, per portion, HPP lengkap): the largest rupiah input. Writes
+ * that would pass it are refused (422), so the exact BigInt math always rounds into a safe JS integer.
+ */
+export const MAX_RECIPE_COST = 1_000_000_000_000;
+const TOO_LARGE =
+  'Biaya resep terlalu besar (maksimal Rp1.000.000.000.000): periksa takaran dan harga bahan';
+
 const pgCode = (e: unknown) => {
   const err = e as { code?: string; cause?: { code?: string } };
   return err.code ?? err.cause?.code;
@@ -118,7 +127,13 @@ export class RecipesService {
           sellingPrice: products.sellingPrice,
         })
         .from(recipes)
-        .innerJoin(products, eq(products.id, recipes.productId))
+        .innerJoin(
+          products,
+          and(
+            eq(products.tenantId, tenantId),
+            eq(products.id, recipes.productId),
+          ),
+        )
         .where(eq(recipes.tenantId, tenantId))
         .orderBy(asc(products.name), asc(recipes.id)),
       db
@@ -139,7 +154,10 @@ export class RecipesService {
         lines.flatMap((l) => (l.ingredientId ? [l.ingredientId] : [])),
       ),
     ];
-    const costs = await this.unitCosts(db, tenantId, ingredientIds);
+    const [costs, deleted] = await Promise.all([
+      this.unitCosts(db, tenantId, ingredientIds),
+      this.deletedIngredients(db, tenantId, ingredientIds),
+    ]);
     const graph = new Map<string, CostRecipe>(
       rows.map((r) => [
         r.id,
@@ -147,7 +165,79 @@ export class RecipesService {
       ]),
     );
     for (const l of lines) graph.get(l.recipeId)?.lines.push(l);
-    return { rows, lines, costs, graph, coster: recipeCoster(graph, costs) };
+    /** Soft-deleted ingredient ids a recipe uses, its sub-recipes' included. */
+    const deletedIn = (id: string, seen = new Set<string>()): string[] => {
+      if (seen.has(id)) return [];
+      seen.add(id);
+      const out = new Set<string>();
+      for (const l of graph.get(id)?.lines ?? []) {
+        if (l.ingredientId && deleted.has(l.ingredientId))
+          out.add(l.ingredientId);
+        if (l.subRecipeId)
+          for (const d of deletedIn(l.subRecipeId, seen)) out.add(d);
+      }
+      return [...out];
+    };
+    return {
+      rows,
+      lines,
+      costs,
+      graph,
+      deletedIn,
+      coster: recipeCoster(graph, costs),
+    };
+  }
+
+  /** The ingredients among `ids` that were deleted from the catalog after a recipe named them. */
+  private async deletedIngredients(
+    db: Db | Tx,
+    tenantId: string,
+    ids: string[],
+  ) {
+    if (!ids.length) return new Set<string>();
+    const rows = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(
+        and(
+          eq(products.tenantId, tenantId),
+          inArray(products.id, ids),
+          isNotNull(products.deletedAt),
+        ),
+      );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * 422 unless every recipe of the store costs at most MAX_RECIPE_COST. Run inside a write's transaction after
+   * the write, so a change that would push a recipe (or a recipe using it as a sub-recipe) past the cap rolls back.
+   */
+  private async assertCostsInRange(tx: Tx, tenantId: string, field: string) {
+    const { rows, coster } = await this.load(tx, tenantId);
+    for (const r of rows) {
+      let s: ReturnType<typeof coster.summary>;
+      try {
+        s = coster.summary(r.id);
+      } catch (e) {
+        if (e instanceof CostTooLargeError) throw fieldError(field, TOO_LARGE);
+        throw e;
+      }
+      if (
+        Math.max(s.batchCost, s.costPerPortion, s.fullCostPerPortion) >
+        MAX_RECIPE_COST
+      )
+        throw fieldError(field, TOO_LARGE);
+    }
+  }
+
+  /** A read whose figures left the safe range (a purchase cost written later): 422, never a wrong number. */
+  private async costed<T>(read: () => Promise<T>): Promise<T> {
+    try {
+      return await read();
+    } catch (e) {
+      if (e instanceof CostTooLargeError) throw fieldError('lines', TOO_LARGE);
+      throw e;
+    }
   }
 
   /** Latest purchase cost per base unit; else the manual cost; else none (the line is "missing cost"). */
@@ -194,8 +284,12 @@ export class RecipesService {
     return out;
   }
 
-  async list(tenantId: string) {
-    const { rows, coster } = await this.load(this.db, tenantId);
+  list(tenantId: string) {
+    return this.costed(() => this.listRows(tenantId));
+  }
+
+  private async listRows(tenantId: string) {
+    const { rows, coster, deletedIn } = await this.load(this.db, tenantId);
     return rows.map((r) => {
       const s = coster.summary(r.id);
       return {
@@ -210,12 +304,20 @@ export class RecipesService {
         costPerPortion: s.costPerPortion,
         fullCostPerPortion: s.fullCostPerPortion,
         missingCost: s.missingCostIngredientIds.length > 0,
+        deletedIngredient: deletedIn(r.id).length > 0,
       };
     });
   }
 
-  async get(tenantId: string, id: string, db: Db | Tx = this.db) {
-    const { rows, lines, costs, coster } = await this.load(db, tenantId);
+  get(tenantId: string, id: string, db: Db | Tx = this.db) {
+    return this.costed(() => this.read(tenantId, id, db));
+  }
+
+  private async read(tenantId: string, id: string, db: Db | Tx) {
+    const { rows, lines, costs, coster, deletedIn } = await this.load(
+      db,
+      tenantId,
+    );
     const r = rows.find((x) => x.id === id);
     if (!r) throw new NotFoundException();
     const own = lines.filter((l) => l.recipeId === id);
@@ -230,6 +332,7 @@ export class RecipesService {
                 id: products.id,
                 name: products.name,
                 unit: products.unit,
+                deletedAt: products.deletedAt,
               })
               .from(products)
               .where(
@@ -283,6 +386,10 @@ export class RecipesService {
           // This line's share of one batch, rounded up for display only (the totals round once).
           cost: ceilFrac(s.lines[i].cost),
           missingCost: s.lines[i].missing.length > 0,
+          // The ingredient (or one inside the sub-recipe) was deleted from the catalog: still costed, flagged.
+          deleted: l.ingredientId
+            ? (ingredient?.deletedAt ?? null) !== null
+            : deletedIn(l.subRecipeId!).length > 0,
         };
       }),
       batchCost: s.batchCost,
@@ -292,6 +399,7 @@ export class RecipesService {
       fullCostPerPortion: s.fullCostPerPortion,
       fixedCostsIncluded: false,
       missingCostIngredientIds: s.missingCostIngredientIds,
+      deletedIngredientIds: deletedIn(id),
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     };
@@ -344,7 +452,13 @@ export class RecipesService {
     const edgeRows = await tx
       .select({ id: recipes.id, sub: recipeLines.subRecipeId })
       .from(recipes)
-      .leftJoin(recipeLines, eq(recipeLines.recipeId, recipes.id))
+      .leftJoin(
+        recipeLines,
+        and(
+          eq(recipeLines.tenantId, tenantId),
+          eq(recipeLines.recipeId, recipes.id),
+        ),
+      )
       .where(eq(recipes.tenantId, tenantId));
     const edges = new Map<string, string[]>();
     for (const e of edgeRows) {
@@ -446,6 +560,7 @@ export class RecipesService {
         });
       await this.checkLines(tx, tenantId, row.id, input.lines);
       await this.writeLines(tx, tenantId, row.id, input.lines);
+      await this.assertCostsInRange(tx, tenantId, 'lines');
       return this.get(tenantId, row.id, tx);
     });
   }
@@ -473,6 +588,8 @@ export class RecipesService {
         await this.checkLines(tx, tenantId, id, input.lines);
         await this.writeLines(tx, tenantId, id, input.lines);
       }
+      // A smaller yield raises the cost too, also of every recipe using this one.
+      await this.assertCostsInRange(tx, tenantId, 'lines');
       return this.get(tenantId, id, tx);
     });
   }
@@ -494,47 +611,75 @@ export class RecipesService {
 
   /**
    * "Pakai sebagai harga modal": the cost per portion becomes the product's cost_price. The selling price is
-   * never touched. Refused (422) while a line has no cost, for an ingredient (its cost comes from purchases),
-   * and above the selling price (the catalog's own rule).
+   * never touched. Refused (422) while a line has no cost or names a deleted ingredient, for an ingredient (its
+   * cost comes from purchases), and above the selling price (the catalog's own rule).
+   *
+   * One transaction: the recipe lock (no line changes meanwhile), then the product row `for update`, so the
+   * selling price judged is the one the write lands next to. `cost_set_at` is the 0054 trigger's: set when the
+   * cost first goes above 0, kept on a later change, cleared at 0.
    */
   async applyCost(tenantId: string, id: string) {
-    const r = await this.get(tenantId, id);
-    if (r.product.type === 'ingredient')
-      throw fieldError(
-        'productId',
-        'Modal bahan baku diambil dari pembelian, bukan dari resep',
-      );
-    if (r.missingCostIngredientIds.length)
-      throw fieldError(
-        'lines',
-        'Ada bahan yang belum punya harga: isi pembelian atau harga manual dulu',
-      );
-    if (r.costPerPortion > r.product.sellingPrice)
-      throw fieldError(
-        'costPrice',
-        'Harga modal tidak boleh melebihi harga jual',
-      );
-    const [row] = await this.db
-      .update(products)
-      .set({ costPrice: r.costPerPortion, updatedAt: new Date() })
-      .where(
-        and(
-          eq(products.tenantId, tenantId),
-          eq(products.id, r.product.id),
-          isNull(products.deletedAt),
-        ),
-      )
-      .returning({
-        id: products.id,
-        costPrice: products.costPrice,
-        sellingPrice: products.sellingPrice,
-      });
-    if (!row) throw new NotFoundException();
-    return {
-      productId: row.id,
-      costPrice: row.costPrice,
-      sellingPrice: row.sellingPrice,
-    };
+    return this.db.transaction(async (tx) => {
+      await this.lock(tx, tenantId);
+      const [recipe] = await tx
+        .select({ productId: recipes.productId })
+        .from(recipes)
+        .where(and(eq(recipes.tenantId, tenantId), eq(recipes.id, id)));
+      if (!recipe) throw new NotFoundException();
+      const [product] = await tx
+        .select({
+          id: products.id,
+          type: products.type,
+          sellingPrice: products.sellingPrice,
+        })
+        .from(products)
+        .where(
+          and(
+            eq(products.tenantId, tenantId),
+            eq(products.id, recipe.productId),
+            isNull(products.deletedAt),
+          ),
+        )
+        .for('update');
+      if (!product) throw new NotFoundException();
+      if (product.type === 'ingredient')
+        throw fieldError(
+          'productId',
+          'Modal bahan baku diambil dari pembelian, bukan dari resep',
+        );
+      const r = await this.get(tenantId, id, tx);
+      if (r.deletedIngredientIds.length)
+        throw fieldError(
+          'lines',
+          'Ada bahan yang sudah dihapus dari katalog: ganti bahan itu di resep dulu',
+        );
+      if (r.missingCostIngredientIds.length)
+        throw fieldError(
+          'lines',
+          'Ada bahan yang belum punya harga: isi pembelian atau harga manual dulu',
+        );
+      if (r.costPerPortion > product.sellingPrice)
+        throw fieldError(
+          'costPrice',
+          'Harga modal tidak boleh melebihi harga jual',
+        );
+      const [row] = await tx
+        .update(products)
+        .set({ costPrice: r.costPerPortion, updatedAt: new Date() })
+        .where(
+          and(eq(products.tenantId, tenantId), eq(products.id, product.id)),
+        )
+        .returning({
+          id: products.id,
+          costPrice: products.costPrice,
+          sellingPrice: products.sellingPrice,
+        });
+      return {
+        productId: row.id,
+        costPrice: row.costPrice,
+        sellingPrice: row.sellingPrice,
+      };
+    });
   }
 
   // ---------- manual ingredient cost ----------
@@ -560,19 +705,28 @@ export class RecipesService {
     input: z.infer<typeof ManualCostInput>,
   ) {
     await this.ingredient(tenantId, productId);
-    const [row] = await this.db
-      .insert(ingredientCosts)
-      .values({ tenantId, productId, cost: input.cost, perQty: input.perQty })
-      .onConflictDoUpdate({
-        target: [ingredientCosts.tenantId, ingredientCosts.productId],
-        set: { cost: input.cost, perQty: input.perQty, updatedAt: new Date() },
-      })
-      .returning({
-        productId: ingredientCosts.productId,
-        cost: ingredientCosts.cost,
-        perQty: ingredientCosts.perQty,
-      });
-    return row;
+    return this.db.transaction(async (tx) => {
+      // The recipe lock: a recipe edit and a cost change are checked against each other's result.
+      await this.lock(tx, tenantId);
+      const [row] = await tx
+        .insert(ingredientCosts)
+        .values({ tenantId, productId, cost: input.cost, perQty: input.perQty })
+        .onConflictDoUpdate({
+          target: [ingredientCosts.tenantId, ingredientCosts.productId],
+          set: {
+            cost: input.cost,
+            perQty: input.perQty,
+            updatedAt: new Date(),
+          },
+        })
+        .returning({
+          productId: ingredientCosts.productId,
+          cost: ingredientCosts.cost,
+          perQty: ingredientCosts.perQty,
+        });
+      await this.assertCostsInRange(tx, tenantId, 'cost');
+      return row;
+    });
   }
 
   async removeManualCost(tenantId: string, productId: string) {
