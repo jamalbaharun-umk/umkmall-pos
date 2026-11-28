@@ -17,5 +17,6 @@ import { LocalDiskStorage, OBJECT_STORAGE } from './storage';
       useFactory: () => new LocalDiskStorage(loadEnv().POS_STORAGE_DIR),
     },
   ],
+  exports: [CatalogService],
 })
 export class CatalogModule {}

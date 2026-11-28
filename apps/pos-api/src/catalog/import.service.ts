@@ -8,6 +8,13 @@ import { StockService } from '../stock/stock.service';
 import { CatalogService, QUICK_CATEGORY } from './catalog.service';
 import { ImportFileError, readRows, type ImportRow } from './import';
 
+/** The refusal's own words for an HttpException; anything else is not a row's fault and is rethrown. */
+function messageOf(e: unknown, fallback: string): string {
+  if (!(e instanceof HttpException)) throw e;
+  const body = e.getResponse() as { message?: unknown };
+  return typeof body.message === 'string' ? body.message : fallback;
+}
+
 export type PreviewRow = Omit<ImportRow, 'errors'> & {
   status: 'ok' | 'error';
   errors: string[];
@@ -111,10 +118,14 @@ export class ImportService {
       ok.map((r) => r.category ?? QUICK_CATEGORY),
     );
     let created = 0;
-    const failed: Array<{ row: number; name: string; errors: string[] }> =
-      preview.rows
-        .filter((r) => r.status === 'error')
-        .map(({ row, name, errors }) => ({ row, name, errors }));
+    const failed: Array<{
+      row: number;
+      name: string;
+      errors: string[];
+      saved?: true;
+    }> = preview.rows
+      .filter((r) => r.status === 'error')
+      .map(({ row, name, errors }) => ({ row, name, errors }));
     for (const r of ok) {
       try {
         const product = await this.catalog.createProduct(tenantId, {
@@ -130,24 +141,30 @@ export class ImportService {
           type: r.stock === null ? 'non_stock' : 'product',
           barcodes: r.barcode ? [r.barcode] : undefined,
         });
-        if (r.stock)
-          await this.stock.opening(tenantId, actorId, {
-            // `present` spreads the row: its id is there, typed loosely.
-            productId: (product as unknown as { id: string }).id,
-            qty: r.stock,
-          });
         created++;
+        if (r.stock)
+          try {
+            await this.stock.opening(tenantId, actorId, {
+              // `present` spreads the row: its id is there, typed loosely.
+              productId: (product as unknown as { id: string }).id,
+              qty: r.stock,
+            });
+          } catch (e) {
+            // The product exists: report the row as saved without its opening stock, never as not saved.
+            failed.push({
+              row: r.row,
+              name: r.name,
+              errors: [
+                `Produk tersimpan, tetapi stok awal tidak tercatat: ${messageOf(e, 'coba catat lewat Pembelian')}`,
+              ],
+              saved: true,
+            });
+          }
       } catch (e) {
-        if (!(e instanceof HttpException)) throw e;
-        const body = e.getResponse() as { message?: unknown };
         failed.push({
           row: r.row,
           name: r.name,
-          errors: [
-            typeof body.message === 'string'
-              ? body.message
-              : 'Baris ini tidak bisa disimpan',
-          ],
+          errors: [messageOf(e, 'Baris ini tidak bisa disimpan')],
         });
       }
     }

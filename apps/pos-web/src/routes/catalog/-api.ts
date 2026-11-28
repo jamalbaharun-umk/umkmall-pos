@@ -178,7 +178,12 @@ export type ImportPreviewRow = {
   errors: string[]
 }
 export type ImportPreview = { rows: ImportPreviewRow[]; total: number; okCount: number; errorCount: number }
-export type ImportResult = { created: number; failed: { row: number; name: string; errors: string[] }[]; total: number }
+export type ImportResult = {
+  created: number
+  // `saved`: the product was made but its opening stock was not recorded (the row is in `created` too).
+  failed: { row: number; name: string; errors: string[]; saved?: true }[]
+  total: number
+}
 export type ImportAnswer<T> = { ok: true; data: T } | { ok: false; error: string; status?: number; code?: string }
 
 async function importCall<T>(path: string, csv: string): Promise<ImportAnswer<T>> {

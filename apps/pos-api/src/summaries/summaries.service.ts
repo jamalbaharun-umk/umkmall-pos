@@ -409,7 +409,10 @@ export class SummariesService {
     const final = FINAL_LIST;
     const [r] = await this.rows(sql`
       select exists (select 1 from pos.store_profiles where tenant_id = ${tenantId} and name <> '') as profile,
-             exists (select 1 from pos.products where tenant_id = ${tenantId} and deleted_at is null) as products,
+             exists (select 1 from pos.products where tenant_id = ${tenantId} and deleted_at is null and is_active
+                       and selling_price > 0 and type <> 'ingredient') as products,
+             exists (select 1 from pos.products where tenant_id = ${tenantId} and deleted_at is null and not is_active
+                       and selling_price = 0 and type <> 'ingredient') as unpriced,
              exists (select 1 from pos.payment_methods where tenant_id = ${tenantId} and deleted_at is null) as methods,
              exists (select 1 from pos.sales_settings where tenant_id = ${tenantId} and tax_set_at is not null) as tax,
              exists (select 1 from pos.stock_batches where tenant_id = ${tenantId}) as stock_in,
@@ -443,7 +446,12 @@ export class SummariesService {
         'Produk',
         'Barang yang dijual muncul di layar kasir.',
         r.products,
-        '/catalog/products',
+        // UMK-2128: a sellable product counts (a template's unpriced ones do not); the way to one is the first screen.
+        r.products
+          ? '/catalog/products'
+          : r.unpriced
+            ? '/mulai/harga'
+            : '/mulai',
       ),
       step(
         'methods',

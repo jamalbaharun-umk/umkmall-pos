@@ -1,4 +1,4 @@
-import { Button } from '@umkmall/ui/primitives'
+import { Alert, Button } from '@umkmall/ui/primitives'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { useEffect, type ReactNode } from 'react'
@@ -19,7 +19,10 @@ const getHome = createServerFn().handler(async () => {
   const res = await api('/catalog/products?perPage=1')
   if (!res.ok) throw new Error('Gagal memuat toko')
   const { total } = (await res.json()) as { total: number }
-  return { signedIn: true as const, products: total, devSignIn }
+  // UMK-2128: template products waiting for a price; an actor without catalog.manage is refused and sees none.
+  const waiting = await api('/onboarding/unpriced')
+  const unpriced = waiting.ok ? ((await waiting.json()) as { total: number }).total : 0
+  return { signedIn: true as const, products: total, unpriced, devSignIn }
 })
 
 export const Route = createFileRoute('/')({
@@ -49,7 +52,7 @@ function Home() {
     void navigate({ search: ({ masuk: _m, keluar: _k, ...rest }) => rest, replace: true })
   }, [masuk, keluar, navigate])
   return home.signedIn ? (
-    <Dashboard products={home.products} />
+    <Dashboard products={home.products} unpriced={home.unpriced} />
   ) : (
     <OwnerSignIn failed={gagal} devSignIn={home.devSignIn} />
   )
@@ -59,17 +62,28 @@ function Home() {
  * The dashboard. With `reports.view` it is the chart widgets (design feature 35, UMK-1972); the quick start below stays
  * for a signed-in actor without that permission (no card shows) and for a store with no product yet.
  */
-function Dashboard({ products }: { products: number }) {
+function Dashboard({ products, unpriced }: { products: number; unpriced: number }) {
   const canReport = useCan('reports.view')
   return (
     <Page title="Dashboard">
+      {unpriced > 0 && (
+        <Alert variant="warning" size="small">
+          {unpriced} produk belum punya harga dan belum tampil di kasir.{' '}
+          <Link to="/mulai/harga" className="font-semibold underline">
+            Isi harga
+          </Link>
+        </Alert>
+      )}
+      {/* A store without products starts here first (UMK-2128); the charts would be empty anyway. */}
+      {products === 0 && <QuickStartPanel products={products} />}
       {canReport && <DashboardWidgets />}
-      {(!canReport || products === 0) && <QuickStartPanel products={products} />}
+      {!canReport && products > 0 && <QuickStartPanel products={products} />}
     </Page>
   )
 }
 
 function QuickStartPanel({ products }: { products: number }) {
+  const canEdit = useCan('catalog.manage')
   return (
     <>
       <Panel>
@@ -77,12 +91,16 @@ function QuickStartPanel({ products }: { products: number }) {
           <Empty
             title="Belum ada produk"
             action={
-              <Button asChild type="primary" color="primary" size="small" width="auto">
-                <Link to="/catalog/products/baru">Tambah produk</Link>
-              </Button>
+              canEdit && (
+                <Button asChild type="primary" color="primary" size="small" width="auto">
+                  <Link to="/mulai">Mulai siapkan toko</Link>
+                </Button>
+              )
             }
           >
-            Tambahkan produk pertama untuk mulai berjualan.
+            {canEdit
+              ? 'Pilih template usaha, pindahkan data dari CSV, atau mulai dari HPP.'
+              : 'Pemilik toko belum menambahkan produk.'}
           </Empty>
         ) : (
           <QuickStart>

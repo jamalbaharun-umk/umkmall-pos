@@ -27,6 +27,7 @@ import { StoreModule } from './store/store.controller';
 import { VoidModule } from './void/void.controller';
 import { PaymentsModule } from './payments-client/payments.module';
 import { RecipesModule } from './recipes/recipes.controller';
+import { OnboardingModule } from './onboarding/onboarding.controller';
 import { HealthController } from './health/health.controller';
 import { SessionGuard } from './tenancy/session.guard';
 import { TenancyController } from './tenancy/tenancy.controller';
@@ -58,6 +59,7 @@ import { TenancyController } from './tenancy/tenancy.controller';
     PaymentsModule,
     AuditModule,
     RecipesModule,
+    OnboardingModule,
   ],
   controllers: [HealthController, TenancyController, AuthController],
   providers: [
