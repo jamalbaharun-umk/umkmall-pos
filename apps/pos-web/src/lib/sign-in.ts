@@ -1,10 +1,10 @@
 // Pure helpers for signing in and out, kept apart from the server-only cookie code so they can be unit tested.
 
 /** The actor kind inside the session token, read without verifying (pos-api verifies); only used to route a refusal. */
-export function sessionKind(token: string): 'owner' | 'cashier' | undefined {
+export function sessionKind(token: string): 'owner' | 'cashier' | 'helper' | undefined {
   try {
     const claims = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()) as { kind?: unknown }
-    return claims.kind === 'cashier' || claims.kind === 'owner' ? claims.kind : undefined
+    return claims.kind === 'cashier' || claims.kind === 'owner' || claims.kind === 'helper' ? claims.kind : undefined
   } catch {
     return undefined
   }
@@ -52,7 +52,17 @@ export function parseNativeSession(raw: string | undefined): NativeSession | und
  * Where a sign-in may land instead of the POS home (UMK-2054). The cookie holds only a key of this list, never a
  * path, so a sign-in cannot be sent anywhere else. `keamanan`: the owner asked to sign in again to reset their PIN.
  */
-export const RETURN_PATHS = { keamanan: '/pengaturan/keamanan?lupa=1' } as const
+export const RETURN_PATHS = {
+  keamanan: '/pengaturan/keamanan?lupa=1',
+  // UMK-2124: the owner ends a handover whose helper device is gone (needs a fresh sign-in), back on the till.
+  pembantu: '/kasir?pembantu=akhiri',
+  // UMK-2124: an owner session that cannot park this device's native session signs in again, back on the till.
+  kasir: '/kasir',
+} as const
+
+/** The landing key `/masuk/ulang` was sent (a form field); anything unknown is Keamanan's, as before. */
+export const returnKeyOf = (value: unknown): ReturnKey =>
+  typeof value === 'string' && Object.hasOwn(RETURN_PATHS, value) ? (value as ReturnKey) : 'keamanan'
 export type ReturnKey = keyof typeof RETURN_PATHS
 
 /** The landing path of a sign-in for the cookie's value: the listed path, or the POS home's "signed in" toast. */

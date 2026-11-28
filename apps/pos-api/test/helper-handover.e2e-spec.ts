@@ -337,6 +337,11 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
     const [row] = await admin<{ ended_at: Date | null }[]>`
       select ended_at from pos.helper_sessions where id = ${started.body.helper.id}`;
     expect(row.ended_at).toBeNull();
+    // a sale of store B can never name store A's handover (the foreign key carries the store)
+    const bSale = await b.sell(b.auth).expect(201);
+    await expect(
+      admin`update pos.sales set helper_session_id = ${started.body.helper.id} where id = ${bSale.body.id}`,
+    ).rejects.toThrow(/foreign key/);
     // A's helper sees only A's shift and products
     const products = await get(
       bearer(started.body.sessionToken),

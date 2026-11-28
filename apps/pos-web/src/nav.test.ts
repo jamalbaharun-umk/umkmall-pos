@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NAV, activeNav, visibleNav } from './nav'
+import { NAV, activeNav, helperMayOpen, visibleNav } from './nav'
 
 describe('nav config', () => {
   const all = (to: string) => NAV.flatMap((g) => g.items).some((i) => i.to === to)
@@ -119,5 +119,11 @@ describe('Resep entry (UMK-2125)', () => {
     expect(find(['sales.create'])).toBeUndefined()
     expect(find(['catalog.manage'])?.label).toBe('Inventori')
     expect(activeNav(NAV, '/resep/abc')).toBe('/resep')
+  })
+
+  it('lets a helper session open only the till and a receipt (UMK-2124)', () => {
+    for (const ok of ['/kasir', '/kasir/', '/kasir/struk/abc', '/kasir/struk/abc/']) expect(helperMayOpen(ok)).toBe(true)
+    for (const no of ['/', '/kasir/riwayat', '/kasir/tutup', '/kasir/struk', '/kasir/struk/a/b', '/catalog/products', '/kasirx'])
+      expect(helperMayOpen(no)).toBe(false)
   })
 })

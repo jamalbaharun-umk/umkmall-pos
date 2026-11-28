@@ -1,0 +1,1 @@
+ALTER TABLE "pos"."sales" ADD CONSTRAINT "sales_tenant_id_helper_session_id_helper_sessions_tenant_id_id_fk" FOREIGN KEY ("tenant_id","helper_session_id") REFERENCES "pos"."helper_sessions"("tenant_id","id") ON DELETE restrict ON UPDATE no action;

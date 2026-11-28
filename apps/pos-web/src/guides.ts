@@ -244,6 +244,30 @@ export const guideFor = (pathname: string): Guide | undefined => {
   return GUIDES.find((g) => g.to === path)
 }
 
+/**
+ * UMK-2124: the helper's sales-only till ("Mode pembantu") has its own guide on `/kasir`, kept on the device: a helper
+ * session reaches no guide progress in pos-api. It is the only guide a helper sees.
+ */
+export const HELPER_GUIDE: Guide = {
+  key: 'kasir.pembantu',
+  to: '/kasir',
+  title: 'Mode pembantu',
+  steps: [
+    { target: 'helper-products', title: 'Pilih barang', text: 'Ketuk barang untuk memasukkannya ke pesanan.' },
+    { target: 'helper-cart', title: 'Pesanan', text: 'Ubah jumlah atau hapus barang di sini; harga diatur pemilik.' },
+    { target: 'helper-pay', title: 'Terima pembayaran', text: 'Ketuk Bayar, pilih Tunai, Debit, atau QRIS, lalu struk keluar.' },
+    {
+      target: 'helper-return',
+      title: 'Kembali ke pemilik',
+      text: 'Pemilik mengetuk tombol ini dan memasukkan PIN untuk membuka sesinya lagi.',
+    },
+  ],
+}
+
+/** The guide a session sees on a path: a helper only the restricted till's, everyone else the screen's own. */
+export const guideForSession = (pathname: string, helper: boolean): Guide | undefined =>
+  helper ? (guideFor(pathname)?.to === HELPER_GUIDE.to ? HELPER_GUIDE : undefined) : guideFor(pathname)
+
 /** Paths where a guide never starts on its own: the cashier PIN sign-in and the receipt print page. */
 export const NO_AUTO_START = [/^\/kasir\/masuk/, /^\/kasir\/struk\//]
 

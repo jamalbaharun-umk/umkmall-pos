@@ -59,6 +59,11 @@ export function rememberMe(me: unknown, maxAgeSeconds = 7 * 24 * 60 * 60): void 
   })
 }
 
+/** UMK-2124: drops the last /tenant/me, so a session swap never renders the previous actor's shell from it. */
+export function forgetMe(): void {
+  deleteCookie(LAST_ME, { path: '/' })
+}
+
 export function lastMe<T>(): T | null {
   try {
     const raw = getCookie(LAST_ME)
@@ -100,6 +105,11 @@ export async function startSession(path: string, body: unknown, headers: Record<
   const answer = (await res.json()) as SessionAnswer
   storeSession(answer)
   return answer.sessionToken
+}
+
+/** UMK-2124: the owner's native session id on this device, which "Serahkan ke pembantu" asks pos-api to park. */
+export function nativeSid(): string | undefined {
+  return parseNativeSession(getCookie(NATIVE))?.sid
 }
 
 /**

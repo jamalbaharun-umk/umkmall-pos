@@ -1,6 +1,8 @@
 import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
+import { forgetMe, getSessionToken, nativeSid, refreshOwner, sameOriginRequest, storeSession } from '@/lib/session.server'
+import { sessionKind } from '@/lib/sign-in'
 import type { Quote, SaleUnit } from './-helpers'
 import type { SalePayment } from './-online'
 import { parseWaitingSales, type WaitingSale } from './-shift-helpers'
@@ -134,6 +136,8 @@ export type Result<T = undefined> =
       saleId?: string
       /** UMK-2044: the sales that hold a shift open (a 409 `sales_awaiting_payment`). */
       waiting?: WaitingSale[]
+      /** UMK-2124: seconds until a locked owner PIN can be tried again (a 429). */
+      retryAfter?: number
     }
 
 const ERRORS: Record<number, string> = {
@@ -149,17 +153,20 @@ type Refusal = {
   code?: string
   saleId?: string
   waiting?: WaitingSale[]
+  retryAfter?: number
 }
 
 /** pos-api's 409/422 bodies are Indonesian and internals-free (`{ message, errors, total? }`): pass them on. */
 async function refusalOf(res: Response): Promise<Refusal> {
-  if (res.status === 409 || res.status === 422 || res.status === 503) {
+  // 429: a locked PIN says how long to wait (UMK-2124 "Kembali ke pemilik", the void's owner PIN rule).
+  if (res.status === 409 || res.status === 422 || res.status === 429 || res.status === 503) {
     const body = (await res.json().catch(() => null)) as {
       message?: unknown
       errors?: unknown
       total?: unknown
       code?: unknown
       saleId?: unknown
+      retryAfter?: unknown
     } | null
     return {
       status: res.status,
@@ -174,11 +181,15 @@ async function refusalOf(res: Response): Promise<Refusal> {
       code: typeof body?.code === 'string' && /^[a-z][a-z_]{1,39}$/.test(body.code) ? body.code : undefined,
       saleId: typeof body?.saleId === 'string' ? body.saleId : undefined,
       waiting: res.status === 409 ? parseWaitingSales(body) : undefined,
+      retryAfter: res.status === 429 && typeof body?.retryAfter === 'number' ? body.retryAfter : undefined,
     }
   }
   return { status: res.status, error: ERRORS[res.status] ?? 'Gagal terhubung ke server, coba lagi.' }
 }
 const errorOf = async (res: Response) => (await refusalOf(res)).error
+
+/** UMK-2124: a helper session reaches only the till's reads; the calls it may not make are not sent (no 403 page). */
+const helperSession = () => sessionKind(getSessionToken() ?? '') === 'helper'
 
 async function load<T>(path: string): Promise<T> {
   const res = await api(path)
@@ -214,7 +225,8 @@ export const loadCashier = createServerFn().handler(async () => {
     // UMK-1992: any session reads the profile; only the QRIS flag and a cache-busting stamp are used here.
     load<{ qrisConfigured: boolean; updatedAt: string | null }>('/store/profile'),
     // UMK-1991: the gateway methods the store may charge now. A failure hides the online methods, never the till.
-    chargeableMethods(),
+    // A helper never sells online (UMK-2124): not asked.
+    helperSession() ? Promise.resolve<OnlineMethodsResult>({ methods: [], banks: {}, unavailable: false }) : chargeableMethods(),
   ])
   return {
     shift,
@@ -250,6 +262,49 @@ export const closeShift = createServerFn({ method: 'POST' })
 export const checkOpening = createServerFn({ method: 'POST' })
   .validator((d: { shiftId: string; openingCash?: number }) => d)
   .handler(({ data }) => send<Shift>('/shifts/current/opening', data))
+
+/**
+ * UMK-2124 "Serahkan ke pembantu": the owner's PIN parks this device's owner session (pos-api refuses to refresh the
+ * native session until the PIN ends the handover) and the cookie now holds the helper's sales-only token.
+ */
+export const startHelper = createServerFn({ method: 'POST' })
+  .validator((d: { pin: string; name?: string }) => d)
+  .handler(async ({ data }) => {
+    if (!sameOriginRequest()) return crossSite()
+    const parkedSid = nativeSid()
+    const res = await send<{ sessionToken: string; expiresIn: number; helper: { id: string; name: string | null; expiresAt: string } }>(
+      '/helper/start',
+      { ...data, ...(parkedSid ? { parkedSid } : {}) },
+    )
+    if (!res.ok) return res
+    storeSession({ sessionToken: res.data.sessionToken, expiresIn: res.data.expiresIn })
+    forgetMe() // the owner's last /tenant/me must never render for the helper
+    return { ok: true as const, data: res.data.helper }
+  })
+
+/** UMK-2124 "Kembali ke pemilik": the owner's PIN ends the handover and the cookie holds the owner's session again. */
+export const endHelper = createServerFn({ method: 'POST' })
+  .validator((d: { pin: string }) => d)
+  .handler(async ({ data }) => {
+    if (!sameOriginRequest()) return crossSite()
+    const res = await send<{ sessionToken: string; expiresIn: number }>('/helper/end', data)
+    if (!res.ok) return res
+    storeSession(res.data)
+    forgetMe()
+    // The owner's native session slept in the httpOnly cookie while the helper sold: refresh it now, so UMKMall
+    // rotates its refresh token (where it does) and the one the helper's device held is spent. Best effort: a failure
+    // leaves the owner signed in on the token just stored.
+    await refreshOwner().catch(() => null)
+    return { ok: true as const, data: undefined }
+  })
+
+/** The owner ends a handover from a fresh WhatsApp sign-in, when the helper's device cannot be reached. */
+export const closeHelper = createServerFn({ method: 'POST' }).handler(() =>
+  sameOriginRequest() ? send<{ ended: true }>('/helper/close', {}) : crossSite(),
+)
+
+/** A session swap asked from another site (no same-origin POST): refused, nothing sent to pos-api. */
+const crossSite = () => ({ ok: false as const, status: 403, error: 'Permintaan ditolak. Muat ulang halaman lalu coba lagi.' })
 
 /** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
 type LineDiscountFields = { discountPercent?: number; discountAmount?: number }
@@ -294,9 +349,12 @@ export const loadReceipt = createServerFn()
     const id = encodeURIComponent(data)
     const [receipt, meta] = await Promise.all([
       load<Receipt>(`/sales/${id}/receipt`),
-      api(`/sales/${id}`)
-        .then((r) => (r.ok ? (r.json() as Promise<{ paidAt?: unknown }>) : null))
-        .catch(() => null),
+      // A helper reads its own receipt only (UMK-2124); its sale was paid when rung up, so `createdAt` dates it.
+      helperSession()
+        ? null
+        : api(`/sales/${id}`)
+            .then((r) => (r.ok ? (r.json() as Promise<{ paidAt?: unknown }>) : null))
+            .catch(() => null),
     ])
     return { ...receipt, paidAt: typeof meta?.paidAt === 'string' ? meta.paidAt : null }
   })

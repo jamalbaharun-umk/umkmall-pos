@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpException,
   Injectable,
+  Logger,
   Module,
   Post,
   UnauthorizedException,
@@ -88,6 +89,7 @@ export async function parkedSidRefused(db: Db, sid: string) {
 
 @Injectable()
 export class HelperService {
+  private readonly log = new Logger(HelperService.name);
   private readonly env = loadEnv();
   private readonly secret = this.env.POS_SESSION_SECRET;
 
@@ -332,16 +334,24 @@ export class HelperService {
             ? 'wrong_pin'
             : null;
     if (!reason) return;
-    await this.db.transaction((tx) =>
-      recordAudit(tx, s, 'helper_end_refused', {
-        target: {
-          type: 'helper_session',
-          id: helperSessionId,
-          label: 'Mode pembantu',
-        },
-        details: { helperSessionId, reason },
-      }),
-    );
+    // A failed audit write must not turn the PIN's 422/429 into a 500: the refusal is answered either way.
+    await this.db
+      .transaction((tx) =>
+        recordAudit(tx, s, 'helper_end_refused', {
+          target: {
+            type: 'helper_session',
+            id: helperSessionId,
+            label: 'Mode pembantu',
+          },
+          details: { helperSessionId, reason },
+        }),
+      )
+      .catch((err: unknown) =>
+        // ids and the reason only: never the PIN
+        this.log.warn(
+          `helper_end_refused audit not written for ${helperSessionId} (${reason}): ${err instanceof Error ? err.name : 'error'}`,
+        ),
+      );
   }
 }
 

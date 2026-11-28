@@ -16,6 +16,7 @@ import { createdAt, id, pos, rupiah } from './_base';
 import { products } from './catalog';
 import { members, vouchers } from './members';
 import { tenants } from './tenants';
+import { helperSessions } from './helper';
 
 // U3 shifts and cash sales (ported from Lakasir cash_drawers, sellings, selling_details, payment_methods).
 // Every sale belongs to a shift (Lakasir never set cash_drawer_id); all money is integer rupiah.
@@ -344,6 +345,11 @@ export const sales = pos
       foreignKey({
         columns: [t.tenantId, t.memberId],
         foreignColumns: [members.tenantId, members.id],
+      }).onDelete('restrict'),
+      // UMK-2124: a helper's sale names a handover of the same store.
+      foreignKey({
+        columns: [t.tenantId, t.helperSessionId],
+        foreignColumns: [helperSessions.tenantId, helperSessions.id],
       }).onDelete('restrict'),
       foreignKey({
         columns: [t.tenantId, t.voucherId],

@@ -9,6 +9,7 @@ import { AddressInfo } from 'node:net';
 import postgres from 'postgres';
 import request from 'supertest';
 import { OTP_REQUESTS_PER_WINDOW } from '../src/auth/auth.controller';
+import { hashSecret } from '../src/staff/secrets';
 import { createApp } from './support/fixtures';
 import { ADMIN_DATABASE_URL } from './support/env';
 
@@ -246,6 +247,9 @@ describe('owner sign-in by WhatsApp OTP through UMKMall native auth (UMK-2065)',
         tid: first.body.tenant.id,
       });
       expect(c.auth_time).toEqual(expect.any(Number)); // a sign-in: fresh for the owner PIN reset (UMK-2054)
+      // UMK-2124: the session names its native session (a hash, never the sid), the one a handover parks
+      expect(c.nsh).toBe(hashSecret('sid-1'));
+      expect(JSON.stringify(c)).not.toContain('sid-1'); // the decoded claims, never the sid itself
       const me = await request(app.getHttpServer())
         .get('/tenant/me')
         .set('Authorization', `Bearer ${first.body.sessionToken}`)
@@ -390,6 +394,8 @@ describe('owner sign-in by WhatsApp OTP through UMKMall native auth (UMK-2065)',
       const c = claims(res.body.sessionToken);
       expect(c).toMatchObject({ sub, kind: 'owner' });
       expect(c).not.toHaveProperty('auth_time');
+      expect(c.nsh).toBe(hashSecret('sid-1')); // UMK-2124
+      expect(JSON.stringify(c)).not.toContain('sid-1');
     });
 
     it("keeps the client's refresh token when UMKMall did not rotate it (grace)", async () => {
