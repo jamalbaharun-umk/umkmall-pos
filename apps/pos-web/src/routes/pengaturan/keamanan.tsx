@@ -1,5 +1,5 @@
 import { Alert, Badge, Button, Dialog, TextField } from '@umkmall/ui/primitives'
-import { createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router'
+import { Link, createFileRoute, getRouteApi, useNavigate, useRouter } from '@tanstack/react-router'
 import { useRef, useState, type FormEvent } from 'react'
 import { useConfirm } from '@/components/confirm'
 import { Empty, NoAccess, Page, PageError, PageLoading, Panel } from '@/components/page'
@@ -49,6 +49,18 @@ function SecurityPage() {
           )}
           {approvers && (
             <ApproverList approvers={approvers} selfId={me?.actor.id} isOwner={isOwner} askSignIn={setFresh} />
+          )}
+          {/* UMK-2121: the solo owner's menu hides Log aktivitas, so it stays one tap away here. */}
+          {isOwner && (
+            <Panel className="flex flex-col gap-1 p-6">
+              <h2 className="text-base font-semibold">Log aktivitas</h2>
+              <p className="text-sm text-default-secondary">
+                Catatan masuk, pembatalan, perubahan harga dan PIN.{' '}
+                <Link to="/pengaturan/log-aktivitas" className="font-semibold underline">
+                  Lihat log aktivitas
+                </Link>
+              </p>
+            </Panel>
           )}
         </div>
       )}

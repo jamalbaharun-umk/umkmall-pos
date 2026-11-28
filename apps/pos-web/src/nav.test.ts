@@ -87,6 +87,31 @@ describe('Pembayaran Online entry (UMK-2020)', () => {
   })
 })
 
+describe('solo-owner mode (UMK-2121)', () => {
+  const all = () => true
+  const owner = ['staff.manage', 'reports.view', 'catalog.manage', 'sales.create', 'sales.void']
+  const shown = (solo?: { active: boolean; storeCash: boolean } | null) =>
+    visibleNav(NAV, all, owner, solo).flatMap((g) => g.items.map((i) => i.to))
+  const TEAM = ['/staf', '/staf/peran', '/staf/perangkat', '/kas-toko/setoran', '/pengaturan/log-aktivitas']
+
+  it('hides the team screens while the store has no staff', () => {
+    const solo = shown({ active: true, storeCash: false })
+    expect(solo.filter((to) => TEAM.includes(to))).toEqual([])
+    expect(solo).not.toContain('/kas-toko')
+    expect(solo).toContain('/kasir')
+    expect(solo).toContain('/pengaturan/keamanan')
+  })
+
+  it('keeps Kas toko while it still holds cash', () => {
+    expect(shown({ active: true, storeCash: true })).toContain('/kas-toko')
+  })
+
+  it('shows every team screen again with the first staff member, or when the mode is unknown', () => {
+    for (const s of [{ active: false, storeCash: false }, null, undefined])
+      expect(TEAM.every((to) => shown(s).includes(to))).toBe(true)
+  })
+})
+
 describe('Resep entry (UMK-2125)', () => {
   it('shows only with catalog.manage, under Inventori', () => {
     const find = (perms: string[]) =>

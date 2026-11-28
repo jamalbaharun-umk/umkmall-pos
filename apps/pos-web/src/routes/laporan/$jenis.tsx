@@ -4,7 +4,8 @@ import { Card } from '@umkmall/ui/compositions'
 import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TextField } from '@umkmall/ui/primitives'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { loadReport, rupiah, type FieldErrors, type Report } from './-api'
-import { cashDiff, checkRange, REPORTS, type Column, type ReportDef } from './-reports'
+import { cashDiff, checkRange, REPORTS, soloReport, type Column, type ReportDef } from './-reports'
+import { useSolo } from '@/components/shell'
 import { ReportError, ReportLayout, ReportPending } from './-ui'
 import { ActionRow } from '@/components/action-row'
 import { ReportVisuals } from '@/components/report-visual'
@@ -45,7 +46,8 @@ function ReportPage() {
   const result = Route.useLoaderData()
   const search = Route.useSearch()
   const jenis = Route.useParams().jenis
-  const def = REPORTS[jenis]
+  const solo = useSolo()
+  const def = soloReport(REPORTS[jenis], solo, result.ok ? result.data.rows : [])
   // A refused range keeps the form, with pos-api's message on the field it names.
   if (!result.ok && result.status !== 422) return <ReportError message={result.error} />
   return (

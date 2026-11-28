@@ -1,6 +1,7 @@
 import { AgentModule } from './agent/agent.module';
 import { AuditModule } from './audit/audit.controller';
 import { Module } from '@nestjs/common';
+import { VoidPins } from './void/void-pin';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ErrorFilter } from './common/error.filter';
 import { CatalogModule } from './catalog/catalog.module';
@@ -67,6 +68,8 @@ import { TenancyController } from './tenancy/tenancy.controller';
   providers: [
     { provide: APP_GUARD, useClass: SessionGuard },
     { provide: APP_FILTER, useClass: ErrorFilter },
+    // UMK-2121: /tenant/me tells the owner's shell whether the owner PIN exists.
+    VoidPins,
   ],
 })
 export class AppModule {}

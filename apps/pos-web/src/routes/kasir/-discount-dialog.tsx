@@ -13,6 +13,7 @@ import {
   discountTextError,
   discountToast,
   needsApproval,
+  discountHint,
   parseDiscount,
   percentText,
   type DiscountKind,
@@ -47,8 +48,11 @@ export function DiscountDialog({
   onClose,
   onApply,
   onRemove,
+  pinRequired = true,
 }: {
   target?: DiscountTarget
+  /** pos-api's `discountPinRequired` (UMK-2123): false for a solo owner, whose big discount needs no PIN. */
+  pinRequired?: boolean
   onClose: () => void
   onApply: (key: string, d: LineDiscount) => void
   onRemove: (key: string) => void
@@ -92,7 +96,7 @@ export function DiscountDialog({
   const value = parseDiscount(kind, text)
   const off = error ? 0 : discountOf(lineTotal, { kind, value }, qty)
   const isPrice = kind === 'price'
-  const big = !error && needsApproval(off, lineTotal)
+  const big = !error && pinRequired && needsApproval(off, lineTotal)
   const list = approvers.state === 'ready' ? approvers.list : []
 
   const apply = (d: LineDiscount) => {
@@ -201,9 +205,7 @@ export function DiscountDialog({
             </div>
           </dl>
           <p className="text-xs text-default-secondary">
-            {isPrice
-              ? `Harga normal ${rupiah(target.unitPrice)} per item. Lebih dari 30% di bawahnya meminta PIN admin.`
-              : 'Lebih dari 30% meminta PIN admin. Tidak bisa 100%.'}
+            {discountHint(isPrice, rupiah(target.unitPrice), pinRequired)}
           </p>
           <ActionRow>
             <Button width="auto" type="outline" color="light" onClick={onClose}>

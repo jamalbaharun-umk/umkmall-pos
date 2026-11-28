@@ -2,7 +2,8 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Text } from '@umkmall/ui'
 import { useState } from 'react'
 import { formatDate, LoadError, Page, Pending, rupiah } from '@/components/pos-page'
-import { useCan } from '@/components/shell'
+import { useCan, useSolo } from '@/components/shell'
+import { showCashier } from '@/lib/solo'
 import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import { loadSaleDetail } from './-void-api'
 import { RefundPanel } from './-refund-panel'
@@ -26,6 +27,7 @@ function SalePage() {
   const { id } = Route.useParams()
   const router = useRouter()
   const canStart = useCan('sales.create')
+  const withCashier = showCashier(useSolo(), [r.cashier])
   const [voiding, setVoiding] = useState(false)
   const [sharing, setSharing] = useState(false)
   const voided = r.status === 'void'
@@ -134,8 +136,12 @@ function SalePage() {
           <dl className="mt-3 grid max-w-md grid-cols-2 gap-y-1 text-sm">
             <dt className="font-medium">Kode</dt>
             <dd className="text-right">#{r.number}</dd>
-            <dt className="font-medium">Kasir</dt>
-            <dd className="text-right">{r.cashier}</dd>
+            {withCashier && (
+              <>
+                <dt className="font-medium">Kasir</dt>
+                <dd className="text-right">{r.cashier}</dd>
+              </>
+            )}
             <dt className="font-medium">{paidAt ? 'Tanggal bayar' : 'Tanggal'}</dt>
             <dd className="text-right">{formatDate(paidAt ?? r.createdAt)}</dd>
             {paidLater(r.createdAt, paidAt) && (

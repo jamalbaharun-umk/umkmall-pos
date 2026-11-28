@@ -96,13 +96,18 @@ export type LineDiscountState = {
  * A cart line's discount against its current total: an amount that became the whole line, or a share that grew past
  * its PIN approval (fewer items), is a problem the cashier fixes before paying; it is not sent meanwhile.
  */
-export function lineDiscountState(lineTotal: number, d: LineDiscount | undefined, qty = 1): LineDiscountState {
+export function lineDiscountState(
+  lineTotal: number,
+  d: LineDiscount | undefined,
+  qty = 1,
+  pinRequired = true,
+): LineDiscountState {
   if (!d) return { discount: 0, netTotal: lineTotal }
   const discount = discountOf(lineTotal, d, qty)
   if (d.kind === 'price' && discount <= 0)
     return { discount: 0, netTotal: lineTotal, problem: 'Harga manual tidak lagi di bawah harga sekarang. Ubah harganya.' }
   if (discount >= lineTotal) return { discount: 0, netTotal: lineTotal, problem: 'Diskon melebihi harga baris. Ubah diskonnya.' }
-  if (needsApproval(discount, lineTotal) && (!d.approval || !approvalCovers(d.approval, discount, lineTotal)))
+  if (pinRequired && needsApproval(discount, lineTotal) && (!d.approval || !approvalCovers(d.approval, discount, lineTotal)))
     return {
       discount: 0,
       netTotal: lineTotal,
@@ -126,6 +131,17 @@ export function discountFields(d: LineDiscount | undefined, withApproval: boolea
   }
   const value = d.kind === 'percent' ? { discountPercent: d.value } : { discountAmount: d.value }
   return withApproval && d.approval ? { ...value, discountApprovalId: d.approval.id } : value
+}
+
+/**
+ * The rule under the discount fields. `pinRequired` is pos-api's `discountPinRequired` (UMK-2123): false for the owner
+ * of a store without staff, who approves their own reduction above 30%.
+ */
+export function discountHint(isPrice: boolean, unitPrice: string, pinRequired: boolean): string {
+  if (!pinRequired) return 'Anda menjalankan toko sendiri, jadi diskon besar tidak meminta PIN. Tidak bisa 100%.'
+  return isPrice
+    ? `Harga normal ${unitPrice} per item. Lebih dari 30% di bawahnya meminta PIN admin.`
+    : 'Lebih dari 30% meminta PIN admin. Tidak bisa 100%.'
 }
 
 /** "diskon 10%", "diskon Rp2.000" or "harga Rp3.500", next to the line's quantity. */

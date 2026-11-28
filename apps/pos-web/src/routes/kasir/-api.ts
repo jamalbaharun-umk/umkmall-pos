@@ -191,10 +191,15 @@ async function send<T>(path: string, body: unknown, headers: Record<string, stri
 }
 
 export const loadCashier = createServerFn().handler(async () => {
-  const { shift } = await load<{ shift: (Shift & { expectedCash: number }) | null }>('/shifts/current')
+  const { shift, discountPinRequired } = await load<{
+    shift: (Shift & { expectedCash: number }) | null
+    discountPinRequired?: boolean
+  }>('/shifts/current')
+  // UMK-2123: a solo owner's big discount needs no PIN. Absent (an older pos-api): the PIN is asked as before.
+  const pinRequired = discountPinRequired !== false
   const noQris = { configured: false, version: '' }
   if (!shift)
-    return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[], onlineUnavailable: false, banks: {} as Record<string, Bank[]> }
+    return { shift: null, pinRequired, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[], onlineUnavailable: false, banks: {} as Record<string, Bank[]> }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
   const [page, settings, methods, profile, chargeable] = await Promise.all([
     load<{ data: Product[] }>('/catalog/products?perPage=100&use=sale'),
@@ -207,6 +212,7 @@ export const loadCashier = createServerFn().handler(async () => {
   ])
   return {
     shift,
+    pinRequired,
     products: page.data.filter((p) => p.isActive),
     taxBps: settings.taxBps,
     methods: methods.data,

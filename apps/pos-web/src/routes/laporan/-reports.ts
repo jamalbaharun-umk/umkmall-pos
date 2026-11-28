@@ -1,4 +1,5 @@
 import type { Kind } from './-api'
+import { showCashier } from '../../lib/solo'
 
 // Columns per report, in Lakasir's order. `money` cells render as rupiah; the API sends integer rupiah.
 export type Column = { key: string; label: string; money?: boolean; num?: boolean; cashDiff?: boolean }
@@ -150,4 +151,14 @@ export function costMissingText(products: number): { title: string; body: string
     title: `Modal belum diisi untuk ${products} produk`,
     body: 'Untung di atas belum lengkap karena penjualan produk tanpa modal dihitung modalnya Rp0.',
   }
+}
+
+/**
+ * UMK-2121 solo-owner mode: the on-screen table drops the Kasir column when every row is the owner's (`showCashier`
+ * in `lib/solo.ts`). The CSV and PDF keep every column.
+ */
+export function soloReport(def: ReportDef, solo: boolean, rows: readonly Record<string, unknown>[]): ReportDef {
+  if (!def.columns.some((c) => c.key === 'cashier')) return def
+  const names = rows.map((r) => String(r.cashier ?? ''))
+  return showCashier(solo, names) ? def : { ...def, columns: def.columns.filter((c) => c.key !== 'cashier') }
 }

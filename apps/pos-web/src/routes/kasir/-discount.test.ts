@@ -3,6 +3,7 @@ import { cashRounding } from './-money'
 import {
   approvalBps,
   approvalCovers,
+  discountHint,
   approvedByLabel,
   breakdown,
   discountFields,
@@ -165,5 +166,19 @@ describe('line discount (UMK-1990)', () => {
       expect(approvedByLabel(null)).toBeNull()
       expect(approvedByLabel(undefined)).toBeNull()
     })
+  })
+})
+
+describe('solo owner discount (UMK-2123)', () => {
+  it('a reduction above 30% is a problem only while a PIN is required', () => {
+    const d = { kind: 'percent' as const, value: 50 }
+    expect(lineDiscountState(10_000, d, 1).problem).toBeDefined()
+    expect(lineDiscountState(10_000, d, 1, false)).toEqual({ discount: 5_000, netTotal: 5_000 })
+    expect(lineDiscountState(10_000, { kind: 'percent', value: 100 }, 1, false).problem).toBeDefined()
+  })
+  it('the hint says no PIN is asked for a solo owner', () => {
+    expect(discountHint(false, 'Rp1.000', true)).toContain('meminta PIN admin')
+    expect(discountHint(true, 'Rp1.000', true)).toContain('Rp1.000')
+    expect(discountHint(true, 'Rp1.000', false)).toContain('tidak meminta PIN')
   })
 })

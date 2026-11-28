@@ -1,13 +1,13 @@
-import { Alert, Button, Select, TextField, Upload } from '@umkmall/ui/primitives'
+import { Alert, Badge, Button, Select, TextField, Upload } from '@umkmall/ui/primitives'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/compositions'
-import { createFileRoute, useRouter } from '@tanstack/react-router'
+import { Link, createFileRoute, useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { SCROLL_TABS } from '@/lib/scroll-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { ActionRow } from '@/components/action-row'
 import { useConfirm } from '@/components/confirm'
 import { NoAccess, Page, PageError, PageLoading, Panel, RequiredLabel } from '@/components/page'
-import { useCan, useIsOwner } from '@/components/shell'
+import { useCan, useIsOwner, useSoloStatus } from '@/components/shell'
 import { DailyTargetForm } from '../ringkasan/-target-form'
 import { SetupBoard } from '../ringkasan/-panels'
 import { appSettingsPayload } from './-app-settings'
@@ -50,6 +50,7 @@ function SettingsPage() {
   return (
     <Page title="Pengaturan" crumbs={[{ label: 'Pengaturan' }]}>
       {canEdit && <SetupBoard refresh={setupRound} />}
+      <StoreModeCard />
       {!canEdit ? (
         <NoAccess permission="Mengelola katalog" />
       ) : (
@@ -83,6 +84,38 @@ function SettingsPage() {
         </Tabs>
       )}
     </Page>
+  )
+}
+
+/**
+ * UMK-2121, design 40: whether the owner runs the store alone. Worked out from the staff list (no active staff), never
+ * a switch: the staff menus come back with the first staff member. Owner only (`solo` is null for a cashier).
+ */
+function StoreModeCard() {
+  const solo = useSoloStatus()
+  if (!solo) return null
+  return (
+    <Panel className="mb-4 flex flex-col gap-3 p-6 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Status toko</h2>
+          <Badge color={solo.active ? 'primary' : 'light'} size="small">
+            {solo.active ? 'Sendiri' : 'Dengan staf'}
+          </Badge>
+        </div>
+        <p className="text-sm text-default-secondary">
+          {solo.active
+            ? 'Anda menjalankan toko sendiri. Menu staf, setoran dan log aktivitas disembunyikan sampai Anda menambah staf pertama.'
+            : 'Toko punya staf aktif, jadi semua menu staf tampil.'}{' '}
+          Dihitung dari data staf; tidak ada saklar.
+        </p>
+      </div>
+      {solo.active && (
+        <Button asChild type="outline" color="primary" size="small" width="auto">
+          <Link to="/staf">Tambah staf</Link>
+        </Button>
+      )}
+    </Panel>
   )
 }
 
