@@ -29,6 +29,7 @@ import {
   products,
   productUnits,
   stockBatches,
+  isStocked,
 } from '../db/schema';
 import {
   pricingIssues,
@@ -227,14 +228,14 @@ export class CatalogService {
       ),
       this.stock.onHand(
         tenantId,
-        rows.filter((r) => r.type === 'product').map((r) => r.id),
+        rows.filter((r) => isStocked(r.type)).map((r) => r.id),
       ),
     ]);
     return {
       data: rows.map((r) => ({
         ...this.present(r, codes.get(r.id) ?? [], pricing.get(r.id)),
-        // Only `product` tracks stock; service and non_stock rows answer null.
-        stock: r.type === 'product' ? (onHand[r.id] ?? 0) : null,
+        // Only stocked types (product, ingredient) track stock; service and non_stock rows answer null.
+        stock: isStocked(r.type) ? (onHand[r.id] ?? 0) : null,
       })),
       page: q.page,
       perPage: q.perPage,
@@ -247,8 +248,8 @@ export class CatalogService {
   private stockStateIs(tenantId: string, state: 'low' | 'out') {
     const onHand = sql`coalesce((select sum(b.qty_remaining) from ${stockBatches} b where b.product_id = ${products.id} and b.tenant_id = ${tenantId}), 0)`;
     return state === 'out'
-      ? sql`(${products.type} = 'product' and ${onHand} = 0)`
-      : sql`(${products.type} = 'product' and ${onHand} > 0 and ${onHand} <= ${products.lowStockThreshold})`;
+      ? sql`(${products.type} in ('product', 'ingredient') and ${onHand} = 0)`
+      : sql`(${products.type} in ('product', 'ingredient') and ${onHand} > 0 and ${onHand} <= ${products.lowStockThreshold})`;
   }
 
   async getProduct(tenantId: string, id: string) {
