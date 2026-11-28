@@ -1,3 +1,4 @@
+import { soloOwnerSelfApproves } from '../sales/solo-discount';
 import {
   ConflictException,
   Injectable,
@@ -183,6 +184,11 @@ export class ShiftsService {
    */
   async autoOpens(s: PosSession, open: boolean) {
     return !open && (await isSoloOwner(this.db, s));
+  }
+
+  /** UMK-2123: whether this actor's reductions above 30% need a PIN approval (false for a solo owner). */
+  async discountPinRequired(s: PosSession) {
+    return !(await soloOwnerSelfApproves(this.db, s));
   }
 
   /** One shift of this store as a screen reads it (after a write). */

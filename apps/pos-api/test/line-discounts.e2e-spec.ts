@@ -494,6 +494,8 @@ describe('line discounts (UMK-1990)', () => {
 
     it('idempotent under a double tap: two requests with one key at once both answer the first sale, the approval and stock taken once', async () => {
       const s = await shop(0);
+      // A staff member, so the owner's own discount still takes a PIN approval (UMK-2123: not in solo mode).
+      await createCashier(app, s);
       // A few rounds: the race is real only when both requests reach the database together.
       for (let round = 0; round < 3; round++) {
         const approval = await post(s.auth, '/sales/discount-approvals', {
@@ -822,6 +824,8 @@ describe('line discounts (UMK-1990)', () => {
       maxAmount: 8000,
     }).expect(201);
     const b = await shop(0);
+    // B has staff too, so B's owner needs an approval of B's (UMK-2123: a solo owner would need none).
+    await createCashier(app, b);
     const listed = await get(b.auth, '/sales/discount-approvers').expect(200);
     expect((listed.body as { id: string }[]).map((x) => x.id)).toEqual([
       b.userId,
