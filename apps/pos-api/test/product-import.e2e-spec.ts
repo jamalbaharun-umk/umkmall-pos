@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, UnprocessableEntityException } from '@nestjs/common';
 import request from 'supertest';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
+import { StockService } from '../src/stock/stock.service';
 
 type Store = Awaited<ReturnType<typeof createStore>>;
 type Row = { row: number; status: string; errors: string[]; name: string };
@@ -155,5 +156,36 @@ describe('product import (UMK-2129)', () => {
       csv: 'Nama,Harga,SKU,Barcode\nKopi bubuk,1000,KOPI-1,899001',
     }).expect(200);
     expect(res.body.rows[0]).toMatchObject({ status: 'ok', errors: [] });
+  });
+
+  it('reports a product whose opening stock failed as saved, with a note, never as not saved', async () => {
+    const opening = jest
+      .spyOn(app.get(StockService), 'opening')
+      .mockRejectedValueOnce(new UnprocessableEntityException('Stok gagal'));
+    try {
+      const res = await post(a.auth, '/catalog/products/import', {
+        csv: 'Nama,Harga,Stok\nGaram dapur,3000,5',
+      }).expect(201);
+      expect(res.body.created).toBe(1);
+      expect(res.body.failed).toEqual([
+        {
+          row: 2,
+          name: 'Garam dapur',
+          saved: true,
+          errors: [
+            'Produk tersimpan, tetapi stok awal tidak tercatat: Stok gagal',
+          ],
+        },
+      ]);
+      const found = (
+        await http()
+          .get('/catalog/products?q=garam%20dapur')
+          .set('Authorization', a.auth)
+          .expect(200)
+      ).body;
+      expect(found.total).toBe(1);
+    } finally {
+      opening.mockRestore();
+    }
   });
 });

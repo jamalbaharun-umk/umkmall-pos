@@ -26,6 +26,9 @@ import { Route as LaporanUntungRugiRouteImport } from './routes/laporan/untung-r
 import { Route as MasukDevRouteImport } from './routes/masuk/dev'
 import { Route as MasukUlangRouteImport } from './routes/masuk/ulang'
 import { Route as MetodePembayaranIndexRouteImport } from './routes/metode-pembayaran/index'
+import { Route as MulaiIndexRouteImport } from './routes/mulai/index'
+import { Route as MulaiHargaRouteImport } from './routes/mulai/harga'
+import { Route as MulaiTemplateRouteImport } from './routes/mulai/template'
 import { Route as PelangganIndexRouteImport } from './routes/pelanggan/index'
 import { Route as PemasokIndexRouteImport } from './routes/pemasok/index'
 import { Route as PembelianIndexRouteImport } from './routes/pembelian/index'
@@ -156,6 +159,21 @@ const MasukUlangRoute = MasukUlangRouteImport.update({
 const MetodePembayaranIndexRoute = MetodePembayaranIndexRouteImport.update({
   id: '/metode-pembayaran/',
   path: '/metode-pembayaran/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MulaiIndexRoute = MulaiIndexRouteImport.update({
+  id: '/mulai/',
+  path: '/mulai/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MulaiHargaRoute = MulaiHargaRouteImport.update({
+  id: '/mulai/harga',
+  path: '/mulai/harga',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MulaiTemplateRoute = MulaiTemplateRouteImport.update({
+  id: '/mulai/template',
+  path: '/mulai/template',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PelangganIndexRoute = PelangganIndexRouteImport.update({
@@ -399,6 +417,8 @@ export interface FileRoutesByFullPath {
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/ulang': typeof MasukUlangRoute
+  '/mulai/harga': typeof MulaiHargaRoute
+  '/mulai/template': typeof MulaiTemplateRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
@@ -419,6 +439,7 @@ export interface FileRoutesByFullPath {
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
   '/metode-pembayaran/': typeof MetodePembayaranIndexRoute
+  '/mulai/': typeof MulaiIndexRoute
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
   '/pembelian/': typeof PembelianIndexRoute
@@ -463,6 +484,8 @@ export interface FileRoutesByTo {
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/ulang': typeof MasukUlangRoute
+  '/mulai/harga': typeof MulaiHargaRoute
+  '/mulai/template': typeof MulaiTemplateRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
@@ -483,6 +506,7 @@ export interface FileRoutesByTo {
   '/kasir': typeof KasirIndexRoute
   '/laporan': typeof LaporanIndexRoute
   '/metode-pembayaran': typeof MetodePembayaranIndexRoute
+  '/mulai': typeof MulaiIndexRoute
   '/pelanggan': typeof PelangganIndexRoute
   '/pemasok': typeof PemasokIndexRoute
   '/pembelian': typeof PembelianIndexRoute
@@ -528,6 +552,8 @@ export interface FileRoutesById {
   '/laporan/untung-rugi': typeof LaporanUntungRugiRoute
   '/masuk/dev': typeof MasukDevRoute
   '/masuk/ulang': typeof MasukUlangRoute
+  '/mulai/harga': typeof MulaiHargaRoute
+  '/mulai/template': typeof MulaiTemplateRoute
   '/pembelian/$id': typeof PembelianIdRoute
   '/pembelian/baru': typeof PembelianBaruRoute
   '/pengaturan/keamanan': typeof PengaturanKeamananRoute
@@ -548,6 +574,7 @@ export interface FileRoutesById {
   '/kasir/': typeof KasirIndexRoute
   '/laporan/': typeof LaporanIndexRoute
   '/metode-pembayaran/': typeof MetodePembayaranIndexRoute
+  '/mulai/': typeof MulaiIndexRoute
   '/pelanggan/': typeof PelangganIndexRoute
   '/pemasok/': typeof PemasokIndexRoute
   '/pembelian/': typeof PembelianIndexRoute
@@ -594,6 +621,8 @@ export interface FileRouteTypes {
     | '/laporan/untung-rugi'
     | '/masuk/dev'
     | '/masuk/ulang'
+    | '/mulai/harga'
+    | '/mulai/template'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
@@ -614,6 +643,7 @@ export interface FileRouteTypes {
     | '/kasir/'
     | '/laporan/'
     | '/metode-pembayaran/'
+    | '/mulai/'
     | '/pelanggan/'
     | '/pemasok/'
     | '/pembelian/'
@@ -658,6 +688,8 @@ export interface FileRouteTypes {
     | '/laporan/untung-rugi'
     | '/masuk/dev'
     | '/masuk/ulang'
+    | '/mulai/harga'
+    | '/mulai/template'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
@@ -678,6 +710,7 @@ export interface FileRouteTypes {
     | '/kasir'
     | '/laporan'
     | '/metode-pembayaran'
+    | '/mulai'
     | '/pelanggan'
     | '/pemasok'
     | '/pembelian'
@@ -722,6 +755,8 @@ export interface FileRouteTypes {
     | '/laporan/untung-rugi'
     | '/masuk/dev'
     | '/masuk/ulang'
+    | '/mulai/harga'
+    | '/mulai/template'
     | '/pembelian/$id'
     | '/pembelian/baru'
     | '/pengaturan/keamanan'
@@ -742,6 +777,7 @@ export interface FileRouteTypes {
     | '/kasir/'
     | '/laporan/'
     | '/metode-pembayaran/'
+    | '/mulai/'
     | '/pelanggan/'
     | '/pemasok/'
     | '/pembelian/'
@@ -787,6 +823,8 @@ export interface RootRouteChildren {
   LaporanUntungRugiRoute: typeof LaporanUntungRugiRoute
   MasukDevRoute: typeof MasukDevRoute
   MasukUlangRoute: typeof MasukUlangRoute
+  MulaiHargaRoute: typeof MulaiHargaRoute
+  MulaiTemplateRoute: typeof MulaiTemplateRoute
   PembelianIdRoute: typeof PembelianIdRoute
   PembelianBaruRoute: typeof PembelianBaruRoute
   PengaturanKeamananRoute: typeof PengaturanKeamananRoute
@@ -807,6 +845,7 @@ export interface RootRouteChildren {
   KasirIndexRoute: typeof KasirIndexRoute
   LaporanIndexRoute: typeof LaporanIndexRoute
   MetodePembayaranIndexRoute: typeof MetodePembayaranIndexRoute
+  MulaiIndexRoute: typeof MulaiIndexRoute
   PelangganIndexRoute: typeof PelangganIndexRoute
   PemasokIndexRoute: typeof PemasokIndexRoute
   PembelianIndexRoute: typeof PembelianIndexRoute
@@ -958,6 +997,27 @@ declare module '@tanstack/react-router' {
       path: '/metode-pembayaran'
       fullPath: '/metode-pembayaran/'
       preLoaderRoute: typeof MetodePembayaranIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mulai/': {
+      id: '/mulai/'
+      path: '/mulai'
+      fullPath: '/mulai/'
+      preLoaderRoute: typeof MulaiIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mulai/harga': {
+      id: '/mulai/harga'
+      path: '/mulai/harga'
+      fullPath: '/mulai/harga'
+      preLoaderRoute: typeof MulaiHargaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mulai/template': {
+      id: '/mulai/template'
+      path: '/mulai/template'
+      fullPath: '/mulai/template'
+      preLoaderRoute: typeof MulaiTemplateRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pelanggan/': {
@@ -1291,6 +1351,8 @@ const rootRouteChildren: RootRouteChildren = {
   LaporanUntungRugiRoute: LaporanUntungRugiRoute,
   MasukDevRoute: MasukDevRoute,
   MasukUlangRoute: MasukUlangRoute,
+  MulaiHargaRoute: MulaiHargaRoute,
+  MulaiTemplateRoute: MulaiTemplateRoute,
   PembelianIdRoute: PembelianIdRoute,
   PembelianBaruRoute: PembelianBaruRoute,
   PengaturanKeamananRoute: PengaturanKeamananRoute,
@@ -1311,6 +1373,7 @@ const rootRouteChildren: RootRouteChildren = {
   KasirIndexRoute: KasirIndexRoute,
   LaporanIndexRoute: LaporanIndexRoute,
   MetodePembayaranIndexRoute: MetodePembayaranIndexRoute,
+  MulaiIndexRoute: MulaiIndexRoute,
   PelangganIndexRoute: PelangganIndexRoute,
   PemasokIndexRoute: PemasokIndexRoute,
   PembelianIndexRoute: PembelianIndexRoute,

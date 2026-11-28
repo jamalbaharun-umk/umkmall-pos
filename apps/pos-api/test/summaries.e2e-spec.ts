@@ -320,7 +320,7 @@ describe('summaries across menus (feature 39)', () => {
     expect(empty.steps.map((x: { to: string }) => x.to)).toEqual([
       '/pengaturan',
       '/pengaturan/keamanan',
-      '/catalog/products',
+      '/mulai', // UMK-2128: no product yet, the first screen
       '/metode-pembayaran',
       '/pengaturan',
       '/pembelian',

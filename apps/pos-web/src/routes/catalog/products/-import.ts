@@ -31,8 +31,25 @@ export function previewSummary(p: { total: number; okCount: number; errorCount: 
 }
 
 /** The toast after a save, and whether some rows were left out. */
-export function importToast(r: { created: number; failed: unknown[] }): string {
-  return r.failed.length
-    ? `${r.created} produk ditambahkan, ${r.failed.length} baris tidak disimpan`
-    : `${r.created} produk ditambahkan`
+type ImportOutcome = { created: number; failed: { saved?: true }[] }
+
+/** Rows not saved at all; a row whose product was made without its opening stock is saved, with a note. */
+const notSaved = (r: ImportOutcome) => r.failed.filter((f) => !f.saved).length
+
+export function importToast(r: ImportOutcome): string {
+  const n = notSaved(r)
+  return n ? `${r.created} produk ditambahkan, ${n} baris tidak disimpan` : `${r.created} produk ditambahkan`
+}
+
+/** The heading of the result list: what was added, what was not saved, what was saved with a note. */
+export function doneText(r: ImportOutcome): string {
+  const n = notSaved(r)
+  const noted = r.failed.length - n
+  return [
+    `${r.created} produk ditambahkan.`,
+    n ? `${n} baris tidak disimpan.` : '',
+    noted ? `${noted} produk tersimpan tanpa stok awal.` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
 }

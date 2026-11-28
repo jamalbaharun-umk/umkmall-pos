@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { importFileError, importToast, previewSummary, SAMPLE_CSV, saveLabel } from './-import'
+import { doneText, importFileError, importToast, previewSummary, SAMPLE_CSV, saveLabel } from './-import'
 
 describe('product import screen (UMK-2129)', () => {
   it('reads only a CSV that is neither empty nor too large, and says how to save an Excel sheet', () => {
@@ -18,6 +18,12 @@ describe('product import screen (UMK-2129)', () => {
     expect(previewSummary({ total: 4, okCount: 2, errorCount: 2 })).toMatch(/^2 dari 4 baris siap disimpan\. 2 baris ditandai/)
     expect(importToast({ created: 24, failed: [] })).toBe('24 produk ditambahkan')
     expect(importToast({ created: 2, failed: [{}] })).toBe('2 produk ditambahkan, 1 baris tidak disimpan')
+    // A product saved without its opening stock is not a row "tidak disimpan".
+    expect(importToast({ created: 2, failed: [{ saved: true }] })).toBe('2 produk ditambahkan')
+    expect(doneText({ created: 3, failed: [{}, { saved: true }] })).toBe(
+      '3 produk ditambahkan. 1 baris tidak disimpan. 1 produk tersimpan tanpa stok awal.',
+    )
+    expect(doneText({ created: 1, failed: [{}] })).toBe('1 produk ditambahkan. 1 baris tidak disimpan.')
   })
 
   it('offers a sample whose header names the columns pos-api reads', () => {

@@ -18,7 +18,7 @@ import { NoAccess, Page, Panel, rupiah } from '@/components/page'
 import { useCan } from '@/components/shell'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { previewImport, runImport, type ImportPreview, type ImportResult } from '../-api'
-import { importFileError, importToast, previewSummary, SAMPLE_CSV, saveLabel } from './-import'
+import { doneText, importFileError, importToast, previewSummary, SAMPLE_CSV, saveLabel } from './-import'
 
 export const Route = createFileRoute('/catalog/products/impor')({
   component: ImportProducts,
@@ -179,7 +179,7 @@ function Done({ result, onAgain }: { result: ImportResult; onAgain: () => void }
   return (
     <Panel className="flex flex-col gap-4 p-4 md:p-6">
       <Alert variant="warning" size="small">
-        {result.created} produk ditambahkan. {result.failed.length} baris tidak disimpan:
+        {doneText(result)}
       </Alert>
       <ul className="flex flex-col gap-1 text-sm">
         {result.failed.map((f) => (
