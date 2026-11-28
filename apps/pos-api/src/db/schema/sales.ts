@@ -48,6 +48,12 @@ export const shifts = pos
       expectedCash: rupiah('expected_cash'),
       cashSales: rupiah('cash_sales'),
       salesCount: integer('sales_count'),
+      // UMK-2120, design 40 screen 7: opened by the owner's first cash action, and when the owner checked or
+      // corrected its opening cash on the till.
+      openedAutomatically: boolean('opened_automatically')
+        .notNull()
+        .default(false),
+      openingCheckedAt: ts('opening_checked_at'),
     },
     (t) => [
       unique().on(t.tenantId, t.id),

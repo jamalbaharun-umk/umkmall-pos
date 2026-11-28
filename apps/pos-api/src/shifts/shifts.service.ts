@@ -80,6 +80,8 @@ const shiftColumns = {
   expectedCash: shifts.expectedCash,
   cashSales: shifts.cashSales,
   salesCount: shifts.salesCount,
+  openedAutomatically: shifts.openedAutomatically,
+  openingCheckedAt: shifts.openingCheckedAt,
 };
 
 /** For a select: the stored columns plus whose shift it is. `numbered` adds the shift's number. */
@@ -411,6 +413,94 @@ export class ShiftsService {
   }
 
   /** The owner's take at "Tutup hari", written by the one writer of manual drawer cash (`cash-entries.service`). */
+  /**
+   * Design 40 screen 7 (UMK-2120, owner decision 2026-11-28, option A): the owner checks the opening cash of a
+   * shift that opened by itself (the last count), and may correct it once. Without `openingCash` it is only marked
+   * checked ("Sudah benar"). The opening of an open shift is no ledger entry (the expected cash is worked out at
+   * read time), so the correction changes no closed figure; it is audited as `shift_opening_correct`. After the
+   * check, the drawer is corrected with a recorded movement instead (409 `opening_checked`).
+   */
+  async checkOpening(s: PosSession, shiftId: string, openingCash?: number) {
+    await this.db.transaction(async (tx) => {
+      const [shift] = await tx
+        .select({
+          id: shifts.id,
+          openingCash: shifts.openingCash,
+          openedAutomatically: shifts.openedAutomatically,
+          openingCheckedAt: shifts.openingCheckedAt,
+        })
+        .from(shifts)
+        .where(
+          and(
+            eq(shifts.tenantId, s.tenantId),
+            eq(shifts.actorId, s.actorId),
+            isNull(shifts.closedAt),
+          ),
+        )
+        .for('update');
+      if (shift?.id !== shiftId)
+        throw new ConflictException({
+          message:
+            'Shift ini sudah ditutup. Muat ulang untuk melihat shift yang terbuka sekarang.',
+          code: SHIFT_CHANGED,
+        });
+      if (!shift.openedAutomatically)
+        throw new ConflictException({
+          message:
+            'Modal awal shift ini diisi sendiri saat membuka shift. Betulkan isi laci dengan Tambah modal atau uang keluar.',
+          code: 'opening_not_automatic',
+        });
+      const changes =
+        openingCash !== undefined && openingCash !== shift.openingCash;
+      if (shift.openingCheckedAt) {
+        if (!changes) return; // a repeat of the check, or of the same correction
+        throw new ConflictException({
+          message:
+            'Modal awal sudah dicek. Betulkan isi laci dengan Tambah modal atau uang keluar.',
+          code: 'opening_checked',
+        });
+      }
+      if (changes) {
+        // Cash already taken out of this shift may not leave the drawer below nothing.
+        const t = await this.totals(tx, shift.id);
+        const cash = await this.cashOf(tx, s.tenantId, shift.id);
+        const movements =
+          expectedCash(shift.openingCash, t.cashSales, cash) -
+          shift.openingCash;
+        if (openingCash + movements < 0)
+          throw codedError(
+            'OPENING_TOO_LOW',
+            'openingCash',
+            `Modal awal minimal ${formatRupiah(-movements)}, karena uang itu sudah keluar dari laci di shift ini`,
+            { minimum: -movements },
+          );
+      }
+      await tx
+        .update(shifts)
+        .set({
+          openingCheckedAt: sql`now()`,
+          ...(changes ? { openingCash } : {}),
+        })
+        .where(and(eq(shifts.tenantId, s.tenantId), eq(shifts.id, shift.id)));
+      if (changes) {
+        const read = await this.read(tx, s.tenantId, shift.id);
+        await recordAudit(tx, s, 'shift_opening_correct', {
+          target: {
+            type: 'shift',
+            id: shift.id,
+            label: `Shift #${read.number}`,
+          },
+          details: {
+            shiftId: shift.id,
+            openingCashBefore: shift.openingCash,
+            openingCash,
+          },
+        });
+      }
+    });
+    return this.current(s);
+  }
+
   private async takeAtClose(
     tx: Tx,
     s: PosSession,

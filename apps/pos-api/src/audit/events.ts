@@ -26,6 +26,8 @@ export const AUDIT_EVENTS = {
   production_run: 'money',
   shift_open: 'shift',
   shift_close: 'shift',
+  // Design 40 screen 7: the owner corrected the opening cash of a shift that opened by itself.
+  shift_opening_correct: 'shift',
   sign_in: 'access',
   approval_pin_set: 'access',
   approval_pin_unlock: 'access',

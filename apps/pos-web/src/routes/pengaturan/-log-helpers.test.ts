@@ -53,6 +53,7 @@ describe('Log aktivitas (UMK-1969)', () => {
     expect(actionLabel('shift_close')).toBe('Tutup shift')
     expect(actionLabel('whatever')).toBe('Aksi lain')
     expect(actionLabel('production_run')).toBe('Produksi dicatat')
+    expect(actionLabel('shift_opening_correct')).toBe('Modal awal dibetulkan')
     expect(targetLabel(row())).toBe('Struk #139')
     expect(targetLabel(row({ target: { type: 'device', id: 'd', label: 'Tablet lama' } }))).toBe('Tablet lama')
     expect(targetLabel(row({ target: null }))).toBe('')
@@ -63,6 +64,9 @@ describe('Log aktivitas (UMK-1969)', () => {
     expect(detailText(row({ event: 'price_override', details: { listPrice: 5000, unitPrice: 4500, qty: 2 } }))).toBe('Rp5.000 jadi Rp4.500 · jumlah 2')
     expect(detailText(row({ event: 'shift_close', details: { difference: -5000 } }))).toBe('Selisih −Rp5.000')
     expect(detailText(row({ event: 'shift_close', details: { difference: 0 } }))).toBe('Selisih Rp0')
+    expect(
+      detailText(row({ event: 'shift_opening_correct', details: { openingCashBefore: 50000, openingCash: 30000 } })),
+    ).toBe('Modal awal Rp50.000 jadi Rp30.000')
     expect(detailText(row({ event: 'drawer_cash_out', details: { amount: 10000, reason: 'setor_bank' } }))).toBe('Rp10.000 · Setor ke bank')
     expect(detailText(row({ event: 'staff_update', details: { changed: ['name', 'credential'] } }))).toBe('Diubah: nama, PIN')
     expect(

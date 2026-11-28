@@ -118,6 +118,7 @@ import {
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
 import { CloseYesterday } from './-close-yesterday'
+import { OpeningCard } from './-opening-card'
 import { BarcodeScanSheet, canShowScan, primeBeep, useScanSupport } from '@/components/barcode-scanner'
 import {
   addedResult,
@@ -236,7 +237,7 @@ function Register({
   /** UMK-2123: false for a solo owner, whose discount above 30% needs no PIN. */
   pinRequired: boolean
   /** The open shift: its day and sales for "Tutup kemarin dulu" (UMK-2122). */
-  shift: { id: string; openedAt: string; revenue?: number }
+  shift: { id: string; openedAt: string; revenue?: number; openingCash: number; openedAutomatically?: boolean; openingCheckedAt?: string | null }
   /** `?menunggu=` of the URL: `daftar` opens the waiting list, a sale id opens that sale (the shift close links here). */
   open?: string
 }) {
@@ -662,6 +663,7 @@ function Register({
           <SinceNotices ownIds={pend.state.sales.map((t) => t.id)} />
         </div>
         {solo && <CloseYesterday shift={shift} />}
+        <OpeningCard shift={shift} />
         {!pend.durable && (
           <Alert variant="warning" size="small" role="alert">
             {NOT_STORED_TEXT}
