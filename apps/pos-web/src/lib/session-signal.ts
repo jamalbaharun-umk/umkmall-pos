@@ -5,6 +5,13 @@
 
 export const SESSION_SIGNAL_KEY = 'pos.session.changed'
 const CHANNEL = 'pos-session'
+// This tab's own id: a BroadcastChannel message also reaches another channel object of the SAME tab (the root's
+// listener), so the acting tab, which reloads itself, ignores the signal it sent (no second reload).
+const TAB_ID = Math.random().toString(36).slice(2)
+
+/** Whether a channel message came from another tab (an old message without a tab id counts as another tab's). */
+export const fromOtherTab = (data: unknown, tabId = TAB_ID) =>
+  !(typeof data === 'object' && data !== null && (data as { tab?: unknown }).tab === tabId)
 
 /** Tells the other tabs that the session changed. Never throws (storage may be blocked). */
 export function announceSessionChange(now = Date.now()): void {
@@ -15,7 +22,7 @@ export function announceSessionChange(now = Date.now()): void {
   }
   try {
     const ch = new BroadcastChannel(CHANNEL)
-    ch.postMessage(now)
+    ch.postMessage({ tab: TAB_ID, at: now })
     ch.close()
   } catch {
     // an old browser without BroadcastChannel: the storage event carries it
@@ -60,7 +67,7 @@ export function onSessionChange(handler: () => void): () => void {
   let ch: BroadcastChannel | null = null
   try {
     ch = new BroadcastChannel(CHANNEL)
-    ch.onmessage = () => handler()
+    ch.onmessage = (e: MessageEvent) => fromOtherTab(e.data) && handler()
   } catch {
     ch = null
   }
