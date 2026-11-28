@@ -65,6 +65,12 @@ export const agentPermissions = (
   ...new Set(scopes.flatMap((s) => AGENT_SCOPE_PERMISSIONS[s])),
 ];
 
+/**
+ * UMK-2124 (design 42): what a helper the owner handed the till to may do: sell, nothing else. The routes are
+ * limited further by `@HelperRoute()`, and the sale itself takes no price, discount, voucher, kasbon or online method.
+ */
+export const HELPER_PERMISSIONS: readonly Permission[] = ['sales.create'];
+
 export const ADMIN_ROLE_NAME = 'Admin';
 
 // Seeded for a store the first time its roles are used.

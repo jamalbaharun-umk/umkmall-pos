@@ -2,11 +2,11 @@ import { Controller, Get, NotFoundException } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
-import { staff, storeProfiles, tenants } from '../db/schema';
+import { helperSessions, staff, storeProfiles, tenants } from '../db/schema';
 import { isSoloOwner } from '../shifts/cash-ledger';
 import { storeCashAvailable } from '../store-cash/store-cash-ledger';
 import { VoidPins } from '../void/void-pin';
-import { CurrentSession } from './decorators';
+import { CurrentSession, HelperRoute } from './decorators';
 import { freshSignIn, type PosSession } from './session';
 
 @Controller('tenant')
@@ -41,6 +41,7 @@ export class TenancyController {
    * The signed-in store and actor (the app shell shows who is signed in and hides what they may not open).
    * A cashier's name is read within the session's tenant only; an owner has no POS name (null).
    */
+  @HelperRoute()
   @Get('me')
   async me(@CurrentSession() session: PosSession) {
     const [tenant] = await this.db
@@ -65,9 +66,26 @@ export class TenancyController {
               ),
             )
         : [];
+    // UMK-2124: the restricted till shows "Mode pembantu · {name}" and when the handover ends.
+    const [helper] =
+      session.kind === 'helper' && session.helperSessionId
+        ? await this.db
+            .select({
+              name: helperSessions.name,
+              expiresAt: helperSessions.expiresAt,
+            })
+            .from(helperSessions)
+            .where(
+              and(
+                eq(helperSessions.id, session.helperSessionId),
+                eq(helperSessions.tenantId, session.tenantId),
+              ),
+            )
+        : [];
     return {
       tenant,
       solo: await this.solo(session),
+      helper: helper ?? null,
       actor: {
         id: session.actorId,
         kind: session.kind,

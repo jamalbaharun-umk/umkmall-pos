@@ -7,7 +7,12 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { loadEnv } from '../config';
-import { AGENT_ROUTE, IS_PUBLIC, SessionRequest } from './decorators';
+import {
+  AGENT_ROUTE,
+  HELPER_ROUTE,
+  IS_PUBLIC,
+  SessionRequest,
+} from './decorators';
 import { verifySession } from './session';
 import { StaffAccess } from '../staff/staff-access';
 
@@ -38,6 +43,15 @@ export class SessionGuard implements CanActivate {
     if (
       session.kind === 'agent' &&
       !this.reflector.getAllAndOverride<boolean>(AGENT_ROUTE, [
+        ctx.getHandler(),
+        ctx.getClass(),
+      ])
+    )
+      throw new ForbiddenException();
+    // UMK-2124: a helper reaches only the restricted till's routes, fail-closed like the agent.
+    if (
+      session.kind === 'helper' &&
+      !this.reflector.getAllAndOverride<boolean>(HELPER_ROUTE, [
         ctx.getHandler(),
         ctx.getClass(),
       ])

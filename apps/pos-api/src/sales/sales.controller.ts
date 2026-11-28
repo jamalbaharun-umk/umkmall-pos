@@ -13,12 +13,14 @@ import { z } from 'zod';
 import { validate } from '../common/validation';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { AgentRoute, CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession, HelperRoute } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   AgentQuoteInput,
   AgentSaleInput,
   DiscountApprovalInput,
+  HelperQuoteInput,
+  HelperSaleInput,
   IdempotencyKey,
   PaidSinceQuery,
   QuoteInput,
@@ -33,6 +35,7 @@ export class SalesController {
   constructor(private readonly sales: SalesService) {}
 
   @AgentRoute()
+  @HelperRoute()
   @Post()
   @RequirePermission('sales.create')
   create(
@@ -45,15 +48,18 @@ export class SalesController {
       validate(z.object({ idempotencyKey: IdempotencyKey }), {
         idempotencyKey: key,
       }).idempotencyKey,
-      // UMKMall's agent never sets a price or a discount (AgentSaleInput).
+      // UMKMall's agent never sets a price or a discount (AgentSaleInput); nor does a helper (HelperSaleInput).
       s.kind === 'agent'
         ? validate(AgentSaleInput, body)
-        : validate(SaleInput, body),
+        : s.kind === 'helper'
+          ? validate(HelperSaleInput, body)
+          : validate(SaleInput, body),
     );
   }
 
   /** UMK-1985: the server's price of a cart (unit and wholesale tier), nothing written. */
   @AgentRoute()
+  @HelperRoute()
   @Post('quote')
   @HttpCode(200)
   @RequirePermission('sales.create')
@@ -62,7 +68,9 @@ export class SalesController {
       s,
       s.kind === 'agent'
         ? validate(AgentQuoteInput, body)
-        : validate(QuoteInput, body),
+        : s.kind === 'helper'
+          ? validate(HelperQuoteInput, body)
+          : validate(QuoteInput, body),
     );
   }
 
@@ -94,6 +102,7 @@ export class SalesController {
     return this.sales.paidSince(s, validate(PaidSinceQuery, query));
   }
 
+  @HelperRoute()
   @Get('settings')
   settings(@CurrentSession() s: PosSession) {
     return this.sales.settings(s.tenantId);
@@ -113,6 +122,7 @@ export class SalesController {
     return this.sales.get(s, parseId(id));
   }
 
+  @HelperRoute()
   @Get(':id/receipt')
   receipt(@CurrentSession() s: PosSession, @Param('id') id: string) {
     return this.sales.receipt(s, parseId(id));

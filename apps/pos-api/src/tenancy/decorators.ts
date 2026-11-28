@@ -16,6 +16,14 @@ export const AGENT_ROUTE = 'pos:agentRoute';
 /** A route UMKMall's agent session may call (UMK-1978). Every other route answers it 403: new routes stay closed. */
 export const AgentRoute = () => SetMetadata(AGENT_ROUTE, true);
 
+export const HELPER_ROUTE = 'pos:helperRoute';
+
+/**
+ * A route a helper session may call (UMK-2124, design 42: the restricted till sells and nothing else). Every other
+ * route answers a helper 403, whatever the permission: new routes stay closed.
+ */
+export const HelperRoute = () => SetMetadata(HELPER_ROUTE, true);
+
 export type SessionRequest = Request & { posSession?: PosSession };
 
 /** The verified session. Take the tenant id from here, never from the body, query or path. */

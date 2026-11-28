@@ -13,7 +13,7 @@ import { validate } from '../common/validation';
 import { IdempotencyKey } from '../sales/sales.schemas';
 import { parseId } from '../staff/http';
 import { RequirePermission } from '../staff/require-permission';
-import { AgentRoute, CurrentSession } from '../tenancy/decorators';
+import { AgentRoute, CurrentSession, HelperRoute } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
 import {
   CashEntriesService,
@@ -57,6 +57,7 @@ export class ShiftsController {
   ) {}
 
   @AgentRoute()
+  @HelperRoute()
   @Get('current')
   @RequirePermission('sales.create')
   async current(@CurrentSession() s: PosSession) {

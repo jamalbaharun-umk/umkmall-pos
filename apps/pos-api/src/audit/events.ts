@@ -42,6 +42,9 @@ export const AUDIT_EVENTS = {
   device_pair: 'access',
   device_revoke: 'access',
   session_revoke: 'access',
+  // UMK-2124: the owner handed the till to a helper, and came back with the owner PIN.
+  helper_start: 'access',
+  helper_end: 'access',
 } as const satisfies Record<string, AuditGroup>;
 
 export type AuditEvent = keyof typeof AUDIT_EVENTS;

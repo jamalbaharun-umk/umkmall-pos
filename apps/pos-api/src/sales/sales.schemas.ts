@@ -112,6 +112,27 @@ export const AgentSaleInput = z
   .strict();
 
 /**
+ * What a helper may send for a sale (UMK-2124, design 42): the cart, one payment method and the amount paid. No
+ * price, no discount, no voucher, no member, no bank: an unknown field answers 422.
+ */
+export const HelperSaleInput = z
+  .object({
+    lines: linesOf(z.object(lineFields).strict()),
+    paymentMethodId: Uuid.optional(),
+    paid: rupiah,
+    note: z.string().trim().max(200).optional(),
+  })
+  .strict();
+
+/** UMK-2124: the helper's quote, which never carries a discount or a voucher. */
+export const HelperQuoteInput = z
+  .object({
+    lines: linesOf(z.object(lineFields).strict()),
+    paymentMethodId: Uuid.optional(),
+  })
+  .strict();
+
+/**
  * `POST /sales/quote`: the cart's lines and, when a voucher or a payment method is given (UMK-1981), the whole
  * amount the sale would ask: voucher discount, tax, total, cash rounding, amount due. Nothing is written.
  */

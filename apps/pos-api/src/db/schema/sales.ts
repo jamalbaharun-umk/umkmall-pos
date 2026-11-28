@@ -28,9 +28,12 @@ const tenantId = () =>
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
-export const ACTOR_KINDS = ['owner', 'cashier', 'agent'] as const;
+// `helper`: a sale rung up by someone the owner handed the till to (UMK-2124), in the owner's shift.
+export const ACTOR_KINDS = ['owner', 'cashier', 'agent', 'helper'] as const;
 /** How a row UMKMall's agent recorded names its actor on screens and receipts (UMK-1981). */
 export const AGENT_LABEL = 'Agent UMKMall';
+/** How a row a helper recorded names its actor (UMK-2124, design 42). */
+export const HELPER_LABEL = 'Pembantu';
 
 export const shifts = pos
   .table(
@@ -207,6 +210,8 @@ export const sales = pos
       shiftId: uuid('shift_id').notNull(),
       actorId: uuid('actor_id').notNull(),
       actorKind: text('actor_kind', { enum: ACTOR_KINDS }).notNull(),
+      // UMK-2124: the handover a helper sold under (`actor_kind = 'helper'`); null for everyone else.
+      helperSessionId: uuid('helper_session_id'),
       paymentMethodId: uuid('payment_method_id').notNull(),
       idempotencyKey: text('idempotency_key').notNull(),
       // sha256 of the normalized request: the same key with a different body is refused, not replayed.
