@@ -1,3 +1,4 @@
+import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { refusalOf } from '@/lib/refusal'
@@ -161,3 +162,46 @@ export const deleteProduct = createServerFn({ method: 'POST' })
   .handler(({ data }) => write(`/catalog/products/${encodeURIComponent(data)}`, 'DELETE'))
 
 export { rupiah } from '../../lib/rupiah'
+
+// UMK-2129: product import from CSV. The screen reads the file; pos-api parses and checks it.
+export type ImportPreviewRow = {
+  row: number
+  name: string
+  sellingPrice: number | null
+  costPrice: number | null
+  sku: string | null
+  category: string | null
+  unit: string | null
+  barcode: string | null
+  stock: number | null
+  status: 'ok' | 'error'
+  errors: string[]
+}
+export type ImportPreview = { rows: ImportPreviewRow[]; total: number; okCount: number; errorCount: number }
+export type ImportResult = { created: number; failed: { row: number; name: string; errors: string[] }[]; total: number }
+export type ImportAnswer<T> = { ok: true; data: T } | { ok: false; error: string; status?: number; code?: string }
+
+async function importCall<T>(path: string, csv: string): Promise<ImportAnswer<T>> {
+  const res = await api(path, { method: 'POST', body: JSON.stringify({ csv }) }).catch((e: unknown) => {
+    if (isRedirect(e)) throw e // the session ended: follow the sign-in redirect
+    return null
+  })
+  if (!res) return { ok: false, status: 0, error: 'Tidak bisa terhubung. Periksa koneksi lalu coba lagi.' }
+  if (!res.ok) {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as { code?: unknown } | null
+    const refusal = await refusalOf(res)
+    return { ok: false, ...refusal, code: typeof body?.code === 'string' ? body.code : undefined }
+  }
+  return { ok: true, data: (await res.json()) as T }
+}
+
+export const previewImport = createServerFn({ method: 'POST' })
+  .validator((csv: string) => csv)
+  .handler(({ data }) => importCall<ImportPreview>('/catalog/products/import/preview', data))
+
+export const runImport = createServerFn({ method: 'POST' })
+  .validator((csv: string) => csv)
+  .handler(({ data }) => importCall<ImportResult>('/catalog/products/import', data))

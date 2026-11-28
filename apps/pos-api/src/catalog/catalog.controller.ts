@@ -23,12 +23,14 @@ import {
   CategoryInput,
   parse,
   ProductCreate,
+  ImportInput,
   QuickProductCreate,
   ProductQuery,
   ProductUpdate,
   Uuid,
 } from './catalog.schemas';
 import { CatalogService } from './catalog.service';
+import { ImportService } from './import.service';
 
 // A malformed id can never name a row of this store: 404, same as another store's id.
 const idOf = (raw: string) => {
@@ -82,11 +84,14 @@ export class CategoriesController {
 export const AGENT_MAX_IMAGES = 10;
 
 /** Cost price is margin data: only actors who manage the catalog, read reports or buy stock see it. */
+/** Who may see a product's cost (and so which products have none). */
+const seesCost = (s: PosSession) =>
+  (['catalog.manage', 'reports.view', 'purchasing.manage'] as const).some((k) =>
+    hasPermission(s, k),
+  );
+
 function withoutCost<T extends Record<string, unknown>>(s: PosSession, p: T) {
-  const sees = (
-    ['catalog.manage', 'reports.view', 'purchasing.manage'] as const
-  ).some((k) => hasPermission(s, k));
-  if (sees) return p;
+  if (seesCost(s)) return p;
   const rest: Record<string, unknown> = { ...p };
   delete rest.costPrice;
   delete rest.costMissingCount;
@@ -95,15 +100,18 @@ function withoutCost<T extends Record<string, unknown>>(s: PosSession, p: T) {
 
 @Controller('catalog/products')
 export class ProductsController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly imports: ImportService,
+  ) {}
 
   @AgentRoute()
   @Get()
   async list(@CurrentSession() s: PosSession, @Query() query: unknown) {
-    const page = await this.catalog.listProducts(
-      s.tenantId,
-      parse(ProductQuery, query),
-    );
+    const q = parse(ProductQuery, query);
+    // PR 88 review: the cost filter would tell an actor who may not see costs which products have none.
+    if (!seesCost(s)) q.cost = undefined;
+    const page = await this.catalog.listProducts(s.tenantId, q);
     // Without cost visibility neither a product's cost nor how many lack one (UMK-2130).
     return withoutCost(s, {
       ...page,
@@ -121,6 +129,25 @@ export class ProductsController {
       s.kind === 'agent'
         ? parse(AgentProductCreate, body)
         : parse(ProductCreate, body),
+    );
+  }
+
+  /** UMK-2129: the file's rows with their errors, nothing saved. */
+  @Post('import/preview')
+  @HttpCode(200)
+  @RequirePermission('catalog.manage')
+  previewImport(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    return this.imports.preview(s.tenantId, parse(ImportInput, body).csv);
+  }
+
+  /** UMK-2129: saves the rows that pass; answers how many were made and which rows were not. */
+  @Post('import')
+  @RequirePermission('catalog.manage')
+  runImport(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    return this.imports.import(
+      s.tenantId,
+      s.actorId,
+      parse(ImportInput, body).csv,
     );
   }
 
