@@ -30,6 +30,7 @@ import { addressKey } from '../staff/address-limits';
 import { Public } from '../tenancy/decorators';
 import type { AgentScope, PosSession } from '../tenancy/session';
 import { signSession } from '../tenancy/session';
+import { hashSecret } from '../staff/secrets';
 import { type NativeAnswer, UmkmallNative } from './umkmall-native';
 
 const SESSION_TTL = 15 * 60;
@@ -270,6 +271,7 @@ export class AuthController {
         actorId: user.id,
         kind: 'owner',
         signedInAt: nowSeconds(),
+        nativeSidHash: hashSecret(session.id),
       })),
       umkmall: { sid: session.id, refreshToken },
     };
@@ -305,7 +307,12 @@ export class AuthController {
     const { user, refreshToken: rotated } = answer.data.data;
     const tenantId = await this.tenantOfUmkmallUser(user.id);
     return {
-      ...(await this.issue({ tenantId, actorId: user.id, kind: 'owner' })),
+      ...(await this.issue({
+        tenantId,
+        actorId: user.id,
+        kind: 'owner',
+        nativeSidHash: hashSecret(sid),
+      })),
       umkmall: { sid, ...(rotated && { refreshToken: rotated }) },
     };
   }

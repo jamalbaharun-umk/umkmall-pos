@@ -4,6 +4,7 @@ import {
   Controller,
   ForbiddenException,
   HttpCode,
+  HttpException,
   Injectable,
   Module,
   Post,
@@ -12,7 +13,7 @@ import {
 import { and, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { recordAudit } from '../audit/record';
-import { validate } from '../common/validation';
+import { fieldError, validate } from '../common/validation';
 import { loadEnv } from '../config';
 import type { Db } from '../db/db.module';
 import { InjectDb } from '../db/db.module';
@@ -22,9 +23,9 @@ import { isUniqueViolation } from '../staff/http';
 import { hashSecret } from '../staff/secrets';
 import { CurrentSession, HelperRoute } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
-import { signSession } from '../tenancy/session';
+import { freshSignIn, signSession } from '../tenancy/session';
 import { VoidPin } from '../void/void.schemas';
-import { VoidPins } from '../void/void-pin';
+import { FRESH_SIGN_IN_REQUIRED, VoidPins } from '../void/void-pin';
 
 // UMK-2124 "Serahkan ke pembantu" (design 42, plan 2026-11-28-015). The owner parks the session behind the owner
 // PIN and hands the till to a helper who may only sell; the owner comes back with the PIN. The security model is in
@@ -39,6 +40,8 @@ const OWNER_SESSION_SECONDS = 15 * 60;
 export const HELPER_ACTIVE = 'helper_active';
 export const SHIFT_REQUIRED_FOR_HELPER = 'shift_required';
 export const SESSION_PARKED = 'session_parked';
+export const SIGN_IN_AGAIN = 'sign_in_again';
+export const HELPER_NOT_ACTIVE = 'helper_not_active';
 
 const StartInput = z
   .object({
@@ -50,7 +53,8 @@ const StartInput = z
       .optional()
       .transform((v) => (v ? v : undefined)),
     // The owner's UMKMall native session id on this device (pos-web reads it from its httpOnly cookie). Stored
-    // only as a hash; absent for a dev sign-in, which has no native session.
+    // only as a hash, and it must be the native session this owner session came from (the token's `nsh`). Required
+    // whenever the owner signs in by WhatsApp; absent only where there is no native sign-in (a dev sign-in).
     parkedSid: z.string().min(1).max(200).optional(),
   })
   .strict();
@@ -69,9 +73,12 @@ export async function parkedSidRefused(db: Db, sid: string) {
     .where(
       and(
         eq(helperSessions.parkedSidHash, hashSecret(sid)),
+        // Released only by the owner's PIN: a running handover, one that ran out, and one the owner ended by
+        // signing in again (that sign-in made a new native session; the parked one never wakes).
         or(
           isNull(helperSessions.endedReason),
           eq(helperSessions.endedReason, 'expired'),
+          eq(helperSessions.endedReason, 'signin'),
         ),
       ),
     )
@@ -81,7 +88,8 @@ export async function parkedSidRefused(db: Db, sid: string) {
 
 @Injectable()
 export class HelperService {
-  private readonly secret = loadEnv().POS_SESSION_SECRET;
+  private readonly env = loadEnv();
+  private readonly secret = this.env.POS_SESSION_SECRET;
 
   constructor(
     @InjectDb() private readonly db: Db,
@@ -93,6 +101,7 @@ export class HelperService {
       throw new ForbiddenException(
         'Hanya pemilik yang bisa menyerahkan kasir ke pembantu',
       );
+    const parkedSidHash = this.parkedHashOf(s, input.parkedSid);
     // The owner's own PIN, counted and locked like a void's (wrong 422, locked 429, none 422).
     await this.pins.verifyOwner(s.tenantId, s.actorId, input.pin);
     const row = await this.db
@@ -123,7 +132,7 @@ export class HelperService {
             tenantId: s.tenantId,
             ownerId: s.actorId,
             name: input.name ?? null,
-            parkedSidHash: input.parkedSid ? hashSecret(input.parkedSid) : null,
+            parkedSidHash,
             expiresAt: sql`now() + make_interval(secs => ${HELPER_SESSION_SECONDS})`,
           })
           .returning({
@@ -177,9 +186,14 @@ export class HelperService {
   async end(s: PosSession, pin: string) {
     if (s.kind !== 'helper' || !s.helperSessionId)
       throw new ForbiddenException();
-    await this.pins.verifyOwner(s.tenantId, s.actorId, pin);
     const helperSessionId = s.helperSessionId;
-    await this.db.transaction(async (tx) => {
+    try {
+      await this.pins.verifyOwner(s.tenantId, s.actorId, pin);
+    } catch (e) {
+      await this.auditRefusal(s, helperSessionId, e);
+      throw e;
+    }
+    const parked = await this.db.transaction(async (tx) => {
       const [ended] = await tx
         .update(helperSessions)
         .set({ endedAt: sql`now()`, endedReason: 'owner' })
@@ -192,7 +206,10 @@ export class HelperService {
             gt(helperSessions.expiresAt, sql`now()`),
           ),
         )
-        .returning({ id: helperSessions.id });
+        .returning({
+          id: helperSessions.id,
+          parkedSidHash: helperSessions.parkedSidHash,
+        });
       // Ended meanwhile (a second "Kembali ke pemilik") or past its 12 hours: this token is dead.
       if (!ended) throw new UnauthorizedException();
       await recordAudit(tx, s, 'helper_end', {
@@ -203,16 +220,128 @@ export class HelperService {
         },
         details: { helperSessionId: ended.id, reason: 'owner' },
       });
+      return ended.parkedSidHash;
     });
-    // The owner's session again, never fresh: making or resetting the owner PIN still needs a WhatsApp sign-in.
+    // The owner's session again, never fresh: making or resetting the owner PIN still needs a WhatsApp sign-in, and
+    // so does changing it (a handover happened since it was set). It names the native session it unparked.
     return {
       sessionToken: await signSession(
-        { tenantId: s.tenantId, actorId: s.actorId, kind: 'owner' },
+        {
+          tenantId: s.tenantId,
+          actorId: s.actorId,
+          kind: 'owner',
+          ...(parked && { nativeSidHash: parked }),
+        },
         this.secret,
         OWNER_SESSION_SECONDS,
       ),
       expiresIn: OWNER_SESSION_SECONDS,
     };
+  }
+
+  /**
+   * The owner ends a handover from a fresh WhatsApp sign-in (review of PR 109): the device that held the helper's
+   * till is lost or was signed out, so "Kembali ke pemilik" cannot be pressed there. The handover ends as `signin`
+   * and its parked native session stays refused (the sign-in made a new one). 409 `helper_not_active` when there is
+   * none to end.
+   */
+  async closeByOwner(s: PosSession) {
+    if (s.kind !== 'owner')
+      throw new ForbiddenException(
+        'Hanya pemilik yang bisa mengakhiri mode pembantu',
+      );
+    if (!freshSignIn(s))
+      throw new ForbiddenException({
+        message:
+          'Untuk keamanan, masuk lagi dengan akun UMKMall, lalu akhiri mode pembantu dalam 5 menit.',
+        code: FRESH_SIGN_IN_REQUIRED,
+      });
+    return this.db.transaction(async (tx) => {
+      const [ended] = await tx
+        .update(helperSessions)
+        .set({
+          endedAt: sql`now()`,
+          endedReason: sql`case when ${helperSessions.expiresAt} <= now() then 'expired' else 'signin' end`,
+        })
+        .where(
+          and(
+            eq(helperSessions.tenantId, s.tenantId),
+            eq(helperSessions.ownerId, s.actorId),
+            isNull(helperSessions.endedAt),
+          ),
+        )
+        .returning({
+          id: helperSessions.id,
+          endedReason: helperSessions.endedReason,
+        });
+      if (!ended)
+        throw new ConflictException({
+          message: 'Tidak ada mode pembantu yang sedang berjalan.',
+          code: HELPER_NOT_ACTIVE,
+        });
+      await recordAudit(tx, s, 'helper_end', {
+        target: {
+          type: 'helper_session',
+          id: ended.id,
+          label: 'Mode pembantu',
+        },
+        details: { helperSessionId: ended.id, reason: ended.endedReason },
+      });
+      return { ended: true };
+    });
+  }
+
+  /**
+   * The parked native session's hash for a start: the one this owner session came from. A WhatsApp-signed-in owner
+   * must name it (pos-web reads its httpOnly cookie), so a start can never leave the owner's native session awake
+   * for the helper's device to refresh. A session without `nsh` where native sign-in exists (signed before UMK-2124)
+   * signs in again; only without native sign-in (development) is there nothing to park.
+   */
+  private parkedHashOf(s: PosSession, parkedSid: string | undefined) {
+    if (s.nativeSidHash) {
+      if (!parkedSid || hashSecret(parkedSid) !== s.nativeSidHash)
+        throw fieldError(
+          'parkedSid',
+          'Sesi pemilik di perangkat ini tidak cocok. Masuk lagi lewat WhatsApp, lalu serahkan kasir.',
+        );
+      return s.nativeSidHash;
+    }
+    if (this.env.UMKMALL_API_URL)
+      throw new ForbiddenException({
+        message: 'Masuk lagi lewat WhatsApp, lalu serahkan kasir ke pembantu.',
+        code: SIGN_IN_AGAIN,
+      });
+    return null;
+  }
+
+  /** A wrong, locked or missing owner PIN at "Kembali ke pemilik" is audited (never the PIN), in its own write. */
+  private async auditRefusal(
+    s: PosSession,
+    helperSessionId: string,
+    e: unknown,
+  ) {
+    if (!(e instanceof HttpException)) return;
+    const status = e.getStatus();
+    const code = (e.getResponse() as { code?: unknown }).code;
+    const reason =
+      status === 429
+        ? 'locked'
+        : code === 'owner_pin_missing'
+          ? 'missing'
+          : status === 422
+            ? 'wrong_pin'
+            : null;
+    if (!reason) return;
+    await this.db.transaction((tx) =>
+      recordAudit(tx, s, 'helper_end_refused', {
+        target: {
+          type: 'helper_session',
+          id: helperSessionId,
+          label: 'Mode pembantu',
+        },
+        details: { helperSessionId, reason },
+      }),
+    );
   }
 }
 
@@ -225,6 +354,13 @@ export class HelperController {
   @HttpCode(201)
   start(@CurrentSession() s: PosSession, @Body() body: unknown) {
     return this.helper.start(s, validate(StartInput, body));
+  }
+
+  /** The owner ends a handover from a fresh WhatsApp sign-in, when the helper's device cannot be reached. */
+  @Post('close')
+  @HttpCode(200)
+  close(@CurrentSession() s: PosSession) {
+    return this.helper.closeByOwner(s);
   }
 
   /** "Kembali ke pemilik": the owner's PIN ends the handover; the answer is the owner's token. */

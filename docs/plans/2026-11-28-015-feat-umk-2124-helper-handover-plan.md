@@ -42,6 +42,31 @@ Two PRs: the server (this plan's pos-api part, with its tests), then the screens
   cannot get 5 guesses here and 5 more at a void. A right PIN ends the row
   (`ended_reason = 'owner'`) and answers a new owner token (never fresh: making or resetting the PIN still needs a
   WhatsApp sign-in). An expired or ended row answers 401: the helper token is dead.
+- **Review of PR 109 (reviewer blockers, coordinator's calls 2026-11-28, safer option each time):**
+  - `GET /shifts/current` answers a helper only `{ shift: { id, openedAt } | null, autoOpen: false,
+    discountPinRequired: true }`: no revenue, profit, cost or drawer ledger of the owner's shift.
+  - **The parked native session is bound.** An owner token from a WhatsApp sign-in or its refresh carries `nsh`, the
+    sha256 of the native session id it came from. `POST /helper/start` then needs `parkedSid` and its hash must equal
+    `nsh` (422 on `parkedSid` otherwise), checked before the PIN is counted. Where native sign-in exists
+    (`UMKMALL_API_URL` set) an owner token without `nsh` (signed before this change) answers 403 `sign_in_again`.
+    Only without native sign-in (development) is nothing parked. The owner token handed back by `/helper/end`
+    carries the unparked `nsh`.
+  - **Changing the owner PIN.** Before this change, changing an existing owner PIN with the current PIN needed no
+    fresh sign-in (`void-pin.ts`, `set`), so a helper who saw the PIN could have changed it from the owner token that
+    `/helper/end` answers. Now, when a handover of this owner was created since the PIN was last set, changing it
+    needs a fresh WhatsApp sign-in (403 `fresh_sign_in_required`), during or after the handover. A change after that
+    sign-in moves the PIN's `updated_at` past the handover and the usual rule is back. Making, resetting and
+    unlocking the PIN already needed a fresh sign-in, and the `/helper/end` token is never fresh.
+  - **The owner ends a handover from a fresh sign-in:** `POST /helper/close` (owner, fresh sign-in, else 403
+    `fresh_sign_in_required`), for a lost or signed-out helper device that would otherwise leave the owner at 409
+    `helper_active` for 12 hours. It ends the live row as `signin` (or `expired` if past its end); 409
+    `helper_not_active` when there is none. A `signin` end keeps the parked native session refused (the sign-in made
+    a new one).
+  - **Audit of refusals at "Kembali ke pemilik":** `helper_end_refused` (`wrong_pin`, `locked`, `missing`), written
+    in its own transaction, never the PIN.
+  - **The parked native session on the device** stays only in the httpOnly `pos_umkmall` cookie (never readable by
+    page script), refused by pos-api until the PIN. pos-web's "Kembali ke pemilik" refreshes it at once after the
+    PIN (UMKMall rotates the refresh token where it does), in the screens PR.
 - **Audit:** `helper_start` and `helper_end` (group `access`): the handover id, the expiry, the end reason. Never the
   helper's name, a PIN or a sid.
 - **Never logged:** the PIN, the sid, the token, the helper's name.
@@ -60,6 +85,11 @@ Two PRs: the server (this plan's pos-api part, with its tests), then the screens
   - an expired handover is 401, and the parked sid stays refused by the refresh; a sid released by the PIN is
     accepted again;
   - store B cannot end or use store A's handover.
+  - review of PR 109: the helper's shift shape; a start without `parkedSid`, with another sid, or from a token
+    without `nsh`; a forged `hsid` is 401; the helper quote refuses voucher, discount and price; an online method is
+    403; wrong PINs at the end are audited; the `/helper/end` token is not fresh and the PIN changes only after a
+    fresh sign-in; `POST /helper/close` (fresh only, ends as `signin`, sid stays refused, other store untouched).
+    Revert-red on the shift shape and the sid binding.
   - Revert-red once on the route allow-list and once on the refresh block.
 - [test] `src/guards.spec.ts` pins the helper routes.
 - [cmd] `npm run lint && npm run typecheck && npm test && npm run build`.

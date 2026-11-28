@@ -45,6 +45,8 @@ export const AUDIT_EVENTS = {
   // UMK-2124: the owner handed the till to a helper, and came back with the owner PIN.
   helper_start: 'access',
   helper_end: 'access',
+  // A wrong, locked or missing owner PIN at "Kembali ke pemilik" (never the PIN itself).
+  helper_end_refused: 'access',
 } as const satisfies Record<string, AuditGroup>;
 
 export type AuditEvent = keyof typeof AUDIT_EVENTS;

@@ -1,5 +1,5 @@
 {
-  "id": "27325729-9283-4191-9d5e-ea3f19087157",
+  "id": "2a65fb60-7863-472b-a56f-f4d5cea3fb3c",
   "prevId": "083a1611-9982-4de4-9e5e-8b9144434bee",
   "version": "7",
   "dialect": "postgresql",
@@ -8916,7 +8916,7 @@
       "checkConstraints": {
         "helper_sessions_end_ck": {
           "name": "helper_sessions_end_ck",
-          "value": "(\"pos\".\"helper_sessions\".\"ended_at\" is null) = (\"pos\".\"helper_sessions\".\"ended_reason\" is null) and (\"pos\".\"helper_sessions\".\"ended_reason\" is null or \"pos\".\"helper_sessions\".\"ended_reason\" in ('owner', 'expired'))"
+          "value": "(\"pos\".\"helper_sessions\".\"ended_at\" is null) = (\"pos\".\"helper_sessions\".\"ended_reason\" is null) and (\"pos\".\"helper_sessions\".\"ended_reason\" is null or \"pos\".\"helper_sessions\".\"ended_reason\" in ('owner', 'expired', 'signin'))"
         },
         "helper_sessions_name_ck": {
           "name": "helper_sessions_name_ck",

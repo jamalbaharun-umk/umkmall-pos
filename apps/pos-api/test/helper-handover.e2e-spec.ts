@@ -5,6 +5,8 @@ import request from 'supertest';
 import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
+import { hashSecret } from '../src/staff/secrets';
+import { signSession } from '../src/tenancy/session';
 
 // UMK-2124 "Serahkan ke pembantu" (design 42, plan 2026-11-28-015): the owner parks the session behind the owner
 // PIN and a helper sells on the same device, nothing else; the owner comes back with the PIN.
@@ -41,9 +43,33 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
       select actor_kind, details from pos.audit_log
        where tenant_id = ${tenantId} and event = ${event} order by occurred_at, id`;
 
+  /**
+   * The owner's session after a WhatsApp sign-in or its refresh: it names the native session it came from (`nsh`),
+   * the one a handover parks. Sids of this file are random (the parked lookup names no store).
+   */
+  const nativeOwner = async (
+    s: { tenantId: string; userId: string },
+    sid: string,
+    signedInAt?: number,
+  ) =>
+    bearer(
+      await signSession(
+        {
+          tenantId: s.tenantId,
+          actorId: s.userId,
+          kind: 'owner',
+          nativeSidHash: hashSecret(sid),
+          ...(signedInAt && { signedInAt }),
+        },
+        process.env.POS_SESSION_SECRET!,
+      ),
+    );
+
   /** A store without staff, with the owner's PIN and Es Teh at Rp5.000. */
   async function shop() {
     const s = await createStore();
+    const sid = randomUUID();
+    const owner = await nativeOwner(s, sid);
     await http()
       .put('/void-pin')
       .set('Authorization', s.freshAuth)
@@ -66,16 +92,14 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
         .set('Authorization', auth)
         .set('Idempotency-Key', randomUUID())
         .send({ lines: [{ productId, qty: 1 }], paid: 5000, ...body });
-    const start = (body: object = {}) =>
-      post(s.auth, '/helper/start', { pin: OWNER_PIN, ...body });
-    return { ...s, productId, sell, start };
+    const start = (body: object = {}, auth = owner) =>
+      post(auth, '/helper/start', { pin: OWNER_PIN, parkedSid: sid, ...body });
+    return { ...s, sid, owner, productId, sell, start };
   }
 
   it('hands over with the owner PIN: the shift opens, the helper sells into it as "Pembantu"', async () => {
     const s = await shop();
-    const started = await s
-      .start({ name: 'Dina', parkedSid: randomUUID() })
-      .expect(201);
+    const started = await s.start({ name: 'Dina' }).expect(201);
     expect(started.body.helper).toMatchObject({ name: 'Dina' });
     const helper = bearer(started.body.sessionToken);
     const me = await get(helper, '/tenant/me').expect(200);
@@ -85,8 +109,15 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
     });
     expect(me.body.helper).toMatchObject({ name: 'Dina' });
 
-    const shift = (await get(helper, '/shifts/current').expect(200)).body.shift;
-    expect(shift).not.toBeNull();
+    // the shift is open, and nothing of its money reaches the helper (review of PR 109)
+    const current = await get(helper, '/shifts/current').expect(200);
+    const shift = current.body.shift as { id: string };
+    expect(Object.keys(shift).sort()).toEqual(['id', 'openedAt']);
+    expect(current.body).toEqual({
+      shift,
+      autoOpen: false,
+      discountPinRequired: true,
+    });
     const sale = await s.sell(helper).expect(201);
     const [row] = await admin<
       {
@@ -134,9 +165,12 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
     expect(again.body.code).toBe('helper_active');
 
     const noPin = await createStore();
-    const missing = await post(noPin.auth, '/helper/start', {
-      pin: OWNER_PIN,
-    }).expect(422);
+    const noPinSid = randomUUID();
+    const missing = await post(
+      await nativeOwner(noPin, noPinSid),
+      '/helper/start',
+      { pin: OWNER_PIN, parkedSid: noPinSid },
+    ).expect(422);
     expect(missing.body.code).toBe('owner_pin_missing');
 
     const withStaff = await shop();
@@ -258,18 +292,13 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
     const s = await shop();
     // The sid hash is looked up before the store is known (the refresh names no store): sids of this test are
     // its own, so a suite sharing the database never collides with them.
-    const [parkedSid, otherSid, laterSid] = [
-      randomUUID(),
-      randomUUID(),
-      randomUUID(),
-    ];
+    const parkedSid = s.sid;
+    const [otherSid, laterSid] = [randomUUID(), randomUUID()];
     const refresh = (sid: string) =>
       http()
         .post('/auth/umkmall/refresh')
         .send({ sid, refreshToken: 'r'.repeat(20) });
-    const helper = bearer(
-      (await s.start({ parkedSid }).expect(201)).body.sessionToken,
-    );
+    const helper = bearer((await s.start().expect(201)).body.sessionToken);
     const parked = await refresh(parkedSid).expect(403);
     expect(parked.body.code).toBe('session_parked');
     // another sid is not parked: it gets past the check (and UMKMall cannot be reached here)
@@ -279,7 +308,11 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
 
     // a handover that ran out: its token is refused, its sid stays parked, the next start ends it as expired
     const second = bearer(
-      (await s.start({ parkedSid: laterSid }).expect(201)).body.sessionToken,
+      (
+        await s
+          .start({ parkedSid: laterSid }, await nativeOwner(s, laterSid))
+          .expect(201)
+      ).body.sessionToken,
     );
     await admin`update pos.helper_sessions set expires_at = now() - interval '1 second'
                 where tenant_id = ${s.tenantId} and ended_at is null`;
@@ -313,5 +346,137 @@ describe('Serahkan ke pembantu: a sales-only till behind the owner PIN (UMK-2124
       (p) => p.id,
     );
     expect(ids).toEqual([a.productId]);
+  });
+  it('parks exactly the native session the owner signed in with (review of PR 109)', async () => {
+    const s = await shop();
+    // none named, or another one: nothing would be parked, so nothing is handed over (and no PIN is counted)
+    const none = await s.start({ parkedSid: undefined }).expect(422);
+    expect(none.body.errors.parkedSid).toBeDefined();
+    await s.start({ parkedSid: randomUUID() }).expect(422);
+    // an owner session that names no native session, where WhatsApp sign-in exists, signs in again first
+    const unnamed = await s.start({}, s.auth).expect(403);
+    expect(unnamed.body.code).toBe('sign_in_again');
+    const [pin] = await admin<{ failures: number }[]>`
+      select failures from pos.void_pins where tenant_id = ${s.tenantId}`;
+    expect(pin.failures).toBe(0);
+    await s.start().expect(201);
+  });
+
+  it('a helper token names a live handover of its store: a forged one is 401', async () => {
+    const s = await shop();
+    await s.start().expect(201);
+    const forged = await signSession(
+      {
+        tenantId: s.tenantId,
+        actorId: s.userId,
+        kind: 'helper',
+        helperSessionId: randomUUID(),
+      },
+      process.env.POS_SESSION_SECRET!,
+    );
+    await get(bearer(forged), '/shifts/current').expect(401);
+    await post(bearer(forged), '/helper/end', { pin: OWNER_PIN }).expect(401);
+  });
+
+  it('the helper quote takes no voucher, discount or price, and an online method is refused', async () => {
+    const s = await shop();
+    const helper = bearer((await s.start().expect(201)).body.sessionToken);
+    await post(helper, '/sales/quote', {
+      lines: [{ productId: s.productId, qty: 1 }],
+    }).expect(200);
+    for (const body of [
+      { lines: [{ productId: s.productId, qty: 1 }], voucherCode: 'HEMAT' },
+      { lines: [{ productId: s.productId, qty: 1, discountAmount: 500 }] },
+      { lines: [{ productId: s.productId, qty: 1, discountPercent: 10 }] },
+      { lines: [{ productId: s.productId, qty: 1, price: 1000 }] },
+      { lines: [{ productId: s.productId, qty: 1 }], discount: 500 },
+    ])
+      await post(helper, '/sales/quote', body).expect(422);
+    const [online] = await admin<{ id: string }[]>`
+      insert into pos.payment_methods (tenant_id, name, is_online, gateway_method)
+      values (${s.tenantId}, 'QRIS online', true, 'fake_qris') returning id`;
+    const refused = await s
+      .sell(helper, { paymentMethodId: online.id })
+      .expect(403);
+    expect(refused.body.code).toBe('helper_not_allowed');
+  });
+
+  it('after a handover the owner PIN changes only after a fresh WhatsApp sign-in; the token handed back is not fresh', async () => {
+    const s = await shop();
+    const helper = bearer((await s.start().expect(201)).body.sessionToken);
+    // wrong PINs at "Kembali ke pemilik" are audited, never the PIN
+    await post(helper, '/helper/end', { pin: '000000' }).expect(422);
+    const refused = await audits(s.tenantId, 'helper_end_refused');
+    expect(refused).toEqual([
+      {
+        actor_kind: 'helper',
+        details: expect.objectContaining({ reason: 'wrong_pin' }),
+      },
+    ]);
+    expect(JSON.stringify(refused)).not.toMatch(/000000|135790/);
+    const owner = bearer(
+      (await post(helper, '/helper/end', { pin: OWNER_PIN }).expect(200)).body
+        .sessionToken,
+    );
+    const forgotten = await http()
+      .put('/void-pin/forgotten')
+      .set('Authorization', owner)
+      .send({ pin: '246810' })
+      .expect(403);
+    expect(forgotten.body.code).toBe('fresh_sign_in_required');
+    // a helper who saw the PIN cannot change it with that PIN, from this token or a refreshed one
+    for (const auth of [owner, s.owner, s.auth]) {
+      const change = await http()
+        .put('/void-pin')
+        .set('Authorization', auth)
+        .send({ pin: '246810', currentPin: OWNER_PIN })
+        .expect(403);
+      expect(change.body.code).toBe('fresh_sign_in_required');
+    }
+    await http()
+      .put('/void-pin')
+      .set('Authorization', s.freshAuth)
+      .send({ pin: '246810', currentPin: OWNER_PIN })
+      .expect(200);
+    // changed after the handover: the usual rule is back (the current PIN is enough)
+    await http()
+      .put('/void-pin')
+      .set('Authorization', s.auth)
+      .send({ pin: OWNER_PIN, currentPin: '246810' })
+      .expect(200);
+  });
+
+  it('the owner ends a handover from a fresh WhatsApp sign-in when the helper device is gone', async () => {
+    const s = await shop();
+    const other = await shop();
+    const helper = bearer((await s.start().expect(201)).body.sessionToken);
+    const otherHelper = bearer(
+      (await other.start().expect(201)).body.sessionToken,
+    );
+    const stale = await post(s.auth, '/helper/close', {}).expect(403);
+    expect(stale.body.code).toBe('fresh_sign_in_required');
+    await post(helper, '/helper/close', {}).expect(403);
+    await post(s.freshAuth, '/helper/close', {}).expect(200);
+    await get(helper, '/shifts/current').expect(401);
+    // the parked native session stays asleep: the sign-in made a new one
+    const parked = await http()
+      .post('/auth/umkmall/refresh')
+      .send({ sid: s.sid, refreshToken: 'r'.repeat(20) })
+      .expect(403);
+    expect(parked.body.code).toBe('session_parked');
+    expect(await audits(s.tenantId, 'helper_end')).toEqual([
+      {
+        actor_kind: 'owner',
+        details: expect.objectContaining({ reason: 'signin' }),
+      },
+    ]);
+    const none = await post(s.freshAuth, '/helper/close', {}).expect(409);
+    expect(none.body.code).toBe('helper_not_active');
+    // another store's handover is untouched
+    await get(otherHelper, '/shifts/current').expect(200);
+    // and a new handover may start
+    await s.start({}, await nativeOwner(s, randomUUID())).expect(422);
+    const sid = randomUUID();
+    await s.start({ parkedSid: sid }, await nativeOwner(s, sid)).expect(201);
   });
 });

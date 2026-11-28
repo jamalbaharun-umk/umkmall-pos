@@ -11,8 +11,11 @@ import {
 import { createdAt, id, pos } from './_base';
 import { tenants } from './tenants';
 
-/** Why a handover ended: the owner came back with the PIN, or it ran out (12 hours, found at the next start). */
-export const HELPER_END_REASONS = ['owner', 'expired'] as const;
+/**
+ * Why a handover ended: the owner came back with the PIN, it ran out (12 hours, found at the next start or at the
+ * owner's end), or the owner ended it from a fresh WhatsApp sign-in (the helper's device could not be reached).
+ */
+export const HELPER_END_REASONS = ['owner', 'expired', 'signin'] as const;
 
 // UMK-2124 "Serahkan ke pembantu" (design 42): the owner parked their session behind the owner PIN and handed the
 // till to a helper on the same device. One live row per owner. A helper token names its row (`hsid`) and is
@@ -46,7 +49,7 @@ export const helperSessions = pos
       index('helper_sessions_parked_sid_idx').on(t.parkedSidHash),
       check(
         'helper_sessions_end_ck',
-        sql`(${t.endedAt} is null) = (${t.endedReason} is null) and (${t.endedReason} is null or ${t.endedReason} in ('owner', 'expired'))`,
+        sql`(${t.endedAt} is null) = (${t.endedReason} is null) and (${t.endedReason} is null or ${t.endedReason} in ('owner', 'expired', 'signin'))`,
       ),
       check(
         'helper_sessions_name_ck',

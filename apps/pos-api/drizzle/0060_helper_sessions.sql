@@ -9,7 +9,7 @@ CREATE TABLE "pos"."helper_sessions" (
 	"ended_at" timestamp with time zone,
 	"ended_reason" text,
 	CONSTRAINT "helper_sessions_tenant_id_id_unique" UNIQUE("tenant_id","id"),
-	CONSTRAINT "helper_sessions_end_ck" CHECK (("pos"."helper_sessions"."ended_at" is null) = ("pos"."helper_sessions"."ended_reason" is null) and ("pos"."helper_sessions"."ended_reason" is null or "pos"."helper_sessions"."ended_reason" in ('owner', 'expired'))),
+	CONSTRAINT "helper_sessions_end_ck" CHECK (("pos"."helper_sessions"."ended_at" is null) = ("pos"."helper_sessions"."ended_reason" is null) and ("pos"."helper_sessions"."ended_reason" is null or "pos"."helper_sessions"."ended_reason" in ('owner', 'expired', 'signin'))),
 	CONSTRAINT "helper_sessions_name_ck" CHECK ("pos"."helper_sessions"."name" is null or char_length("pos"."helper_sessions"."name") between 1 and 40)
 );
 --> statement-breakpoint
