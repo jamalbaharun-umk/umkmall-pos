@@ -106,6 +106,10 @@ describe('quick product and cost missing (UMK-2130)', () => {
     const seen = (await list(cashier.auth)).body;
     expect(seen.costMissingCount).toBeUndefined();
     expect(seen.data[0].costPrice).toBeUndefined();
+    // Without cost visibility the filter is ignored: the cashier gets every product, not the costless ones.
+    const filtered = (await list(cashier.auth, '?cost=missing')).body;
+    expect(filtered.total).toBe(seen.total);
+    expect(filtered.total).toBeGreaterThan(2);
     // Cross-tenant: store B lists nothing of A's.
     const other = (await list(b.auth, '?cost=missing')).body;
     expect(other).toMatchObject({ total: 0, costMissingCount: 0 });

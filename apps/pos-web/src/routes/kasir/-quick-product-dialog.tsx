@@ -1,5 +1,5 @@
 import { Button, Dialog, TextField } from '@umkmall/ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { createQuickProduct, type Product } from './-api'
@@ -26,6 +26,8 @@ export function QuickProductDialog({
   const [cost, setCost] = useState('')
   const [errors, setErrors] = useState<QuickProductErrors>({})
   const [busy, setBusy] = useState(false)
+  // A ref, not the state: two Enter presses in one tick both see the state's old value.
+  const sending = useRef(false)
 
   useEffect(() => {
     if (!open) return
@@ -36,11 +38,14 @@ export function QuickProductDialog({
   }, [open, initialName])
 
   async function submit() {
+    // Enter pressed twice must not make two products (PR 88 review).
+    if (sending.current) return
     const parsed = quickProductBody({ name, price, cost })
     if (!parsed.ok) {
       setErrors(parsed.errors)
       return
     }
+    sending.current = true
     setBusy(true)
     try {
       const r = await createQuickProduct({ data: parsed.body })
@@ -56,6 +61,7 @@ export function QuickProductDialog({
     } catch (e) {
       showError(e, { action: 'menambah produk', retry: () => void submit() })
     } finally {
+      sending.current = false
       setBusy(false)
     }
   }

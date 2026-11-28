@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { loadEnv } from '../config';
 import { CategoriesController, ProductsController } from './catalog.controller';
 import { CatalogService } from './catalog.service';
+import { ImportService } from './import.service';
 import { StockModule } from '../stock/stock.module';
 import { LocalDiskStorage, OBJECT_STORAGE } from './storage';
 
@@ -10,6 +11,7 @@ import { LocalDiskStorage, OBJECT_STORAGE } from './storage';
   controllers: [CategoriesController, ProductsController],
   providers: [
     CatalogService,
+    ImportService,
     {
       provide: OBJECT_STORAGE,
       useFactory: () => new LocalDiskStorage(loadEnv().POS_STORAGE_DIR),
