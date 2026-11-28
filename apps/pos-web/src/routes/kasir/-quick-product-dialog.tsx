@@ -12,12 +12,15 @@ import { quickProductBody, quickProductServerErrors, type QuickProductErrors } f
 export function QuickProductDialog({
   open,
   initialName,
+  barcode,
   onClose,
   onCreated,
 }: {
   open: boolean
   /** What the cashier searched for and did not find. */
   initialName: string
+  /** UMK-1986: the code the camera scanned and the store did not know; saved with the product. */
+  barcode?: string
   onClose: () => void
   onCreated: (product: Product) => void
 }) {
@@ -40,7 +43,7 @@ export function QuickProductDialog({
   async function submit() {
     // Enter pressed twice must not make two products (PR 88 review).
     if (sending.current) return
-    const parsed = quickProductBody({ name, price, cost })
+    const parsed = quickProductBody({ name, price, cost }, barcode)
     if (!parsed.ok) {
       setErrors(parsed.errors)
       return
@@ -99,6 +102,7 @@ export function QuickProductDialog({
           onChange={(e) => setCost(e.target.value)}
           error={errors.costPrice}
         />
+        {barcode && <p className="text-sm text-default-secondary">Barcode {barcode} disimpan bersama produk ini.</p>}
         <p className="text-sm text-default-secondary">Produk ini muncul di kasir sekarang. Lengkapi modal nanti.</p>
         <ActionRow>
           <Button width="auto" type="outline" color="light" onClick={onClose} disabled={busy}>

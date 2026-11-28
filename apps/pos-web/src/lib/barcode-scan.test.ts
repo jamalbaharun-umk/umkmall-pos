@@ -153,6 +153,8 @@ describe('result texts', () => {
       detail: 'Mi goreng ditambahkan. Di keranjang: 4 barang.',
     })
     expect(soldOutResult('Teh').kind).toBe('warn')
-    expect(takenResult('899', 'Teh Botol 350ml').detail).toBe('Barcode 899 sudah dipakai produk Teh Botol 350ml.')
+    expect(takenResult('899', 'Teh Botol 350ml')).toMatchObject({
+      detail: 'Barcode 899 sudah dipakai produk Teh Botol 350ml.',
+    })
   })
 })
