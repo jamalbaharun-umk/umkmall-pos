@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cashDiff, change, checkRange, costMissingText, REPORTS } from './-reports'
+import { cashDiff, change, checkRange, costMissingText, REPORTS, soloReport } from './-reports'
 
 describe('change', () => {
   it('rounds the percentage and refuses a zero base', () => {
@@ -70,5 +70,21 @@ describe('costMissingText (UMK-2130)', () => {
       title: 'Modal belum diisi untuk 3 produk',
       body: 'Untung di atas belum lengkap karena penjualan produk tanpa modal dihitung modalnya Rp0.',
     })
+  })
+})
+
+describe('soloReport', () => {
+  const owner = [{ cashier: 'Pemilik' }, { cashier: 'Pemilik' }]
+  it('drops the Kasir column in solo-owner mode when every row is the owner', () => {
+    const def = REPORTS.penjualan
+    expect(soloReport(def, false, owner)).toBe(def)
+    const solo = soloReport(def, true, owner)
+    expect(solo.columns.map((c) => c.key)).not.toContain('cashier')
+    expect(solo.columns).toHaveLength(def.columns.length - 1)
+    expect(soloReport(REPORTS.shift, true, owner).columns.map((c) => c.key)).not.toContain('cashier')
+  })
+  it('keeps it when another cashier is in the rows, and leaves reports without it alone', () => {
+    expect(soloReport(REPORTS.penjualan, true, [...owner, { cashier: 'Rina' }])).toBe(REPORTS.penjualan)
+    expect(soloReport(REPORTS.produk, true, owner)).toBe(REPORTS.produk)
   })
 })

@@ -1,7 +1,7 @@
 import { Alert, Button } from '@umkmall/ui/primitives'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ActionRow } from '@/components/action-row'
 import { notifySuccess } from '@/lib/feedback'
 import { Empty, Page, PageError, PageLoading, Panel } from '@/components/page'
@@ -9,7 +9,9 @@ import { api } from '@/lib/api.server'
 import { getSessionToken } from '@/lib/session.server'
 import { devSignInUser } from '@/lib/sign-in'
 import { OwnerSignIn } from './-owner-sign-in'
-import { useCan } from '@/components/shell'
+import { useCan, useSoloStatus } from '@/components/shell'
+import { OwnerPinPrompt } from '@/components/owner-pin-prompt'
+import { shouldAskOwnerPin } from '@/lib/owner-pin'
 import { DashboardWidgets } from './-dashboard'
 
 const getHome = createServerFn().handler(async () => {
@@ -43,6 +45,9 @@ function Home() {
   const home = Route.useLoaderData()
   const { gagal, masuk, keluar } = Route.useSearch()
   const navigate = useNavigate({ from: '/' })
+  // Design 40: the owner without a PIN is asked for one right after signing in. Read once: the flag is stripped below.
+  const solo = useSoloStatus()
+  const [askPin, setAskPin] = useState(() => shouldAskOwnerPin(solo, Boolean(masuk)))
   // Sign-in and sign-out are full-page POSTs; they land here with a one-shot flag for the toast.
   useEffect(() => {
     if (!masuk && !keluar) return
@@ -52,7 +57,10 @@ function Home() {
     void navigate({ search: ({ masuk: _m, keluar: _k, ...rest }) => rest, replace: true })
   }, [masuk, keluar, navigate])
   return home.signedIn ? (
-    <Dashboard products={home.products} unpriced={home.unpriced} />
+    <>
+      <Dashboard products={home.products} unpriced={home.unpriced} />
+      <OwnerPinPrompt open={askPin} onClose={() => setAskPin(false)} />
+    </>
   ) : (
     <OwnerSignIn failed={gagal} devSignIn={home.devSignIn} />
   )

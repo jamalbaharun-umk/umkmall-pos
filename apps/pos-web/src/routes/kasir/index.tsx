@@ -134,10 +134,10 @@ export const Route = createFileRoute('/kasir/')({
 })
 
 function CashierPage() {
-  const { shift, products, taxBps, methods, qris, chargeable, onlineUnavailable, banks } = Route.useLoaderData()
+  const { shift, pinRequired, products, taxBps, methods, qris, chargeable, onlineUnavailable, banks } = Route.useLoaderData()
   const { menunggu } = Route.useSearch()
   return shift ? (
-    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} open={menunggu} />
+    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} pinRequired={pinRequired} open={menunggu} />
   ) : (
     <OpenShift />
   )
@@ -208,6 +208,7 @@ function Register({
   chargeable,
   onlineUnavailable,
   banks,
+  pinRequired,
   open: openWaiting,
 }: {
   products: Product[]
@@ -220,6 +221,8 @@ function Register({
   onlineUnavailable: boolean
   /** UMK-2037: by gateway method, the banks to choose from before a virtual account is made. */
   banks: Record<string, Bank[]>
+  /** UMK-2123: false for a solo owner, whose discount above 30% needs no PIN. */
+  pinRequired: boolean
   /** `?menunggu=` of the URL: `daftar` opens the waiting list, a sale id opens that sale (the shift close links here). */
   open?: string
 }) {
@@ -389,7 +392,7 @@ function Register({
   const listPriced = priceEntries(cart, quote?.sig ? quote.quote : null)
   const quoteLines = requestLines(cart).map((l, i) => {
     const d = discounts[entryKey(cart[i])]
-    return lineDiscountState(listPriced[i].lineTotal, d, cart[i].qty).problem ? l : { ...l, ...discountFields(d, false) }
+    return lineDiscountState(listPriced[i].lineTotal, d, cart[i].qty, pinRequired).problem ? l : { ...l, ...discountFields(d, false) }
   })
   const sig = cartSignature(cart) + JSON.stringify(quoteLines)
   useEffect(() => {
@@ -418,7 +421,9 @@ function Register({
   const priced = priceEntries(cart, current)
   const hints = wholesaleHints(cart, current)
   const subtotal = subtotalOf(priced)
-  const lineStates = priced.map((pl, i) => lineDiscountState(pl.lineTotal, discounts[entryKey(cart[i])], cart[i].qty))
+  const lineStates = priced.map((pl, i) =>
+    lineDiscountState(pl.lineTotal, discounts[entryKey(cart[i])], cart[i].qty, pinRequired),
+  )
   const lineDiscount = lineStates.reduce((n, d) => n + d.discount, 0)
   const discountProblem = lineStates.find((d) => d.problem)?.problem
   // Estimate shown to the cashier; pos-api computes the charged total the same way: line discounts, then the voucher
@@ -852,6 +857,7 @@ function Register({
       <NoteDialog open={editingNote} note={note} onClose={() => setEditingNote(false)} onSave={setNote} />
       <DiscountDialog
         target={discounting}
+        pinRequired={pinRequired}
         onClose={() => setDiscounting(undefined)}
         onApply={(key, d) => setDiscounts((all) => ({ ...all, [key]: d }))}
         onRemove={(key) =>

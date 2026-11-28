@@ -34,7 +34,17 @@ import {
  * that adds a screen adds or fixes its line here. An entry shows only when its route exists in the route tree and
  * the actor holds its `permission`, so a line for a screen that is not built yet stays hidden until it is.
  */
-export type NavItem = { to: string; label: string; icon: LucideIcon; permission?: string }
+export type NavItem = {
+  to: string
+  label: string
+  icon: LucideIcon
+  permission?: string
+  /**
+   * UMK-2121: a team screen, hidden in solo-owner mode (a store without active staff) and back with the first staff
+   * member. `storeCash`: Kas toko stays while the store still holds cash outside the drawer (owner decision 2026-11-28).
+   */
+  team?: true | 'storeCash'
+}
 export type NavGroup = { label?: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
@@ -46,8 +56,8 @@ export const NAV: NavGroup[] = [
       // UMK-1963: the shift cash ledger and the store's cash outside every drawer.
       { to: '/kasir/shift', label: 'Riwayat shift', icon: Clock, permission: 'sales.create' },
       { to: '/kasir/kas-laci', label: 'Kas laci', icon: Wallet, permission: 'sales.create' },
-      { to: '/kas-toko', label: 'Kas toko', icon: PiggyBank, permission: 'reports.view' },
-      { to: '/kas-toko/setoran', label: 'Setoran penagih', icon: HandCoins, permission: 'reports.view' },
+      { to: '/kas-toko', label: 'Kas toko', icon: PiggyBank, permission: 'reports.view', team: 'storeCash' },
+      { to: '/kas-toko/setoran', label: 'Setoran penagih', icon: HandCoins, permission: 'reports.view', team: true },
       { to: '/pemasok', label: 'Pemasok', icon: ListOrdered, permission: 'purchasing.manage' },
       { to: '/pelanggan', label: 'Pelanggan', icon: UsersRound, permission: 'members.manage' },
       { to: '/metode-pembayaran', label: 'Metode pembayaran', icon: CreditCard, permission: 'catalog.manage' },
@@ -67,9 +77,9 @@ export const NAV: NavGroup[] = [
   {
     label: 'Pengguna',
     items: [
-      { to: '/staf', label: 'Staf', icon: Users, permission: 'staff.manage' },
-      { to: '/staf/peran', label: 'Peran', icon: ListChecks, permission: 'staff.manage' },
-      { to: '/staf/perangkat', label: 'Perangkat', icon: MonitorSmartphone, permission: 'staff.manage' },
+      { to: '/staf', label: 'Staf', icon: Users, permission: 'staff.manage', team: true },
+      { to: '/staf/peran', label: 'Peran', icon: ListChecks, permission: 'staff.manage', team: true },
+      { to: '/staf/perangkat', label: 'Perangkat', icon: MonitorSmartphone, permission: 'staff.manage', team: true },
     ],
   },
   {
@@ -91,7 +101,7 @@ export const NAV: NavGroup[] = [
       // UMK-2041: gateway money that paid no sale, and refused refunds; owner only.
       { to: '/perlu-ditinjau', label: 'Perlu ditinjau', icon: AlertTriangle, permission: 'payments.manage' },
       // UMK-1969: the staff audit log (design 32); owner only (staff.manage is held by no default role but Pemilik).
-      { to: '/pengaturan/log-aktivitas', label: 'Log aktivitas', icon: ScrollText, permission: 'staff.manage' },
+      { to: '/pengaturan/log-aktivitas', label: 'Log aktivitas', icon: ScrollText, permission: 'staff.manage', team: true },
       { to: '/pengaturan/keamanan', label: 'Keamanan', icon: ShieldCheck, permission: 'sales.void' },
       // UMK-2134: every person's own guides (coach marks), replay and "Teks besar".
       { to: '/pengaturan/panduan', label: 'Panduan', icon: BookOpen },
@@ -102,12 +112,26 @@ export const NAV: NavGroup[] = [
 /** Route ids that render full-screen, without the shell (Lakasir's POS page uses the bare layout too). */
 export const BARE_ROUTES = ['/kasir/', '/kasir/masuk', '/kasir/struk/$id']
 
+/** Solo-owner mode as the owner's `/tenant/me` tells it; absent (a cashier, or offline) means "show the team". */
+export type SoloNav = { active: boolean; storeCash: boolean }
+
+/** Whether an entry shows in solo-owner mode: team screens hide, Kas toko stays while it holds cash. */
+const shownSolo = (i: NavItem, solo?: SoloNav | null) =>
+  !solo?.active || !i.team || (i.team === 'storeCash' && solo.storeCash)
+
 /** The groups the actor sees: entries with an existing route and a held permission; empty groups dropped. */
-export function visibleNav(nav: NavGroup[], routeExists: (to: string) => boolean, permissions: readonly string[]) {
+export function visibleNav(
+  nav: NavGroup[],
+  routeExists: (to: string) => boolean,
+  permissions: readonly string[],
+  solo?: SoloNav | null,
+) {
   return nav
     .map((g) => ({
       ...g,
-      items: g.items.filter((i) => routeExists(i.to) && (!i.permission || permissions.includes(i.permission))),
+      items: g.items.filter(
+        (i) => routeExists(i.to) && (!i.permission || permissions.includes(i.permission)) && shownSolo(i, solo),
+      ),
     }))
     .filter((g) => g.items.length > 0)
 }

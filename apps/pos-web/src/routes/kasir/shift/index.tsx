@@ -4,6 +4,8 @@ import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/component
 import { ListFooter } from '../../pelanggan/-ui'
 import { loadShifts } from '../-shift-api'
 import { shiftCashier } from '../-shift-helpers'
+import { useSolo } from '@/components/shell'
+import { showCashier } from '@/lib/solo'
 
 const PER_PAGE = 20
 
@@ -24,6 +26,7 @@ function ShiftsPage() {
   const { data, total } = Route.useLoaderData()
   const { page = 1 } = Route.useSearch()
   const navigate = useNavigate({ from: '/kasir/shift/' })
+  const withCashier = showCashier(useSolo(), data.map(shiftCashier))
   return (
     <Page title="Riwayat shift" crumbs={[{ label: 'Kasir', to: '/kasir' }, { label: 'Riwayat shift' }]}>
       <Card variant="outlined" padding="none" className="overflow-hidden">
@@ -34,7 +37,7 @@ function ShiftsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Dibuka</TableHead>
-                <TableHead>Kasir</TableHead>
+                {withCashier && <TableHead>Kasir</TableHead>}
                 <TableHead className="text-right">Uang awal</TableHead>
                 <TableHead className="text-right">Kas masuk</TableHead>
                 <TableHead className="text-right">Kas keluar</TableHead>
@@ -49,7 +52,7 @@ function ShiftsPage() {
               {data.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell>{formatDate(s.openedAt)}</TableCell>
-                  <TableCell>{shiftCashier(s)}</TableCell>
+                  {withCashier && <TableCell>{shiftCashier(s)}</TableCell>}
                   <TableCell className="text-right">{rupiah(s.openingCash)}</TableCell>
                   <TableCell className="text-right">{rupiah(s.cashIn)}</TableCell>
                   <TableCell className="text-right">{rupiah(s.cashOut)}</TableCell>

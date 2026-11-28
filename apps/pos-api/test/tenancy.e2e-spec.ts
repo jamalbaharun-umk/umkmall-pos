@@ -1,9 +1,11 @@
 import { INestApplication } from '@nestjs/common';
+import postgres from 'postgres';
 import request from 'supertest';
 import { signSession } from '../src/tenancy/session';
 import { PERMISSIONS } from '../src/staff/permissions';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
+import { ADMIN_DATABASE_URL } from './support/env';
 
 describe('session guard and tenant context', () => {
   let app: INestApplication;
@@ -90,5 +92,49 @@ describe('session guard and tenant context', () => {
       .get('/tenant/me')
       .set('Authorization', `Bearer ${forged}`)
       .expect(401);
+  });
+
+  it('tells the owner shell about solo-owner mode (UMK-2121), and a cashier nothing', async () => {
+    const a = await createStore();
+    const me = async (auth: string) =>
+      (
+        await request(app.getHttpServer())
+          .get('/tenant/me')
+          .set('Authorization', auth)
+          .expect(200)
+      ).body.solo as Record<string, boolean> | null;
+    expect(await me(a.auth)).toEqual({
+      active: true,
+      storeCash: false,
+      ownerPin: false,
+      freshSignIn: false,
+    });
+    expect((await me(a.freshAuth))?.freshSignIn).toBe(true);
+    await request(app.getHttpServer())
+      .put('/void-pin')
+      .set('Authorization', a.freshAuth)
+      .send({ pin: '480613' })
+      .expect(200);
+    expect((await me(a.auth))?.ownerPin).toBe(true);
+    // Cash outside the drawer keeps Kas toko in the menu.
+    const admin = postgres(ADMIN_DATABASE_URL, { max: 1 });
+    try {
+      await admin`insert into pos.store_cash_entries (tenant_id, direction, kind, amount, actor_id, actor_kind)
+                  values (${a.tenantId}, 'in', 'receivable_payment', 5000, ${a.userId}, 'owner')`;
+    } finally {
+      await admin.end();
+    }
+    expect((await me(a.auth))?.storeCash).toBe(true);
+    // The first staff member ends solo-owner mode; the cashier's own answer carries no solo block.
+    const cashier = await createCashier(app, a, ['sales.create']);
+    expect((await me(a.auth))?.active).toBe(false);
+    expect(await me(cashier.auth)).toBeNull();
+    // Store B is unaffected by A.
+    const b = await createStore();
+    expect(await me(b.auth)).toMatchObject({
+      active: true,
+      storeCash: false,
+      ownerPin: false,
+    });
   });
 });

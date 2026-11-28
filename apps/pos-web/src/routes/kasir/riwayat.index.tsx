@@ -17,6 +17,8 @@ import { Empty, formatDate, LoadError, Page, Pending, rupiah } from '@/component
 import { loadHistory } from './-api'
 import { hasRounding } from './-money'
 import { SalesHistorySummary } from '../ringkasan/-panels'
+import { useSolo } from '@/components/shell'
+import { showCashier } from '@/lib/solo'
 
 const PER_PAGE = 20
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -55,6 +57,7 @@ function HistoryPage() {
   const [to, setTo] = useState(search.to ?? '')
   const [rangeError, setRangeError] = useState<string>()
   const showCost = data.some((s) => s.costTotal !== undefined)
+  const withCashier = showCashier(useSolo(), data.map((s) => s.cashier))
   const filtered = !!(search.from || search.to)
   const period = filtered ? 'periode ini' : 'semua waktu'
 
@@ -136,7 +139,7 @@ function HistoryPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Kode</TableHead>
-                  <TableHead>Kasir</TableHead>
+                  {withCashier && <TableHead>Kasir</TableHead>}
                   <TableHead>Tanggal bayar</TableHead>
                   <TableHead className="text-right">Total akhir</TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
@@ -168,7 +171,7 @@ function HistoryPage() {
                     }
                   >
                     <TableCell className="font-medium">#{s.number}</TableCell>
-                    <TableCell>{s.cashier}</TableCell>
+                    {withCashier && <TableCell>{s.cashier}</TableCell>}
                     <TableCell>{formatDate(s.paidAt ?? s.createdAt)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.total)}</TableCell>
                     <TableCell className="text-right">{rupiah(s.subtotal)}</TableCell>

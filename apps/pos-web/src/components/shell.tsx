@@ -4,10 +4,17 @@ import { Link, getRouteApi, useRouter, useRouterState } from '@tanstack/react-ro
 import { LogOut, Menu as MenuIcon, Store } from 'lucide-react'
 import { forwardRef, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { NAV, activeNav, visibleNav } from '@/nav'
+import type { SoloStatus } from '@/lib/owner-pin'
 
 export type Me = {
   tenant: { id: string; name?: string | null }
   actor: { id: string; kind: 'owner' | 'cashier'; name: string | null; permissions: string[] }
+  /**
+   * UMK-2121 solo-owner mode, owner sessions only (null for a cashier): `active` while the store has no staff,
+   * `storeCash` while Kas toko still holds cash, `ownerPin` whether the owner made a PIN, `freshSignIn` whether the
+   * session can still make the first one.
+   */
+  solo?: SoloStatus | null
   /** Set when UMKMall or pos-api could not be reached: the shell renders from the last known answer. */
   offline?: string | null
 }
@@ -40,6 +47,18 @@ export function useActorId(): string {
   return me?.actor.id ?? ''
 }
 
+/** UMK-2121: whether the owner runs the store alone (no active staff); false for a cashier or when unknown. */
+export function useSolo(): boolean {
+  const me = root.useLoaderData() as Me | null
+  return me?.solo?.active ?? false
+}
+
+/** UMK-2121: the owner's whole solo block (null for a cashier or when signed out). */
+export function useSoloStatus(): SoloStatus | null {
+  const me = root.useLoaderData() as Me | null
+  return me?.solo ?? null
+}
+
 /** Whether the signed-in actor is the store owner (UMK-1991: only the owner marks a refund "dikembalikan manual"). */
 export function useIsOwner(): boolean {
   const me = root.useLoaderData() as Me | null
@@ -68,7 +87,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   }, [resolved])
 
   const exists = (to: string) => Boolean((router.routesByPath as unknown as Record<string, unknown>)[to])
-  const groups = visibleNav(NAV, exists, me.actor.permissions)
+  const groups = visibleNav(NAV, exists, me.actor.permissions, me.solo)
   const active = activeNav(groups, pathname)
   const store = me.tenant.name || 'Toko Anda'
   const actor = me.actor.kind === 'owner' ? 'Pemilik' : (me.actor.name ?? 'Kasir')
@@ -90,6 +109,12 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
       header={drawer ? storeName : undefined}
     >
       <div className="flex flex-col gap-5">
+        {me.solo?.active && (drawer || !collapsed) && (
+          <div className="mx-1 rounded-xl border border-default-primary p-3">
+            <p className="text-sm font-semibold text-default-primary">Anda menjalankan toko sendiri</p>
+            <p className="text-sm text-default-secondary">Menu staf muncul lagi saat Anda menambah staf pertama.</p>
+          </div>
+        )}
         {groups.map((g, i) => (
           <div key={g.label ?? i} className="flex flex-col gap-1">
             {g.label && (drawer || !collapsed) && (
