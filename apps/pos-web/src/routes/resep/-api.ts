@@ -2,7 +2,7 @@ import { isRedirect } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { api } from '@/lib/api.server'
 import { refusalOf } from '@/lib/refusal'
-import type { Recipe, RecipePayload, RecipeSummary } from './-recipe'
+import type { Recipe, RecipePayload, RecipeSummary, SuggestedPrice } from './-recipe'
 
 // Server functions of the recipe screens (UMK-2125). pos-api computes every cost; these only relay.
 // A mutation returns a Result instead of throwing, so forms and `act()` can show the toast or the error dialog.
@@ -95,3 +95,33 @@ export const setIngredientCost = createServerFn({ method: 'POST' })
 export const removeIngredientCost = createServerFn({ method: 'POST' })
   .validator((productId: string) => productId)
   .handler(({ data }) => send<undefined>(`/ingredient-costs/${enc(data)}`, 'DELETE'))
+
+/** UMK-2126: the suggested price for another target margin (pos-api computes it; 422 outside 1..90 is a Result). */
+export const loadSuggestedPrice = createServerFn()
+  .validator((d: { id: string; targetMargin: number }) => d)
+  .handler(async ({ data }) => {
+    const res = await send<Recipe>(`/recipes/${enc(data.id)}?targetMargin=${Number(data.targetMargin)}`, 'GET')
+    return res.ok ? ({ ok: true, data: res.data.suggestedPrice } as Result<SuggestedPrice | null>) : res
+  })
+
+/** "Pakai harga jual": the owner's own change of the selling price, through the catalog route (`catalog.manage`). */
+export const setSellingPrice = createServerFn({ method: 'POST' })
+  .validator((d: { productId: string; price: number }) => d)
+  .handler(({ data }) => send<{ id: string }>(`/catalog/products/${enc(data.productId)}`, 'PATCH', { sellingPrice: data.price }))
+
+/**
+ * pos-api's refusal of producing this recipe (a recipe used as a sub-recipe, a deleted ingredient, a product without stock),
+ * read from the production plan for one batch. Null when producing is allowed or the plan could not be read: the production
+ * screen has its own error states, so a failed read never blocks the button.
+ */
+export const loadProductionRefusal = createServerFn()
+  .validator((id: string) => id)
+  .handler(async ({ data }): Promise<{ code: string; message: string } | null> => {
+    const res = await api(`/production-runs/plan?recipeId=${enc(data)}&batches=1`).catch((e: unknown) => {
+      if (isRedirect(e)) throw e
+      return null
+    })
+    if (!res?.ok) return null
+    const plan = (await res.json().catch(() => null)) as { refusal?: { code: string; message: string } | null } | null
+    return plan?.refusal ?? null
+  })

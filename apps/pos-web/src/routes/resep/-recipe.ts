@@ -49,7 +49,31 @@ export type Recipe = {
   deletedIngredientIds: string[]
   createdAt: string
   updatedAt: string
+  /** UMK-2126: pos-api's suggested selling price for `targetMargin`; null while the cost is incomplete or zero. */
+  suggestedPrice: SuggestedPrice | null
 }
+
+export type SuggestedPrice = {
+  targetMargin: number
+  price: number
+  currentPrice: number
+  /** Margin of the current selling price in tenths of a percent (563 is 56,3%); null without a price. */
+  marginAtCurrentPermille: number | null
+}
+
+/** One row of GET /recipes/cost-alerts (UMK-2126): a recipe whose cost per portion rose since the cost price was set. */
+export type CostAlert = {
+  recipeId: string
+  product: { id: string; name: string }
+  previousCost: number
+  costPerPortion: number
+  /** The rise in tenths of a percent (87 is 8,7%). */
+  risePermille: number
+  sellingPrice: number
+  marginPermille: number | null
+  suggested: { targetMargin: number; price: number | null }
+}
+export type CostAlerts = { thresholdPercent: number; total: number; rows: CostAlert[] }
 
 export type LinePayload = { ingredientId?: string; subRecipeId?: string; quantity: number; wastePercent: number }
 export type RecipePayload = {
@@ -236,3 +260,51 @@ export function pickerOptions(rows: { id: string; name: string; sku: string }[],
 export function applyCostConfirm(newCost: number, oldCost: number): string {
   return `Harga modal produk menjadi ${rupiah(newCost)} (sebelumnya ${rupiah(oldCost)}). Lanjutkan?`
 }
+
+// ---------- UMK-2126: cost-rise card, suggested price ----------
+
+/** Tenths of a percent as text, integers only: 87 is "8,7%", 600 is "60%", 563 is "56,3%". */
+export function permilleText(p: number): string {
+  const sign = p < 0 ? '−' : ''
+  const v = Math.abs(p)
+  const tenth = v % 10
+  return `${sign}${Math.trunc(v / 10).toLocaleString('id-ID')}${tenth ? `,${tenth}` : ''}%`
+}
+
+/** Title of one card row (design 43, screen 5): "Nasi goreng naik 8,7%". */
+export const alertTitle = (a: Pick<CostAlert, 'product' | 'risePermille'>) => `${a.product.name} naik ${permilleText(a.risePermille)}`
+
+/** The line under it: the old and the new cost, the margin now and the suggested price (never applied). */
+export function alertDetail(a: Pick<CostAlert, 'previousCost' | 'costPerPortion' | 'marginPermille' | 'suggested'>): string {
+  const parts = [`Dari ${rupiah(a.previousCost)} menjadi ${rupiah(a.costPerPortion)}.`]
+  if (a.marginPermille !== null) parts.push(`Margin Anda kini ${permilleText(a.marginPermille)}.`)
+  if (a.suggested.price !== null) parts.push(`Usulan harga (margin ${a.suggested.targetMargin}%) ${rupiah(a.suggested.price)}.`)
+  return parts.join(' ')
+}
+
+export const alertsFooter = (total: number, shown: number) =>
+  total > shown ? `Menampilkan ${shown} dari ${total} resep. Harga tidak berubah kecuali Anda mengubahnya.` : 'Harga tidak berubah kecuali Anda mengubahnya.'
+
+/** Target margin of the "Harga usulan" panel: design 43 shows 60%; pos-api accepts whole percents 1..90. */
+export const DEFAULT_TARGET_MARGIN = 60
+export const MIN_TARGET_MARGIN = 1
+export const MAX_TARGET_MARGIN = 90
+
+/** The margin field as typed: a whole percent from 1 to 90, else the message to show under it. */
+export function checkTargetMargin(v: string): { value: number } | { error: string } {
+  const t = v.trim()
+  if (!/^\d+$/.test(t)) return { error: 'Isi dengan angka bulat, misalnya 60' }
+  const n = Number(t)
+  if (n < MIN_TARGET_MARGIN || n > MAX_TARGET_MARGIN) return { error: `Target margin ${MIN_TARGET_MARGIN} sampai ${MAX_TARGET_MARGIN}%` }
+  return { value: n }
+}
+
+/** How the suggested price compares with the current one; the panel words it, pos-api did the math. */
+export function priceCompare(s: Pick<SuggestedPrice, 'price' | 'currentPrice'>): string {
+  const diff = s.price - s.currentPrice
+  if (diff === 0) return 'Sama dengan harga jual sekarang.'
+  return diff > 0 ? `${rupiah(diff)} di atas harga jual sekarang.` : `${rupiah(-diff)} di bawah harga jual sekarang.`
+}
+
+/** The confirm before the suggested price becomes the selling price. */
+export const priceConfirm = (price: number, current: number) => `Harga jual menjadi ${rupiah(price)} (sebelumnya ${rupiah(current)}). Lanjutkan?`
