@@ -27,6 +27,7 @@ import {
   assertPersonAtTill,
   lockShiftForCash,
   recordShiftCashAt,
+  recordShiftCashInShift,
 } from './cash-ledger';
 import { ShiftsService } from './shifts.service';
 
@@ -272,4 +273,53 @@ export class CashEntriesService {
     }
     return this.get(s.tenantId, id);
   }
+}
+
+/**
+ * UMK-2122 "Tutup hari": the owner's take from the counted drawer, written by the close inside its transaction and
+ * under the shift lock it holds, before the shift closes (a closed shift takes no entry). One "Diambil pemilik"
+ * manual cash-out (ledger row and manual entry, keyed by the shift so it is written once) and its `drawer_cash_out`
+ * audit row. `drawerCashBefore` is the drawer the close computed under that lock.
+ */
+export async function recordOwnerTakeAtClose(
+  tx: Tx,
+  s: PosSession,
+  shiftId: string,
+  amount: number,
+  drawerCashBefore: number,
+) {
+  assertPersonAtTill(s.kind);
+  const id = randomUUID();
+  await recordShiftCashInShift(tx, s, shiftId, {
+    direction: 'out',
+    kind: 'manual_out',
+    amount,
+    refId: id,
+  });
+  await tx.insert(manualCashEntries).values({
+    id,
+    tenantId: s.tenantId,
+    shiftId,
+    direction: 'out',
+    reason: 'ambil_pemilik',
+    note: null,
+    amount,
+    drawerCashBefore,
+    actorId: s.actorId,
+    actorKind: s.kind,
+    idempotencyKey: `close-day:${shiftId}`,
+    requestHash: createHash('sha256')
+      .update(`close-day:${amount}`)
+      .digest('hex'),
+  });
+  await recordAudit(tx, s, 'drawer_cash_out', {
+    target: { type: 'shift', id: shiftId },
+    details: {
+      shiftId,
+      amount,
+      reason: 'ambil_pemilik',
+      drawerCashBefore,
+      atClose: true,
+    },
+  });
 }

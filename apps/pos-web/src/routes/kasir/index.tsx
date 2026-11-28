@@ -18,7 +18,7 @@ import {
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { notifySuccess, showError } from '@/lib/feedback'
 import { act, Empty, ErrorText, LoadError, Pending, rupiah } from '@/components/pos-page'
-import { useCan } from '@/components/shell'
+import { useCan, useSolo } from '@/components/shell'
 import { WhatsappReceiptDialog } from '@/components/whatsapp-dialogs'
 import {
   createSale,
@@ -116,6 +116,7 @@ import {
   type LineDiscount,
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
+import { CloseYesterday } from './-close-yesterday'
 import { GuideButton } from '@/components/guide'
 import { DailyTargetCard } from '../ringkasan/-panels'
 
@@ -137,7 +138,7 @@ function CashierPage() {
   const { shift, pinRequired, products, taxBps, methods, qris, chargeable, onlineUnavailable, banks } = Route.useLoaderData()
   const { menunggu } = Route.useSearch()
   return shift ? (
-    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} pinRequired={pinRequired} open={menunggu} />
+    <Register products={products} taxBps={taxBps} methods={methods} qris={qris} chargeable={chargeable} onlineUnavailable={onlineUnavailable} banks={banks} pinRequired={pinRequired} shift={shift} open={menunggu} />
   ) : (
     <OpenShift />
   )
@@ -209,6 +210,7 @@ function Register({
   onlineUnavailable,
   banks,
   pinRequired,
+  shift,
   open: openWaiting,
 }: {
   products: Product[]
@@ -223,10 +225,13 @@ function Register({
   banks: Record<string, Bank[]>
   /** UMK-2123: false for a solo owner, whose discount above 30% needs no PIN. */
   pinRequired: boolean
+  /** The open shift: its day and sales for "Tutup kemarin dulu" (UMK-2122). */
+  shift: { id: string; openedAt: string; revenue?: number }
   /** `?menunggu=` of the URL: `daftar` opens the waiting list, a sale id opens that sale (the shift close links here). */
   open?: string
 }) {
   const router = useRouter()
+  const solo = useSolo()
   const [q, setQ] = useState('')
   const [category, setCategory] = useState(ALL)
   const [cart, setCart] = useState<CartLine[]>([])
@@ -594,11 +599,12 @@ function Register({
               <Link to="/kasir/kas-laci">Kas laci</Link>
             </Button>
             <Button width="auto" asChild type="text" size="compact" color="danger">
-              <Link to="/kasir/tutup">Tutup shift</Link>
+              <Link to="/kasir/tutup">{solo ? 'Tutup hari' : 'Tutup shift'}</Link>
             </Button>
           </div>
           <SinceNotices ownIds={pend.state.sales.map((t) => t.id)} />
         </div>
+        {solo && <CloseYesterday shift={shift} />}
         {!pend.durable && (
           <Alert variant="warning" size="small" role="alert">
             {NOT_STORED_TEXT}

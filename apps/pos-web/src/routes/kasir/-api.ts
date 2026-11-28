@@ -192,7 +192,7 @@ async function send<T>(path: string, body: unknown, headers: Record<string, stri
 
 export const loadCashier = createServerFn().handler(async () => {
   const { shift, discountPinRequired } = await load<{
-    shift: (Shift & { expectedCash: number }) | null
+    shift: (Shift & { expectedCash: number; revenue?: number }) | null
     discountPinRequired?: boolean
   }>('/shifts/current')
   // UMK-2123: a solo owner's big discount needs no PIN. Absent (an older pos-api): the PIN is asked as before.
@@ -235,9 +235,10 @@ export const openShift = createServerFn({ method: 'POST' })
   .validator((openingCash: number) => openingCash)
   .handler(({ data }) => send<Shift>('/shifts/open', { openingCash: data }))
 
+// UMK-2122: `ownerTakes`, the cash the solo owner takes home at "Tutup hari" (pos-api writes it as "Diambil pemilik").
 export const closeShift = createServerFn({ method: 'POST' })
-  .validator((countedCash: number) => countedCash)
-  .handler(({ data }) => send<Shift>('/shifts/current/close', { countedCash: data }))
+  .validator((d: { countedCash: number; ownerTakes?: number }) => d)
+  .handler(({ data }) => send<Shift & { ownerTakes?: number }>('/shifts/current/close', data))
 
 /** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
 type LineDiscountFields = { discountPercent?: number; discountAmount?: number }
@@ -300,7 +301,18 @@ export const loadHistory = createServerFn()
   })
 
 export const loadCurrentShift = createServerFn().handler(() =>
-  load<{ shift: (Shift & { expectedCash: number; cashSales: number; salesCount: number }) | null }>('/shifts/current'),
+  load<{
+    shift:
+      | (Shift & {
+          expectedCash: number
+          cashSales: number
+          salesCount: number
+          /** UMK-2122: the shift's sale totals and gross profit (tax excluded), less its voids. */
+          revenue?: number
+          grossProfit?: number
+        })
+      | null
+  }>('/shifts/current'),
 )
 
 export { rupiah } from '@/components/pos-page'

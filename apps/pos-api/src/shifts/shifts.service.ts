@@ -1,9 +1,11 @@
 import { soloOwnerSelfApproves } from '../sales/solo-discount';
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { codedError, formatRupiah } from '../common/validation';
 import {
   and,
   asc,
@@ -52,6 +54,18 @@ import { shiftActorName, shiftNumbers } from './shift-read';
 
 /** The `code` of the 409 that refuses to close a shift while sales of it await payment (UMK-2044). */
 export const SALES_AWAITING_PAYMENT = 'sales_awaiting_payment';
+
+/**
+ * UMK-2122: writes the owner's take at "Tutup hari" (`recordOwnerTakeAtClose` in cash-entries.service, the one
+ * writer of manual drawer cash). Passed in by the controller: that service depends on this one.
+ */
+export type TakeWriter = (
+  tx: Tx,
+  s: PosSession,
+  shiftId: string,
+  amount: number,
+  drawerCashBefore: number,
+) => Promise<void>;
 
 const shiftColumns = {
   id: shifts.id,
@@ -119,6 +133,31 @@ export class ShiftsService {
     return { cashSales: Number(t.cashSales), salesCount: t.salesCount };
   }
 
+  /**
+   * UMK-2122 "Tutup hari": what the shift sold and earned, by the reports' one definition (reports.service
+   * `metrics`): revenue = sale totals; gross profit = revenue - tax - cost, so it never includes tax. The
+   * sales rung up in the shift minus the voids done in it, as the shift report counts a shift.
+   */
+  private async profitOf(db: Db | Tx, tenantId: string, shiftId: string) {
+    const sums = (table: SQL, only: SQL) => sql`
+      select coalesce(sum(x.total), 0) as revenue, coalesce(sum(x.tax), 0) as tax,
+             coalesce(sum(x.cost_total), 0) as cost
+        from ${table} x
+       where x.tenant_id = ${tenantId} and x.shift_id = ${shiftId} ${only}`;
+    const final = sql.raw(FINAL_SALE_STATUSES.map((v) => `'${v}'`).join(', '));
+    const [r] = [
+      ...(await db.execute(sql`
+        select s.revenue - v.revenue as revenue, s.tax - v.tax as tax, s.cost - v.cost as cost
+          from (${sums(sql`pos.sales`, sql`and x.status in (${final})`)}) s,
+               (${sums(sql`pos.sale_voids`, sql``)}) v`)),
+    ] as { revenue: string; tax: string; cost: string }[];
+    const revenue = Number(r.revenue);
+    return {
+      revenue,
+      grossProfit: revenue - Number(r.tax) - Number(r.cost),
+    };
+  }
+
   private async cashOf(db: Db | Tx, tenantId: string, shiftId: string) {
     return (await cashTotals(db, tenantId, [shiftId])).get(shiftId) ?? NO_CASH;
   }
@@ -166,14 +205,16 @@ export class ShiftsService {
       );
     if (!found) return null;
     const [shift] = await this.numbered(this.db, s.tenantId, [found]);
-    const [t, cash] = await Promise.all([
+    const [t, cash, profit] = await Promise.all([
       this.totals(this.db, shift.id),
       this.cashOf(this.db, s.tenantId, shift.id),
+      this.profitOf(this.db, s.tenantId, shift.id),
     ]);
     return {
       ...withDifference(shift),
       ...t,
       ...cash,
+      ...profit,
       expectedCash: expectedCash(shift.openingCash, t.cashSales, cash),
     };
   }
@@ -235,8 +276,30 @@ export class ShiftsService {
     }
   }
 
-  /** Locks the shift row (the lock every sale and cash movement takes), so nothing lands after the count. */
-  async close(s: PosSession, countedCash: number) {
+  /**
+   * Locks the shift row (the lock every sale and cash movement takes), so nothing lands after the count.
+   *
+   * UMK-2122 "Tutup hari": `ownerTakes` is the cash the owner takes home from the counted drawer. It is written
+   * as a "Diambil pemilik" manual cash-out of this shift, in this transaction and before the close (a closed shift
+   * takes no entry), so the stored count and the expected cash both exclude it and the difference is the count's.
+   * The next automatic opening (`autoOpeningCash`, the last closed shift's count) is then what stays in the drawer.
+   */
+  async close(
+    s: PosSession,
+    countedCash: number,
+    ownerTakes = 0,
+    writeTake?: TakeWriter,
+  ) {
+    if (ownerTakes > 0 && s.kind !== 'owner')
+      throw new ForbiddenException(
+        'Hanya pemilik yang bisa mencatat uang diambil pemilik',
+      );
+    if (ownerTakes > countedCash)
+      throw codedError(
+        'OWNER_TAKES_TOO_MUCH',
+        'ownerTakes',
+        `Jumlah diambil lebih besar dari uang di laci (${formatRupiah(countedCash)})`,
+      );
     return this.db.transaction(async (tx) => {
       const shift = await lockOpenShift(tx, s);
       if (!shift) throw new ConflictException('Tidak ada shift yang terbuka');
@@ -297,13 +360,18 @@ export class ShiftsService {
             }),
           ),
         });
+      if (ownerTakes > 0) {
+        if (!writeTake) throw new Error('close: a take needs its writer');
+        await this.takeAtClose(tx, s, shift, ownerTakes, writeTake);
+      }
       const t = await this.totals(tx, shift.id);
       const cash = await this.cashOf(tx, s.tenantId, shift.id);
+      const stored = countedCash - ownerTakes;
       await tx
         .update(shifts)
         .set({
           closedAt: new Date(),
-          countedCash,
+          countedCash: stored,
           expectedCash: expectedCash(shift.openingCash, t.cashSales, cash),
           cashSales: t.cashSales,
           salesCount: t.salesCount,
@@ -316,13 +384,31 @@ export class ShiftsService {
           shiftId: shift.id,
           openedAt: row.openedAt.toISOString(),
           openingCash: row.openingCash,
-          countedCash,
+          countedCash: stored,
           expectedCash: row.expectedCash,
+          ...(ownerTakes > 0 ? { ownerTakes } : {}),
           difference: withDifference(row).difference,
         },
       });
-      return { ...withDifference(row), ...cash };
+      return { ...withDifference(row), ...cash, ownerTakes };
     });
+  }
+
+  /** The owner's take at "Tutup hari", written by the one writer of manual drawer cash (`cash-entries.service`). */
+  private async takeAtClose(
+    tx: Tx,
+    s: PosSession,
+    shift: { id: string; openingCash: number },
+    amount: number,
+    writeTake: TakeWriter,
+  ) {
+    const t = await this.totals(tx, shift.id);
+    const before = expectedCash(
+      shift.openingCash,
+      t.cashSales,
+      await this.cashOf(tx, s.tenantId, shift.id),
+    );
+    await writeTake(tx, s, shift.id, amount, Math.max(before, 0));
   }
 
   /** Cashiers see their own shifts; `reports.view` sees the store's. */
