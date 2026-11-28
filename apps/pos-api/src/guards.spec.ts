@@ -403,6 +403,8 @@ describe('repo guards', () => {
       path.join('shifts', 'shifts.service.ts'),
       path.join('sales', 'sales.service.ts'),
       path.join('agent', 'ledger.controller.ts'),
+      // Activation metrics (UMK-2131): first sale and sales days, receipts only (`FINAL_SALE_STATUSES`).
+      path.join('onboarding', 'activation.ts'),
       path.join('summaries', 'summaries.service.ts'),
       path.join('reports', 'export', 'trend.service.ts'),
       path.join('reports', 'export', 'visuals.service.ts'),
@@ -420,6 +422,8 @@ describe('repo guards', () => {
     expect(readers).toEqual([
       // The ledger feed: receipts only (`status in FINAL_SALE_STATUSES`).
       path.join('agent', 'ledger.controller.ts'),
+      // Activation metrics (UMK-2131): receipts only.
+      path.join('onboarding', 'activation.ts'),
       // Sales by id of any status (the sale a late payment came in for) and refused refunds, for the owner.
       path.join('payments-client', 'payment-review.service.ts'),
       path.join('payments-client', 'payment-sync.service.ts'),

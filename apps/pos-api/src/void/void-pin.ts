@@ -237,6 +237,17 @@ export class VoidPins {
     });
   }
 
+  /** Whether the store's owner has made their approval PIN ("Kelengkapan toko", UMK-2131). Never the PIN or its hash. */
+  async ownerHasPin(tenantId: string): Promise<boolean> {
+    const ownerId = await this.ownerId(tenantId);
+    if (!ownerId) return false;
+    const [row] = await this.db
+      .select({ actorId: voidPins.actorId })
+      .from(voidPins)
+      .where(this.where(tenantId, ownerId));
+    return !!row;
+  }
+
   /** The signed-in actor's own PIN state. */
   async status(s: PosSession) {
     const [row] = await this.db

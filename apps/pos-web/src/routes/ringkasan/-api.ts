@@ -63,7 +63,8 @@ export type SuppliersSummary = {
   months: { month: string; total: number }[]
 }
 export type SetupSummary = {
-  steps: { key: string; label: string; done: boolean; to: string }[]
+  // UMK-2131: `why` is one line on why the step matters; an `optional` step never keeps the board open.
+  steps: { key: string; label: string; why: string; done: boolean; to: string; optional: boolean }[]
   doneCount: number
   complete: boolean
 }

@@ -301,41 +301,60 @@ describe('summaries across menus (feature 39)', () => {
         complete: boolean;
         steps: any[];
       };
-    const empty = await steps(b);
+    // A store of its own: this one sells, and store B must stay empty for the cross-tenant checks.
+    const c = await createStore();
+    const empty = await steps(c);
     expect(empty).toMatchObject({ doneCount: 0, complete: false });
+    // v2 (UMK-2131): owner PIN, first stock-in, first sale and an optional cashier, each with why it matters.
     expect(empty.steps.map((x: { key: string }) => x.key)).toEqual([
       'profile',
+      'owner_pin',
       'products',
       'methods',
       'tax',
+      'stock_in',
+      'first_sale',
+      'cashier',
     ]);
     // Each step links to the screen that does it (not a redirect).
     expect(empty.steps.map((x: { to: string }) => x.to)).toEqual([
       '/pengaturan',
+      '/pengaturan/keamanan',
       '/catalog/products',
       '/metode-pembayaran',
       '/pengaturan',
+      '/pembelian',
+      '/kasir',
+      '/staf',
     ]);
+    for (const x of empty.steps) expect(x.why).toMatch(/\S.*\.$/);
+    expect(
+      empty.steps
+        .filter((x: { optional: boolean }) => x.optional)
+        .map((x: { key: string }) => x.key),
+    ).toEqual(['cashier']);
     await http()
       .put('/store/profile')
-      .set('Authorization', b.auth)
+      .set('Authorization', c.auth)
       .send({
         name: 'Toko B',
         businessType: 'retail',
         address: 'Jl. B 1',
       })
       .expect(200);
-    const cat = await post(b.auth, '/catalog/categories', { name: 'X' }).expect(
+    const cat = await post(c.auth, '/catalog/categories', { name: 'X' }).expect(
       201,
     );
-    await post(b.auth, '/catalog/products', {
-      categoryId: cat.body.id,
-      name: 'P',
-      sellingPrice: 1000,
-    }).expect(201);
+    const product = (
+      await post(c.auth, '/catalog/products', {
+        categoryId: cat.body.id,
+        name: 'P',
+        sellingPrice: 1000,
+      }).expect(201)
+    ).body.id as string;
     // The store's Tunai method is seeded the first time the menu or a sale needs it: that is the step.
-    await get(b.auth, '/payment-methods').expect(200);
-    const three = await steps(b);
+    await get(c.auth, '/payment-methods').expect(200);
+    const three = await steps(c);
     expect(three.steps.filter((x: { done: boolean }) => x.done)).toHaveLength(
       3,
     );
@@ -346,26 +365,56 @@ describe('summaries across menus (feature 39)', () => {
     const setTax = (taxBps: number) =>
       http()
         .put('/sales/settings')
-        .set('Authorization', b.auth)
+        .set('Authorization', c.auth)
         .send({ taxBps })
         .expect(200);
     const taxSetAt = async () =>
       (
         await admin<{ at: Date | null }[]>`
-          select tax_set_at as at from pos.sales_settings where tenant_id = ${b.tenantId}`
+          select tax_set_at as at from pos.sales_settings where tenant_id = ${c.tenantId}`
       )[0]?.at ?? null;
     // Nothing saved yet: the step is open. Saving 0% ("tidak memungut pajak") is a choice and completes it.
     expect(await taxSetAt()).toBeNull();
-    expect(await steps(b)).toMatchObject({ doneCount: 3, complete: false });
+    expect(await steps(c)).toMatchObject({ doneCount: 3, complete: false });
     await setTax(0);
     const first = await taxSetAt();
     expect(first).not.toBeNull();
-    expect(await steps(b)).toMatchObject({ doneCount: 4, complete: true });
+    expect(await steps(c)).toMatchObject({ doneCount: 4, complete: false });
     // Saved again (another tax, or back to 0): the first time stays.
     await setTax(500);
     await setTax(0);
     expect(await taxSetAt()).toEqual(first);
-    expect(await steps(b)).toMatchObject({ doneCount: 4, complete: true });
+    const done = async () =>
+      (await steps(c)).steps
+        .filter((x: { done: boolean }) => x.done)
+        .map((x: { key: string }) => x.key);
+    // The owner's PIN (made on a fresh sign-in), the first stock-in and the first sale.
+    await http()
+      .put('/void-pin')
+      .set('Authorization', c.freshAuth)
+      .send({ pin: '135790' })
+      .expect(200);
+    expect(await done()).toContain('owner_pin');
+    await post(c.auth, '/stock/opening', { productId: product, qty: 5 }).expect(
+      201,
+    );
+    expect(await done()).toContain('stock_in');
+    await post(c.auth, '/shifts/open', { openingCash: 0 }).expect(201);
+    expect(await steps(c)).toMatchObject({ doneCount: 6, complete: false });
+    await post(c.auth, '/sales', {
+      lines: [{ productId: product, qty: 1 }],
+      paid: 1000,
+    }).expect(201);
+    // Every required step done: the board is complete although no cashier was invited (optional).
+    expect(await steps(c)).toMatchObject({ doneCount: 7, complete: true });
+    expect(await done()).not.toContain('cashier');
+    await createCashier(app, c, ['sales.create']);
+    expect(await steps(c)).toMatchObject({ doneCount: 8, complete: true });
+    // Cross-tenant: store B's PIN does not tick store A's board.
+    expect(
+      (await steps(a)).steps.find((x: { key: string }) => x.key === 'owner_pin')
+        .done,
+    ).toBe(false);
   });
 
   it("days are the store's own around midnight (Asia/Jayapura), a void takes off its total and count, inactive products are not counted", async () => {

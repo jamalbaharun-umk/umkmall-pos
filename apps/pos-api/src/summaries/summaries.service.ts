@@ -400,38 +400,92 @@ export class SummariesService {
     };
   }
 
-  /** "Kelengkapan toko": the steps of setting the store up, each done or not. */
-  async setup(tenantId: string) {
+  /**
+   * "Kelengkapan toko" (v2, UMK-2131): the steps of setting the store up, each done or not, with one line on why it
+   * matters. An `optional` step (inviting a cashier: most stores have no staff) never holds the board open:
+   * `complete` asks only the required ones. `ownerHasPin` comes from void/void-pin.ts, the one reader of PINs.
+   */
+  async setup(tenantId: string, ownerHasPin: boolean) {
+    const final = FINAL_LIST;
     const [r] = await this.rows(sql`
       select exists (select 1 from pos.store_profiles where tenant_id = ${tenantId} and name <> '') as profile,
              exists (select 1 from pos.products where tenant_id = ${tenantId} and deleted_at is null) as products,
              exists (select 1 from pos.payment_methods where tenant_id = ${tenantId} and deleted_at is null) as methods,
-             exists (select 1 from pos.sales_settings where tenant_id = ${tenantId} and tax_set_at is not null) as tax`);
+             exists (select 1 from pos.sales_settings where tenant_id = ${tenantId} and tax_set_at is not null) as tax,
+             exists (select 1 from pos.stock_batches where tenant_id = ${tenantId}) as stock_in,
+             exists (select 1 from pos.sales where tenant_id = ${tenantId} and status in (${final})) as first_sale,
+             exists (select 1 from pos.staff where tenant_id = ${tenantId} and deleted_at is null) as cashier`);
+    const step = (
+      key: string,
+      label: string,
+      why: string,
+      done: unknown,
+      to: string,
+      optional = false,
+    ) => ({ key, label, why, done: done === true, to, optional });
     const steps = [
-      {
-        key: 'profile',
-        label: 'Profil dan struk',
-        done: r.profile === true,
-        to: '/pengaturan',
-      },
-      {
-        key: 'products',
-        label: 'Produk',
-        done: r.products === true,
-        to: '/catalog/products',
-      },
-      {
-        key: 'methods',
-        label: 'Metode pembayaran',
-        done: r.methods === true,
-        to: '/metode-pembayaran',
-      },
-      { key: 'tax', label: 'Pajak', done: r.tax === true, to: '/pengaturan' },
+      step(
+        'profile',
+        'Profil dan struk',
+        'Nama dan alamat toko tercetak di setiap struk.',
+        r.profile,
+        '/pengaturan',
+      ),
+      step(
+        'owner_pin',
+        'PIN pemilik',
+        'Dipakai untuk menyetujui pembatalan struk dan diskon besar.',
+        ownerHasPin,
+        '/pengaturan/keamanan',
+      ),
+      step(
+        'products',
+        'Produk',
+        'Barang yang dijual muncul di layar kasir.',
+        r.products,
+        '/catalog/products',
+      ),
+      step(
+        'methods',
+        'Metode pembayaran',
+        'Pelanggan bisa membayar tunai atau dengan cara lain.',
+        r.methods,
+        '/metode-pembayaran',
+      ),
+      step(
+        'tax',
+        'Pajak',
+        'Total di struk dihitung dengan pajak yang benar, atau tanpa pajak.',
+        r.tax,
+        '/pengaturan',
+      ),
+      step(
+        'stock_in',
+        'Stok masuk pertama',
+        'Stok yang tercatat membuat sisa barang dan modal terhitung.',
+        r.stock_in,
+        '/pembelian',
+      ),
+      step(
+        'first_sale',
+        'Penjualan pertama',
+        'Setelah struk pertama, laporan dan untung mulai terisi.',
+        r.first_sale,
+        '/kasir',
+      ),
+      step(
+        'cashier',
+        'Undang kasir',
+        'Opsional: kasir masuk dengan PIN sendiri, penjualannya tercatat atas namanya.',
+        r.cashier,
+        '/staf',
+        true,
+      ),
     ];
     return {
       steps,
       doneCount: steps.filter((s) => s.done).length,
-      complete: steps.every((s) => s.done),
+      complete: steps.every((s) => s.done || s.optional),
     };
   }
 

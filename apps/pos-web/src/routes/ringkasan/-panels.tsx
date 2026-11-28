@@ -520,10 +520,14 @@ function SetupBoardInner({ refresh }: { refresh: number }) {
       <ul className="flex flex-col gap-2">
         {steps.map((s) => (
           <li key={s.key} className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm text-default-primary">
-              <span aria-hidden>{s.done ? '✓ ' : '○ '}</span>
-              {s.label}
-              <span className="sr-only">{s.done ? ': selesai' : ': belum diatur'}</span>
+            <span className="flex min-w-0 flex-col">
+              <span className="text-sm text-default-primary">
+                <span aria-hidden>{s.done ? '✓ ' : '○ '}</span>
+                {s.label}
+                {s.optional && <span className="text-default-secondary"> (opsional)</span>}
+                <span className="sr-only">{s.done ? ': selesai' : ': belum diatur'}</span>
+              </span>
+              {!s.done && <span className="text-xs text-default-secondary">{s.why}</span>}
             </span>
             {s.done ? (
               <span className="text-sm text-default-secondary">Selesai</span>
