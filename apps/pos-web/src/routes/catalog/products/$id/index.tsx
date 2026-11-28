@@ -3,6 +3,7 @@ import { Card, Tabs, TabsContent, TabsList, TabsTrigger } from '@umkmall/ui/comp
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { REASON } from '../-stock-reasons'
 import { notifySuccess } from '@/lib/feedback'
 import { useConfirm } from '@/components/confirm'
 import { useCan } from '@/components/shell'
@@ -17,16 +18,7 @@ export const Route = createFileRoute('/catalog/products/$id/')({
   component: ViewProduct,
 })
 
-const REASON: Record<string, string> = {
-  opening: 'Stok awal',
-  sale: 'Penjualan',
-  sale_void: 'Penjualan dibatalkan',
-  purchase: 'Pembelian',
-  opname: 'Stok opname',
-  purchase_return: 'Retur ke pemasok',
-  purchase_return_reversal: 'Retur ke pemasok dibatalkan',
-}
-const SOURCE: Record<string, string> = { opening: 'Stok awal', purchase: 'Pembelian', adjustment: 'Penyesuaian' }
+const SOURCE: Record<string, string> = { opening: 'Stok awal', purchase: 'Pembelian', adjustment: 'Penyesuaian', production: 'Hasil produksi' }
 
 /** Lakasir's product view: status + actions, stat cards, the detail grid, then history tabs. */
 function ViewProduct() {

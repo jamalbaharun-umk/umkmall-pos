@@ -1,7 +1,7 @@
 // What the staff audit log records (UMK-1969, design 32 "Tercatat"): sign-in, price change, void and refund, shift
 // open and close, staff and role changes, device binding, manual drawer cash, the payment correction (a
 // refund marked returned by hand), a kasbon instalment corrected by PIN (UMK-1971) and the supplier money of a
-// purchase (UMK-1970: payment void, money back and its void, return undone). Nothing else is written. A new code is added here (and to `AUDIT_EVENTS`'s groups).
+// purchase (UMK-1970: payment void, money back and its void, return undone) and a production run (UMK-2132). Nothing else is written. A new code is added here (and to `AUDIT_EVENTS`'s groups).
 
 export const AUDIT_GROUPS = ['money', 'access', 'shift'] as const;
 export type AuditGroup = (typeof AUDIT_GROUPS)[number];
@@ -22,6 +22,8 @@ export const AUDIT_EVENTS = {
   purchase_refund: 'money',
   purchase_refund_void: 'money',
   purchase_return_undo: 'money',
+  // UMK-2132: a production run (ingredients out, the finished batch in at its real cost).
+  production_run: 'money',
   shift_open: 'shift',
   shift_close: 'shift',
   sign_in: 'access',

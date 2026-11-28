@@ -138,5 +138,6 @@ export class IngredientCostsController {
 @Module({
   controllers: [RecipesController, IngredientCostsController],
   providers: [RecipesService],
+  exports: [RecipesService],
 })
 export class RecipesModule {}

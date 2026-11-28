@@ -20,7 +20,13 @@ const tenantId = () =>
     .notNull()
     .references(() => tenants.id, { onDelete: 'restrict' });
 
-export const STOCK_SOURCES = ['opening', 'purchase', 'adjustment'] as const;
+// UMK-2132: `production` is the finished product of a production run (src/production/).
+export const STOCK_SOURCES = [
+  'opening',
+  'purchase',
+  'adjustment',
+  'production',
+] as const;
 export type StockSource = (typeof STOCK_SOURCES)[number];
 export const STOCK_REASONS = [
   'opening',
@@ -32,6 +38,9 @@ export const STOCK_REASONS = [
   'purchase_return',
   // UMK-1970: a return undone, the units back into the batch they left.
   'purchase_return_reversal',
+  // UMK-2132: a production run's finished batch in, and its ingredients out.
+  'production',
+  'production_use',
 ] as const;
 export type StockReason = (typeof STOCK_REASONS)[number];
 
@@ -66,7 +75,7 @@ export const stockBatches = pos
       check('stock_batches_cost_ck', sql`${t.unitCost} >= 0`),
       check(
         'stock_batches_source_ck',
-        sql`${t.source} in ('opening', 'purchase', 'adjustment')`,
+        sql`${t.source} in ('opening', 'purchase', 'adjustment', 'production')`,
       ),
     ],
   )
@@ -96,7 +105,7 @@ export const stockMovements = pos
       check('stock_movements_delta_ck', sql`${t.delta} <> 0`),
       check(
         'stock_movements_reason_ck',
-        sql`${t.reason} in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return', 'purchase_return_reversal')`,
+        sql`${t.reason} in ('opening', 'sale', 'sale_void', 'purchase', 'opname', 'purchase_return', 'purchase_return_reversal', 'production', 'production_use')`,
       ),
     ],
   )

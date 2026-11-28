@@ -7,6 +7,7 @@ import { parseWaitingSales, type WaitingSale } from './-shift-helpers'
 import { parseOnlineMethods, type Bank, type OnlineMethodsResult } from './-pay-step'
 import type { CashTotals } from './-shift-helpers'
 import type { QuickProductBody } from './-quick-product'
+import { barcodePath, exactMatch } from '@/lib/barcode-scan'
 
 // Server functions for the U3 cashier. pos-api computes every price and total; these only relay.
 
@@ -347,4 +348,16 @@ export const createQuickProduct = createServerFn({ method: 'POST' })
     const r = await send<Omit<Product, 'stock'>>('/catalog/products/quick', data)
     // A non-stock product tracks no stock: the till's grid shows no count for it.
     return r.ok ? { ok: true, data: { ...r.data, stock: null } } : r
+  })
+
+/**
+ * UMK-1986: the active product the till sells whose barcode equals `data`, or null (an unknown code is a normal answer,
+ * not an error). pos-api's own catalogue search does the lookup, scoped to the session's store; the search matches a
+ * substring, so only an exact barcode counts here.
+ */
+export const findProductByBarcode = createServerFn()
+  .validator((code: string) => code)
+  .handler(async ({ data }): Promise<Product | null> => {
+    const page = await load<{ data: (Product & { barcodes: string[] })[] }>(barcodePath(data))
+    return exactMatch(page.data.filter((p) => p.isActive), data)
   })

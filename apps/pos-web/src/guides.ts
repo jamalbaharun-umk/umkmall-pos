@@ -49,7 +49,12 @@ const STEPS: Record<string, GuideStep[]> = {
     {
       target: 'kasir-search',
       title: 'Mulai dari sini',
-      text: 'Ketik nama barang atau scan kodenya untuk mencarinya.',
+      text: 'Ketik nama barang atau kodenya untuk mencarinya.',
+    },
+    {
+      target: 'kasir-scan',
+      title: 'Scan barang',
+      text: 'Ketuk Scan, lalu arahkan kamera ke kode batang di bungkus barang.',
     },
     {
       target: 'kasir-products',
@@ -62,14 +67,9 @@ const STEPS: Record<string, GuideStep[]> = {
       text: 'Ubah jumlah atau hapus barang di rincian pesanan ini.',
     },
     {
-      target: 'kasir-total',
-      title: 'Lihat total',
-      text: 'Total sudah termasuk diskon dan pajak, dan dihitung oleh sistem.',
-    },
-    {
       target: 'kasir-pay',
       title: 'Terima pembayaran',
-      text: 'Ketuk tombol ini, pilih Tunai atau QRIS, lalu struk keluar otomatis.',
+      text: 'Total dihitung oleh sistem; ketuk tombol ini, pilih Tunai atau QRIS, lalu struk keluar.',
     },
   ],
   '/kasir/riwayat': screen(
@@ -177,6 +177,24 @@ const STEPS: Record<string, GuideStep[]> = {
     'Hitung modal satu porsi dari bahan, bungkus, dan tenaga kerja.',
     'Bandingkan modal tiap resep, lalu pakai sebagai harga modal produk.',
   ),
+  '/produksi': [
+    {
+      target: 'page-title',
+      title: 'Produksi',
+      text: 'Catat saat Anda memasak: bahan keluar dari stok dan barang jadi masuk stok.',
+    },
+    {
+      target: 'produksi-filter',
+      title: 'Pilih tanggal',
+      text: 'Atur tanggal untuk melihat produksi di periode tertentu.',
+    },
+    {
+      target: 'panel',
+      title: 'Riwayat produksi',
+      text: 'Setiap baris menunjukkan hasil rencana, hasil nyata, dan selisihnya; ketuk untuk rinciannya.',
+    },
+    replay,
+  ],
   '/voucher': screen(
     'Voucher',
     'Buat kode voucher diskon untuk pelanggan.',

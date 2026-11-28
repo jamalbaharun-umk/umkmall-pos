@@ -18,6 +18,7 @@ import {
   isStocked,
   STOCKED_TYPES,
 } from '../db/schema';
+import { CostTooLargeError } from '../recipes/cost';
 
 /** A Drizzle transaction: every stock write runs inside the caller's (sale, purchase, opname) transaction. */
 export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -29,6 +30,19 @@ type Draw = {
   refId?: string | null;
   actorId: string;
 };
+
+const MAX_SAFE_COST = BigInt(Number.MAX_SAFE_INTEGER);
+
+/** A draw whose cost left the safe integer range answers 422, never a rounded number (UMK-2132). */
+async function costOr422<T>(draw: Promise<T>): Promise<T> {
+  try {
+    return await draw;
+  } catch (e) {
+    if (e instanceof CostTooLargeError)
+      throw new UnprocessableEntityException('Nilai modal stok terlalu besar');
+    throw e;
+  }
+}
 
 const positiveInt = (n: number, what: string) => {
   if (!Number.isSafeInteger(n) || n <= 0)
@@ -160,7 +174,19 @@ export class StockService {
     positiveInt(input.qty, 'Jumlah');
     const p = await this.product(tx, input.tenantId, input.productId);
     if (!isStocked(p.type)) return { costTotal: p.costPrice * input.qty };
-    return this.draw(tx, input, 'sale');
+    return costOr422(this.draw(tx, input, 'sale'));
+  }
+
+  /**
+   * UMK-2132: an ingredient a production run uses, out FIFO under the same row locks as a sale (ledger reason
+   * `production_use`, `ref_id` = the run) and its cost. 422 when the batches hold less. Same lock order as
+   * `consume`: callers drawing several products call in product-id order. Throws `CostTooLargeError` when the
+   * cost passes `Number.MAX_SAFE_INTEGER` (the caller answers 422).
+   */
+  async drawForProduction(tx: Tx, input: Draw): Promise<{ costTotal: number }> {
+    positiveInt(input.qty, 'Jumlah');
+    await this.tracked(tx, input.tenantId, input.productId);
+    return this.draw(tx, input, 'production_use');
   }
 
   /** Opname or correction: positive adds a batch at the latest batch cost, negative draws FIFO. */
@@ -172,7 +198,9 @@ export class StockService {
       throw new UnprocessableEntityException('Selisih stok tidak valid');
     const p = await this.tracked(tx, input.tenantId, input.productId);
     if (input.delta < 0) {
-      return this.draw(tx, { ...input, qty: -input.delta }, input.reason);
+      return costOr422(
+        this.draw(tx, { ...input, qty: -input.delta }, input.reason),
+      );
     }
     const [last] = await tx
       .select({ unitCost: stockBatches.unitCost })
@@ -232,7 +260,8 @@ export class StockService {
     }
 
     let left = input.qty;
-    let costTotal = 0;
+    // Summed in BigInt: qty × unit_cost may pass the safe integer range, and is refused then, never rounded.
+    let costTotal = 0n;
     for (const b of batches) {
       if (left === 0) break;
       const take = Math.min(left, b.qtyRemaining);
@@ -249,10 +278,11 @@ export class StockService {
         refId: input.refId ?? null,
         actorId: input.actorId,
       });
-      costTotal += take * b.unitCost;
+      costTotal += BigInt(take) * BigInt(b.unitCost);
       left -= take;
     }
-    return { costTotal };
+    if (costTotal > MAX_SAFE_COST) throw new CostTooLargeError();
+    return { costTotal: Number(costTotal) };
   }
 
   /**
