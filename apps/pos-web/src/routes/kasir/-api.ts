@@ -197,7 +197,7 @@ export const loadCashier = createServerFn().handler(async () => {
     return { shift: null, products: [], taxBps: 0, methods: [] as PaymentMethod[], qris: noQris, chargeable: [] as string[], onlineUnavailable: false, banks: {} as Record<string, Bank[]> }
   // shortcut: first 100 active products, searched in the browser; add server search when catalogs grow.
   const [page, settings, methods, profile, chargeable] = await Promise.all([
-    load<{ data: Product[] }>('/catalog/products?perPage=100'),
+    load<{ data: Product[] }>('/catalog/products?perPage=100&use=sale'),
     load<{ taxBps: number }>('/sales/settings'),
     load<{ data: PaymentMethod[] }>('/payment-methods'),
     // UMK-1992: any session reads the profile; only the QRIS flag and a cache-busting stamp are used here.

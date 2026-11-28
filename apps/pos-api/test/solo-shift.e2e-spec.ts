@@ -397,16 +397,38 @@ describe('solo-owner mode: the first cash action opens the shift (UMK-2120)', ()
       ).toEqual([{ kind: 'void_refund', amount: 5000 }]);
     });
 
-    it('a void with a wrong PIN opens nothing', async () => {
+    it('a void with a wrong PIN opens nothing; the same void with the right PIN does', async () => {
       const s = await shop();
       const sale = await s.sell().expect(201);
       await close(s.auth, 5000);
-      await keyed(s.auth, `/sales/${sale.body.id}/void`, {
-        reasonCode: 'wrong_item_or_qty',
-        approverId: s.userId,
-        pin: '000000',
-      }).expect(422);
-      expect(await openShifts(s.tenantId)).toEqual([]);
+      const before = await shiftRows(s.tenantId);
+      expect(before).toHaveLength(1);
+      const audits = async () =>
+        admin<{ event: string }[]>`select event from pos.audit_log
+          where tenant_id = ${s.tenantId} and event in ('shift_open', 'void')
+          order by occurred_at, id`;
+      const auditsBefore = await audits();
+      const voidWith = (pin: string) =>
+        keyed(s.auth, `/sales/${sale.body.id}/void`, {
+          reasonCode: 'wrong_item_or_qty',
+          approverId: s.userId,
+          pin,
+        });
+
+      await voidWith('000000').expect(422);
+      // no shift and no audit row of a shift or a void appeared for this store
+      expect(await shiftRows(s.tenantId)).toEqual(before);
+      expect(await audits()).toEqual(auditsBefore);
+      expect(await autoAudits(s.tenantId)).toHaveLength(1);
+
+      // control: the same request with the right PIN opens the shift, so the refusal above was not vacuous
+      await voidWith(OWNER_PIN).expect(201);
+      expect(await openShifts(s.tenantId)).toHaveLength(1);
+      expect(await autoAudits(s.tenantId)).toHaveLength(2);
+      // shift_open and void share the transaction's time: compared as a set
+      expect((await audits()).map((r) => r.event).sort()).toEqual(
+        [...auditsBefore.map((r) => r.event), 'shift_open', 'void'].sort(),
+      );
     });
   });
 
@@ -440,5 +462,101 @@ describe('solo-owner mode: the first cash action opens the shift (UMK-2120)', ()
     expect(
       await admin`select count(*)::int as n from pos.payment_methods where tenant_id = ${tenantId}`,
     ).toEqual([{ n: 1 }]);
+  });
+
+  describe('racing the shift close', () => {
+    /** Holds the shift's row lock, sends the requests one by one (each queued at the lock), then lets go. */
+    async function behindLock<T>(
+      shiftId: string,
+      sends: (() => Promise<T>)[],
+    ): Promise<T[]> {
+      const [all] = await locker.begin(async (sql) => {
+        await sql`select id from pos.shifts where id = ${shiftId} for update`;
+        const pending: Promise<T>[] = [];
+        for (const send of sends) {
+          pending.push(send());
+          await untilWaiting(pending.length);
+        }
+        return [Promise.all(pending)];
+      });
+      return all;
+    }
+
+    it('a duplicate cash entry queued behind the close answers the first entry and opens no shift', async () => {
+      const s = await shop();
+      await s.sell().expect(201);
+      const [shift] = await openShifts(s.tenantId);
+      const key = randomUUID();
+      const entry = () =>
+        http()
+          .post('/shifts/current/cash-entries')
+          .set('Authorization', s.auth)
+          .set('Idempotency-Key', key)
+          .send({ direction: 'in', amount: 1000, reason: 'tambah_modal' })
+          .then((r) => r);
+      // Queue order at the shift's row lock: the entry, the close, the duplicate. The duplicate read the key
+      // before the first entry committed, then finds the shift closed and (solo owner) opens a new one.
+      const [first, closed, dup] = await behindLock(shift.id, [
+        entry,
+        () =>
+          post(s.auth, '/shifts/current/close', { countedCash: 6000 }).then(
+            (r) => r,
+          ),
+        entry,
+      ]);
+      expect([first.status, closed.status, dup.status]).toEqual([
+        201, 200, 201,
+      ]);
+      // the first entry landed before the count
+      expect(closed.body).toMatchObject({ expectedCash: 6000 });
+      expect(dup.body.id).toBe(first.body.id);
+      // the duplicate's automatic shift and its audit row were rolled back
+      expect(await shiftRows(s.tenantId)).toEqual([
+        expect.objectContaining({ id: shift.id, closed_at: expect.any(Date) }),
+      ]);
+      expect(await autoAudits(s.tenantId)).toHaveLength(1);
+      expect(
+        await admin`select count(*)::int as n from pos.manual_cash_entries
+                     where tenant_id = ${s.tenantId}`,
+      ).toEqual([{ n: 1 }]);
+    });
+
+    it('a sale and a drawer expense queued behind the close land in one new automatic shift', async () => {
+      const s = await shop();
+      await s.sell().expect(201);
+      const [shift] = await openShifts(s.tenantId);
+      const [closed, sale, expense] = await behindLock(shift.id, [
+        () =>
+          post(s.auth, '/shifts/current/close', { countedCash: 5000 }).then(
+            (r) => r,
+          ),
+        () => s.sell().then((r) => r),
+        () =>
+          keyed(s.auth, '/expenses', {
+            amount: 3000,
+            category: 'transport',
+            source: 'drawer',
+          }).then((r) => r),
+      ]);
+      // Actual behaviour: the close wins, neither action is refused; both find no open shift and the solo owner's
+      // drawer is opened once, from the count just made.
+      expect([closed.status, sale.status, expense.status]).toEqual([
+        200, 201, 201,
+      ]);
+      expect(closed.body).toMatchObject({ expectedCash: 5000 });
+      const rows = await shiftRows(s.tenantId);
+      expect(rows).toHaveLength(2);
+      const fresh = rows.find((r) => r.id !== shift.id)!;
+      expect(fresh).toMatchObject({ opening_cash: 5000, closed_at: null });
+      expect((await saleShift(sale.body.id)).shift_id).toBe(fresh.id);
+      expect(
+        await admin`select kind, amount::int as amount from pos.shift_cash_entries
+                     where shift_id = ${fresh.id}`,
+      ).toEqual([{ kind: 'expense', amount: 3000 }]);
+      const autos = await autoAudits(s.tenantId);
+      expect(autos).toHaveLength(2);
+      expect(autos[1].target_id).toBe(fresh.id);
+      expect(['sale', 'expense']).toContain(autos[1].details.trigger);
+    });
   });
 });

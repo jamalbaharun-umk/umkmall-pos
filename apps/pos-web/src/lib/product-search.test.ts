@@ -18,8 +18,8 @@ const p = (id: string, name = id, sku = `SKU-${id}`): PickerProduct => ({
 
 describe('searchPath', () => {
   it('asks for one page of stock-tracked products, with no q when empty', () => {
-    expect(searchPath('')).toBe(`/catalog/products?type=product&perPage=${PICKER_PAGE_SIZE}`)
-    expect(searchPath('   ')).toBe(`/catalog/products?type=product&perPage=${PICKER_PAGE_SIZE}`)
+    expect(searchPath('')).toBe(`/catalog/products?use=stock&perPage=${PICKER_PAGE_SIZE}`)
+    expect(searchPath('   ')).toBe(`/catalog/products?use=stock&perPage=${PICKER_PAGE_SIZE}`)
   })
   it('encodes the term (name, SKU or barcode) and trims it', () => {
     expect(searchPath('  es teh & gula ')).toContain('q=es+teh+%26+gula')

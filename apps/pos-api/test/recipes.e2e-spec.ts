@@ -1,6 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import postgres from 'postgres';
 import request from 'supertest';
+import { ADMIN_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
 import { createCashier } from './support/staff';
 
@@ -13,6 +15,22 @@ describe('recipes R1 (UMK-2125)', () => {
   let a: Store;
   let b: Store;
   const http = () => request(app.getHttpServer());
+  const admin = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
+  // A second owner connection that holds a product's row lock while a request is in flight.
+  const locker = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
+
+  /** Resolves once `n` backends of this database wait for a lock: the requests are in flight. */
+  async function untilWaiting(n: number) {
+    for (let i = 0; i < 400; i++) {
+      const [{ waiting }] = await admin<{ waiting: number }[]>`
+        select count(*)::int as waiting from pg_locks l
+        join pg_stat_activity a on a.pid = l.pid
+        where not l.granted and a.datname = current_database()`;
+      if (waiting >= n) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`fewer than ${n} requests reached the lock`);
+  }
 
   beforeAll(async () => {
     app = await createApp();
@@ -21,6 +39,8 @@ describe('recipes R1 (UMK-2125)', () => {
   });
   afterAll(async () => {
     await app.close();
+    await admin.end();
+    await locker.end();
   });
 
   const categories = new Map<string, string>();
@@ -533,5 +553,207 @@ describe('recipes R1 (UMK-2125)', () => {
       .send({ lines: [{ productId: kopi, qty: 1 }], paid: 10_000 })
       .expect(422);
     expect(sale.body.errors).toHaveProperty(['lines.0.productId']);
+  });
+
+  describe('review follow-ups (PR 89)', () => {
+    const applyCost = (store: Store, id: string) =>
+      http().post(`/recipes/${id}/apply-cost`).set('Authorization', store.auth);
+    const costRow = async (productId: string) =>
+      (
+        await admin<
+          {
+            cost_price: number;
+            selling_price: number;
+            cost_set_at: Date | null;
+          }[]
+        >`select cost_price::int as cost_price, selling_price::int as selling_price, cost_set_at
+            from pos.products where id = ${productId}`
+      )[0];
+
+    it('refuses figures beyond the cap with 422 (recipe write and manual cost), never a rounded number', async () => {
+      const ing = await ingredient(a, 'Saffron');
+      await manualCost(a, ing, 1_000_000_000_000).expect(200);
+      const c = await createRecipe(a, {
+        productId: await ingredient(a, 'Olahan saffron'),
+        yieldQty: 1,
+        lines: [{ ingredientId: ing, quantity: 1 }],
+      }).expect(201);
+      // 10.000.000 × Rp1.000.000.000.000 per batch: far past the cap (and past 2^53 one level up).
+      const tooMuch = await createRecipe(a, {
+        productId: await product(a, 'Saffron jumbo'),
+        yieldQty: 1,
+        lines: [{ subRecipeId: c.body.id, quantity: 10_000_000 }],
+      }).expect(422);
+      expect(tooMuch.body.errors).toHaveProperty('lines');
+
+      // A recipe within the cap, then a manual cost that would push it past: refused, the old cost kept.
+      const garam = await ingredient(a, 'Garam laut');
+      await manualCost(a, garam, 1).expect(200);
+      const r = await createRecipe(a, {
+        productId: await product(a, 'Asinan'),
+        yieldQty: 1,
+        lines: [{ ingredientId: garam, quantity: 10_000_000 }],
+      }).expect(201);
+      expect(r.body.costPerPortion).toBe(10_000_000);
+      const refused = await manualCost(a, garam, 1_000_000).expect(422);
+      expect(refused.body.errors).toHaveProperty('cost');
+      expect(
+        (await getRecipe(a, r.body.id).expect(200)).body.costPerPortion,
+      ).toBe(10_000_000);
+      // A smaller yield of a sub-recipe raises its parents too: checked on update as well.
+      const sub = await createRecipe(a, {
+        productId: await ingredient(a, 'Bumbu garam'),
+        yieldQty: 1_000_000,
+        lines: [{ ingredientId: ing, quantity: 1 }],
+      }).expect(201);
+      await createRecipe(a, {
+        productId: await product(a, 'Paket bumbu'),
+        yieldQty: 1,
+        // Rp1.000.000 per portion × 100.000 = Rp100.000.000.000, within the cap
+        lines: [{ subRecipeId: sub.body.id, quantity: 100_000 }],
+      }).expect(201);
+      await http()
+        .patch(`/recipes/${sub.body.id}`)
+        .set('Authorization', a.auth)
+        .send({ yieldQty: 1 })
+        .expect(422);
+      expect((await getRecipe(a, sub.body.id).expect(200)).body.yieldQty).toBe(
+        1_000_000,
+      );
+    });
+
+    it('apply-cost judges the selling price under the product row lock; cost_set_at is set once and kept', async () => {
+      const kopi = await ingredient(a, 'Kopi bubuk');
+      await manualCost(a, kopi, 100).expect(200);
+      const es = await product(a, 'Es kopi', { sellingPrice: 5_000 });
+      const r = await createRecipe(a, {
+        productId: es,
+        yieldQty: 1,
+        lines: [{ ingredientId: kopi, quantity: 15 }],
+      }).expect(201);
+      expect(r.body.costPerPortion).toBe(1_500);
+      expect((await costRow(es)).cost_set_at).toBeNull();
+
+      // The owner lowers the price below the cost while apply-cost is in flight: apply-cost waits for the row
+      // and judges the new price.
+      const [pending] = await locker.begin(async (sql) => {
+        await sql`select id from pos.products where id = ${es} for update`;
+        const inFlight = applyCost(a, r.body.id).then((x) => x);
+        await untilWaiting(1);
+        await sql`update pos.products set selling_price = 1000 where id = ${es}`;
+        return [inFlight];
+      });
+      const refused = await Promise.resolve(pending);
+      expect(refused.status).toBe(422);
+      expect(refused.body.errors).toHaveProperty('costPrice');
+      expect(await costRow(es)).toMatchObject({
+        cost_price: 0,
+        selling_price: 1_000,
+        cost_set_at: null,
+      });
+
+      await admin`update pos.products set selling_price = 5000 where id = ${es}`;
+      await applyCost(a, r.body.id).expect(200);
+      const first = await costRow(es);
+      expect(first.cost_price).toBe(1_500);
+      expect(first.cost_set_at).toBeInstanceOf(Date);
+
+      await manualCost(a, kopi, 120).expect(200);
+      const again = await applyCost(a, r.body.id).expect(200);
+      expect(again.body.costPrice).toBe(1_800);
+      // the trigger keeps the first time the cost went above 0
+      expect((await costRow(es)).cost_set_at).toEqual(first.cost_set_at);
+    });
+
+    const deletedFlags = (body: { lines: { deleted: boolean }[] }) =>
+      body.lines.map((l) => l.deleted);
+
+    it('flags a deleted ingredient in the reads (also through a sub-recipe) and apply-cost refuses it', async () => {
+      const susu = await ingredient(a, 'Susu');
+      const gula = await ingredient(a, 'Gula aren');
+      await manualCost(a, susu, 20).expect(200);
+      await manualCost(a, gula, 30).expect(200);
+      const sirup = await createRecipe(a, {
+        productId: await ingredient(a, 'Sirup aren'),
+        yieldQty: 1,
+        lines: [{ ingredientId: gula, quantity: 10 }],
+      }).expect(201);
+      const latte = await product(a, 'Latte aren', { sellingPrice: 9_000 });
+      const r = await createRecipe(a, {
+        productId: latte,
+        yieldQty: 1,
+        lines: [
+          { ingredientId: susu, quantity: 100 },
+          { subRecipeId: sirup.body.id, quantity: 1 },
+        ],
+      }).expect(201);
+      expect(r.body.deletedIngredientIds).toEqual([]);
+      expect(deletedFlags(r.body)).toEqual([false, false]);
+
+      await http()
+        .delete(`/catalog/products/${gula}`)
+        .set('Authorization', a.auth)
+        .expect(204);
+      const read = await getRecipe(a, r.body.id).expect(200);
+      expect(read.body.deletedIngredientIds).toEqual([gula]);
+      expect(deletedFlags(read.body)).toEqual([false, true]);
+      // still costed, only flagged
+      expect(read.body.costPerPortion).toBe(2_300);
+      const sub = await getRecipe(a, sirup.body.id).expect(200);
+      expect(sub.body.lines[0]).toMatchObject({
+        ingredientId: gula,
+        deleted: true,
+      });
+      const list = await http()
+        .get('/recipes')
+        .set('Authorization', a.auth)
+        .expect(200);
+      expect(
+        (list.body.data as { id: string; deletedIngredient: boolean }[]).find(
+          (x) => x.id === r.body.id,
+        ),
+      ).toMatchObject({ deletedIngredient: true });
+
+      const refused = await applyCost(a, r.body.id).expect(422);
+      expect(refused.body.errors).toHaveProperty('lines');
+      expect((await costRow(latte)).cost_price).toBe(0);
+    });
+
+    it('the till lists no ingredient (use=sale), the stock pickers list products and ingredients (use=stock)', async () => {
+      const c = await createStore();
+      const barang = await product(c, 'Teh botol');
+      const bahan = await ingredient(c, 'Daun teh');
+      const jasa = await product(c, 'Cuci gelas', { type: 'service' });
+      const ids = async (query: object) =>
+        (
+          (
+            await http()
+              .get('/catalog/products')
+              .query(query)
+              .set('Authorization', c.auth)
+              .expect(200)
+          ).body.data as { id: string }[]
+        )
+          .map((p) => p.id)
+          .sort();
+      expect(await ids({ use: 'sale' })).toEqual([barang, jasa].sort());
+      expect(await ids({ use: 'stock' })).toEqual([barang, bahan].sort());
+      await http()
+        .get('/catalog/products')
+        .query({ use: 'all' })
+        .set('Authorization', c.auth)
+        .expect(422);
+
+      // The products summary counts the ingredient on the shelf, but not in "modal belum diisi".
+      const sum = await http()
+        .get('/summaries/products')
+        .set('Authorization', c.auth)
+        .expect(200);
+      expect(sum.body).toMatchObject({
+        total: 2,
+        stock: { ok: 0, low: 0, out: 2 },
+        noCost: 1,
+      });
+    });
   });
 });
