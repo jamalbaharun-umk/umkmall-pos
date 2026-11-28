@@ -138,6 +138,8 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       lines: [{ ingredientId: milk.body.id, quantity: 150, wastePercent: 5 }],
     }).expect(201);
     await put('/sales/settings', { taxBps: 1000 }).expect(200);
+    // UMK-2134: a finished coach-mark guide (guide_progress).
+    await put('/guides/progress/kasir', { status: 'done' }).expect(200);
     await put('/reports/settings', { timezone: 'UTC' }).expect(200);
     await put('/store/profile', {
       name: 'Toko',

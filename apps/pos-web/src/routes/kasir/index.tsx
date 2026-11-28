@@ -116,6 +116,7 @@ import {
   type LineDiscount,
 } from './-discount'
 import { ActionRow } from '@/components/action-row'
+import { GuideButton } from '@/components/guide'
 import { DailyTargetCard } from '../ringkasan/-panels'
 
 // Lakasir's classic cashier (/member/cashier, not PosV2), full screen: product grid with search and category tabs on
@@ -455,7 +456,8 @@ function Register({
               <Icon name="arrow-left" size="sm" /> Dasbor
             </Link>
           </Button>
-          <div className="w-full sm:w-72">
+          <GuideButton />
+          <div className="w-full sm:w-72" data-guide="kasir-search">
             <TextField
               aria-label="Cari produk"
               type="search"
@@ -521,7 +523,7 @@ function Register({
             />
           </Card>
         ) : (
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" data-guide="kasir-products">
             {shown.map((p) => {
               const state = stockState(p.stock, p.lowStockThreshold)
               return (
@@ -569,6 +571,7 @@ function Register({
 
       <aside
         aria-label="Rincian pesanan"
+        data-guide="kasir-cart"
         className="flex min-w-0 flex-col gap-3 border-default-primary bg-default-primary p-4 md:sticky md:top-0 md:h-svh md:border-l"
       >
         <div className="flex min-w-0 flex-col gap-1">
@@ -756,7 +759,7 @@ function Register({
           <VoucherRow voucher={voucher} amount={subtotal - lineDiscount} onChange={setVoucher} />
         </dl>
 
-        <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm">
+        <dl className="space-y-2 rounded-2xl border border-default-primary p-3 text-sm" data-guide="kasir-total">
           <Row
             label={quoteState === 'loading' ? 'Subtotal (menghitung…)' : 'Subtotal'}
             value={<span className="text-default-brand">{rupiah(subtotal)}</span>}
@@ -821,6 +824,7 @@ function Register({
             }) || !!discountProblem
           }
           onClick={() => setPaying(true)}
+          data-guide="kasir-pay"
         >
           Lanjut ke pembayaran
         </Button>

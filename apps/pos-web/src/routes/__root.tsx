@@ -4,6 +4,7 @@ import { Toaster } from '@umkmall/ui/primitives'
 import type { ReactNode } from 'react'
 import { FeedbackHost } from '@/components/feedback-host'
 import { Empty, Page } from '@/components/page'
+import { GuideProvider } from '@/components/guide'
 import { Shell, type Me } from '@/components/shell'
 import { API_DOWN, UMKMALL_DOWN, api } from '@/lib/api.server'
 import { getSessionToken, lastMe, rememberMe } from '@/lib/session.server'
@@ -57,7 +58,20 @@ export const Route = createRootRoute({
 function Root() {
   const me = Route.useLoaderData()
   const bare = useMatches({ select: (m) => BARE_ROUTES.includes(m.at(-1)?.routeId ?? '') })
-  return <RootDocument>{me && !bare ? <Shell me={me}><Outlet /></Shell> : <Outlet />}</RootDocument>
+  return (
+    <RootDocument>
+      {/* UMK-2134: guides for every signed-in screen, the bare till included. */}
+      <GuideProvider enabled={Boolean(me)}>
+        {me && !bare ? (
+          <Shell me={me}>
+            <Outlet />
+          </Shell>
+        ) : (
+          <Outlet />
+        )}
+      </GuideProvider>
+    </RootDocument>
+  )
 }
 
 function RootDocument({ children }: { children: ReactNode }) {

@@ -27,6 +27,18 @@ one-line export in `src/primitives/index.ts` and the `test` script above. **A la
 They are pure SVG (no charting dependency), render with `react-dom/server`, and read colour only from tokens. When
 the package is published, move this folder to the monorepo first.
 
+## Local addition: CoachMark (owner exception 2026-11-28, UMK-2134)
+
+The step-by-step guide bubble (design 46) is the second thing built here, on the same terms as the charts: a later
+re-vendor keeps these files, and the component moves to the monorepo first when the package is published.
+
+- `src/primitives/CoachMark/` (everything in it): `CoachMark`, `placeBubble` and their test;
+- the line `export * from './CoachMark';` at the end of `src/primitives/index.ts`;
+- `src/primitives/CoachMark` in the `test` script of `package.json`.
+
+It has no contract entry and no story yet (the POS has no Storybook); it reads colour and type only from tokens
+(`border-default-brand`, `text-ds-*`), so both token guards cover it.
+
 Do not edit any other component here. A needed change goes to the monorepo first, then this copy is refreshed from it.
 
 ## Known upstream issues

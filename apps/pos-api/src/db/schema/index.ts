@@ -19,3 +19,4 @@ export * from './store';
 export * from './agent';
 export * from './audit';
 export * from './recipes';
+export * from './guides';
