@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cashDiff, change, checkRange, REPORTS } from './-reports'
+import { cashDiff, change, checkRange, costMissingText, REPORTS } from './-reports'
 
 describe('change', () => {
   it('rounds the percentage and refuses a zero base', () => {
@@ -60,5 +60,15 @@ describe('Laporan kasir columns (UMK-2088)', () => {
     expect(labels.orderDiscount).toBe('Diskon pesanan')
     expect(labels.grossSales).toBeUndefined()
     expect(REPORTS.penjualan.totals.find((t) => t.key === 'grossSales')?.label).toBe('Penjualan kotor')
+  })
+})
+
+describe('costMissingText (UMK-2130)', () => {
+  it('warns only when products were sold without a cost', () => {
+    expect(costMissingText(0)).toBeNull()
+    expect(costMissingText(3)).toEqual({
+      title: 'Modal belum diisi untuk 3 produk',
+      body: 'Untung di atas belum lengkap karena penjualan produk tanpa modal dihitung modalnya Rp0.',
+    })
   })
 })

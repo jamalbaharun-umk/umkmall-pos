@@ -15,6 +15,8 @@ import {
   stockMovements,
   type StockReason,
   type StockSource,
+  isStocked,
+  STOCKED_TYPES,
 } from '../db/schema';
 
 /** A Drizzle transaction: every stock write runs inside the caller's (sale, purchase, opname) transaction. */
@@ -36,7 +38,7 @@ const positiveInt = (n: number, what: string) => {
 /**
  * Stock in batches, drawn FIFO (oldest `received_at` first) under row locks. Ported from Lakasir's
  * StockService with flaw 8 fixed: Lakasir read the batch, then saved an absolute value with no lock.
- * Only `type = 'product'` tracks stock.
+ * Only the stocked types (`STOCKED_TYPES`: product, ingredient) track stock.
  */
 @Injectable()
 export class StockService {
@@ -68,7 +70,7 @@ export class StockService {
 
   private async tracked(tx: Tx, tenantId: string, productId: string) {
     const p = await this.product(tx, tenantId, productId);
-    if (p.type !== 'product')
+    if (!isStocked(p.type))
       throw new UnprocessableEntityException('Produk ini tidak memakai stok');
     return p;
   }
@@ -157,7 +159,7 @@ export class StockService {
   async consume(tx: Tx, input: Draw): Promise<{ costTotal: number }> {
     positiveInt(input.qty, 'Jumlah');
     const p = await this.product(tx, input.tenantId, input.productId);
-    if (p.type !== 'product') return { costTotal: p.costPrice * input.qty };
+    if (!isStocked(p.type)) return { costTotal: p.costPrice * input.qty };
     return this.draw(tx, input, 'sale');
   }
 
@@ -479,7 +481,7 @@ export class StockService {
         and(
           eq(products.tenantId, tenantId),
           inArray(products.id, productIds),
-          eq(products.type, 'product'),
+          inArray(products.type, [...STOCKED_TYPES]),
         ),
       )
       .groupBy(products.id);
@@ -489,7 +491,7 @@ export class StockService {
   /** `GET /stock/products/:id`: on-hand and the batches still holding stock. */
   async productStock(tenantId: string, productId: string) {
     const p = await this.product(this.db, tenantId, productId, false);
-    if (p.type !== 'product')
+    if (!isStocked(p.type))
       return { productId, tracked: false, onHand: null, batches: [] };
     const batches = await this.db
       .select({

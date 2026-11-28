@@ -225,6 +225,23 @@ export class ReportsService {
   }
 
   /**
+   * UMK-2130 "Modal belum diisi": how many products were sold in whole store days `[from, to]` (by `paid_at`, as
+   * every sales figure; a voided receipt left out) on a line whose stored cost is 0 while it was charged. Their
+   * cost counts as Rp0 in every profit, so a screen warns that the profit is not complete.
+   */
+  async costMissing(tenantId: string, tz: string, range: DateRange) {
+    const { start, end } = this.bounds(range, tz);
+    const [r] = await this.rows(sql`
+      select count(distinct l.product_id) as products
+        from pos.sale_lines l
+        join pos.sales s on s.tenant_id = l.tenant_id and s.id = l.sale_id
+       where l.tenant_id = ${tenantId} and s.status = 'completed'
+         and s.paid_at >= ${start} and s.paid_at < ${end}
+         and l.cost_total = 0 and l.line_total > 0`);
+    return { products: n(r.products) };
+  }
+
+  /**
    * Current period so far vs the same span one period earlier ("this week so far" vs "last week up to the same
    * moment"). Lakasir compared overlapping windows.
    */

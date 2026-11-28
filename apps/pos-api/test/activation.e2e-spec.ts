@@ -125,7 +125,7 @@ describe('activation metrics (UMK-2131)', () => {
     await admin`update pos.tenants set created_at = now() - interval '2 days' where id = ${young.tenantId}`;
 
     // Store "idle": no sale at all.
-    const idle = await createStore();
+    await createStore();
 
     const report = await activationReport(appDb);
     // No personal data: only these four figures per store, never an id.
@@ -152,7 +152,6 @@ describe('activation metrics (UMK-2131)', () => {
       }),
     );
     expect(report.firstSaleWithin5Minutes).toBeGreaterThanOrEqual(1);
-    void idle;
     expect(report.stores).toContainEqual({
       ageDays: 0,
       minutesToFirstSale: null,

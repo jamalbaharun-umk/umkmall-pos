@@ -79,9 +79,13 @@ export class ProfitLossService {
         spent,
       };
     };
-    const [current, previous] = await Promise.all([
+    const [current, previous, costMissing] = await Promise.all([
       side(range.from, range.to),
       side(range.previous.from, range.previous.to, cutoff),
+      this.reports.costMissing(tenantId, tz, {
+        from: range.from,
+        to: range.to,
+      }),
     ]);
     return {
       period: range.period,
@@ -94,6 +98,8 @@ export class ProfitLossService {
       current: current.figures,
       previous: previous.figures,
       netProfitChange: current.figures.netProfit - previous.figures.netProfit,
+      // UMK-2130: products sold this period without a cost ("Modal belum diisi untuk n produk"): profit is not complete.
+      costMissing,
       // "Pengeluaran terbesar": the period's expense categories, largest first, supplier payments out.
       topExpenses: current.spent.byCategory
         .filter((c) => c.kind === 'expense')

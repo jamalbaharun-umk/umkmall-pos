@@ -171,10 +171,31 @@ export const ProductQuery = z.object({
   type: z.enum(PRODUCT_TYPES).optional(),
   // UMK-1966: only tracked products that are running low (0 < on-hand <= threshold) or out (on-hand 0).
   stock: z.enum(['low', 'out']).optional(),
+  // UMK-2130: products whose cost is still 0 ("Modal belum diisi").
+  cost: z.enum(['missing']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/**
+ * UMK-2130 "Produk cepat" from the till: name and price, cost optional (owner ruling 2026-11-28: sell first, complete
+ * the catalog later). The server puts it in the "Lainnya" category as a `non_stock` product, so it sells at once
+ * without a stock-in; a barcode the till just scanned and did not know may come with it.
+ */
+export const QuickProductCreate = z
+  .object({
+    name: productFields.name,
+    sellingPrice: productFields.sellingPrice,
+    costPrice: productFields.costPrice,
+    barcode: codeOf('Barcode').optional(),
+  })
+  .strict()
+  .refine(costNotAboveSelling, {
+    message: 'Harga modal tidak boleh melebihi harga jual',
+    path: ['costPrice'],
+  });
+
 export type ProductCreate = z.infer<typeof ProductCreate>;
+export type QuickProductCreate = z.infer<typeof QuickProductCreate>;
 export type ProductUpdate = z.infer<typeof ProductUpdate>;
 export type ProductQuery = z.infer<typeof ProductQuery>;

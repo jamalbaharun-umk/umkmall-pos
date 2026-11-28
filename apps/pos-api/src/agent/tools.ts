@@ -1483,9 +1483,9 @@ export function buildAgentServer(
             const p = await get(`/catalog/products/${l.productId}`);
             if (!p.ok) return refused(p.message);
             const prod = p.data as { name: string; type: string };
-            if (prod.type !== 'product')
+            if (prod.type !== 'product' && prod.type !== 'ingredient')
               return refused(
-                `${prod.name} tidak dilacak stoknya (bukan tipe product).`,
+                `${prod.name} tidak dilacak stoknya (bukan tipe product atau ingredient).`,
               );
             const st = await get(`/stock/products/${l.productId}`);
             if (!st.ok) return refused(st.message);

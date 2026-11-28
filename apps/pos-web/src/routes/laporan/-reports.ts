@@ -142,3 +142,12 @@ export function checkRange(from: string, to: string): Record<string, string> {
   }
   return errors
 }
+
+/** UMK-2130: the P&L warning for products sold without a cost; null when every product sold had one. */
+export function costMissingText(products: number): { title: string; body: string } | null {
+  if (products <= 0) return null
+  return {
+    title: `Modal belum diisi untuk ${products} produk`,
+    body: 'Untung di atas belum lengkap karena penjualan produk tanpa modal dihitung modalnya Rp0.',
+  }
+}

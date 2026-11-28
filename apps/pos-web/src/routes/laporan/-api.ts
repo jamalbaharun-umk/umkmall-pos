@@ -103,6 +103,8 @@ export type ProfitLoss = {
   current: ProfitLossFigures
   previous: ProfitLossFigures
   netProfitChange: number
+  // UMK-2130: products sold this period with no cost (their cost counted Rp0).
+  costMissing: { products: number }
   topExpenses: { category: string; label: string; total: number; count: number }[]
 }
 
