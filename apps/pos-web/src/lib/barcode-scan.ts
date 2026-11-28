@@ -69,6 +69,52 @@ export function writeBeep(on: boolean, storage: StorageLike | undefined = device
   }
 }
 
+/** Fired on `window` by `setBeep` so the Pengaturan switch and the camera sheet stay in step inside one tab. */
+export const BEEP_EVENT = 'pos:scan-beep'
+
+type Listenable = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>
+
+/**
+ * Calls `listener` whenever the beep choice may have changed: in this tab (`BEEP_EVENT`) or in another tab of the
+ * device (`storage` event for `BEEP_KEY`). Returns the unsubscribe function.
+ */
+export function subscribeBeep(listener: () => void, target: Listenable | undefined = browserWindow()): () => void {
+  if (!target) return () => undefined
+  const onStorage = (e: Event) => {
+    const key = (e as StorageEvent).key
+    if (key === null || key === BEEP_KEY) listener()
+  }
+  target.addEventListener(BEEP_EVENT, listener)
+  target.addEventListener('storage', onStorage)
+  return () => {
+    target.removeEventListener(BEEP_EVENT, listener)
+    target.removeEventListener('storage', onStorage)
+  }
+}
+
+const browserWindow = (): (Listenable & Pick<EventTarget, 'dispatchEvent'>) | undefined =>
+  typeof window === 'undefined' ? undefined : window
+
+/** Stores the choice and tells every switch on the page. */
+export function setBeep(on: boolean, storage: StorageLike | undefined = deviceStorage(), target = browserWindow()): void {
+  writeBeep(on, storage)
+  try {
+    target?.dispatchEvent(new Event(BEEP_EVENT))
+  } catch {
+    // No events: the next read still sees the stored value.
+  }
+}
+
+/**
+ * What to do with the shared AudioContext before a beep. Mobile browsers start it `suspended` (iOS also `interrupted`
+ * after a call) until a user gesture resumes it; a `closed` one can never run again and is replaced.
+ */
+export function audioAction(state: string | undefined): 'create' | 'resume' | 'ready' {
+  if (state === undefined || state === 'closed') return 'create'
+  if (state === 'suspended' || state === 'interrupted') return 'resume'
+  return 'ready'
+}
+
 export type CameraSupport = 'ok' | 'insecure' | 'no-detector' | 'no-camera'
 
 /**

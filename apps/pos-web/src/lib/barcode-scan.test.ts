@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   BEEP_KEY,
+  audioAction,
+  setBeep,
+  subscribeBeep,
   addedResult,
   barcodePath,
   cameraSupport,
@@ -165,5 +168,53 @@ describe('result texts', () => {
       detail: 'Barcode 899 sudah dipakai produk Teh Botol 350ml.',
     })
     expect(fieldScanResult('899', ['', ' 899 '], null)).toMatchObject({ kind: 'warn', title: 'Barcode sudah ada' })
+  })
+})
+
+describe('beep setting sync and audio state', () => {
+  const target = () => {
+    const l = new Map<string, Set<(e: Event) => void>>()
+    return {
+      l,
+      addEventListener: (t: string, f: (e: Event) => void) => void (l.get(t) ?? l.set(t, new Set()).get(t)!).add(f),
+      removeEventListener: (t: string, f: (e: Event) => void) => void l.get(t)?.delete(f),
+      dispatchEvent: (e: Event) => {
+        l.get(e.type)?.forEach((f) => f(e))
+        return true
+      },
+    }
+  }
+  it('tells listeners when the choice is set in this tab and stops after unsubscribe', () => {
+    const t = target()
+    const store = { getItem: () => null, setItem: () => undefined }
+    let n = 0
+    const off = subscribeBeep(() => n++, t)
+    setBeep(false, store, t)
+    expect(n).toBe(1)
+    off()
+    setBeep(true, store, t)
+    expect(n).toBe(1)
+  })
+  it('reacts to the storage event of its own key (or a clear) only', () => {
+    const t = target()
+    let n = 0
+    subscribeBeep(() => n++, t)
+    t.dispatchEvent(Object.assign(new Event('storage'), { key: 'other' }))
+    expect(n).toBe(0)
+    t.dispatchEvent(Object.assign(new Event('storage'), { key: BEEP_KEY }))
+    t.dispatchEvent(Object.assign(new Event('storage'), { key: null }))
+    expect(n).toBe(2)
+  })
+  it('does not throw without a window or when dispatch fails', () => {
+    expect(subscribeBeep(() => undefined, undefined)).toBeTypeOf('function')
+    const bad = { ...target(), dispatchEvent: () => { throw new Error('x') } }
+    expect(() => setBeep(false, undefined, bad)).not.toThrow()
+  })
+  it('creates, resumes or keeps the audio context by its state', () => {
+    expect(audioAction(undefined)).toBe('create')
+    expect(audioAction('closed')).toBe('create')
+    expect(audioAction('suspended')).toBe('resume')
+    expect(audioAction('interrupted')).toBe('resume')
+    expect(audioAction('running')).toBe('ready')
   })
 })
