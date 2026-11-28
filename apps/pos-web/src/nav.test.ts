@@ -86,3 +86,13 @@ describe('Pembayaran Online entry (UMK-2020)', () => {
     expect(activeNav(NAV, '/pengaturan/pembayaran-online')).toBe('/pengaturan/pembayaran-online')
   })
 })
+
+describe('Resep entry (UMK-2125)', () => {
+  it('shows only with catalog.manage, under Inventori', () => {
+    const find = (perms: string[]) =>
+      visibleNav(NAV, () => true, perms).find((g) => g.items.some((i) => i.to === '/resep'))
+    expect(find(['sales.create'])).toBeUndefined()
+    expect(find(['catalog.manage'])?.label).toBe('Inventori')
+    expect(activeNav(NAV, '/resep/abc')).toBe('/resep')
+  })
+})

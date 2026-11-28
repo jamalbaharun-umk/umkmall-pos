@@ -47,6 +47,9 @@ import { Route as PengeluaranBaruRouteImport } from './routes/pengeluaran/baru'
 import { Route as PerluDitinjauIndexRouteImport } from './routes/perlu-ditinjau/index'
 import { Route as PiutangIndexRouteImport } from './routes/piutang/index'
 import { Route as PiutangIdRouteImport } from './routes/piutang/$id'
+import { Route as ResepIndexRouteImport } from './routes/resep/index'
+import { Route as ResepIdRouteImport } from './routes/resep/$id'
+import { Route as ResepBaruRouteImport } from './routes/resep/baru'
 import { Route as StafIndexRouteImport } from './routes/staf/index'
 import { Route as StafIdRouteImport } from './routes/staf/$id'
 import { Route as StafBaruRouteImport } from './routes/staf/baru'
@@ -268,6 +271,21 @@ const PiutangIdRoute = PiutangIdRouteImport.update({
   path: '/piutang/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ResepIndexRoute = ResepIndexRouteImport.update({
+  id: '/resep/',
+  path: '/resep/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResepIdRoute = ResepIdRouteImport.update({
+  id: '/resep/$id',
+  path: '/resep/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResepBaruRoute = ResepBaruRouteImport.update({
+  id: '/resep/baru',
+  path: '/resep/baru',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StafIndexRoute = StafIndexRouteImport.update({
   id: '/staf/',
   path: '/staf/',
@@ -436,6 +454,8 @@ export interface FileRoutesByFullPath {
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
+  '/resep/$id': typeof ResepIdRoute
+  '/resep/baru': typeof ResepBaruRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/baru': typeof StafBaruRoute
   '/staf/perangkat': typeof StafPerangkatRoute
@@ -454,6 +474,7 @@ export interface FileRoutesByFullPath {
   '/pengeluaran/': typeof PengeluaranIndexRoute
   '/perlu-ditinjau/': typeof PerluDitinjauIndexRoute
   '/piutang/': typeof PiutangIndexRoute
+  '/resep/': typeof ResepIndexRoute
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
@@ -504,6 +525,8 @@ export interface FileRoutesByTo {
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
+  '/resep/$id': typeof ResepIdRoute
+  '/resep/baru': typeof ResepBaruRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/baru': typeof StafBaruRoute
   '/staf/perangkat': typeof StafPerangkatRoute
@@ -522,6 +545,7 @@ export interface FileRoutesByTo {
   '/pengeluaran': typeof PengeluaranIndexRoute
   '/perlu-ditinjau': typeof PerluDitinjauIndexRoute
   '/piutang': typeof PiutangIndexRoute
+  '/resep': typeof ResepIndexRoute
   '/staf': typeof StafIndexRoute
   '/stok-opname': typeof StokOpnameIndexRoute
   '/voucher': typeof VoucherIndexRoute
@@ -573,6 +597,8 @@ export interface FileRoutesById {
   '/pengeluaran/$id': typeof PengeluaranIdRoute
   '/pengeluaran/baru': typeof PengeluaranBaruRoute
   '/piutang/$id': typeof PiutangIdRoute
+  '/resep/$id': typeof ResepIdRoute
+  '/resep/baru': typeof ResepBaruRoute
   '/staf/$id': typeof StafIdRoute
   '/staf/baru': typeof StafBaruRoute
   '/staf/perangkat': typeof StafPerangkatRoute
@@ -591,6 +617,7 @@ export interface FileRoutesById {
   '/pengeluaran/': typeof PengeluaranIndexRoute
   '/perlu-ditinjau/': typeof PerluDitinjauIndexRoute
   '/piutang/': typeof PiutangIndexRoute
+  '/resep/': typeof ResepIndexRoute
   '/staf/': typeof StafIndexRoute
   '/stok-opname/': typeof StokOpnameIndexRoute
   '/voucher/': typeof VoucherIndexRoute
@@ -643,6 +670,8 @@ export interface FileRouteTypes {
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
     | '/piutang/$id'
+    | '/resep/$id'
+    | '/resep/baru'
     | '/staf/$id'
     | '/staf/baru'
     | '/staf/perangkat'
@@ -661,6 +690,7 @@ export interface FileRouteTypes {
     | '/pengeluaran/'
     | '/perlu-ditinjau/'
     | '/piutang/'
+    | '/resep/'
     | '/staf/'
     | '/stok-opname/'
     | '/voucher/'
@@ -711,6 +741,8 @@ export interface FileRouteTypes {
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
     | '/piutang/$id'
+    | '/resep/$id'
+    | '/resep/baru'
     | '/staf/$id'
     | '/staf/baru'
     | '/staf/perangkat'
@@ -729,6 +761,7 @@ export interface FileRouteTypes {
     | '/pengeluaran'
     | '/perlu-ditinjau'
     | '/piutang'
+    | '/resep'
     | '/staf'
     | '/stok-opname'
     | '/voucher'
@@ -779,6 +812,8 @@ export interface FileRouteTypes {
     | '/pengeluaran/$id'
     | '/pengeluaran/baru'
     | '/piutang/$id'
+    | '/resep/$id'
+    | '/resep/baru'
     | '/staf/$id'
     | '/staf/baru'
     | '/staf/perangkat'
@@ -797,6 +832,7 @@ export interface FileRouteTypes {
     | '/pengeluaran/'
     | '/perlu-ditinjau/'
     | '/piutang/'
+    | '/resep/'
     | '/staf/'
     | '/stok-opname/'
     | '/voucher/'
@@ -848,6 +884,8 @@ export interface RootRouteChildren {
   PengeluaranIdRoute: typeof PengeluaranIdRoute
   PengeluaranBaruRoute: typeof PengeluaranBaruRoute
   PiutangIdRoute: typeof PiutangIdRoute
+  ResepIdRoute: typeof ResepIdRoute
+  ResepBaruRoute: typeof ResepBaruRoute
   StafIdRoute: typeof StafIdRoute
   StafBaruRoute: typeof StafBaruRoute
   StafPerangkatRoute: typeof StafPerangkatRoute
@@ -866,6 +904,7 @@ export interface RootRouteChildren {
   PengeluaranIndexRoute: typeof PengeluaranIndexRoute
   PerluDitinjauIndexRoute: typeof PerluDitinjauIndexRoute
   PiutangIndexRoute: typeof PiutangIndexRoute
+  ResepIndexRoute: typeof ResepIndexRoute
   StafIndexRoute: typeof StafIndexRoute
   StokOpnameIndexRoute: typeof StokOpnameIndexRoute
   VoucherIndexRoute: typeof VoucherIndexRoute
@@ -1159,6 +1198,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PiutangIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/resep/': {
+      id: '/resep/'
+      path: '/resep'
+      fullPath: '/resep/'
+      preLoaderRoute: typeof ResepIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/resep/$id': {
+      id: '/resep/$id'
+      path: '/resep/$id'
+      fullPath: '/resep/$id'
+      preLoaderRoute: typeof ResepIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/resep/baru': {
+      id: '/resep/baru'
+      path: '/resep/baru'
+      fullPath: '/resep/baru'
+      preLoaderRoute: typeof ResepBaruRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/staf/': {
       id: '/staf/'
       path: '/staf'
@@ -1384,6 +1444,8 @@ const rootRouteChildren: RootRouteChildren = {
   PengeluaranIdRoute: PengeluaranIdRoute,
   PengeluaranBaruRoute: PengeluaranBaruRoute,
   PiutangIdRoute: PiutangIdRoute,
+  ResepIdRoute: ResepIdRoute,
+  ResepBaruRoute: ResepBaruRoute,
   StafIdRoute: StafIdRoute,
   StafBaruRoute: StafBaruRoute,
   StafPerangkatRoute: StafPerangkatRoute,
@@ -1402,6 +1464,7 @@ const rootRouteChildren: RootRouteChildren = {
   PengeluaranIndexRoute: PengeluaranIndexRoute,
   PerluDitinjauIndexRoute: PerluDitinjauIndexRoute,
   PiutangIndexRoute: PiutangIndexRoute,
+  ResepIndexRoute: ResepIndexRoute,
   StafIndexRoute: StafIndexRoute,
   StokOpnameIndexRoute: StokOpnameIndexRoute,
   VoucherIndexRoute: VoucherIndexRoute,
