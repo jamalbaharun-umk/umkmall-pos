@@ -12,6 +12,7 @@ import { withMargins } from '../src/agent/hpp';
 import { AGENT_TOOL_NAMES, redact } from '../src/agent/tools';
 import { ADMIN_DATABASE_URL, APP_DATABASE_URL } from './support/env';
 import { createApp, createStore } from './support/fixtures';
+import { createCashier } from './support/staff';
 
 // UMK-1978 (agent session), UMK-1979 (MCP read tools), UMK-1980 (write tools, HPP import), UMK-1982 (doc drift),
 // and the New Teman AI alignment: consent scopes, revocation, usage and provenance, registry entries.
@@ -951,6 +952,8 @@ describe('UMKMall agent: session and MCP tools', () => {
       const kopi = await seedProduct(store.auth, 'Kopi Susu', 15123);
       const client = await mcp(await agentToken(store.userId));
       const cart = { lines: [{ productId: kopi.id, qty: 2 }] };
+      // A store with staff: no shift is opened for the owner (UMK-2120 solo-owner mode is off).
+      await createCashier(app, store);
 
       // no open shift: the tool says so and records nothing
       const closed = await call(client, 'record_sale', {
@@ -1026,6 +1029,55 @@ describe('UMKMall agent: session and MCP tools', () => {
         .set('Authorization', store.auth)
         .expect(200);
       expect(list.body.total).toBe(2);
+    });
+
+    it('UMK-2120: for a solo owner with no open shift, record_sale opens the shift and the sale lands in it', async () => {
+      const store = await createStore();
+      const kopi = await seedProduct(store.auth, 'Kopi Tubruk', 8000);
+      const client = await mcp(await agentToken(store.userId));
+      const current = await http()
+        .get('/shifts/current')
+        .set('Authorization', store.auth)
+        .expect(200);
+      expect(current.body).toEqual({ shift: null, autoOpen: true });
+
+      const made = await call(client, 'record_sale', {
+        lines: [{ productId: kopi.id, qty: 1 }],
+        idempotencyKey: 'sale-solo-1',
+        confirm: true,
+      });
+      expect(made.error).toBeUndefined();
+      const saleId = (made.data as { id: string }).id;
+      const [sale] = await admin<
+        { actor_id: string; actor_kind: string; shift_id: string }[]
+      >`select actor_id, actor_kind, shift_id from pos.sales where id = ${saleId}`;
+      expect(sale).toMatchObject({
+        actor_id: store.userId,
+        actor_kind: 'agent',
+      });
+      const shifts = await admin<
+        { id: string; actor_id: string; opening_cash: number }[]
+      >`select id, actor_id, opening_cash::int as opening_cash from pos.shifts
+         where tenant_id = ${store.tenantId} and closed_at is null`;
+      expect(shifts).toEqual([
+        { id: sale.shift_id, actor_id: store.userId, opening_cash: 0 },
+      ]);
+      const [audit] = await admin<
+        { actor_kind: string; details: Record<string, unknown> }[]
+      >`select actor_kind, details from pos.audit_log
+         where tenant_id = ${store.tenantId} and event = 'shift_open'`;
+      expect(audit).toMatchObject({
+        actor_kind: 'agent',
+        details: { automatic: true, trigger: 'sale', openingCash: 0 },
+      });
+      // the owner at the till sells into the same shift
+      const till = await http()
+        .post('/sales')
+        .set('Authorization', store.auth)
+        .set('Idempotency-Key', `till-${randomUUID()}`)
+        .send({ lines: [{ productId: kopi.id, qty: 1 }], paid: 8000 })
+        .expect(201);
+      expect(till.body.shiftId).toBe(sale.shift_id);
     });
 
     it('never takes a price or a discount from the agent, over REST either', async () => {
