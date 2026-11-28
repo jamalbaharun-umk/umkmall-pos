@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Archive,
   Banknote,
+  BookOpen,
   Globe,
   CalendarDays,
   Clock,
@@ -95,6 +96,8 @@ export const NAV: NavGroup[] = [
       // UMK-1969: the staff audit log (design 32); owner only (staff.manage is held by no default role but Pemilik).
       { to: '/pengaturan/log-aktivitas', label: 'Log aktivitas', icon: ScrollText, permission: 'staff.manage' },
       { to: '/pengaturan/keamanan', label: 'Keamanan', icon: ShieldCheck, permission: 'sales.void' },
+      // UMK-2134: every person's own guides (coach marks), replay and "Teks besar".
+      { to: '/pengaturan/panduan', label: 'Panduan', icon: BookOpen },
     ],
   },
 ]

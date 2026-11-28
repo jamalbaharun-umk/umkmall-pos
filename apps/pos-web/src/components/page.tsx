@@ -5,6 +5,7 @@ import { ChevronRight, Inbox } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { actionRowClass } from '@/lib/action-row'
 import { isNotFoundError, parentPath } from '@/lib/not-found'
+import { GuideButton } from './guide'
 
 export type Crumb = { label: string; to?: string; params?: Record<string, string> }
 
@@ -43,7 +44,12 @@ export function Page({
           </nav>
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold text-default-primary md:text-3xl">{title}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-default-primary md:text-3xl" data-guide="page-title">
+              {title}
+            </h1>
+            <GuideButton />
+          </div>
           {actions && <div className={actionRowClass({ className: 'sm:w-auto' })}>{actions}</div>}
         </div>
       </header>
@@ -56,7 +62,7 @@ export function Page({
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     // No overflow-hidden: it clipped the in-place Select lists (a portalled list can't be used, see POS-COPY.md).
-    <Card variant="outlined" padding="none" className={`bg-default-primary ${className}`}>
+    <Card variant="outlined" padding="none" className={`bg-default-primary ${className}`} data-guide="panel">
       {children}
     </Card>
   )
