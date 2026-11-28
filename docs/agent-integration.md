@@ -311,7 +311,11 @@ portions of the sub-recipe. **Packaging (plastic, box, sticker) is an ordinary i
   (`POST /catalog/products`, `POST /recipes` as the agent). Preview without `confirm` checks every line against the
   store and writes nothing; once per `idempotencyKey`. If the recipe is refused after the product was made (422) the
   answer says so; fix the lines and send again with the SAME key: the product of the first try is reused, never made
-  twice. Out: `productId`, the `recipe` (cost per portion and "HPP lengkap" as the recipe screen shows them) and
+  twice. `sellingPrice` is a whole rupiah amount of **at least Rp1** (the catalog refuses Rp0, so a
+  product is never made active at Rp0); refused in the preview too. The first try of a key can leave the product
+  without a recipe and free the key: the retry must carry the SAME product (name, category, price, unit, type),
+  else it is refused as another request (422 "Kunci idempotensi ini sudah dipakai…") and no product is made.
+  Out: `productId`, the `recipe` (cost per portion and "HPP lengkap" as the recipe screen shows them) and
   `provenance`.
 - `productId` of an existing product: **a draft only** (`draft: true`, `written: false`, the checked recipe and the
   product's current cost and price). The agent never changes an existing product; the owner enters it in the POS.
