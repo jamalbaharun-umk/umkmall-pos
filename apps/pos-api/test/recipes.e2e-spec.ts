@@ -636,14 +636,14 @@ describe('recipes R1 (UMK-2125)', () => {
 
       // The owner lowers the price below the cost while apply-cost is in flight: apply-cost waits for the row
       // and judges the new price.
-      const res = await locker.begin(async (sql) => {
+      const [pending] = await locker.begin(async (sql) => {
         await sql`select id from pos.products where id = ${es} for update`;
-        const pending = applyCost(a, r.body.id).then((x) => x);
+        const inFlight = applyCost(a, r.body.id).then((x) => x);
         await untilWaiting(1);
         await sql`update pos.products set selling_price = 1000 where id = ${es}`;
-        return [pending];
+        return [inFlight];
       });
-      const refused = await res[0];
+      const refused = await Promise.resolve(pending);
       expect(refused.status).toBe(422);
       expect(refused.body.errors).toHaveProperty('costPrice');
       expect(await costRow(es)).toMatchObject({
@@ -665,6 +665,9 @@ describe('recipes R1 (UMK-2125)', () => {
       expect((await costRow(es)).cost_set_at).toEqual(first.cost_set_at);
     });
 
+    const deletedFlags = (body: { lines: { deleted: boolean }[] }) =>
+      body.lines.map((l) => l.deleted);
+
     it('flags a deleted ingredient in the reads (also through a sub-recipe) and apply-cost refuses it', async () => {
       const susu = await ingredient(a, 'Susu');
       const gula = await ingredient(a, 'Gula aren');
@@ -685,10 +688,7 @@ describe('recipes R1 (UMK-2125)', () => {
         ],
       }).expect(201);
       expect(r.body.deletedIngredientIds).toEqual([]);
-      expect(r.body.lines.map((l: { deleted: boolean }) => l.deleted)).toEqual([
-        false,
-        false,
-      ]);
+      expect(deletedFlags(r.body)).toEqual([false, false]);
 
       await http()
         .delete(`/catalog/products/${gula}`)
@@ -696,9 +696,7 @@ describe('recipes R1 (UMK-2125)', () => {
         .expect(204);
       const read = await getRecipe(a, r.body.id).expect(200);
       expect(read.body.deletedIngredientIds).toEqual([gula]);
-      expect(
-        read.body.lines.map((l: { deleted: boolean }) => l.deleted),
-      ).toEqual([false, true]);
+      expect(deletedFlags(read.body)).toEqual([false, true]);
       // still costed, only flagged
       expect(read.body.costPerPortion).toBe(2_300);
       const sub = await getRecipe(a, sirup.body.id).expect(200);
