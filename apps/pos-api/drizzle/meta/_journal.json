@@ -379,6 +379,13 @@
       "when": 1795757982646,
       "tag": "0053_stock_batch_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795858915801,
+      "tag": "0054_products_cost_set_at",
+      "breakpoints": true
     }
   ]
 }

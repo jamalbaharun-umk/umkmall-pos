@@ -57,6 +57,9 @@ export const products = pos
       sku: text('sku').notNull(),
       unit: text('unit').notNull().default('PCS'),
       costPrice: rupiah('cost_price').notNull().default(0),
+      // UMK-2131: when the cost first went above 0 (null while it is 0, "modal belum diisi"). Kept by the trigger
+      // products_cost_set_at (migration 0054) on every write path, so the day-7 activation metric can read it.
+      costSetAt: timestamp('cost_set_at', { withTimezone: true }),
       sellingPrice: rupiah('selling_price').notNull(),
       // Only 'product' tracks stock (U3/U6); 'service' and 'non_stock' never do.
       type: text('type', { enum: PRODUCT_TYPES }).notNull().default('product'),

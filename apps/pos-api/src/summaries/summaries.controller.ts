@@ -12,6 +12,7 @@ import { ReportsModule } from '../reports/reports.controller';
 import { hasPermission, RequirePermission } from '../staff/require-permission';
 import { CurrentSession } from '../tenancy/decorators';
 import type { PosSession } from '../tenancy/session';
+import { VoidPins } from '../void/void-pin';
 import { SummariesService } from './summaries.service';
 
 /** At most Rp1 miliar a day: past that it is a typo. */
@@ -35,7 +36,10 @@ const TargetInput = z
  */
 @Controller('summaries')
 export class SummariesController {
-  constructor(private readonly summaries: SummariesService) {}
+  constructor(
+    private readonly summaries: SummariesService,
+    private readonly pins: VoidPins,
+  ) {}
 
   private money = (s: PosSession) => hasPermission(s, 'reports.view');
 
@@ -99,8 +103,11 @@ export class SummariesController {
 
   @Get('setup')
   @RequirePermission('catalog.manage')
-  setup(@CurrentSession() s: PosSession) {
-    return this.summaries.setup(s.tenantId);
+  async setup(@CurrentSession() s: PosSession) {
+    return this.summaries.setup(
+      s.tenantId,
+      await this.pins.ownerHasPin(s.tenantId),
+    );
   }
 
   /**
@@ -129,6 +136,6 @@ export class SummariesController {
 @Module({
   imports: [ReportsModule],
   controllers: [SummariesController],
-  providers: [SummariesService],
+  providers: [SummariesService, VoidPins],
 })
 export class SummariesModule {}
