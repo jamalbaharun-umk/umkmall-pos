@@ -123,8 +123,8 @@ The business layer of New Teman AI context: `store` (name, business type, addres
 re-explain their business.
 
 ### `search_products`
-Catalog search. In: `q?`, `sku?` (exact, e.g. `UMK-<ref>`), `categoryId?`, `stock?` (`low` | `out`), `page?`,
-`perPage?` (1 to 100). Out: the `GET /catalog/products` page (price, unit, units and tiers, `stock` null for
+Catalog search. In: `q?`, `sku?` (exact, e.g. `UMK-<ref>`), `categoryId?`, `stock?` (`low` | `out`), `type?` (`product` | `service` | `non_stock` | `ingredient`: the
+ingredients a recipe can use), `page?`, `perPage?` (1 to 100). Out: the `GET /catalog/products` page (price, unit, units and tiers, `stock` null for
 non-stock items, `costPrice`).
 
 ### `get_product`
@@ -171,6 +171,17 @@ default 50). Out: `products`, one row each with `sellingPrice`, `costPrice`, `un
 unit cost, last date: what buying it really cost); `operatingExpenses` (total and by category: fixed-cost
 candidates); `period` (revenue and gross profit); paging; `purchasesTruncated` when the period's purchase lines were
 more than the report shows.
+
+A product that has a recipe (UMK-2127) also carries `recipe`: `id` (the id a `subRecipeId` takes), `yieldQty`,
+`yieldUnit`, `laborCost`, `lines` (`kind`, `name`, `quantity`, `unit`, `wastePercent`, `unitCost`, `cost`,
+`missingCost`, `deleted`), `batchCost`, `costPerPortion`, `fullCostPerPortion`, `missingCostIngredientIds`. A product
+without a recipe has no `recipe` key: its row is exactly as before. It comes from `GET /recipes/breakdown`, the
+recipe screen's own figures (no second cost calculation), and a `pos.read` consent is enough. **`cogs` is
+`costPerPortion`** (ingredients, waste and packaging: variable cost). `fullCostPerPortion` ("HPP lengkap") adds the
+labour per batch divided by the yield and nothing else: the POS allocates no fixed costs to products
+(`fixedCostsIncluded: false`), so it is still not UMKMall's `hpp`, which adds allocated fixed costs. A line with
+`missingCost: true` has an ingredient with no purchase and no manual cost: its cost counts as 0, so the totals are
+too low until the owner fills it.
 
 ### `create_category`
 In: `name` + write controls. Out: the created category and `provenance`.
@@ -286,6 +297,28 @@ the same key answers the first purchase, another body under the key is 422. The 
 nor approve one (`POST /purchasing/orders` and `/approve` are not agent routes). Only stock-tracked products
 (`type: product`); a cost never changes a selling price. The preview checks the same bounds and shows each product's
 `stockBefore` and `stockAfter`. After a lost answer send it again with the same key.
+
+### `create_recipe`
+A recipe for a NEW product (UMK-2127). Needs `pos.write`. In: exactly one of `newProduct` (`name`, `categoryId`,
+`sellingPrice`, `unit?`, `type?` `non_stock` | `product`) or `productId`; `yieldQty` (portions one batch makes),
+`yieldUnit?`, `laborCost?` (rupiah per batch), `note?`, `lines` (1 to 100 of `{ ingredientId | subRecipeId, quantity,
+wastePercent? }`) + write controls. `ingredientId` is a product of type `ingredient` (`search_products` with
+`type: "ingredient"`; the owner creates ingredients in the POS, the agent does not: they are costed by purchases or a
+manual cost); `subRecipeId` is a recipe id from `hpp_product_data`; `quantity` is in base units (gram, ml, pcs) or
+portions of the sub-recipe. **Packaging (plastic, box, sticker) is an ordinary ingredient line.**
+
+- `newProduct`: the product is made with a SKU from the key (`RC-<12 hex>`) and **no cost price**, then the recipe
+  (`POST /catalog/products`, `POST /recipes` as the agent). Preview without `confirm` checks every line against the
+  store and writes nothing; once per `idempotencyKey`. If the recipe is refused after the product was made (422) the
+  answer says so; fix the lines and send again with the SAME key: the product of the first try is reused, never made
+  twice. Out: `productId`, the `recipe` (cost per portion and "HPP lengkap" as the recipe screen shows them) and
+  `provenance`.
+- `productId` of an existing product: **a draft only** (`draft: true`, `written: false`, the checked recipe and the
+  product's current cost and price). The agent never changes an existing product; the owner enters it in the POS.
+- The agent never sets `costPrice` (not an input) and never applies a recipe cost: "Pakai sebagai harga modal"
+  (`POST /recipes/:id/apply-cost`) is not an agent route, and no selling price changes.
+- Refused with the route's own message: unknown or other-store ingredient or sub-recipe (404), a product that is not
+  an ingredient, a cycle or a sub-recipe nest deeper than the limit, waste above the limit, a cost above Rp1 trillion.
 
 ## 6. Not yet
 

@@ -313,11 +313,27 @@ export class RecipesService {
     return this.costed(() => this.read(tenantId, id, db));
   }
 
-  private async read(tenantId: string, id: string, db: Db | Tx) {
-    const { rows, lines, costs, coster, deletedIn } = await this.load(
-      db,
-      tenantId,
-    );
+  /** The full recipe of each product that has one (one graph load for all), for the agent's HPP data. */
+  breakdowns(tenantId: string, productIds: string[]) {
+    return this.costed(async () => {
+      const loaded = await this.load(this.db, tenantId);
+      const wanted = new Set(productIds);
+      return Promise.all(
+        loaded.rows
+          .filter((r) => wanted.has(r.productId))
+          .map((r) => this.read(tenantId, r.id, this.db, loaded)),
+      );
+    });
+  }
+
+  private async read(
+    tenantId: string,
+    id: string,
+    db: Db | Tx,
+    loaded?: Awaited<ReturnType<RecipesService['load']>>,
+  ) {
+    const { rows, lines, costs, coster, deletedIn } =
+      loaded ?? (await this.load(db, tenantId));
     const r = rows.find((x) => x.id === id);
     if (!r) throw new NotFoundException();
     const own = lines.filter((l) => l.recipeId === id);

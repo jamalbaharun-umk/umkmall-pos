@@ -109,3 +109,91 @@ export function costDataRows(
     };
   });
 }
+
+/** What `GET /recipes/breakdown` answers for one product (a `RecipesService.read` result). */
+type RecipeBreakdown = {
+  id: string;
+  product: { id: string };
+  yieldQty: number;
+  yieldUnit: string | null;
+  laborCost: number;
+  note: string | null;
+  lines: {
+    kind: string;
+    ingredientId: string | null;
+    subRecipeId: string | null;
+    name: string | null;
+    quantity: number;
+    unit: string | null;
+    wastePercent: number;
+    unitCost: unknown;
+    cost: number;
+    missingCost: boolean;
+    deleted: boolean;
+  }[];
+  batchCost: number;
+  costPerPortion: number;
+  fullCostPerPortion: number;
+  fixedCostsIncluded: boolean;
+  missingCostIngredientIds: string[];
+  deletedIngredientIds: string[];
+};
+
+/**
+ * UMK-2127: a product row that has a recipe gets a `recipe` key (the recipe route's own figures: no cost math here);
+ * a row without one is returned as it was, with no `recipe` key. `costPerPortion` is the variable cost (`cogs`);
+ * `fullCostPerPortion` ("HPP lengkap") adds labour only, never UMKMall's allocated fixed costs.
+ */
+export function withRecipes<T extends { productId: string }>(
+  rows: T[],
+  recipes: RecipeBreakdown[],
+) {
+  const byProduct = new Map(recipes.map((r) => [r.product.id, r]));
+  return rows.map((row) => {
+    const r = byProduct.get(row.productId);
+    if (!r) return row;
+    return {
+      ...row,
+      recipe: {
+        id: r.id,
+        yieldQty: r.yieldQty,
+        yieldUnit: r.yieldUnit,
+        laborCost: r.laborCost,
+        note: r.note,
+        lines: r.lines.map(
+          ({
+            kind,
+            ingredientId,
+            subRecipeId,
+            name,
+            quantity,
+            unit,
+            wastePercent,
+            unitCost,
+            cost,
+            missingCost,
+            deleted,
+          }) => ({
+            kind,
+            ingredientId,
+            subRecipeId,
+            name,
+            quantity,
+            unit,
+            wastePercent,
+            unitCost,
+            cost,
+            missingCost,
+            deleted,
+          }),
+        ),
+        batchCost: r.batchCost,
+        costPerPortion: r.costPerPortion,
+        fullCostPerPortion: r.fullCostPerPortion,
+        fixedCostsIncluded: r.fixedCostsIncluded,
+        missingCostIngredientIds: r.missingCostIngredientIds,
+        deletedIngredientIds: r.deletedIngredientIds,
+      },
+    };
+  });
+}
