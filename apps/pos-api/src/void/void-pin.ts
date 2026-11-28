@@ -360,6 +360,7 @@ export class VoidPins {
         return made.length ? { ok: true } : { ok: false, attemptsLeft: -1 };
       }
       if (currentPin === undefined) return { ok: false, attemptsLeft: -1 };
+      // The database's clock on both sides (`updated_at` is written with now()), so app and database clocks never mix.
       // UMK-2124 (review of PR 109): a PIN that was typed on a till handed to a helper since it was set may be
       // known to the helper, so changing it with that PIN alone needs a fresh WhatsApp sign-in, during or after the
       // handover. A change after that fresh sign-in moves `updated_at` past the handover, and the usual rule is back.
@@ -381,7 +382,7 @@ export class VoidPins {
       if (checked.ok)
         await tx
           .update(voidPins)
-          .set({ pinHash, updatedAt: new Date() })
+          .set({ pinHash, updatedAt: sql`now()` })
           .where(this.where(s.tenantId, s.actorId));
       if (checked.ok)
         await recordAudit(tx, s, 'approval_pin_set', {
@@ -427,7 +428,7 @@ export class VoidPins {
             // The lock it clears is recorded as `unlock` records it.
             unlockedAt: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then now() else ${voidPins.unlockedAt} end`,
             unlockedBy: sql`case when ${voidPins.lockedUntil} is not null or ${voidPins.failures} > 0 then ${s.actorId}::uuid else ${voidPins.unlockedBy} end`,
-            updatedAt: new Date(),
+            updatedAt: sql`now()`,
           },
         });
       await recordAudit(tx, s, 'approval_pin_set', {

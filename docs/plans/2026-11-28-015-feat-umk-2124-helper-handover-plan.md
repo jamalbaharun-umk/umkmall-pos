@@ -67,6 +67,17 @@ Two PRs: the server (this plan's pos-api part, with its tests), then the screens
   - **The parked native session on the device** stays only in the httpOnly `pos_umkmall` cookie (never readable by
     page script), refused by pos-api until the PIN. pos-web's "Kembali ke pemilik" refreshes it at once after the
     PIN (UMKMall rotates the refresh token where it does), in the screens PR.
+- **What the owner PIN alone gives (stated plainly, review of PR 109):** anyone who knows the owner PIN can call
+  `POST /helper/end` with the helper token on that device and gets an owner token. That token is never fresh: it cannot
+  make, reset, unlock or (after a handover) change the PIN, which all need a WhatsApp sign-in. The PIN is the
+  owner's secret; telling it to the helper hands the till back to them.
+- **Follow-ups of the PR 109 merge (in the screens PR):** `void_pins.updated_at` is written with the database's
+  `now()`, so the PIN-change rule compares one clock; a failed `helper_end_refused` write never turns the PIN's
+  422/429 into a 500; e2e checks that OTP verify and refresh carry `nsh`; `sales.helper_session_id` gets a foreign key
+  to `helper_sessions (tenant_id, id)` (migration 0061; the purge orders deletes by foreign keys). The sign-out of a
+  parked native session is left allowed: it only ends that session at UMKMall (it answers no token), which is
+  stricter than parking it. `ops/pos-role.sql` needs nothing: `pos_app` creates and owns `helper_sessions` through
+  the migrations, like every `pos` table.
 - **Audit:** `helper_start` and `helper_end` (group `access`): the handover id, the expiry, the end reason. Never the
   helper's name, a PIN or a sid.
 - **Never logged:** the PIN, the sid, the token, the helper's name.
