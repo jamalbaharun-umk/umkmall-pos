@@ -435,6 +435,16 @@ export class RecipesService {
     );
   }
 
+  /**
+   * UMK-2132: the shared side of `lock` (same key). A production run holds it while it reads the graph and draws,
+   * so no recipe write of the store lands in between; runs do not wait for one another.
+   */
+  readLock(tx: Tx, tenantId: string) {
+    return tx.execute(
+      sql`select pg_advisory_xact_lock_shared(hashtext('pos.recipes'), hashtext(${tenantId}))`,
+    );
+  }
+
   /** 422 unless every line names a live ingredient or a recipe of this store, and the graph stays sound. */
   private async checkLines(
     tx: Tx,

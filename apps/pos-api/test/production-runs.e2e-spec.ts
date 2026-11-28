@@ -19,6 +19,9 @@ describe('production runs (UMK-2132)', () => {
   let app: INestApplication;
   let a: Store;
   let b: Store;
+  // Store C holds ingredients at the largest unit cost: kept apart, since any recipe write of a store checks
+  // every recipe's cost against the cap.
+  let c: Store;
   const http = () => request(app.getHttpServer());
   const admin = postgres(ADMIN_DATABASE_URL, { max: 1, onnotice: () => {} });
   // A second owner connection that holds batch row locks while requests are in flight.
@@ -41,6 +44,7 @@ describe('production runs (UMK-2132)', () => {
     app = await createApp();
     a = await createStore();
     b = await createStore();
+    c = await createStore();
   });
   afterAll(async () => {
     await app.close();
@@ -509,54 +513,94 @@ describe('production runs (UMK-2132)', () => {
     });
   });
 
-  it('expands a sub-recipe into its raw ingredients; the sub-recipe product itself is not drawn', async () => {
-    const singkong = await ingredient(a, 'Singkong');
-    const cabai = await ingredient(a, 'Cabai');
-    const sambal = await ingredient(a, 'Bumbu balado');
-    const keripik = await product(a, 'Keripik balado');
-    await opening(a, singkong, 5_000, 6);
-    await opening(a, cabai, 1_000, 120);
-    // Bumbu: 4 portions from 100 g cabai at 20% waste (125 g taken per batch).
-    const sub = await recipe(a, {
-      productId: sambal,
-      yieldQty: 4,
-      lines: [{ ingredientId: cabai, quantity: 100, wastePercent: 20 }],
+  describe('a sub-recipe (Bumbu balado inside Keripik balado)', () => {
+    let singkong: string;
+    let cabai: string;
+    let sambal: string;
+    let keripik: string;
+    let sub: string;
+    let top: string;
+
+    beforeAll(async () => {
+      singkong = await ingredient(a, 'Singkong');
+      cabai = await ingredient(a, 'Cabai');
+      sambal = await ingredient(a, 'Bumbu balado');
+      keripik = await product(a, 'Keripik balado');
+      await opening(a, singkong, 5_000, 6);
+      await opening(a, cabai, 1_000, 120);
+      // Bumbu: 4 portions from 100 g cabai at 20% waste (125 g taken per batch).
+      sub = await recipe(a, {
+        productId: sambal,
+        yieldQty: 4,
+        lines: [{ ingredientId: cabai, quantity: 100, wastePercent: 20 }],
+      });
+      top = await recipe(a, {
+        productId: keripik,
+        yieldQty: 10,
+        lines: [
+          { ingredientId: singkong, quantity: 1_000 },
+          { subRecipeId: sub, quantity: 2 },
+        ],
+      });
     });
-    const top = await recipe(a, {
-      productId: keripik,
-      yieldQty: 10,
-      lines: [
-        { ingredientId: singkong, quantity: 1_000 },
-        { subRecipeId: sub, quantity: 2 },
-      ],
+
+    it('refuses a run of the sub-recipe itself (422 RECIPE_USED_AS_SUB_RECIPE), nothing written', async () => {
+      // Its run would stock Bumbu balado that the Keripik run never draws (it takes the cabai again).
+      const before = await snapshot(a.tenantId);
+      const res = await run(a, {
+        recipeId: sub,
+        batches: 1,
+        actualYield: 4,
+      }).expect(422);
+      expect(res.body).toMatchObject({
+        code: 'RECIPE_USED_AS_SUB_RECIPE',
+        message:
+          'Bumbu balado dipakai sebagai sub-resep di Keripik balado. Catat produksi resep itu saja: bahan mentah Bumbu balado ikut terpakai di sana',
+      });
+      expect(res.body.errors).toHaveProperty('recipeId');
+      expect(await snapshot(a.tenantId)).toEqual(before);
+
+      const plan = await http()
+        .get('/production-runs/plan')
+        .query({ recipeId: sub, batches: 1 })
+        .set('Authorization', a.auth)
+        .expect(200);
+      expect(plan.body).toMatchObject({
+        canProduce: false,
+        usedAsSubRecipeIn: [{ recipeId: top, productName: 'Keripik balado' }],
+        refusal: { code: 'RECIPE_USED_AS_SUB_RECIPE' },
+      });
     });
-    // 3 batches: singkong 3.000 g; bumbu 6 portions = 1,5 bumbu batches = 187,5 g cabai → 188 g.
-    const res = await run(a, {
-      recipeId: top,
-      batches: 3,
-      actualYield: 28,
-    }).expect(201);
-    const cost = 3_000 * 6 + 188 * 120; // 18.000 + 22.560 = 40.560
-    expect(res.body).toMatchObject({
-      plannedYield: 30,
-      actualYield: 28,
-      ingredientCost: cost,
-      costPerPortion: Math.ceil(cost / 28), // 1448.57… → 1.449
+
+    it('the parent runs on the raw ingredients; the sub-recipe product itself is not drawn', async () => {
+      // 3 batches: singkong 3.000 g; bumbu 6 portions = 1,5 bumbu batches = 187,5 g cabai → 188 g.
+      const res = await run(a, {
+        recipeId: top,
+        batches: 3,
+        actualYield: 28,
+      }).expect(201);
+      const cost = 3_000 * 6 + 188 * 120; // 18.000 + 22.560 = 40.560
+      expect(res.body).toMatchObject({
+        plannedYield: 30,
+        actualYield: 28,
+        ingredientCost: cost,
+        costPerPortion: Math.ceil(cost / 28), // 1448.57… → 1.449
+      });
+      expect(
+        (res.body.lines as { ingredientId: string; quantity: number }[]).map(
+          (l) => [l.ingredientId, l.quantity],
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          [singkong, 3_000],
+          [cabai, 188],
+        ]),
+      );
+      expect(res.body.lines).toHaveLength(2);
+      expect(await onHand(a, cabai)).toBe(812);
+      expect(await onHand(a, sambal)).toBe(0);
+      expect(await onHand(a, keripik)).toBe(28);
     });
-    expect(
-      (res.body.lines as { ingredientId: string; quantity: number }[]).map(
-        (l) => [l.ingredientId, l.quantity],
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        [singkong, 3_000],
-        [cabai, 188],
-      ]),
-    );
-    expect(res.body.lines).toHaveLength(2);
-    expect(await onHand(a, cabai)).toBe(812);
-    expect(await onHand(a, sambal)).toBe(0);
-    expect(await onHand(a, keripik)).toBe(28);
   });
 
   it('refuses a recipe with a deleted ingredient (422 INGREDIENT_DELETED), nothing drawn', async () => {
@@ -647,5 +691,229 @@ describe('production runs (UMK-2132)', () => {
     expect(x.body.id).toBe(y.body.id);
     expect(await onHand(a, ragi)).toBe(90);
     expect(await onHand(a, donat)).toBe(5);
+  });
+
+  it('same key, stock for exactly one run, two concurrent requests: one run, both answer it', async () => {
+    const susu = await ingredient(a, 'Susu', 'ML');
+    const puding = await product(a, 'Puding');
+    await opening(a, susu, 500, 30);
+    const r = await recipe(a, {
+      productId: puding,
+      yieldQty: 4,
+      lines: [{ ingredientId: susu, quantity: 500 }],
+    });
+    const key = randomUUID();
+    const body = { recipeId: r, batches: 1, actualYield: 4 };
+    // Both pass the key lookup, then wait on the batch rows: the loser finds the stock gone, and must still
+    // answer the winner's run instead of INSUFFICIENT_STOCK.
+    const [pending] = await locker.begin(async (sql) => {
+      await sql`select id from pos.stock_batches where product_id = ${susu} for update`;
+      const both = Promise.all([
+        run(a, body, key).then((x) => x),
+        run(a, body, key).then((x) => x),
+      ]);
+      await untilWaiting(2);
+      return [both];
+    });
+    const [x, y] = await Promise.resolve(pending);
+    expect([x.status, y.status]).toEqual([201, 201]);
+    expect(x.body.id).toBe(y.body.id);
+    expect(await onHand(a, susu)).toBe(0);
+    expect(await onHand(a, puding)).toBe(4);
+    const [{ n }] = await admin<{ n: number }[]>`
+      select count(*)::int as n from pos.production_runs where tenant_id = ${a.tenantId} and recipe_id = ${r}`;
+    expect(n).toBe(1);
+    // Another body under that key is still refused.
+    const other = await run(a, { ...body, actualYield: 3 }, key).expect(422);
+    expect(other.body.errors).toHaveProperty('idempotencyKey');
+  });
+
+  it('refuses a finished product that keeps no stock (422 PRODUCT_NOT_STOCKED), nothing written', async () => {
+    const teh = await ingredient(a, 'Daun teh');
+    const seduh = await product(a, 'Teh seduh');
+    await opening(a, teh, 100, 50);
+    const r = await recipe(a, {
+      productId: seduh,
+      yieldQty: 1,
+      lines: [{ ingredientId: teh, quantity: 5 }],
+    });
+    await admin`update pos.products set type = 'service' where id = ${seduh}`;
+    const before = await snapshot(a.tenantId);
+    const res = await run(a, {
+      recipeId: r,
+      batches: 1,
+      actualYield: 1,
+    }).expect(422);
+    expect(res.body).toMatchObject({ code: 'PRODUCT_NOT_STOCKED' });
+    expect(res.body.errors).toHaveProperty('recipeId');
+    expect(await snapshot(a.tenantId)).toEqual(before);
+    const plan = await http()
+      .get('/production-runs/plan')
+      .query({ recipeId: r, batches: 1 })
+      .set('Authorization', a.auth)
+      .expect(200);
+    expect(plan.body).toMatchObject({
+      canProduce: false,
+      refusal: { code: 'PRODUCT_NOT_STOCKED' },
+    });
+  });
+
+  it('refuses an ingredient whose type no longer keeps stock (422 INGREDIENT_NOT_STOCKED naming it), not a shortage', async () => {
+    const tepung = await ingredient(a, 'Tepung tapioka');
+    const air = await ingredient(a, 'Air galon', 'ML');
+    const cireng = await product(a, 'Cireng');
+    await opening(a, tepung, 1_000, 15);
+    const r = await recipe(a, {
+      productId: cireng,
+      yieldQty: 10,
+      lines: [
+        { ingredientId: tepung, quantity: 200 },
+        { ingredientId: air, quantity: 100 },
+      ],
+    });
+    // Air galon becomes a non-stock item after the recipe named it: it has no batches to draw.
+    await admin`update pos.products set type = 'non_stock' where id = ${air}`;
+    const before = await snapshot(a.tenantId);
+    const res = await run(a, {
+      recipeId: r,
+      batches: 1,
+      actualYield: 10,
+    }).expect(422);
+    expect(res.body).toMatchObject({ code: 'INGREDIENT_NOT_STOCKED' });
+    expect(res.body.message).toContain('Air galon');
+    expect(res.body.message).not.toContain('Tepung tapioka');
+    expect(res.body.errors).toHaveProperty('recipeId');
+    expect(await snapshot(a.tenantId)).toEqual(before);
+  });
+
+  it('refuses a need above the stock column (422 QUANTITY_TOO_LARGE); the plan shows it capped', async () => {
+    const garam = await ingredient(a, 'Garam krosok');
+    const ikan = await product(a, 'Ikan asin');
+    // 10.000.000 g at 90% waste = 100.000.000 g a batch; 1.000 batches = 10^11 g, past the integer column.
+    const r = await recipe(a, {
+      productId: ikan,
+      yieldQty: 1,
+      lines: [{ ingredientId: garam, quantity: 10_000_000, wastePercent: 90 }],
+    });
+    const plan = await http()
+      .get('/production-runs/plan')
+      .query({ recipeId: r, batches: 1_000 })
+      .set('Authorization', a.auth)
+      .expect(200);
+    expect(plan.body).toMatchObject({
+      canProduce: false,
+      refusal: { code: 'QUANTITY_TOO_LARGE' },
+      ingredients: [{ productId: garam, needed: 2_147_483_647, enough: false }],
+    });
+    const before = await snapshot(a.tenantId);
+    const res = await run(a, {
+      recipeId: r,
+      batches: 1_000,
+      actualYield: 1,
+    }).expect(422);
+    expect(res.body).toMatchObject({ code: 'QUANTITY_TOO_LARGE' });
+    expect(res.body.errors).toHaveProperty('batches');
+    expect(await snapshot(a.tenantId)).toEqual(before);
+  });
+
+  it('refuses costs past the safe range and a batch cost past the Rp1 triliun cap (422 COST_TOO_LARGE)', async () => {
+    const MAX = 1_000_000_000_000;
+    const emas = await ingredient(c, 'Emas', 'PCS');
+    const perak = await ingredient(c, 'Perak', 'PCS');
+    const berlian = await ingredient(c, 'Berlian', 'PCS');
+    const mahkota = await product(c, 'Mahkota');
+    const tiara = await product(c, 'Tiara');
+    const cincin = await product(c, 'Cincin');
+    // Every recipe first, while no ingredient has a cost: afterwards a recipe write of store C is over the cap.
+    // One draw of 10.000 × Rp1 triliun = 10^16 > Number.MAX_SAFE_INTEGER.
+    const one = await recipe(c, {
+      productId: mahkota,
+      yieldQty: 1,
+      lines: [{ ingredientId: emas, quantity: 10_000 }],
+    });
+    // Two draws of 5.000 × Rp1 triliun each fit; their sum (10^16) does not.
+    const sum = await recipe(c, {
+      productId: tiara,
+      yieldQty: 1,
+      lines: [
+        { ingredientId: emas, quantity: 5_000 },
+        { ingredientId: perak, quantity: 5_000 },
+      ],
+    });
+    // 2 berlian at Rp1 triliun: Rp2 triliun for one ring is past the batch cap, for two rings it is the cap.
+    const ring = await recipe(c, {
+      productId: cincin,
+      yieldQty: 1,
+      lines: [{ ingredientId: berlian, quantity: 2 }],
+    });
+    await opening(c, emas, 10_000, MAX);
+    await opening(c, perak, 5_000, MAX);
+    await opening(c, berlian, 2, MAX);
+
+    const before = await snapshot(c.tenantId);
+    for (const recipeId of [one, sum]) {
+      const res = await run(c, { recipeId, batches: 1, actualYield: 1 }).expect(
+        422,
+      );
+      expect(res.body).toMatchObject({ code: 'COST_TOO_LARGE' });
+      expect(res.body.errors).toHaveProperty('batches');
+    }
+    const cap = await run(c, {
+      recipeId: ring,
+      batches: 1,
+      actualYield: 1,
+    }).expect(422);
+    expect(cap.body).toMatchObject({ code: 'COST_TOO_LARGE' });
+    expect(cap.body.errors).toHaveProperty('actualYield');
+    expect(await snapshot(c.tenantId)).toEqual(before);
+
+    const ok = await run(c, {
+      recipeId: ring,
+      batches: 1,
+      actualYield: 2,
+    }).expect(201);
+    expect(ok.body).toMatchObject({
+      ingredientCost: 2 * MAX,
+      costPerPortion: MAX,
+    });
+  });
+
+  it('a sale of the finished product goes through while a run of it waits on its ingredient', async () => {
+    const mentega = await ingredient(a, 'Mentega');
+    const kue = await product(a, 'Kue lapis');
+    await opening(a, mentega, 100, 80);
+    await opening(a, kue, 5, 1_000);
+    const r = await recipe(a, {
+      productId: kue,
+      yieldQty: 10,
+      lines: [{ ingredientId: mentega, quantity: 50 }],
+    });
+    await http()
+      .post('/shifts/open')
+      .set('Authorization', a.auth)
+      .set('Idempotency-Key', randomUUID())
+      .send({ openingCash: 0 })
+      .expect(201);
+    const [pending] = await locker.begin(async (sql) => {
+      await sql`select id from pos.stock_batches where product_id = ${mentega} for update`;
+      const running = run(a, {
+        recipeId: r,
+        batches: 1,
+        actualYield: 10,
+      }).then((x) => x);
+      await untilWaiting(1);
+      // The run holds nothing the sale needs: the sale completes while the run still waits.
+      await http()
+        .post('/sales')
+        .set('Authorization', a.auth)
+        .set('Idempotency-Key', randomUUID())
+        .send({ lines: [{ productId: kue, qty: 1 }], paid: 15_000 })
+        .expect(201);
+      return [running];
+    });
+    const res = await Promise.resolve(pending);
+    expect(res.status).toBe(201);
+    expect(await onHand(a, mentega)).toBe(50);
+    expect(await onHand(a, kue)).toBe(5 - 1 + 10);
   });
 });

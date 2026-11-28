@@ -1,5 +1,11 @@
 import type { CostRecipe } from '../recipes/cost';
-import { costPerPortion, requirements, wholeUnits } from './requirements';
+import {
+  clampQty,
+  costPerPortion,
+  MAX_STOCK_QTY,
+  requirements,
+  wholeUnits,
+} from './requirements';
 
 const ing = (ingredientId: string, quantity: number, wastePercent = 0) => ({
   ingredientId,
@@ -84,5 +90,11 @@ describe('production requirements (UMK-2132)', () => {
     expect(costPerPortion(100, 4)).toBe(25);
     expect(costPerPortion(101, 4)).toBe(26);
     expect(costPerPortion(0, 7)).toBe(0);
+  });
+
+  it('an answered quantity is capped at the integer stock column, never wrapped', () => {
+    expect(clampQty(207n)).toBe(207);
+    expect(clampQty(BigInt(MAX_STOCK_QTY))).toBe(MAX_STOCK_QTY);
+    expect(clampQty(100_000_000_000n)).toBe(MAX_STOCK_QTY);
   });
 });

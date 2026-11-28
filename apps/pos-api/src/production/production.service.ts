@@ -22,13 +22,16 @@ import {
   productionRuns,
   products,
 } from '../db/schema';
+import { CostTooLargeError } from '../recipes/cost';
 import { RecipesService } from '../recipes/recipes.service';
 import { isUniqueViolation } from '../staff/http';
 import { StockService, type Tx } from '../stock/stock.service';
 import type { PosSession } from '../tenancy/session';
 import {
+  clampQty,
   costPerPortion,
   MAX_STOCK_QTY,
+  MAX_UNIT_COST,
   requirements,
   wholeUnits,
 } from './requirements';
@@ -84,6 +87,9 @@ const requestHash = (i: ProductionRunInput) =>
     .digest('hex');
 
 const KEY_REUSED = 'Kunci ini sudah dipakai untuk produksi lain';
+const COST_TOO_LARGE =
+  'Biaya bahan produksi ini terlalu besar untuk dihitung: periksa jumlah batch dan harga bahan';
+const rp = (n: number) => `Rp${n.toLocaleString('id-ID')}`;
 const unitLabel = (unit: string) => unit.toLowerCase();
 
 type Need = {
@@ -130,6 +136,7 @@ export class ProductionService {
             id: products.id,
             name: products.name,
             unit: products.unit,
+            type: products.type,
           })
           .from(products)
           .where(
@@ -143,33 +150,80 @@ export class ProductionService {
       .where(
         and(eq(products.tenantId, tenantId), eq(products.id, recipe.productId)),
       );
+    // Recipes that use this one as a sub-recipe: a run of it would put the in-house ingredient into stock, and the
+    // parent's run (always expanded to raw ingredients) would never draw it, taking those ingredients twice.
+    const usedBy = new Set(
+      [...graph.values()]
+        .filter((r) => r.lines.some((l) => l.subRecipeId === recipe.id))
+        .map((r) => r.id),
+    );
     return {
       recipe,
       deleted,
       finishedLive: !!finished && finished.deletedAt === null,
       plannedYield: recipe.yieldQty * batches,
+      parents: rows
+        .filter((r) => usedBy.has(r.id))
+        .map((r) => ({ recipeId: r.id, productName: r.productName })),
       needs: ids.map((id) => ({
         productId: id,
         name: byId.get(id)?.name ?? 'Bahan',
         unit: unitLabel(byId.get(id)?.unit ?? ''),
+        stocked: isStocked(byId.get(id)?.type ?? ''),
         units: wholeUnits(exact.get(id)!),
       })),
     };
   }
 
-  private refuseUnusable(p: Awaited<ReturnType<ProductionService['prepare']>>) {
+  /** Why a prepared run cannot be recorded whatever the stock holds, or null. The plan shows it; `create` throws it. */
+  private unusable(
+    p: Awaited<ReturnType<ProductionService['prepare']>>,
+  ): { code: string; field: string; message: string } | null {
     if (p.deleted.length)
-      throw codedError(
-        'INGREDIENT_DELETED',
-        'recipeId',
-        'Ada bahan resep yang sudah dihapus dari katalog: ganti bahan itu di resep dulu',
-      );
+      return {
+        code: 'INGREDIENT_DELETED',
+        field: 'recipeId',
+        message:
+          'Ada bahan resep yang sudah dihapus dari katalog: ganti bahan itu di resep dulu',
+      };
     if (!p.finishedLive || !isStocked(p.recipe.productType))
-      throw codedError(
-        'PRODUCT_NOT_STOCKED',
-        'recipeId',
-        'Produk hasil resep ini tidak memakai stok',
-      );
+      return {
+        code: 'PRODUCT_NOT_STOCKED',
+        field: 'recipeId',
+        message: 'Produk hasil resep ini tidak memakai stok',
+      };
+    if (p.parents.length)
+      return {
+        code: 'RECIPE_USED_AS_SUB_RECIPE',
+        field: 'recipeId',
+        message: `${p.recipe.productName} dipakai sebagai sub-resep di ${p.parents
+          .map((r) => r.productName)
+          .join(', ')}. Catat produksi resep itu saja: bahan mentah ${
+          p.recipe.productName
+        } ikut terpakai di sana`,
+      };
+    const unstocked = p.needs.filter((n) => !n.stocked);
+    if (unstocked.length)
+      return {
+        code: 'INGREDIENT_NOT_STOCKED',
+        field: 'recipeId',
+        message: `Bahan ${unstocked.map((n) => n.name).join(', ')} tidak memakai stok: ubah jenisnya menjadi bahan baku atau ganti bahan itu di resep`,
+      };
+    const huge = p.needs.filter((n) => n.units > MAX_STOCK_QTY);
+    if (huge.length)
+      return {
+        code: 'QUANTITY_TOO_LARGE',
+        field: 'batches',
+        message: `Jumlah bahan terlalu besar untuk satu produksi (${huge
+          .map((n) => n.name)
+          .join(', ')}): kurangi jumlah batch`,
+      };
+    return null;
+  }
+
+  private refuseUnusable(p: Awaited<ReturnType<ProductionService['prepare']>>) {
+    const why = this.unusable(p);
+    if (why) throw codedError(why.code, why.field, why.message);
   }
 
   /** Design 45 screen 1: what the batches would take and what is on hand. Read only, no lock. */
@@ -185,11 +239,12 @@ export class ProductionService {
         productId: n.productId,
         name: n.name,
         unit: n.unit,
-        needed: Number(n.units),
+        needed: clampQty(n.units),
         available,
         enough: n.units <= BigInt(available),
       };
     });
+    const refusal = this.unusable(p);
     return {
       recipeId: p.recipe.id,
       product: { id: p.recipe.productId, name: p.recipe.productName },
@@ -199,11 +254,9 @@ export class ProductionService {
       plannedYield: p.plannedYield,
       ingredients,
       deletedIngredientIds: p.deleted,
-      canProduce:
-        p.deleted.length === 0 &&
-        p.finishedLive &&
-        isStocked(p.recipe.productType) &&
-        ingredients.every((i) => i.enough),
+      usedAsSubRecipeIn: p.parents,
+      refusal: refusal && { code: refusal.code, message: refusal.message },
+      canProduce: !refusal && ingredients.every((i) => i.enough),
     };
   }
 
@@ -232,6 +285,8 @@ export class ProductionService {
         // A retry (double tap, lost answer) finds the first run and moves no stock.
         const prior = await this.byKey(tx, s.tenantId, key);
         if (prior) return replay(prior);
+        // No recipe write of this store between reading the graph and the last draw (writes lock exclusively).
+        await this.recipes.readLock(tx, s.tenantId);
         const p = await this.prepare(
           tx,
           s.tenantId,
@@ -254,7 +309,7 @@ export class ProductionService {
               productId: n.productId,
               name: n.name,
               unit: n.unit,
-              needed: n.units > MAX_STOCK_QTY ? MAX_STOCK_QTY : Number(n.units),
+              needed: clampQty(n.units),
               available,
             });
         }
@@ -280,8 +335,15 @@ export class ProductionService {
             cost: costTotal,
           });
         }
-        const ingredientCost = lines.reduce((sum, l) => sum + l.cost, 0);
+        const ingredientCost = sumCost(lines.map((l) => l.cost));
         const unitCost = costPerPortion(ingredientCost, input.actualYield);
+        // The cap every other way into stock enforces (opening, purchase): a batch above it is refused.
+        if (unitCost > MAX_UNIT_COST)
+          throw codedError(
+            'COST_TOO_LARGE',
+            'actualYield',
+            `Modal per porsi ${rp(unitCost)} terlalu besar (maksimal ${rp(MAX_UNIT_COST)}): periksa hasil sebenarnya dan harga bahan`,
+          );
         const batch = await this.stock.receive(tx, {
           tenantId: s.tenantId,
           productId: p.recipe.productId,
@@ -332,7 +394,14 @@ export class ProductionService {
         return runId;
       });
     } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
+      // A concurrent request with the same key won: answer its run (same body only). It may have won the unique
+      // key, or committed first while this one waited on the batch locks and then found the stock it took gone:
+      // a refusal is answered only when no run holds the key.
+      if (!isUniqueViolation(e) && !(e instanceof HttpException)) {
+        if (e instanceof CostTooLargeError)
+          throw codedError('COST_TOO_LARGE', 'batches', COST_TOO_LARGE);
+        throw e;
+      }
       const prior = await this.byKey(this.db, s.tenantId, key);
       if (!prior) throw e;
       id = replay(prior);
@@ -444,6 +513,13 @@ export class ProductionService {
       total,
     };
   }
+}
+
+/** Σ of the lines' costs, exact: past `Number.MAX_SAFE_INTEGER` it throws `CostTooLargeError` (answered 422). */
+function sumCost(costs: number[]) {
+  const total = costs.reduce((sum, c) => sum + BigInt(c), 0n);
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new CostTooLargeError();
+  return Number(total);
 }
 
 /** 422 `INSUFFICIENT_STOCK` on `batches` (the screen's "Ubah jumlah"), naming every short ingredient. */

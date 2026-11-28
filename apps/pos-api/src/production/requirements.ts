@@ -14,6 +14,13 @@ import {
 /** Largest quantity a stock column holds (Postgres integer). A larger need is refused, never wrapped. */
 export const MAX_STOCK_QTY = 2_147_483_647;
 
+/** The largest unit cost a batch may carry: the cap opening stock and purchases enforce (Rp1 triliun). */
+export const MAX_UNIT_COST = 1_000_000_000_000;
+
+/** A quantity as a JS number for an answer: at most `MAX_STOCK_QTY` (a larger need is refused, never shown wrapped). */
+export const clampQty = (units: bigint) =>
+  units > BigInt(MAX_STOCK_QTY) ? MAX_STOCK_QTY : Number(units);
+
 /** The waste is part of what is taken: a line takes qty × 100 / (100 − waste) of its ingredient or sub-recipe. */
 const taken = (quantity: number, wastePercent: number): Frac =>
   mul(ratio(quantity, 1), ratio(100, 100 - wastePercent));
