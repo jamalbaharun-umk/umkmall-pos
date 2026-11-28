@@ -208,6 +208,7 @@ async function autoOpenShift(tx: Tx, s: PosSession, trigger: string) {
       actorId: s.actorId,
       actorKind: s.kind,
       openingCash,
+      openedAutomatically: true,
     })
     .onConflictDoNothing({
       target: [shifts.tenantId, shifts.actorId],

@@ -76,6 +76,7 @@ const ACTIONS: Record<string, string> = {
   purchase_return_undo: 'Batalkan retur pembelian',
   shift_open: 'Buka shift',
   shift_close: 'Tutup shift',
+  shift_opening_correct: 'Modal awal dibetulkan',
   staff_create: 'Tambah staf',
   staff_update: 'Ubah staf',
   staff_delete: 'Hapus staf',
@@ -167,6 +168,11 @@ export function detailText(row: Pick<LogRow, 'event' | 'details'>, permissionLab
       break
     case 'shift_close':
       if (num(d.difference) !== null) parts.push(`Selisih ${signedRupiah(num(d.difference)!)}`)
+      break
+    // Design 40 screen 7: the opening cash of a shift that opened by itself, as it was and as corrected.
+    case 'shift_opening_correct':
+      if (num(d.openingCashBefore) !== null && num(d.openingCash) !== null)
+        parts.push(`Modal awal ${rupiah(num(d.openingCashBefore)!)} jadi ${rupiah(num(d.openingCash)!)}`)
       break
     case 'staff_update': {
       const changed = list(d.changed).map((f) => FIELDS[f] ?? f)

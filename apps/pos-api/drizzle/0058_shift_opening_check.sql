@@ -1,0 +1,2 @@
+ALTER TABLE "pos"."shifts" ADD COLUMN "opened_automatically" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "pos"."shifts" ADD COLUMN "opening_checked_at" timestamp with time zone;

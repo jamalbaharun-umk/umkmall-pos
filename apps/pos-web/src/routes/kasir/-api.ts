@@ -21,6 +21,9 @@ export type Shift = CashTotals & {
   cashSales: number | null
   salesCount: number | null
   difference: number | null
+  /** Design 40 screen 7: opened by the owner's first cash action, and when its opening cash was checked. */
+  openedAutomatically?: boolean
+  openingCheckedAt?: string | null
 }
 export type Product = {
   id: string
@@ -240,6 +243,11 @@ export const openShift = createServerFn({ method: 'POST' })
 export const closeShift = createServerFn({ method: 'POST' })
   .validator((d: { countedCash: number; ownerTakes?: number; shiftId?: string }) => d)
   .handler(({ data }) => send<Shift & { ownerTakes?: number; revenue?: number; grossProfit?: number }>('/shifts/current/close', data))
+
+/** Design 40 screen 7: "Sudah benar" (no amount) or "Betulkan modal" for an automatically opened shift. */
+export const checkOpening = createServerFn({ method: 'POST' })
+  .validator((d: { shiftId: string; openingCash?: number }) => d)
+  .handler(({ data }) => send<Shift>('/shifts/current/opening', data))
 
 /** UMK-1990: a line's discount (percent or rupiah, sales.price_override) and, above 30%, its PIN approval. */
 type LineDiscountFields = { discountPercent?: number; discountAmount?: number }

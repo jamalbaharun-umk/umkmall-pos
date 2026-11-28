@@ -37,6 +37,13 @@ const CloseInput = z
     path: ['shiftId'],
     message: 'Shift yang ditutup wajib disebut',
   });
+const OpeningInput = z
+  .object({
+    shiftId: z.string().uuid('Shift tidak dikenal'),
+    openingCash: cash.optional(),
+  })
+  .strict();
+
 const Page = z.object({
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
@@ -82,6 +89,15 @@ export class ShiftsController {
       recordOwnerTakeAtClose,
       input.shiftId,
     );
+  }
+
+  /** Design 40 screen 7: the owner checks, or corrects once, an automatically opened shift's opening cash. */
+  @Post('current/opening')
+  @RequirePermission('sales.create')
+  @HttpCode(200)
+  checkOpening(@CurrentSession() s: PosSession, @Body() body: unknown) {
+    const input = validate(OpeningInput, body);
+    return this.shifts.checkOpening(s, input.shiftId, input.openingCash);
   }
 
   /** Cash put into or taken out of the actor's open drawer by hand (UMK-1924 U3). */
