@@ -39,7 +39,12 @@ export class ShiftsController {
   async current(@CurrentSession() s: PosSession) {
     const shift = await this.shifts.current(s);
     // UMK-2120: no shift, but the owner's next cash action opens one (a store without staff).
-    return { shift, autoOpen: await this.shifts.autoOpens(s, shift !== null) };
+    return {
+      shift,
+      autoOpen: await this.shifts.autoOpens(s, shift !== null),
+      // UMK-2123: false for a solo owner, whose own reductions above 30% need no PIN.
+      discountPinRequired: await this.shifts.discountPinRequired(s),
+    };
   }
 
   @AgentRoute()

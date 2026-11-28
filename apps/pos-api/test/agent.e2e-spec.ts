@@ -1039,7 +1039,11 @@ describe('UMKMall agent: session and MCP tools', () => {
         .get('/shifts/current')
         .set('Authorization', store.auth)
         .expect(200);
-      expect(current.body).toEqual({ shift: null, autoOpen: true });
+      expect(current.body).toEqual({
+        shift: null,
+        autoOpen: true,
+        discountPinRequired: false,
+      });
 
       const made = await call(client, 'record_sale', {
         lines: [{ productId: kopi.id, qty: 1 }],

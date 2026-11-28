@@ -61,6 +61,7 @@ import { codedError } from '../common/validation';
 import { VoidPins } from '../void/void-pin';
 import { cashMethodId, cashRounding } from './cash';
 import { lockDrawerShift } from '../shifts/cash-ledger';
+import { SOLO_OWNER_APPROVAL, soloOwnerSelfApproves } from './solo-discount';
 import {
   DISCOUNT_APPROVAL_REQUIRED,
   DISCOUNT_APPROVAL_TTL_SECONDS,
@@ -606,8 +607,19 @@ export class SalesService {
         field: 'discountApprovalId',
         message: TOTAL_NEEDS_PIN,
       });
-    const approvals = await this.lockApprovals(tx, s, wants);
-    const orderApproval = approvals.get('order');
+    // UMK-2123: a solo owner's own reduction needs no second person's PIN (nobody else exists to approve); it is
+    // recorded as approved by the owner, with `approval: 'solo_owner'` in the audit. Decided here, never by the client.
+    const soloOwner = wants.length > 0 && (await soloOwnerSelfApproves(tx, s));
+    const approvals = soloOwner
+      ? new Map<string, { id: string; approverId: string }>()
+      : await this.lockApprovals(tx, s, wants);
+    const approved = new Map<string, { approverId: string }>(
+      soloOwner
+        ? wants.map((w) => [w.key, { approverId: s.actorId }])
+        : approvals,
+    );
+    const approvalVia = soloOwner ? { approval: SOLO_OWNER_APPROVAL } : {};
+    const orderApproval = approved.get('order');
     const discount = lineDiscount + orderDiscount;
     // U7: validated before anything is taken (Lakasir flaw 1); quota is consumed below, in this transaction.
     const voucher = input.voucherCode
@@ -748,6 +760,7 @@ export class SalesService {
           reduction: combined.reduction,
           listSubtotal: combined.listSubtotal,
           approvedBy: orderApproval.approverId,
+          ...approvalVia,
         },
       });
 
@@ -819,11 +832,10 @@ export class SalesService {
         priceOverriddenBy: l.priceOverriddenBy,
         discount: discounts[l.index].discount,
         discountPercent: discounts[l.index].discountPercent,
-        discountApprovedBy:
-          approvals.get(`line:${l.index}`)?.approverId ?? null,
+        discountApprovedBy: approved.get(`line:${l.index}`)?.approverId ?? null,
         costTotal: cost,
       });
-      const approval = approvals.get(`line:${l.index}`);
+      const approval = approved.get(`line:${l.index}`);
       if (approval)
         await recordAudit(tx, s, 'discount_approval', {
           target: { type: 'product', id: l.productId, label: l.name },
@@ -834,6 +846,7 @@ export class SalesService {
             discountPercent: discounts[l.index].discountPercent,
             ...(l.priceCut ? { priceCut: l.priceCut } : {}),
             approvedBy: approval.approverId,
+            ...approvalVia,
           },
         });
       if (l.priceOverriddenBy)
@@ -1154,6 +1167,8 @@ export class SalesService {
       lineDiscount,
       orderDiscount,
       orderDiscountNeedsApproval: combined.needsApproval,
+      // UMK-2123: false for a solo owner, whose reductions above 30% need no PIN (the `…NeedsApproval` facts stay).
+      discountPinRequired: !(await soloOwnerSelfApproves(this.db, s)),
       listSubtotal: combined.listSubtotal,
       uncoveredListSubtotal: combined.uncoveredListSubtotal,
       totalReduction: combined.reduction,

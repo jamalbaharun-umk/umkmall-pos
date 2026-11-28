@@ -133,7 +133,11 @@ describe('solo-owner mode: the first cash action opens the shift (UMK-2120)', ()
   describe('the first sale', () => {
     it('opens a shift, the sale lands in it, audited as automatic in the same transaction', async () => {
       const s = await shop();
-      expect(await current(s.auth)).toEqual({ shift: null, autoOpen: true });
+      expect(await current(s.auth)).toEqual({
+        shift: null,
+        autoOpen: true,
+        discountPinRequired: false,
+      });
 
       const sale = await s.sell().expect(201);
       const [shift] = await shiftRows(s.tenantId);
@@ -254,10 +258,15 @@ describe('solo-owner mode: the first cash action opens the shift (UMK-2120)', ()
     it('a store with one active staff member keeps today’s behaviour, for the owner and the cashier', async () => {
       const s = await shop();
       const cashier = await createCashier(app, s);
-      expect(await current(s.auth)).toEqual({ shift: null, autoOpen: false });
+      expect(await current(s.auth)).toEqual({
+        shift: null,
+        autoOpen: false,
+        discountPinRequired: true,
+      });
       expect(await current(cashier.auth)).toEqual({
         shift: null,
         autoOpen: false,
+        discountPinRequired: true,
       });
       for (const auth of [s.auth, cashier.auth]) {
         const res = await s.sell(auth).expect(422);
