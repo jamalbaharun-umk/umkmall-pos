@@ -120,6 +120,23 @@ describe('store purge on UMKMall account erasure (U8)', () => {
       .attach('file', PNG, { filename: 'a.png', contentType: 'image/png' })
       .expect(201);
     await post('/stock/opening', { productId, qty: 50 }).expect(201);
+    // UMK-2125: an ingredient with a manual cost and a recipe using it: ingredient_costs, recipes, recipe_lines.
+    const milk = await post('/catalog/products', {
+      categoryId: cat.body.id,
+      name: 'Susu segar',
+      type: 'ingredient',
+      unit: 'ML',
+      sellingPrice: 1,
+    }).expect(201);
+    await put(`/ingredient-costs/${milk.body.id}`, {
+      cost: 18_000,
+      perQty: 1_000,
+    }).expect(200);
+    await post('/recipes', {
+      productId,
+      yieldQty: 1,
+      lines: [{ ingredientId: milk.body.id, quantity: 150, wastePercent: 5 }],
+    }).expect(201);
     await put('/sales/settings', { taxBps: 1000 }).expect(200);
     await put('/reports/settings', { timezone: 'UTC' }).expect(200);
     await put('/store/profile', {
