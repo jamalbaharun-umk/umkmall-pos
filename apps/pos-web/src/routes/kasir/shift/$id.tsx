@@ -53,9 +53,12 @@ function ShiftPage() {
             {drawerRows(shift).map((r) => (
               <div
                 key={r.key}
-                className={`flex justify-between ${r.strong ? 'pt-1 text-base font-bold' : 'text-default-secondary'}`}
+                className={`flex justify-between gap-3 ${r.strong ? 'pt-1 text-base font-bold' : 'text-default-secondary'}`}
               >
-                <dt>{r.label}</dt>
+                <dt>
+                  {r.label}
+                  {r.note && <span className="block text-xs">{r.note}</span>}
+                </dt>
                 <dd>{drawerRowText(r, rupiah)}</dd>
               </div>
             ))}

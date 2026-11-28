@@ -82,6 +82,7 @@ const shiftColumns = {
   salesCount: shifts.salesCount,
   openedAutomatically: shifts.openedAutomatically,
   openingCheckedAt: shifts.openingCheckedAt,
+  openingCashCorrectedFrom: shifts.openingCashCorrectedFrom,
 };
 
 /** For a select: the stored columns plus whose shift it is. `numbered` adds the shift's number. */
@@ -412,7 +413,6 @@ export class ShiftsService {
     });
   }
 
-  /** The owner's take at "Tutup hari", written by the one writer of manual drawer cash (`cash-entries.service`). */
   /**
    * Design 40 screen 7 (UMK-2120, owner decision 2026-11-28, option A): the owner checks the opening cash of a
    * shift that opened by itself (the last count), and may correct it once. Without `openingCash` it is only marked
@@ -479,7 +479,10 @@ export class ShiftsService {
         .update(shifts)
         .set({
           openingCheckedAt: sql`now()`,
-          ...(changes ? { openingCash } : {}),
+          // The automatic figure stays on the shift, so Tutup hari and the shift report show what it was.
+          ...(changes
+            ? { openingCash, openingCashCorrectedFrom: shift.openingCash }
+            : {}),
         })
         .where(and(eq(shifts.tenantId, s.tenantId), eq(shifts.id, shift.id)));
       if (changes) {
@@ -501,6 +504,7 @@ export class ShiftsService {
     return this.current(s);
   }
 
+  /** The owner's take at "Tutup hari", written by the one writer of manual drawer cash (`cash-entries.service`). */
   private async takeAtClose(
     tx: Tx,
     s: PosSession,

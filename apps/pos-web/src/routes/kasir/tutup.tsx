@@ -101,7 +101,7 @@ function CloseShiftPage() {
             <dl className="mt-3 space-y-1 text-sm">
               <Row label="Dibuka" value={formatDate(shift.openedAt)} />
               {drawerRows(shift).map((r) => (
-                <Row key={r.key} label={r.label} value={drawerRowText(r, rupiah)} strong={r.strong} />
+                <Row key={r.key} label={r.label} note={r.note} value={drawerRowText(r, rupiah)} strong={r.strong} />
               ))}
             </dl>
             <p className="mt-2 text-xs text-default-secondary">
@@ -454,7 +454,7 @@ function Summary({ shift }: { shift: Shift }) {
   return (
     <dl className="mt-3 space-y-1 text-sm">
       {drawerRows(shift).map((r) => (
-        <Row key={r.key} label={r.label} value={drawerRowText(r, rupiah)} />
+        <Row key={r.key} label={r.label} note={r.note} value={drawerRowText(r, rupiah)} />
       ))}
       <Row label="Dihitung" value={rupiah(shift.countedCash ?? 0)} />
       <div
@@ -467,10 +467,13 @@ function Summary({ shift }: { shift: Shift }) {
   )
 }
 
-function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+function Row({ label, value, strong, note }: { label: string; value: string; strong?: boolean; note?: string }) {
   return (
-    <div className={`flex justify-between ${strong ? 'pt-1 text-base font-bold' : 'text-default-secondary'}`}>
-      <dt>{label}</dt>
+    <div className={`flex justify-between gap-3 ${strong ? 'pt-1 text-base font-bold' : 'text-default-secondary'}`}>
+      <dt>
+        {label}
+        {note && <span className="block text-xs">{note}</span>}
+      </dt>
       <dd>{value}</dd>
     </div>
   )

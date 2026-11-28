@@ -32,6 +32,7 @@ describe('Modal awal of an automatically opened shift (design 40 screen 7)', () 
     expectedCash: number;
     openedAutomatically: boolean;
     openingCheckedAt: string | null;
+    openingCashCorrectedFrom: number | null;
   };
   const current = async (auth: string) =>
     (await http().get('/shifts/current').set('Authorization', auth).expect(200))
@@ -121,6 +122,7 @@ describe('Modal awal of an automatically opened shift (design 40 screen 7)', () 
     expect(res.body).toMatchObject({
       openingCash: 30_000,
       expectedCash: 35_000,
+      openingCashCorrectedFrom: 50_000,
     });
     expect(res.body.openingCheckedAt).not.toBeNull();
     expect(await audits(s.tenantId)).toEqual([
@@ -137,6 +139,15 @@ describe('Modal awal of an automatically opened shift (design 40 screen 7)', () 
       countedCash: 35_000,
     }).expect(200);
     expect(closed.body).toMatchObject({ expectedCash: 35_000, difference: 0 });
+    // the shift report keeps what the automatic opening was
+    const report = await http()
+      .get(`/shifts/${shift.id}`)
+      .set('Authorization', s.auth)
+      .expect(200);
+    expect(report.body).toMatchObject({
+      openingCash: 30_000,
+      openingCashCorrectedFrom: 50_000,
+    });
   });
 
   it('refuses an opening that would leave the drawer below nothing, and a negative amount', async () => {
@@ -191,6 +202,41 @@ describe('Modal awal of an automatically opened shift (design 40 screen 7)', () 
     expect(stale.body.code).toBe('shift_changed');
     expect((await current(s.auth))!.openingCash).toBe(55_000);
     await opening(s.auth, { openingCash: 1000 }).expect(422);
+  });
+
+  it('a shift opened by hand is not marked and has no corrected figure', async () => {
+    const s = await createStore();
+    const opened = await post(s.auth, '/shifts/open', {
+      openingCash: 10_000,
+    }).expect(201);
+    expect(opened.body).toMatchObject({
+      openedAutomatically: false,
+      openingCheckedAt: null,
+      openingCashCorrectedFrom: null,
+    });
+    expect(await current(s.auth)).toMatchObject({
+      openedAutomatically: false,
+      openingCashCorrectedFrom: null,
+    });
+  });
+
+  it('two corrections at once: one is applied, the other is refused, one audit row', async () => {
+    const s = await shop();
+    await s.sell().expect(201);
+    const shift = (await current(s.auth))!;
+    const answers = await Promise.all([
+      opening(s.auth, { shiftId: shift.id, openingCash: 30_000 }),
+      opening(s.auth, { shiftId: shift.id, openingCash: 40_000 }),
+    ]);
+    expect(answers.map((r) => r.status).sort()).toEqual([200, 409]);
+    const refused = answers.find((r) => r.status === 409)!;
+    expect(refused.body.code).toBe('opening_checked');
+    const applied = answers.find((r) => r.status === 200)!;
+    expect((await current(s.auth))!).toMatchObject({
+      openingCash: applied.body.openingCash,
+      openingCashCorrectedFrom: 50_000,
+    });
+    expect(await audits(s.tenantId)).toHaveLength(1);
   });
 
   it('store B cannot touch store A’s shift', async () => {

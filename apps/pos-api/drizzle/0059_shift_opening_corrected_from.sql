@@ -1,0 +1,1 @@
+ALTER TABLE "pos"."shifts" ADD COLUMN "opening_cash_corrected_from" bigint;
